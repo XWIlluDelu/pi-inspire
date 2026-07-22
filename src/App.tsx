@@ -1,0 +1,386 @@
+import {
+  AlertTriangle,
+  Ban,
+  Check,
+  Clock,
+  Command,
+  Loader2,
+  Minimize2,
+  PanelLeft,
+  PanelRight,
+  Pencil,
+  RefreshCw,
+  X,
+  XCircle,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import type { RunState, ThemePreference } from "../shared/contracts";
+import { setToken } from "./api";
+import { ActivityBar } from "./components/ActivityBar";
+import { CommandPalette } from "./components/CommandPalette";
+import { Composer } from "./components/Composer";
+import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
+import { Nav } from "./components/Nav";
+import { Transcript } from "./components/Transcript";
+import { Welcome } from "./components/Welcome";
+import { isBusyRunState, store, useAppState } from "./store";
+
+export function resolveTheme(pref: ThemePreference, systemDark: boolean): "light" | "dark" {
+  return pref === "system" ? (systemDark ? "dark" : "light") : pref;
+}
+
+function StateChip({ runState }: { runState: RunState }) {
+  switch (runState) {
+    case "running":
+      return (
+        <span className="chip chip--accent">
+          <Loader2 size={12} className="spin" aria-hidden /> Running
+        </span>
+      );
+    case "retrying":
+      return (
+        <span className="chip chip--warning">
+          <AlertTriangle size={12} aria-hidden /> Retrying
+        </span>
+      );
+    case "compacting":
+      return (
+        <span className="chip chip--info">
+          <RefreshCw size={12} aria-hidden /> Compacting
+        </span>
+      );
+    case "queued":
+      return (
+        <span className="chip chip--muted">
+          <Clock size={12} aria-hidden /> Queued
+        </span>
+      );
+    case "aborted":
+      return (
+        <span className="chip chip--error">
+          <Ban size={12} aria-hidden /> Aborted
+        </span>
+      );
+    case "failed":
+      return (
+        <span className="chip chip--error">
+          <XCircle size={12} aria-hidden /> Failed
+        </span>
+      );
+    default:
+      return null;
+  }
+}
+
+function SessionTitle() {
+  const state = useAppState();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+
+  if (editing) {
+    return (
+      <form
+        className="topbar__rename"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void store.renameSession(value).then((ok) => {
+            if (ok) setEditing(false);
+          });
+        }}
+      >
+        <input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          aria-label="Session name"
+          autoFocus
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setEditing(false);
+          }}
+        />
+        <button type="submit" className="icon-button" aria-label="Save session name" disabled={!value.trim()}>
+          <Check size={14} aria-hidden />
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      <h1 className="topbar__title">{state.sessionName || (state.sessionId ? "Untitled session" : "insπre")}</h1>
+      {state.sessionId ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Rename session"
+          title="Rename session"
+          onClick={() => {
+            setValue(state.sessionName);
+            setEditing(true);
+          }}
+        >
+          <Pencil size={13} aria-hidden />
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function ContextPane({ onClose }: { onClose: () => void }) {
+  const state = useAppState();
+  const usage = (state.stats as { contextUsage?: { tokens?: number; contextWindow?: number; percent?: number } } | null)
+    ?.contextUsage;
+  return (
+    <aside className="ctx" aria-label="Session context">
+      <div className="ctx__header">
+        <span>Session</span>
+        <button type="button" className="icon-button" onClick={onClose} aria-label="Close context panel">
+          <PanelRight size={15} aria-hidden />
+        </button>
+      </div>
+      <dl className="ctx__details">
+        <dt>Title</dt>
+        <dd>{state.sessionName || "Untitled session"}</dd>
+        <dt>Session ID</dt>
+        <dd>
+          <code>{state.sessionId ?? "—"}</code>
+        </dd>
+        <dt>Project</dt>
+        <dd>{state.project ?? "—"}</dd>
+        <dt>Directory</dt>
+        <dd>
+          <code>{state.cwd ?? "—"}</code>
+        </dd>
+        <dt>Model</dt>
+        <dd>{state.model ? `${state.model.provider}/${state.model.id}` : "—"}</dd>
+        <dt>Thinking</dt>
+        <dd>{state.thinkingLevel}</dd>
+        <dt>Messages</dt>
+        <dd>{state.messages.length}</dd>
+        {usage?.tokens != null ? (
+          <>
+            <dt>Context</dt>
+            <dd>
+              {usage.tokens.toLocaleString()}
+              {usage.contextWindow ? ` / ${usage.contextWindow.toLocaleString()}` : ""} tokens
+              {usage.percent != null ? ` (${usage.percent.toFixed(1)}%)` : ""}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+    </aside>
+  );
+}
+
+function TokenGate() {
+  const [value, setValue] = useState("");
+  return (
+    <div className="token-gate">
+      <div className="token-gate__card">
+        <span className="wordmark wordmark--large">insπre</span>
+        <p className="token-gate__hint">
+          This insπre host requires its access token. Open the URL printed by the host (it contains{" "}
+          <code>?token=…</code>), or paste the token below.
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const token = value.trim();
+            if (!token) return;
+            setToken(token);
+            void store.init(token);
+          }}
+        >
+          <input
+            type="password"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder="Access token"
+            aria-label="Access token"
+            autoComplete="off"
+          />
+          <button type="submit" className="button button--primary" disabled={!value.trim()}>
+            Connect
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Notices() {
+  const state = useAppState();
+  if (state.notices.length === 0) return null;
+  return (
+    <div className="notices" aria-live="polite">
+      {state.notices.map((notice) => (
+        <div key={notice.id} className={`notice notice--${notice.kind}`} role="status">
+          <span className="notice__text">{notice.text}</span>
+          <button
+            type="button"
+            className="notice__dismiss"
+            onClick={() => store.dismissNotice(notice.id)}
+            aria-label="Dismiss notification"
+          >
+            <X size={12} aria-hidden />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function App() {
+  const state = useAppState();
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [ctxOpen, setCtxOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme = resolveTheme(state.prefs.theme, media.matches);
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [state.prefs.theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.reading = state.prefs.readingSerif ? "serif" : "sans";
+  }, [state.prefs.readingSerif]);
+
+  useEffect(() => {
+    document.title = state.windowTitle ?? "insπre";
+  }, [state.windowTitle]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      } else if (mod && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setNavCollapsed((value) => !value);
+      } else if (mod && event.key === ".") {
+        event.preventDefault();
+        setCtxOpen((value) => !value);
+      } else if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !paletteOpen &&
+        !state.extensionUi &&
+        isBusyRunState(state.runState)
+      ) {
+        void store.abort();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state.runState, state.extensionUi, paletteOpen]);
+
+  if (state.needsToken) return <TokenGate />;
+
+  const statuses = Object.entries(state.statuses);
+
+  return (
+    <div className="app">
+      <Nav collapsed={navCollapsed} />
+      <main className="center">
+        <header className="topbar">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setNavCollapsed((value) => !value)}
+            aria-label="Toggle navigation"
+            title="Toggle navigation (Ctrl+B)"
+          >
+            <PanelLeft size={15} aria-hidden />
+          </button>
+          <SessionTitle />
+          <StateChip runState={state.runState} />
+          {statuses.map(([key, text]) => (
+            <span key={key} className="chip chip--muted">
+              {text}
+            </span>
+          ))}
+          <span className="topbar__spacer" />
+          {state.connection !== "open" ? (
+            <span className="chip chip--warning">
+              <Loader2 size={12} className="spin" aria-hidden />
+              {state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
+            </span>
+          ) : null}
+          {state.sessionId ? (
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => void store.compact()}
+              aria-label="Compact context"
+              title="Compact context"
+            >
+              <Minimize2 size={15} aria-hidden />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Open command palette"
+            title="Command palette (Ctrl+K)"
+          >
+            <Command size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${ctxOpen ? "icon-button--active" : ""}`}
+            onClick={() => setCtxOpen((value) => !value)}
+            aria-label="Toggle context panel"
+            title="Toggle context panel (Ctrl+.)"
+          >
+            <PanelRight size={15} aria-hidden />
+          </button>
+        </header>
+        {state.error ? (
+          <div className="banner banner--error" role="alert">
+            <span>{state.error}</span>
+            <button type="button" onClick={() => store.dismissError()}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+        {state.connection !== "open" && !state.error ? (
+          <div className="banner banner--warning" role="status">
+            Connection to the insπre host interrupted — retrying automatically. The last settled state stays visible.
+          </div>
+        ) : null}
+        {state.sessionId ? (
+          <>
+            <Transcript
+              messages={state.messages}
+              streaming={state.streaming}
+              thinkingVisibility={state.prefs.thinkingVisibility}
+              toolVisibility={state.prefs.toolVisibility}
+            />
+            <div className="composer-dock">
+              <ActivityBar />
+              <Composer />
+            </div>
+          </>
+        ) : (
+          <Welcome />
+        )}
+      </main>
+      {ctxOpen ? <ContextPane onClose={() => setCtxOpen(false)} /> : null}
+      {paletteOpen ? (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          onToggleNav={() => setNavCollapsed((value) => !value)}
+          onToggleCtx={() => setCtxOpen((value) => !value)}
+        />
+      ) : null}
+      <ExtensionUiDialog />
+      <Notices />
+    </div>
+  );
+}
