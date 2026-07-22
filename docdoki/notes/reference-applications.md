@@ -1,0 +1,48 @@
+---
+purpose: Fixed-source findings from Claude Science/cscience and OpenAI4S identify the visual, workbench, streaming, rendering, and state patterns worth carrying into inspire without copying their implementations.
+---
+
+# Reference applications
+
+## cscience and Claude Science
+
+The reviewed `Haleclipse/cscience` tree is a launcher, unpacker, and AST patcher for an already-built Claude Science runtime rather than a maintainable GUI source project. Its repository can ground packaging facts, but its GUI observations come from released minified assets and are design references only.
+
+Useful product patterns visible in the release are typed text/thinking/tool/delegation blocks, paired tool results, project and frame organization, reconnectable streaming buffers, a shared Markdown renderer with KaTeX, and first-class panes for plans, code, provenance, environment, and varied artifacts. These patterns justify the workbench and rendering direction; the unavailable source and uncertain upstream GUI licensing rule out direct reuse.
+
+Sources:
+
+- [`cscience` fixed commit](https://github.com/Haleclipse/cscience/tree/6b6f0654f8861652e04119d40f0794aaa0e88045)
+- [`cscience` package dependencies](https://github.com/Haleclipse/cscience/blob/6b6f0654f8861652e04119d40f0794aaa0e88045/package.json#L1-L21)
+- [`cscience` local launcher](https://github.com/Haleclipse/cscience/blob/6b6f0654f8861652e04119d40f0794aaa0e88045/pkg/platform/bin/claude-science.mjs#L61-L94)
+- [Released GUI asset inventory](https://unpkg.com/@cometix/cscience@0.0.2-linux-x64/?meta)
+
+## OpenAI4S
+
+OpenAI4S is a complete local web application whose browser is a projection over durable SQLite, workspace, artifact, and action-ledger state plus transient WebSocket events. Its dashboard and conversation workspace establish a useful product shape: session navigation at the left, conversation in the center, and notebook, timeline, or files at the right.
+
+The reusable architectural lesson is the separation of canonical durable state, bounded/redacted browser projections, and live deltas. Conversation, immutable execution history, and safe action timeline are separate views rather than one terminal transcript. The implementation itself is not a suitable base: the frontend is a large untyped vanilla JavaScript application, the gateway and client protocol contain compatibility irregularities, and chat does not provide a full KaTeX or MathJax pipeline.
+
+Sources:
+
+- [`OpenAI4S` fixed commit](https://github.com/PKU-YuanGroup/OpenAI4S/tree/e71954465d8b003e656e37741bbc2496bcb2fd3d)
+- [Web UI structure](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/index.html#L23-L175)
+- [Browser projection boundary](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/app.js#L112-L128)
+- [REST and WebSocket roles](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/docs/webapp-api.md#L7-L28)
+- [Streaming Markdown contract](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/tests/test_webui_static_contract.py#L266-L292)
+- [Limited LaTeX artifact parser](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/scientific_renderers.js#L226-L276)
+
+## Visual direction
+
+Both references use compact user bubbles and open assistant document flows. Their interfaces combine neutral surfaces, fine borders, soft radii, restrained shadows, and keyboard accelerators with visible controls. These common patterns are suitable references for insπre’s conversation-centered scientific-workbench character.
+
+Claude Science is the primary visual benchmark. Its released style system supports light, dark, and system modes; uses Anthropic Sans for the interface and default response flow, Anthropic Serif for title or optional response treatment, and Anthropic Mono for code; and combines neutral surfaces with clay branding and controlled semantic colors. OpenAI4S follows a related but more utilitarian treatment: its body and Markdown flow are sans-serif, serif type marks the wordmark and selected titles, monospaced type carries code and data, and its warm-neutral surface system uses a blue primary accent with limited clay, status, and tool colors.
+
+insπre adopts the shared visual grammar rather than either brand. Claude Science leads typography roles, surfaces, boundaries, radii, shadows, and finish. OpenAI4S remains a secondary reference for direct local-tool interaction, command-palette behavior, and practical information organization. Its light and dark palettes are original project tokens; reference colors and proprietary font files are not design assets for reuse.
+
+Sources:
+
+- [Claude Science released style system](https://unpkg.com/@cometix/cscience@0.0.2-linux-x64/runtime/assets/web-dist/assets/index-D3CLqYKb.css)
+- [Claude Science released message presentation](https://unpkg.com/@cometix/cscience@0.0.2-linux-x64/runtime/assets/web-dist/assets/MessageBubble-DlbWFzLl.js)
+- [OpenAI4S visual tokens and conversation styles](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/style.css)
+- [OpenAI4S command palette and keyboard interaction](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/app.js#L6361-L6487)
