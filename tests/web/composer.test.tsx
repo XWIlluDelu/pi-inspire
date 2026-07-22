@@ -122,4 +122,14 @@ describe("project file picker", () => {
     expect(screen.queryByLabelText("Remove src/index.ts")).not.toBeInTheDocument();
     clearLeftovers();
   });
+
+  it("consumes Escape when closing so the global abort shortcut cannot fire", () => {
+    clearLeftovers();
+    render(<Composer />);
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    const input = screen.getByLabelText("Search project files");
+    // fireEvent returns false when preventDefault was called
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(false);
+    expect(screen.queryByLabelText("Search project files")).not.toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -9,6 +9,7 @@ import { AttachmentStore } from "../../server/attachments.js";
 import { createInspireServer } from "../../server/app.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
+import { ResourceStore } from "../../server/resources.js";
 
 const token = "test-local-token";
 
@@ -25,6 +26,7 @@ describe("local host API", () => {
       catalog: new MockCatalog(),
       attachments: new AttachmentStore(join(temporary, "uploads")),
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
+      resources: new ResourceStore(),
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -79,6 +81,8 @@ describe("local host API", () => {
       thinkingVisibility: "expanded",
       toolVisibility: "hidden",
       readingSerif: true,
+      pinnedSessionIds: [],
+      navCollapsedGroups: ["/home/demo/older"],
     };
     await request(application.server)
       .put("/api/preferences")
@@ -95,6 +99,80 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(stored.body).toEqual(value);
+  });
+
+  it("migrates existing preferences by supplying navigation defaults", async () => {
+    const legacy = {
+      theme: "light",
+      launch: "welcome",
+      thinkingVisibility: "collapsed",
+      toolVisibility: "expanded",
+      readingSerif: false,
+    };
+    await writeFile(join(temporary, "preferences.json"), JSON.stringify(legacy));
+    const response = await request(application.server)
+      .get("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(response.body).toEqual({ ...legacy, pinnedSessionIds: [], navCollapsedGroups: [] });
+  });
+
+  it("persists session pins outside Pi history and returns pinned summaries by id", async () => {
+    const pinned = await request(application.server)
+      .post("/api/sessions/pin")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active", pinned: true })
+      .expect(200);
+    expect(pinned.body.pinnedSessionIds).toEqual(["mock-active"]);
+
+    const summaries = await request(application.server)
+      .post("/api/sessions/by-id")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ids: ["mock-active", "missing"] })
+      .expect(200);
+    expect(summaries.body.sessions).toHaveLength(1);
+    expect(summaries.body.sessions[0].id).toBe("mock-active");
+
+    await request(application.server)
+      .post("/api/sessions/pin")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active", pinned: false })
+      .expect(200)
+      .expect((response) => expect(response.body.pinnedSessionIds).toEqual([]));
+  });
+
+  it("resolves and serves only files referenced by the visible session", async () => {
+    await writeFile(join(temporary, "preview.md"), "# Host preview\n");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ message: "Open [the preview](preview.md)." })
+      .expect(202);
+
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "preview.md" })
+      .expect(200);
+    expect(resolved.body).toMatchObject({ name: "preview.md", kind: "markdown" });
+
+    const content = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(content.text).toBe("# Host preview\n");
+
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "unmentioned.txt" })
+      .expect(403);
   });
 
   it("accepts bounded attachments and streams prompt events over an authenticated socket", async () => {

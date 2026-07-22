@@ -32,6 +32,21 @@ Sources:
 - [Streaming Markdown contract](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/tests/test_webui_static_contract.py#L266-L292)
 - [Limited LaTeX artifact parser](https://github.com/PKU-YuanGroup/OpenAI4S/blob/e71954465d8b003e656e37741bbc2496bcb2fd3d/openai4s/server/webui/scientific_renderers.js#L226-L276)
 
+## Pi web concurrency references
+
+After the concurrent-session requirement was clarified, three additional Pi web clients were inspected at fixed commits. `pi-web` keeps active runtimes and activity state in maps keyed by session identity, then derives separate unread completion state from active-to-idle transitions. `pi-dashboard` likewise owns a map of independently started slots, while Piface owns a dictionary of live sessions and groups its dashboard by working directory and recency.
+
+insπre adopts the common product boundary rather than any implementation: one long-lived worker per opened session, browser selection as a view operation, per-session live/completion/error projection, and exact-working-directory navigation groups. The first correction keeps this state in the running host only; it does not import peer-specific persistence, health sweeps, terminal surfaces, or broad compatibility layers.
+
+Sources:
+
+- [`pi-web` active runtime and activity maps](https://github.com/jmfederico/pi-web/blob/24a3d3611ed81232e4a87bb22ff8fb6760ead9d8/src/server/sessions/piSessionService.ts#L663-L670)
+- [`pi-web` active-to-unread completion transition](https://github.com/jmfederico/pi-web/blob/24a3d3611ed81232e4a87bb22ff8fb6760ead9d8/src/server/sessions/sessionUnreadStore.ts#L116-L145)
+- [`pi-web` session-row activity precedence](https://github.com/jmfederico/pi-web/blob/24a3d3611ed81232e4a87bb22ff8fb6760ead9d8/src/client/src/components/SessionList.ts#L519-L537)
+- [`pi-dashboard` independent slot map and lazy runtime creation](https://github.com/samfoy/pi-dashboard/blob/d8be67d4eadc8bc10a309513b59a0485373ef833/backend/pi-manager.ts#L1039-L1073)
+- [Piface live-session ownership](https://github.com/jbn/piface/blob/6172144f221b5f6e2240d9ca1bb7cc522607ef62/piface/session_manager.py#L51-L65)
+- [Piface working-directory grouping and session status](https://github.com/jbn/piface/blob/6172144f221b5f6e2240d9ca1bb7cc522607ef62/README.md#L91-L96)
+
 ## Visual direction
 
 Both references use compact user bubbles and open assistant document flows. Their interfaces combine neutral surfaces, fine borders, soft radii, restrained shadows, and keyboard accelerators with visible controls. These common patterns are suitable references for insπre’s conversation-centered scientific-workbench character.

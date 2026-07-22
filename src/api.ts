@@ -3,6 +3,7 @@ import type {
   BootstrapResponse,
   InspirePreferences,
   PromptRequest,
+  ResourceDescriptor,
   SessionListResponse,
   UploadedAttachment,
 } from "../shared/contracts";
@@ -72,6 +73,23 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
   return (await response.json()) as T;
 }
 
+export interface ResourceContent {
+  blob: Blob;
+  /** True when the host answered a range request with a partial (206) body. */
+  truncated: boolean;
+}
+
+async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<ResourceContent> {
+  const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(byteLimit ? { Range: `bytes=0-${Math.max(0, byteLimit - 1)}` } : {}),
+    },
+  });
+  await ensureOk(response);
+  return { blob: await response.blob(), truncated: response.status === 206 };
+}
+
 async function uploadFiles(token: string, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
@@ -99,6 +117,8 @@ export function createApi(token: string) {
         `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
       ),
     refreshSessions: () => post<{ ok: boolean }>(token, "/api/sessions/refresh"),
+    sessionsByIds: (ids: string[]) => post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-id", { ids }),
+    setSessionPinned: (id: string, pinned: boolean) => post<InspirePreferences>(token, "/api/sessions/pin", { id, pinned }),
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
     newSession: (cwd: string, name?: string) => post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, name }),
     renameSession: (name: string) => post<{ ok: boolean }>(token, "/api/sessions/rename", { name }),
@@ -115,6 +135,10 @@ export function createApi(token: string) {
         token,
         `/api/files?q=${encodeURIComponent(query)}&limit=${limit}`,
       ),
+    resolveResource: (sessionId: string, reference: string) =>
+      post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }),
+    resourceContent: (id: string, sessionId: string, byteLimit?: number) =>
+      fetchResourceContent(token, id, sessionId, byteLimit),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
     savePreferences: (prefs: InspirePreferences) =>

@@ -8,7 +8,9 @@ import {
   type ActiveSnapshot,
   type InspirePreferences,
   type LaunchPreference,
+  type ResourceDescriptor,
   type RunState,
+  type SessionRuntimeStatus,
   type SessionSummary,
   type ThemePreference,
   type VisibilityPreference,
@@ -49,6 +51,41 @@ export type { ActivityTool, ExtensionUiRequest, Notice, QueueInfo, RetryInfo, Wi
 // --- Store state ---
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "offline";
+
+/** Text-like previews are range-capped; the host answers 206 when truncated. */
+export const TEXT_PREVIEW_BYTES = 256 * 1024;
+
+/** In-document CSP injected into sandboxed HTML previews: no scripts (the
+ * iframe sandbox enforces that too), no remote subresources. */
+const HTML_PREVIEW_CSP =
+  "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'";
+
+export function injectHtmlPreviewCsp(html: string): string {
+  // Sandbox blocks script execution and privilege; remove document-controlled
+  // navigation primitives as well so a preview cannot immediately leave its
+  // isolated blob document or choose a local/remote base URL.
+  const inert = html
+    .replace(/<base\b[^>]*>/gi, "")
+    .replace(/<meta\b(?=[^>]*http-equiv\s*=\s*["']?refresh\b)[^>]*>/gi, "");
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">`;
+  const head = /<head[^>]*>/i.exec(inert);
+  if (head) return `${inert.slice(0, head.index + head[0].length)}${meta}${inert.slice(head.index + head[0].length)}`;
+  return `${meta}${inert}`;
+}
+
+export type ResourcePreview =
+  | { status: "loading"; reference: string }
+  | { status: "error"; reference: string; message: string }
+  | {
+      status: "ready";
+      reference: string;
+      descriptor: ResourceDescriptor;
+      /** Decoded text for text/markdown/html previews. */
+      text?: string;
+      truncated?: boolean;
+      /** Object URL for binary-backed previews (image/pdf/audio/video/html). */
+      objectUrl?: string;
+    };
 
 export interface ModelOption {
   provider: string;
@@ -92,8 +129,20 @@ export interface AppState extends EventSlice {
   stats: unknown;
   sessions: SessionSummary[];
   sessionQuery: string;
+  /** Authoritative per-session runtime status for every live session worker,
+   * keyed by session id. Drives nav attention indicators. */
+  sessionStatuses: Record<string, SessionRuntimeStatus>;
+  /** Session switch currently in flight; duplicate selections are ignored until it settles. */
+  openingSessionId: string | null;
   attachments: PendingAttachment[];
   projectFiles: string[];
+  /** Pin mutation in flight for this session id; the row stays truthful. */
+  pinningSessionId: string | null;
+  /** Files/resources pane visibility (Ctrl+.). */
+  resourcesOpen: boolean;
+  /** Reference currently selected in the resources pane. */
+  selectedResourceReference: string | null;
+  resourcePreview: ResourcePreview | null;
   error: string | null;
 }
 
@@ -117,8 +166,14 @@ const initialState: AppState = {
   stats: null,
   sessions: [],
   sessionQuery: "",
+  sessionStatuses: {},
+  openingSessionId: null,
   attachments: [],
   projectFiles: [],
+  pinningSessionId: null,
+  resourcesOpen: false,
+  selectedResourceReference: null,
+  resourcePreview: null,
   error: null,
 };
 
@@ -133,6 +188,9 @@ export class AppStore {
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
+  private selectionGeneration = 0;
+  private readyWhileOpening = new Set<string>();
+  private previewObjectUrl: string | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -203,6 +261,14 @@ export class AppStore {
 
   private applySnapshot(snapshot: ActiveSnapshot): void {
     const active = snapshot.active;
+    const nextSessionId = active?.sessionId ?? null;
+    const sessionChanged = nextSessionId !== this.state.sessionId;
+    if (sessionChanged) {
+      this.selectionGeneration += 1;
+      // Previews are authorized against the owning session; a switch must not
+      // leak the previous session's selection or object URLs.
+      this.revokePreviewObjectUrl();
+    }
     const messages = (active?.messages ?? []).map(asMessage);
     this.settledKeys = new Set(messages.map(messageKey).filter((key): key is string => key !== null));
     const cwd = active?.cwd ?? null;
@@ -219,10 +285,18 @@ export class AppStore {
       messages,
       streaming: Boolean(active?.isStreaming),
       runState: snapshot.runState,
-      // Settled state replaces transient activity; dialog/notice surfaces stay.
+      // Wholesale replace: the host clears completion attention for the
+      // session that was just viewed, so stale client state must not linger.
+      sessionStatuses: snapshot.sessionStatuses ?? {},
+      // Settled activity is rebuilt from the selected worker. A background
+      // extension dialog is restored only when its owning session is viewed.
       tools: {},
       retry: null,
       queue: IDLE_QUEUE,
+      extensionUi: snapshot.pendingExtensionUi ?? null,
+      ...(sessionChanged
+        ? { statuses: {}, editorText: null, windowTitle: null, selectedResourceReference: null, resourcePreview: null }
+        : {}),
     });
   }
 
@@ -249,26 +323,84 @@ export class AppStore {
       if (event.data) this.applySnapshot(event.data as ActiveSnapshot);
       return;
     }
+
+    // Every live event carries its authoritative per-session status; merge it
+    // into the map before any transcript routing.
+    const eventSessionId = typeof event.sessionId === "string" ? event.sessionId : null;
+    const sessionStatuses = this.mergeSessionStatus(eventSessionId, event.sessionStatus);
+
+    if (eventSessionId !== null && eventSessionId !== this.state.sessionId) {
+      // Background session: its message/tool/notice deltas must never enter
+      // the visible transcript and must not resync it. Only the status
+      // changes; a settle refreshes the list so folder/time ordering catches
+      // up. Unchanged statuses (token-level chatter) publish nothing.
+      if (sessionStatuses) this.set({ sessionStatuses });
+      if (event.type === "runtime_ready" && eventSessionId === this.state.openingSessionId) {
+        this.readyWhileOpening.add(eventSessionId);
+      }
+      if (event.type === "runtime_error") this.readyWhileOpening.delete(eventSessionId);
+      if (event.type === "agent_settled") void this.loadSessions(this.state.sessionQuery);
+      return;
+    }
+
+    // An unopened session is shown from its read-only Pi-file preview while
+    // extensions initialize off the critical path. Replace that preview with
+    // the worker's live state as soon as its own runtime becomes ready.
+    if (event.type === "runtime_ready") {
+      if (sessionStatuses) this.set({ sessionStatuses });
+      void this.resync(eventSessionId, this.selectionGeneration);
+      return;
+    }
+
     const before = this.state.notices.length;
     const { slice, settle, resync, changed } = reduceEvent(this.eventSlice(), this.settledKeys, event);
     for (const key of settle) this.settledKeys.add(key);
     if (changed) {
-      this.set(slice);
+      this.set(sessionStatuses ? { ...slice, sessionStatuses } : slice);
       for (const notice of slice.notices.slice(before)) {
         this.noticeTimers.set(
           notice.id,
           setTimeout(() => this.dismissNotice(notice.id), NOTICE_TTL_MS),
         );
       }
+    } else if (sessionStatuses) {
+      this.set({ sessionStatuses });
     }
-    if (resync) void this.resync();
+    if (resync) void this.resync(eventSessionId ?? this.state.sessionId, this.selectionGeneration);
+  }
+
+  /** Merge an event's sessionStatus into the map; null when nothing changed. */
+  private mergeSessionStatus(
+    sessionId: string | null,
+    status: unknown,
+  ): Record<string, SessionRuntimeStatus> | null {
+    if (!sessionId || !status || typeof status !== "object") return null;
+    const record = status as Partial<SessionRuntimeStatus>;
+    if (typeof record.runState !== "string") return null;
+    const next: SessionRuntimeStatus = {
+      runState: record.runState as RunState,
+      ...(record.indicator ? { indicator: record.indicator } : {}),
+    };
+    const existing = this.state.sessionStatuses[sessionId];
+    if (existing && existing.runState === next.runState && existing.indicator === next.indicator) return null;
+    return { ...this.state.sessionStatuses, [sessionId]: next };
   }
 
   /** Authoritative reconcile after stream settlement or reconnect. */
-  private async resync(): Promise<void> {
+  private async resync(
+    expectedSessionId = this.state.sessionId,
+    expectedGeneration = this.selectionGeneration,
+  ): Promise<void> {
     if (!this.api) return;
     try {
-      this.applySnapshot(await this.api.snapshot());
+      const snapshot = await this.api.snapshot();
+      const snapshotSessionId = snapshot.active?.sessionId ?? null;
+      if (
+        this.state.sessionId !== expectedSessionId ||
+        this.selectionGeneration !== expectedGeneration ||
+        snapshotSessionId !== expectedSessionId
+      ) return;
+      this.applySnapshot(snapshot);
       this.set({ error: null });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) this.handleAuthFailure();
@@ -320,10 +452,60 @@ export class AppStore {
     if (!this.api) return;
     try {
       const list = await this.api.sessions(query);
-      this.set({ sessions: list.sessions });
+      const sessions = this.withPinnedFlags(list.sessions);
+      if (!query.trim()) {
+        // Pinned sessions beyond the 40-result page must still surface in the
+        // global Pinned section; fetch them explicitly and merge.
+        const missing = this.state.prefs.pinnedSessionIds.filter((id) => !sessions.some((s) => s.id === id));
+        if (missing.length > 0) {
+          try {
+            const extra = await this.api.sessionsByIds(missing);
+            for (const session of this.withPinnedFlags(extra.sessions)) {
+              if (!sessions.some((candidate) => candidate.id === session.id)) sessions.push(session);
+            }
+          } catch {
+            // Best effort: the base page is already shown.
+          }
+        }
+      }
+      this.set({ sessions });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) this.handleAuthFailure();
       else this.fail(error instanceof Error ? error.message : "Failed to list sessions");
+    }
+  };
+
+  /** Pin state lives in preferences; summaries from the catalog are
+   * normalized against it so rows render one authoritative flag. */
+  private withPinnedFlags(sessions: SessionSummary[]): SessionSummary[] {
+    const pinned = new Set(this.state.prefs.pinnedSessionIds);
+    return sessions.map((session) => ({ ...session, pinned: pinned.has(session.id) }));
+  }
+
+  setSessionPinned = async (id: string, pinned: boolean): Promise<void> => {
+    if (!this.api || this.state.pinningSessionId !== null) return;
+    const previousPrefs = this.state.prefs;
+    const previousSessions = this.state.sessions;
+    const pinnedSessionIds = pinned
+      ? [id, ...previousPrefs.pinnedSessionIds.filter((candidate) => candidate !== id)]
+      : previousPrefs.pinnedSessionIds.filter((candidate) => candidate !== id);
+    this.set({
+      pinningSessionId: id,
+      prefs: { ...previousPrefs, pinnedSessionIds },
+      sessions: previousSessions.map((session) => (session.id === id ? { ...session, pinned } : session)),
+    });
+    try {
+      // The pin endpoint persists the preference host-side and answers with
+      // the updated preferences; no separate save is needed.
+      const prefs = await this.api.setSessionPinned(id, pinned);
+      this.set({ prefs });
+      await this.loadSessions(this.state.sessionQuery);
+    } catch (error) {
+      // Truthful control: a rejected pin cannot leave the UI claiming it.
+      this.set({ prefs: previousPrefs, sessions: previousSessions });
+      this.fail(error instanceof Error ? error.message : "Failed to update the pin");
+    } finally {
+      this.set({ pinningSessionId: null });
     }
   };
 
@@ -346,11 +528,20 @@ export class AppStore {
 
   openSession = async (id: string): Promise<void> => {
     if (!this.api) return;
+    if (this.state.openingSessionId) return; // one switch at a time
+    if (id === this.state.sessionId) return; // already active: no-op
+    this.set({ openingSessionId: id });
     try {
       this.applySnapshot(await this.api.openSession(id));
       this.set({ error: null });
+      if (this.readyWhileOpening.delete(id)) {
+        void this.resync(id, this.selectionGeneration);
+      }
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to open session");
+    } finally {
+      this.readyWhileOpening.delete(id);
+      this.set({ openingSessionId: null });
     }
   };
 
@@ -545,10 +736,14 @@ export class AppStore {
 
   respondExtensionUi = async (payload: Record<string, unknown>): Promise<void> => {
     if (!this.api) return;
-    const requestId = this.state.extensionUi?.id;
+    const request = this.state.extensionUi;
+    if (!request || payload.id !== request.id) return;
     try {
-      await this.api.respondExtensionUi(payload);
-      if (requestId && payload.id === requestId) this.set({ extensionUi: null });
+      await this.api.respondExtensionUi({ ...payload, sessionId: request.sessionId });
+      const current = this.state.extensionUi;
+      if (current?.sessionId === request.sessionId && current.id === request.id) {
+        this.set({ extensionUi: null });
+      }
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to answer the extension");
     }
@@ -580,6 +775,102 @@ export class AppStore {
     this.savePrefs({ ...this.state.prefs, thinkingVisibility: value });
   setToolVisibility = (value: VisibilityPreference): void =>
     this.savePrefs({ ...this.state.prefs, toolVisibility: value });
+
+  toggleNavGroup = (cwd: string): void => {
+    const current = this.state.prefs.navCollapsedGroups;
+    const navCollapsedGroups = current.includes(cwd) ? current.filter((item) => item !== cwd) : [...current, cwd];
+    this.savePrefs({ ...this.state.prefs, navCollapsedGroups });
+  };
+
+  // --- Files/resources pane ---
+
+  setResourcesOpen = (resourcesOpen: boolean): void => {
+    if (!resourcesOpen) this.clearResourceSelection();
+    this.set({ resourcesOpen });
+  };
+
+  private revokePreviewObjectUrl(): void {
+    if (this.previewObjectUrl && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(this.previewObjectUrl);
+    }
+    this.previewObjectUrl = null;
+  }
+
+  clearResourceSelection = (): void => {
+    this.revokePreviewObjectUrl();
+    if (this.state.selectedResourceReference === null && this.state.resourcePreview === null) return;
+    this.set({ selectedResourceReference: null, resourcePreview: null });
+  };
+
+  /** Resolve a conversation reference through the authenticated host endpoint
+   * and load its preview. Replaces any current preview and revokes its URL. */
+  openResource = async (reference: string): Promise<void> => {
+    if (!this.api) return;
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return;
+    this.revokePreviewObjectUrl();
+    this.set({
+      resourcesOpen: true,
+      selectedResourceReference: reference,
+      resourcePreview: { status: "loading", reference },
+    });
+    const stale = () => this.state.selectedResourceReference !== reference || this.state.sessionId !== sessionId;
+    try {
+      const descriptor = await this.api.resolveResource(sessionId, reference);
+      if (stale()) return;
+      if (descriptor.kind === "binary") {
+        this.set({ resourcePreview: { status: "ready", reference, descriptor } });
+        return;
+      }
+      const textLike = descriptor.kind === "text" || descriptor.kind === "markdown" || descriptor.kind === "html";
+      const { blob, truncated } = await this.api.resourceContent(
+        descriptor.id,
+        sessionId,
+        textLike ? TEXT_PREVIEW_BYTES : undefined,
+      );
+      if (stale()) return;
+      if (textLike) {
+        const text = await blob.text();
+        if (stale()) return;
+        if (descriptor.kind === "html" && typeof URL.createObjectURL === "function") {
+          this.previewObjectUrl = URL.createObjectURL(
+            new Blob([injectHtmlPreviewCsp(text)], { type: "text/html" }),
+          );
+        }
+        this.set({
+          resourcePreview: {
+            status: "ready",
+            reference,
+            descriptor,
+            text,
+            truncated,
+            ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
+          },
+        });
+        return;
+      }
+      if (typeof URL.createObjectURL === "function") {
+        this.previewObjectUrl = URL.createObjectURL(blob);
+      }
+      this.set({
+        resourcePreview: {
+          status: "ready",
+          reference,
+          descriptor,
+          ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
+        },
+      });
+    } catch (error) {
+      if (stale()) return;
+      this.set({
+        resourcePreview: {
+          status: "error",
+          reference,
+          message: error instanceof Error ? error.message : "Preview failed",
+        },
+      });
+    }
+  };
 }
 
 export const store = new AppStore();

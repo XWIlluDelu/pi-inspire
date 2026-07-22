@@ -21,6 +21,7 @@ Render technical and scientific answers accurately enough that the GUI materiall
 - Streaming output keeps incomplete fences, links, tables, inline mathematics, and display mathematics readable until they become complete constructs.
 - Final rendering after message completion is equivalent to rendering the complete source once.
 - Raw HTML is disabled or sanitized under an explicit allowlist; unsafe URLs and active inline content are rejected.
+- External web links retain safe new-tab behavior, while explicit local file links and images delegate to the session-bound resource preview instead of navigating the browser to an unusable host-relative URL.
 - Rendering failure is contained to the affected block and leaves its source readable.
 - User messages, assistant messages, thinking, and extension-provided Markdown use deliberate variants of the same rendering authority rather than unrelated parsers.
 

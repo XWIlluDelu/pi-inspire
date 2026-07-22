@@ -123,7 +123,7 @@ export function ExtensionUiDialog() {
     <div className="overlay" role="presentation">
       <div className="dialog" role="dialog" aria-modal="true" aria-label={request.title || "Pi extension request"}>
         {/* key remounts the form state per request */}
-        <DialogBody key={request.id} request={request} />
+        <DialogBody key={`${request.sessionId}:${request.id}`} request={request} />
       </div>
     </div>
   );
