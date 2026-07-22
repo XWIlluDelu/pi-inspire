@@ -14,6 +14,7 @@ import {
 import type { AttachmentStore } from "./attachments.js";
 import type { PreferencesStore } from "./preferences.js";
 import { searchProjectFiles } from "./project-files.js";
+import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 
@@ -28,7 +29,10 @@ const promptSchema = z.object({
 const renameSchema = z.object({ name: z.string().max(160) });
 const modelSchema = z.object({ provider: z.string().min(1).max(120), modelId: z.string().min(1).max(240) });
 const thinkingSchema = z.object({ level: z.enum(THINKING_LEVELS) });
-const extensionSchema = z.object({ id: z.string().min(1).max(200) }).passthrough();
+const extensionSchema = z.object({
+  sessionId: z.string().min(1).max(200),
+  id: z.string().min(1).max(200),
+}).passthrough();
 const sessionQuerySchema = z.object({
   q: z.string().max(200).default(""),
   offset: z.coerce.number().int().min(0).default(0),
@@ -38,6 +42,13 @@ const fileQuerySchema = z.object({
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(100) });
+const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
+const resourceResolveSchema = z.object({
+  sessionId: z.string().min(1).max(128),
+  reference: z.string().min(1).max(8_192),
+});
+const resourceContentSchema = z.object({ sessionId: z.string().min(1).max(128) });
 
 export interface AppDependencies {
   token: string;
@@ -45,6 +56,7 @@ export interface AppDependencies {
   catalog: SessionCatalogLike;
   attachments: AttachmentStore;
   preferences: PreferencesStore;
+  resources: ResourceStore;
   mock: boolean;
   version: string;
   piVersion: string;
@@ -97,7 +109,7 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
         "font-src 'self' data:",
         "img-src 'self' data: blob: http: https:",
         "connect-src 'self' ws: wss:",
-        "frame-src 'none'",
+        "frame-src 'self' blob:",
         "object-src 'none'",
         "base-uri 'none'",
         "form-action 'self'",
@@ -135,6 +147,21 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   app.post("/api/sessions/refresh", async (_request, response) => {
     await deps.catalog.refresh(true);
     response.json({ ok: true });
+  });
+  app.post("/api/sessions/by-id", async (request, response) => {
+    const { ids } = sessionIdsSchema.parse(request.body);
+    response.json({ sessions: await deps.catalog.listByIds(ids) });
+  });
+  app.post("/api/sessions/pin", async (request, response) => {
+    const { id, pinned } = pinSchema.parse(request.body);
+    if (!(await deps.catalog.get(id))) return response.status(404).json({ error: "Session not found" });
+    const preferences = await deps.preferences.update((current) => ({
+      ...current,
+      pinnedSessionIds: pinned
+        ? [id, ...current.pinnedSessionIds.filter((candidate) => candidate !== id)]
+        : current.pinnedSessionIds.filter((candidate) => candidate !== id),
+    }));
+    response.json(preferences);
   });
   app.post("/api/sessions/open", async (request, response) => {
     const { id } = openSchema.parse(request.body);
@@ -190,6 +217,28 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
     const { q, limit } = fileQuerySchema.parse(request.query);
     response.json({ files: await searchProjectFiles(deps.runtime.activeCwd, q, limit) });
+  });
+
+  app.post("/api/resources/resolve", async (request, response) => {
+    const { sessionId, reference } = resourceResolveSchema.parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    response.json(await deps.resources.resolve(context, reference));
+  });
+  app.get("/api/resources/:id/content", async (request, response) => {
+    const { sessionId } = resourceContentSchema.parse(request.query);
+    const resource = deps.resources.get(String(request.params.id), sessionId);
+    response.set({
+      "Content-Type": resource.descriptor.mimeType,
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
+    });
+    if (resource.embedded) {
+      const context = await deps.runtime.resourceContext(sessionId);
+      response.send(deps.resources.embeddedData(resource, context));
+    } else if (resource.path) {
+      response.sendFile(resource.path);
+    } else {
+      response.status(404).json({ error: "The resource preview is no longer available" });
+    }
   });
 
   app.get("/api/preferences", async (_request, response) => response.json(await deps.preferences.read()));

@@ -6,6 +6,7 @@ import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
 import { MockCatalog, MockRuntime } from "./mock.js";
 import { PreferencesStore } from "./preferences.js";
+import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
 
@@ -36,12 +37,14 @@ if (mock) {
 const preferences = new PreferencesStore(
   process.env.INSPIRE_PREFERENCES_PATH || undefined,
 );
+const resources = new ResourceStore();
 const application = createInspireServer({
   token,
   runtime,
   catalog,
   attachments,
   preferences,
+  resources,
   mock,
   version: packageJson.version,
   piVersion: piPackage.version,
@@ -50,8 +53,23 @@ const application = createInspireServer({
 
 application.server.listen(port, host, () => {
   const displayHost = host === "::1" ? "[::1]" : host;
+  const url = `http://${displayHost}:${port}/?token=${token}`;
   console.log(`\n  insπre ${packageJson.version}${mock ? " (mock)" : ""}`);
-  console.log(`  http://${displayHost}:${port}/?token=${token}\n`);
+  console.log(`  ${url}\n`);
+  if (process.env.INSPIRE_OPEN === "1") {
+    void import("node:child_process").then(({ spawn }) => {
+      const opener =
+        process.platform === "darwin"
+          ? ["open", [url]]
+          : process.platform === "win32"
+            ? ["cmd", ["/c", "start", "", url]]
+            : ["xdg-open", [url]];
+      spawn(opener[0] as string, opener[1] as string[], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    });
+  }
 });
 
 let shuttingDown = false;

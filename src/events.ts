@@ -1,4 +1,5 @@
-import type { RunState } from "../shared/contracts";
+import { parseExtensionUiRequest, type ExtensionUiRequest, type RunState } from "../shared/contracts";
+export type { ExtensionUiRequest } from "../shared/contracts";
 
 // --- Chat message model (structural typing over Pi session messages) ---
 
@@ -92,16 +93,6 @@ export interface QueueInfo {
 }
 
 export const IDLE_QUEUE: QueueInfo = { steering: 0, followUp: 0 };
-
-export interface ExtensionUiRequest {
-  id: string;
-  method: "select" | "confirm" | "input" | "editor";
-  title?: string;
-  message?: string;
-  options?: string[];
-  placeholder?: string;
-  prefill?: string;
-}
 
 export interface Notice {
   id: number;
@@ -212,8 +203,6 @@ function asStringArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
-
 /**
  * Pure reconciliation of one Pi wire event into the transient presentation
  * slice. Settled-message dedupe keys are reported (not mutated) so the store
@@ -260,6 +249,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "agent_settled": {
       slice.streaming = false;
+      if (slice.runState !== "failed" && slice.runState !== "aborted") slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
       slice.queue = IDLE_QUEUE;
@@ -352,6 +342,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "runtime_error": {
       slice.runState = "failed";
+      slice.extensionUi = null;
       pushNotice(slice, "error", `Pi runtime stopped: ${String(event.error ?? "unknown error")}`);
       changed = true;
       break;
@@ -360,17 +351,10 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       const id = typeof event.id === "string" ? event.id : "";
       const method = typeof event.method === "string" ? event.method : "";
       if (!id) break;
-      if (DIALOG_METHODS.has(method)) {
+      const dialog = parseExtensionUiRequest(event);
+      if (dialog) {
         changed = true;
-        slice.extensionUi = {
-          id,
-          method: method as ExtensionUiRequest["method"],
-          title: typeof event.title === "string" ? event.title : undefined,
-          message: typeof event.message === "string" ? event.message : undefined,
-          options: Array.isArray(event.options) ? (event.options as string[]).map(String) : undefined,
-          placeholder: typeof event.placeholder === "string" ? event.placeholder : undefined,
-          prefill: typeof event.prefill === "string" ? event.prefill : undefined,
-        };
+        slice.extensionUi = dialog;
       } else if (method === "notify") {
         const kind = event.notifyType === "warning" || event.notifyType === "error" ? event.notifyType : "info";
         pushNotice(slice, kind, String(event.message ?? ""));

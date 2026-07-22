@@ -71,7 +71,10 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
+          if (event.key === "Escape") {
+            event.preventDefault(); // closing the picker must not trigger the global Escape abort
+            onClose();
+          }
         }}
         placeholder="Search project files…"
         aria-label="Search project files"

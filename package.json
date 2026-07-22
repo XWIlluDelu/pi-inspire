@@ -11,8 +11,9 @@
     "dev:host": "INSPIRE_TOKEN=inspire-dev-token tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
-    "start": "NODE_ENV=production tsx server/index.ts",
-    "start:mock": "NODE_ENV=production INSPIRE_MOCK=1 tsx server/index.ts",
+    "start": "NODE_ENV=production INSPIRE_OPEN=1 tsx server/index.ts",
+    "start:mock": "NODE_ENV=production INSPIRE_MOCK=1 INSPIRE_OPEN=1 tsx server/index.ts",
+    "inspire": "./inspire",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "tsc -b && vitest run"

@@ -1,11 +1,12 @@
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import { memo, useState, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { isLocalResourceReference } from "../../shared/resource-references";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 
@@ -51,6 +52,13 @@ const schema = {
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "style", "ariaHidden"],
     annotation: [...(defaultSchema.attributes?.annotation ?? []), "encoding"],
   },
+  // file: links survive sanitization so the link renderer can convert them
+  // into data-file-path references; they never navigate (clicks are
+  // intercepted, and the rendered anchor has no target/rel).
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), "file"],
+  },
 };
 
 // micromark only recognizes $$…$$ as display math when the fences sit on
@@ -68,7 +76,7 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function CodeBlock({ language, code }: { language: string; code: string }) {
+export function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
   const highlighted = hljs.getLanguage(language)
     ? hljs.highlight(code, { language }).value
@@ -100,21 +108,63 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   );
 }
 
+// Local file references carry data-file-path instead of navigation semantics;
+// the transcript's delegated click handler opens them in the resources pane.
+// Remote http(s)/mailto links keep ordinary safe external-link behavior.
 const components: Components = {
   // Our CodeBlock renders its own <pre>; unwrap react-markdown's wrapper.
   pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
   code: ({ className, children }: { className?: string; children?: ReactNode }) => {
     const text = String(children ?? "").replace(/\n$/, "");
     const match = /language-([\w+-]+)/.exec(className ?? "");
-    if (!match) return <code className="inline-code">{text}</code>;
+    if (!match) {
+      // A credible inline-code path (known file extension or explicit relative
+      // prefix) opens the resource pane rather than sitting inert.
+      if (isLocalResourceReference(text)) {
+        return (
+          <button type="button" className="file-ref file-ref--code" data-file-path={text}>
+            <code className="inline-code">{text}</code>
+          </button>
+        );
+      }
+      return <code className="inline-code">{text}</code>;
+    }
     return <CodeBlock language={match[1]!} code={text} />;
   },
-  a: ({ href, children }: { href?: string; children?: ReactNode }) => (
-    <a href={href} target="_blank" rel="noreferrer noopener">
-      {children}
-    </a>
-  ),
+  a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+    if (href && isLocalResourceReference(href)) {
+      return (
+        <a href={href} className="file-ref" data-file-path={href}>
+          {children}
+        </a>
+      );
+    }
+    return (
+      <a href={href} target="_blank" rel="noreferrer noopener">
+        {children}
+      </a>
+    );
+  },
+  img: ({ src, alt }: { src?: string; alt?: string }) => {
+    if (src && isLocalResourceReference(src)) {
+      return (
+        <button type="button" className="file-ref file-ref--image" data-file-path={src} aria-label={`Preview ${alt || src}`}>
+          <span aria-hidden>▧</span>
+          <span>{alt || src}</span>
+        </button>
+      );
+    }
+    return <img src={src} alt={alt ?? ""} />;
+  },
 };
+
+// react-markdown's default URL transform blanks unknown protocols; keep file:
+// URLs so the link renderer can route them to the resource pane (they never
+// navigate). Everything else defers to the default transform.
+function urlTransform(url: string): string {
+  if (/^file:\/\//i.test(url)) return url;
+  return defaultUrlTransform(url);
+}
 
 // Memoized: settled Markdown/KaTeX/highlighting is expensive to reparse, and
 // stream deltas only change the trailing message's props.
@@ -128,6 +178,7 @@ export const RichText = memo(function RichText({ text, variant = "assistant" }: 
           [rehypeSanitize, schema],
         ]}
         components={components}
+        urlTransform={urlTransform}
       >
         {normalizeDisplayMath(text)}
       </ReactMarkdown>

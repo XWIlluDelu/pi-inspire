@@ -162,12 +162,14 @@ describe("extension_ui_request mapping", () => {
   it("presents dialog methods as a pending request", () => {
     const { slice } = reduce(emptyEventSlice(), new Set(), {
       type: "extension_ui_request",
+      sessionId: "s1",
       id: "r1",
       method: "select",
       title: "Pick one",
       options: ["a", "b"],
     });
     expect(slice.extensionUi).toEqual({
+      sessionId: "s1",
       id: "r1",
       method: "select",
       title: "Pick one",
@@ -176,6 +178,18 @@ describe("extension_ui_request mapping", () => {
       placeholder: undefined,
       prefill: undefined,
     });
+  });
+
+  it("dismisses a pending dialog when its runtime stops", () => {
+    const pending = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "r1",
+      method: "confirm",
+    }).slice;
+    const failed = reduce(pending, new Set(), { type: "runtime_error", error: "crashed" }).slice;
+    expect(failed.extensionUi).toBeNull();
+    expect(failed.runState).toBe("failed");
   });
 
   it("turns notify into a fire-and-forget notice with the given severity", () => {

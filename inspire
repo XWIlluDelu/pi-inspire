@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# One-command local host for insπre.
+# Usage:
+#   ./inspire          production host (build if needed, open browser)
+#   ./inspire mock     mock host for UI-only acceptance
+#   ./inspire dev      Vite + host with hot reload
+#   ./inspire build    build only
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$root"
+
+mode="${1:-start}"
+
+need_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js is required (22.19+)." >&2
+    exit 1
+  fi
+}
+
+ensure_deps() {
+  if [[ ! -d node_modules ]]; then
+    echo "Installing dependencies…"
+    npm install
+  fi
+}
+
+ensure_build() {
+  if [[ ! -f dist/index.html ]]; then
+    echo "Building client…"
+    npm run build
+  fi
+}
+
+open_url() {
+  local url="$1"
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 || true
+  elif command -v gio >/dev/null 2>&1; then
+    gio open "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+run_host() {
+  local mock="${1:-0}"
+  need_node
+  ensure_deps
+  ensure_build
+
+  export NODE_ENV=production
+  export INSPIRE_OPEN="${INSPIRE_OPEN:-1}"
+  if [[ "$mock" == "1" ]]; then
+    export INSPIRE_MOCK=1
+  else
+    unset INSPIRE_MOCK || true
+  fi
+
+  exec npx --no-install tsx server/index.ts
+}
+
+case "$mode" in
+  start | host | "")
+    run_host 0
+    ;;
+  mock)
+    run_host 1
+    ;;
+  dev)
+    need_node
+    ensure_deps
+    export INSPIRE_TOKEN="${INSPIRE_TOKEN:-inspire-dev-token}"
+    echo "Dev host token: $INSPIRE_TOKEN"
+    echo "Open http://127.0.0.1:5173/?token=$INSPIRE_TOKEN after Vite starts."
+    open_url "http://127.0.0.1:5173/?token=$INSPIRE_TOKEN"
+    exec npm run dev
+    ;;
+  build)
+    need_node
+    ensure_deps
+    exec npm run build
+    ;;
+  -h | --help | help)
+    sed -n '2,8p' "$0"
+    ;;
+  *)
+    echo "Unknown mode: $mode" >&2
+    echo "Use: ./inspire | ./inspire mock | ./inspire dev | ./inspire build" >&2
+    exit 1
+    ;;
+esac

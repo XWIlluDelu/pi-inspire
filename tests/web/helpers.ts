@@ -59,21 +59,23 @@ export function installFakeWebSocket(): void {
 export const DEFAULT_PREFS = defaultPreferences;
 
 export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveSnapshot {
+  const active = {
+    sessionId: "s1",
+    sessionName: "Test session",
+    cwd: "/proj",
+    model: { provider: "kimi-coding", id: "kimi-k3" },
+    thinkingLevel: "medium",
+    isStreaming: false,
+    isCompacting: false,
+    messages: [],
+    availableModels: [],
+    commands: [],
+    ...overrides,
+  };
   return {
-    active: {
-      sessionId: "s1",
-      sessionName: "Test session",
-      cwd: "/proj",
-      model: { provider: "kimi-coding", id: "kimi-k3" },
-      thinkingLevel: "medium",
-      isStreaming: false,
-      isCompacting: false,
-      messages: [],
-      availableModels: [],
-      commands: [],
-      ...overrides,
-    },
+    active,
     runState: "idle",
+    sessionStatuses: { [String(active.sessionId)]: { runState: "idle" } },
   };
 }
 
@@ -97,7 +99,7 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     piVersion: "0.80.10",
     mock: false,
     preferences: DEFAULT_PREFS,
-    snapshot: { active: null, runState: "idle" },
+    snapshot: { active: null, runState: "idle", sessionStatuses: {} },
     ...overrides,
   };
 }

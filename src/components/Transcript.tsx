@@ -11,17 +11,20 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { VisibilityPreference } from "../../shared/contracts";
+import { isLocalResourceReference, isToolResourceArgumentKey } from "../../shared/resource-references";
 import {
   asMessage,
   contentItems,
   messageKey,
   messageText,
+  store,
   toolResultText,
   type AssistantContent,
   type ChatMessage,
   type ToolCallContent,
 } from "../store";
 import { RichText } from "./RichText";
+import { stripTerminalSequences } from "../ansi";
 
 export function relativeTime(timestamp: number | string): string {
   const time = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
@@ -48,7 +51,7 @@ interface CardProps {
   className: string;
   icon: React.ReactNode;
   label: React.ReactNode;
-  summary?: string;
+  summary?: React.ReactNode;
   status?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -68,7 +71,7 @@ function CollapsibleCard({ defaultVisibility, className, icon, label, summary, s
       >
         <span className="card__icon">{icon}</span>
         <span className="card__label">{label}</span>
-        {summary ? <span className="card__summary">{summary}</span> : null}
+        {summary ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary) : null}
         <span className="card__status">{status}</span>
         {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
       </button>
@@ -78,7 +81,10 @@ function CollapsibleCard({ defaultVisibility, className, icon, label, summary, s
 }
 
 function ThinkingCard({ text, visibility }: { text: string; visibility: VisibilityPreference }) {
-  const firstLine = text.split("\n").find((line) => line.trim()) ?? "";
+  // Stored thinking can carry terminal color sequences; clean only here, at
+  // the display boundary, for both the summary line and the card body.
+  const clean = stripTerminalSequences(text);
+  const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
@@ -87,7 +93,7 @@ function ThinkingCard({ text, visibility }: { text: string; visibility: Visibili
       label="Thinking"
       summary={firstLine.slice(0, 90)}
     >
-      <RichText text={text} variant="thinking" />
+      <RichText text={clean} variant="thinking" />
     </CollapsibleCard>
   );
 }
@@ -105,6 +111,63 @@ function toolSummary(call: ToolCallContent): string {
     if (typeof first === "string") return first.slice(0, 90);
   }
   return "";
+}
+
+/** String tool arguments that carry a local file reference, in argument order. */
+export function toolFileArguments(call: ToolCallContent): Array<{ key: string; value: string }> {
+  const args = call.arguments;
+  if (!args || typeof args !== "object") return [];
+  const found: Array<{ key: string; value: string }> = [];
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    if (!isToolResourceArgumentKey(key)) continue;
+    const values = typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    for (const candidate of values) {
+      if (isLocalResourceReference(candidate)) found.push({ key, value: candidate });
+    }
+  }
+  return found;
+}
+
+/** A file reference rendered as a real button (used in card bodies, where no
+ * interactive ancestor exists). */
+function FileRefButton({ reference, className, children }: { reference: string; className: string; children?: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className={className}
+      data-file-path={reference}
+      title={`Preview ${reference}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        void store.openResource(reference);
+      }}
+    >
+      {children ?? reference}
+    </button>
+  );
+}
+
+function ToolSummary({ call }: { call: ToolCallContent }) {
+  const summary = toolSummary(call);
+  if (!summary) return null;
+  if (!isLocalResourceReference(summary)) return <span className="card__summary">{summary}</span>;
+  // The summary sits inside the collapsible header's own <button>, so a real
+  // nested button would be invalid HTML; this behaves like one without nesting.
+  return (
+    <span
+      className="card__summary card__summary--file"
+      data-file-path={summary}
+      title={`Preview ${summary}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        void store.openResource(summary);
+      }}
+    >
+      {summary}
+    </span>
+  );
 }
 
 function statusIcon(status: ToolStatus) {
@@ -141,10 +204,16 @@ function ToolCard({
       className="card--tool"
       icon={<Wrench size={14} aria-hidden />}
       label={<code className="card__tool-name">{call.name}</code>}
-      summary={toolSummary(call)}
+      summary={<ToolSummary call={call} />}
       status={statusIcon(status)}
     >
       <div className="card__section-label">Arguments</div>
+      {toolFileArguments(call).map((arg) => (
+        <FileRefButton key={`${arg.key}:${arg.value}`} reference={arg.value} className="card__file-arg">
+          <span className="card__file-arg-key">{arg.key}</span>
+          {arg.value}
+        </FileRefButton>
+      ))}
       <pre className="card__mono">{JSON.stringify(call.arguments ?? {}, null, 2)}</pre>
       {result ? (
         <>
@@ -381,9 +450,21 @@ export function Transcript({
     else element.scrollTop = element.scrollHeight;
   }, [messages.length, lastText, virtualize, rows.length, virtualizer]);
 
+  // One delegated handler serves every data-file-path element (Markdown
+  // links/images, inline-code paths) regardless of virtualization or memoized
+  // rows. Elements that must not bubble (tool-card summaries) stop propagation
+  // and call store.openResource themselves.
+  const onClick = (event: React.MouseEvent) => {
+    const origin = event.target instanceof Element ? event.target.closest("[data-file-path]") : null;
+    const reference = origin?.getAttribute("data-file-path");
+    if (!reference) return;
+    event.preventDefault();
+    void store.openResource(reference);
+  };
+
   return (
     <div className="transcript-wrap">
-      <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll}>
+      <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick}>
         {rows.length === 0 ? (
           <div className="transcript__column">
             <div className="empty-state">
