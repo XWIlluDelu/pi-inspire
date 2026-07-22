@@ -23,10 +23,14 @@ export function CommandPalette({
   onClose,
   onToggleNav,
   onToggleCtx,
+  onNewSession,
+  onOpenSession,
 }: {
   onClose: () => void;
   onToggleNav: () => void;
   onToggleCtx: () => void;
+  onNewSession: () => void;
+  onOpenSession: (id: string) => void;
 }) {
   const state = useAppState();
   const [query, setQuery] = useState("");
@@ -41,10 +45,10 @@ export function CommandPalette({
 
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
-      { id: "new", group: "Actions", title: "New session", run: () => void store.newSession() },
+      { id: "new", group: "Actions", title: "New session", run: onNewSession },
       { id: "refresh", group: "Actions", title: "Refresh session list", run: () => void store.refreshSessions() },
       { id: "nav", group: "Actions", title: "Toggle navigation panel", hint: "Ctrl+B", run: onToggleNav },
-      { id: "ctx", group: "Actions", title: "Toggle context panel", hint: "Ctrl+.", run: onToggleCtx },
+      { id: "ctx", group: "Actions", title: "Toggle resources panel", hint: "Ctrl+.", run: onToggleCtx },
     ];
     if (state.sessionId) {
       actions.push(
@@ -117,7 +121,7 @@ export function CommandPalette({
       group: "Sessions",
       title: session.title || "Untitled session",
       hint: `${session.project} · ${relativeTime(session.modified)}`,
-      run: () => void store.openSession(session.id),
+      run: () => onOpenSession(session.id),
     }));
 
     const commands: PaletteItem[] = state.sessionId
@@ -131,7 +135,7 @@ export function CommandPalette({
       : [];
 
     return [...actions, ...sessions, ...commands];
-  }, [state, busy, onToggleNav, onToggleCtx]);
+  }, [state, busy, onToggleNav, onToggleCtx, onNewSession, onOpenSession]);
 
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));

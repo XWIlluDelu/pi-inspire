@@ -59,6 +59,49 @@ describe("raw HTML and unsafe URL defense", () => {
   });
 });
 
+describe("local file references", () => {
+  it("marks local Markdown links as file references without external-link behavior", () => {
+    render(<RichText text="See [the report](./out/report.pdf) for details." />);
+    const link = screen.getByRole("link", { name: "the report" });
+    expect(link).toHaveAttribute("data-file-path", "./out/report.pdf");
+    expect(link).not.toHaveAttribute("target");
+    expect(link).not.toHaveAttribute("rel");
+  });
+
+  it("marks absolute and file: URL links as file references", () => {
+    render(<RichText text="[log](/tmp/run.log) and [chart](file:///tmp/chart.png)" />);
+    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute("data-file-path", "/tmp/run.log");
+    expect(screen.getByRole("link", { name: "chart" })).toHaveAttribute("data-file-path", "file:///tmp/chart.png");
+  });
+
+  it("keeps http(s) and mailto links as safe external links", () => {
+    render(<RichText text="[Pi](https://pi.dev) [mail](mailto:a@b.c) [paper](http://x.test/p.pdf)" />);
+    for (const name of ["Pi", "mail", "paper"]) {
+      const link = screen.getByRole("link", { name });
+      expect(link).not.toHaveAttribute("data-file-path");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noreferrer noopener");
+    }
+  });
+
+  it("makes local images open the preview and leaves remote images plain", () => {
+    const { container } = render(<RichText text="![chart](./chart.png) and ![logo](https://pi.dev/logo.png)" />);
+    const local = screen.getByRole("button", { name: "Preview chart" });
+    expect(local).toHaveAttribute("data-file-path", "./chart.png");
+    const remote = container.querySelector('img[src="https://pi.dev/logo.png"]');
+    expect(remote).toBeTruthy();
+    expect(remote!.closest("[data-file-path]")).toBeNull();
+  });
+
+  it("makes credible inline-code paths clickable without touching ordinary code", () => {
+    const { container } = render(<RichText text="Edit `src/store.ts` then run `npm test`." />);
+    const ref = container.querySelector('[data-file-path="src/store.ts"]');
+    expect(ref).toBeTruthy();
+    expect(ref!.textContent).toBe("src/store.ts");
+    expect(container.querySelector('[data-file-path="npm test"]')).toBeNull();
+  });
+});
+
 describe("markdown constructs", () => {
   it("renders GFM tables and task lists", () => {
     const text = "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] done\n- [ ] todo";

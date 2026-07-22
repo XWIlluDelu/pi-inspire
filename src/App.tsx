@@ -21,6 +21,8 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
+import { ResourcesPane } from "./components/ResourcesPane";
+import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { isBusyRunState, store, useAppState } from "./store";
@@ -94,7 +96,10 @@ function SessionTitle() {
           aria-label="Session name"
           autoFocus
           onKeyDown={(event) => {
-            if (event.key === "Escape") setEditing(false);
+            if (event.key === "Escape") {
+              event.preventDefault(); // leaving rename must not trigger the global Escape abort
+              setEditing(false);
+            }
           }}
         />
         <button type="submit" className="icon-button" aria-label="Save session name" disabled={!value.trim()}>
@@ -122,52 +127,6 @@ function SessionTitle() {
         </button>
       ) : null}
     </>
-  );
-}
-
-function ContextPane({ onClose }: { onClose: () => void }) {
-  const state = useAppState();
-  const usage = (state.stats as { contextUsage?: { tokens?: number; contextWindow?: number; percent?: number } } | null)
-    ?.contextUsage;
-  return (
-    <aside className="ctx" aria-label="Session context">
-      <div className="ctx__header">
-        <span>Session</span>
-        <button type="button" className="icon-button" onClick={onClose} aria-label="Close context panel">
-          <PanelRight size={15} aria-hidden />
-        </button>
-      </div>
-      <dl className="ctx__details">
-        <dt>Title</dt>
-        <dd>{state.sessionName || "Untitled session"}</dd>
-        <dt>Session ID</dt>
-        <dd>
-          <code>{state.sessionId ?? "—"}</code>
-        </dd>
-        <dt>Project</dt>
-        <dd>{state.project ?? "—"}</dd>
-        <dt>Directory</dt>
-        <dd>
-          <code>{state.cwd ?? "—"}</code>
-        </dd>
-        <dt>Model</dt>
-        <dd>{state.model ? `${state.model.provider}/${state.model.id}` : "—"}</dd>
-        <dt>Thinking</dt>
-        <dd>{state.thinkingLevel}</dd>
-        <dt>Messages</dt>
-        <dd>{state.messages.length}</dd>
-        {usage?.tokens != null ? (
-          <>
-            <dt>Context</dt>
-            <dd>
-              {usage.tokens.toLocaleString()}
-              {usage.contextWindow ? ` / ${usage.contextWindow.toLocaleString()}` : ""} tokens
-              {usage.percent != null ? ` (${usage.percent.toFixed(1)}%)` : ""}
-            </dd>
-          </>
-        ) : null}
-      </dl>
-    </aside>
   );
 }
 
@@ -232,8 +191,18 @@ function Notices() {
 export function App() {
   const state = useAppState();
   const [navCollapsed, setNavCollapsed] = useState(false);
-  const [ctxOpen, setCtxOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const openSession = (id: string) => {
+    setSettingsOpen(false);
+    void store.openSession(id);
+  };
+
+  const newSession = () => {
+    setSettingsOpen(false);
+    void store.newSession();
+  };
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -264,7 +233,7 @@ export function App() {
         setNavCollapsed((value) => !value);
       } else if (mod && event.key === ".") {
         event.preventDefault();
-        setCtxOpen((value) => !value);
+        store.setResourcesOpen(!store.getState().resourcesOpen);
       } else if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
@@ -285,7 +254,12 @@ export function App() {
 
   return (
     <div className="app">
-      <Nav collapsed={navCollapsed} />
+      <Nav
+        collapsed={navCollapsed}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewSession={newSession}
+        onSelectSession={openSession}
+      />
       <main className="center">
         <header className="topbar">
           <button
@@ -333,10 +307,10 @@ export function App() {
           </button>
           <button
             type="button"
-            className={`icon-button ${ctxOpen ? "icon-button--active" : ""}`}
-            onClick={() => setCtxOpen((value) => !value)}
-            aria-label="Toggle context panel"
-            title="Toggle context panel (Ctrl+.)"
+            className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
+            onClick={() => store.setResourcesOpen(!state.resourcesOpen)}
+            aria-label="Toggle resources panel"
+            title="Toggle resources panel (Ctrl+.)"
           >
             <PanelRight size={15} aria-hidden />
           </button>
@@ -354,7 +328,9 @@ export function App() {
             Connection to the insπre host interrupted — retrying automatically. The last settled state stays visible.
           </div>
         ) : null}
-        {state.sessionId ? (
+        {settingsOpen ? (
+          <Settings onClose={() => setSettingsOpen(false)} />
+        ) : state.sessionId ? (
           <>
             <Transcript
               messages={state.messages}
@@ -371,12 +347,14 @@ export function App() {
           <Welcome />
         )}
       </main>
-      {ctxOpen ? <ContextPane onClose={() => setCtxOpen(false)} /> : null}
+      {state.resourcesOpen ? <ResourcesPane /> : null}
       {paletteOpen ? (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
           onToggleNav={() => setNavCollapsed((value) => !value)}
-          onToggleCtx={() => setCtxOpen((value) => !value)}
+          onToggleCtx={() => store.setResourcesOpen(!store.getState().resourcesOpen)}
+          onNewSession={newSession}
+          onOpenSession={openSession}
         />
       ) : null}
       <ExtensionUiDialog />

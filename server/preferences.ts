@@ -10,16 +10,19 @@ const preferencesSchema = z.object({
   thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   readingSerif: z.boolean(),
+  pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100).default([]),
+  navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500).default([]),
 });
 
 export class PreferencesStore {
   readonly path: string;
+  private writes: Promise<void> = Promise.resolve();
 
   constructor(path = join(homedir(), ".config", "inspire", "preferences.json")) {
     this.path = path;
   }
 
-  async read(): Promise<InspirePreferences> {
+  private async readDisk(): Promise<InspirePreferences> {
     try {
       const parsed = preferencesSchema.safeParse(JSON.parse(await readFile(this.path, "utf8")));
       return parsed.success ? parsed.data : defaultPreferences;
@@ -28,12 +31,41 @@ export class PreferencesStore {
     }
   }
 
-  async write(value: unknown): Promise<InspirePreferences> {
-    const preferences = preferencesSchema.parse(value);
+  async read(): Promise<InspirePreferences> {
+    await this.writes;
+    return this.readDisk();
+  }
+
+  private async persist(preferences: InspirePreferences): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, this.path);
-    return preferences;
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.writes.then(operation);
+    this.writes = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  async write(value: unknown): Promise<InspirePreferences> {
+    const preferences = preferencesSchema.parse(value);
+    return this.enqueue(async () => {
+      await this.persist(preferences);
+      return preferences;
+    });
+  }
+
+
+  update(mutator: (current: InspirePreferences) => InspirePreferences): Promise<InspirePreferences> {
+    return this.enqueue(async () => {
+      const preferences = preferencesSchema.parse(mutator(await this.readDisk()));
+      await this.persist(preferences);
+      return preferences;
+    });
   }
 }

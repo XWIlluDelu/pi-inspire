@@ -42,6 +42,7 @@ export interface SessionCatalogLike {
   refresh(force?: boolean): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
   list(options?: { query?: string; offset?: number; limit?: number }): Promise<SessionListResponse>;
+  listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
   invalidate(): void;
 }
 
@@ -76,6 +77,11 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   async get(id: string): Promise<SessionRecord | undefined> {
+    // Opening needs stable identity/path/cwd, not freshly sorted list metadata.
+    // Keep known identities usable after invalidate() so a click never pays for
+    // a global JSONL rescan; explicit/list refreshes still rebuild the catalog.
+    const cached = this.byId.get(id);
+    if (cached) return cached;
     await this.refresh();
     return this.byId.get(id);
   }
@@ -95,6 +101,14 @@ export class SessionCatalog implements SessionCatalogLike {
       offset,
       limit,
     };
+  }
+
+  async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
+    await this.refresh();
+    return [...new Set(ids)].flatMap((id) => {
+      const session = this.byId.get(id);
+      return session ? [this.project(session)] : [];
+    });
   }
 
   project(session: SessionRecord): SessionSummary {

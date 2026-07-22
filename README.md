@@ -6,21 +6,29 @@ A Linux-first local web interface for [Pi Coding Agent](https://github.com/earen
 
 Requirements: Node.js 22.19 or newer and an existing Pi configuration under `~/.pi/agent/`.
 
+Simplest:
+
 ```bash
-npm install
-npm run build
-npm start
+./inspire
 ```
 
-Open the loopback URL printed by the host. It includes a one-time launch token; the browser removes that token from the visible URL and keeps it only for the current browser tab.
+That installs dependencies if needed, builds the client when missing, starts the loopback host, and opens the browser with the one-time launch token. Other modes:
+
+```bash
+./inspire mock   # UI-only mock runtime
+./inspire dev    # Vite + host with hot reload
+./inspire build  # client build only
+```
+
+Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). The browser removes the token from the visible URL and keeps it only for the current browser tab.
 
 ## Development
 
 ```bash
-npm run dev
+./inspire dev
 ```
 
-Open the Vite URL (normally `http://localhost:5173`). Development uses a fixed loopback-only token; production generates a fresh token on every launch.
+Or `npm run dev`. Development uses a fixed loopback-only token; production generates a fresh token on every launch.
 
 ## Checks
 
