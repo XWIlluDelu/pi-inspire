@@ -64,6 +64,12 @@ export interface SessionListResponse {
 
 export type ResourceKind = "image" | "html" | "pdf" | "markdown" | "text" | "audio" | "video" | "binary";
 
+/** One entry of a workspace-explorer directory level. */
+export interface ProjectDirEntry {
+  name: string;
+  type: "dir" | "file";
+}
+
 export interface ResourceDescriptor {
   id: string;
   sessionId: string;

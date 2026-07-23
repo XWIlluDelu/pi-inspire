@@ -8,6 +8,7 @@ import {
   type ActiveSnapshot,
   type InspirePreferences,
   type LaunchPreference,
+  type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ResourceDescriptor,
   type RunState,
@@ -16,7 +17,7 @@ import {
   type ThemePreference,
   type VisibilityPreference,
 } from "../shared/contracts";
-import { ApiError, createApi, eventsUrl, type Api, type ProjectDirEntry, type ProjectFileResult } from "./api";
+import { ApiError, createApi, eventsUrl, type Api, type ProjectFileResult } from "./api";
 import {
   asMessage,
   emptyEventSlice,
@@ -159,7 +160,9 @@ export interface AppState extends EventSlice {
   thinkingLevel: string;
   availableModels: ModelOption[];
   commands: PiCommand[];
-  stats: unknown;
+  /** Context-window occupancy parsed from Pi's session stats at the
+   * snapshot boundary; null when Pi provides no usable data. */
+  contextUsage: ContextUsage | null;
   sessions: SessionSummary[];
   sessionQuery: string;
   /** Authoritative per-session runtime status for every live session worker,
@@ -197,7 +200,7 @@ const initialState: AppState = {
   thinkingLevel: "medium",
   availableModels: [],
   commands: [],
-  stats: null,
+  contextUsage: null,
   sessions: [],
   sessionQuery: "",
   sessionStatuses: {},
@@ -266,7 +269,7 @@ export class AppStore {
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
-        version: typeof boot.version === "string" ? boot.version : "",
+        version: boot.version,
         bootstrapped: true,
         needsToken: false,
       });
@@ -316,7 +319,7 @@ export class AppStore {
       thinkingLevel: typeof active?.thinkingLevel === "string" ? active.thinkingLevel : this.state.thinkingLevel,
       availableModels: Array.isArray(active?.availableModels) ? (active.availableModels as ModelOption[]) : [],
       commands: Array.isArray(active?.commands) ? (active.commands as PiCommand[]) : [],
-      stats: active?.stats ?? null,
+      contextUsage: contextUsage(active?.stats ?? null),
       messages,
       streaming: Boolean(active?.isStreaming),
       runState: snapshot.runState,
@@ -859,7 +862,7 @@ export class AppStore {
         return;
       }
       const textLike = descriptor.kind === "text" || descriptor.kind === "markdown" || descriptor.kind === "html";
-      const { blob } = await this.api.resourceContent(
+      const blob = await this.api.resourceContent(
         descriptor.id,
         sessionId,
         textLike ? TEXT_PREVIEW_BYTES : undefined,

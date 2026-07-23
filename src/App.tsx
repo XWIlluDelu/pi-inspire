@@ -24,7 +24,9 @@ import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
+import { Wordmark } from "./components/Wordmark";
 import { isBusyRunState, store, useAppState } from "./store";
+import { useCopied } from "./use-copied";
 
 export function resolveTheme(pref: ThemePreference, systemDark: boolean): "light" | "dark" {
   return pref === "system" ? (systemDark ? "dark" : "light") : pref;
@@ -77,7 +79,7 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
   const state = useAppState();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopied();
 
   if (editing) {
     return (
@@ -114,23 +116,10 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
   if (!show || !state.sessionId) {
     return navCollapsed ? (
       <h1 className="topbar__title">
-        <span className="wordmark">
-          ins<em>π</em>re
-        </span>
+        <Wordmark />
       </h1>
     ) : null;
   }
-
-  const copyPath = async () => {
-    if (!state.cwd) return;
-    try {
-      await navigator.clipboard.writeText(state.cwd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      // clipboard unavailable; leave state unchanged
-    }
-  };
 
   // The title itself is the rename affordance: click to edit in place. The
   // project location sits beside it — folder name or full path per the
@@ -155,7 +144,7 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
         <button
           type="button"
           className="topbar__project"
-          onClick={() => void copyPath()}
+          onClick={() => void copy(state.cwd ?? "")}
           title={copied ? "Copied" : `Copy path — ${state.cwd}`}
           aria-label="Copy project path"
         >
@@ -181,7 +170,7 @@ function TokenGate() {
   return (
     <div className="token-gate">
       <div className="token-gate__card">
-        <span className="wordmark wordmark--large">insπre</span>
+        <Wordmark large />
         <p className="token-gate__hint">
           This insπre host requires its access token. Open the URL printed by the host (it contains{" "}
           <code>?token=…</code>), or paste the token below.
@@ -290,7 +279,6 @@ export function App() {
         event.key === "Escape" &&
         !event.defaultPrevented &&
         !paletteOpen &&
-        !settingsOpen &&
         !state.extensionUi &&
         isBusyRunState(state.runState)
       ) {
@@ -299,7 +287,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.runState, state.extensionUi, paletteOpen, settingsOpen]);
+  }, [state.runState, state.extensionUi, paletteOpen]);
 
   if (state.needsToken) return <TokenGate />;
 

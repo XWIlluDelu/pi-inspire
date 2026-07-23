@@ -11,13 +11,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ProjectFileResult } from "../api";
-import { contextUsage, isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
-
-function formatSize(bytes: number): string {
-  if (bytes < 1_024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
+import { formatBytes } from "../format";
+import { isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
 
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -27,7 +22,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
  * immediately after a compaction). */
 function ContextMeter() {
   const state = useAppState();
-  const usage = contextUsage(state.stats);
+  const usage = state.contextUsage;
   if (!usage || usage.percent === null) return null;
   const percent = Math.max(0, Math.min(100, usage.percent));
   const tone = percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
@@ -71,7 +66,7 @@ function AttachmentChip({ item }: { item: PendingAttachment }) {
       )}
       <span className="attachment__name">{item.fileName}</span>
       <span className="attachment__meta">
-        {item.mimeType} · {formatSize(item.size)}
+        {item.mimeType} · {formatBytes(item.size)}
       </span>
       {item.status === "uploading" ? <Loader2 size={12} className="spin" aria-label="Uploading" /> : null}
       {item.status === "error" ? <AlertTriangle size={12} className="status-error" aria-label="Upload failed" /> : null}
@@ -307,7 +302,7 @@ export function Composer() {
         </button>
         <label className="composer__control" title="Model">
           <span className="composer__control-value" aria-hidden>
-            {state.model ? (state.model.name ?? state.model.id) : "No session model"}
+            {state.model ? modelLabel(state.model) : "No session model"}
           </span>
           <ChevronDown size={11} aria-hidden />
           <select

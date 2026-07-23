@@ -8,6 +8,7 @@ import {
   type ResourceKind,
 } from "../shared/contracts.js";
 import { collectSessionResourceReferences } from "../shared/resource-references.js";
+import { escapesBase } from "./paths.js";
 import { isIndexedProjectFile } from "./project-files.js";
 
 export interface ResourceContext {
@@ -192,9 +193,12 @@ export class ResourceStore {
     // Previewable set: files the transcript references, plus files the
     // project index contains (the same authority behind @-search and the
     // workspace explorer). Ignored trees stay out of reach either way
-    // unless the session itself cited them.
-    const cited = referencedBySession(context, reference);
-    if (!cited && !(await isIndexedProjectFile(context.cwd, lexicalPath))) {
+    // unless the session itself cited them. Citation is the costlier
+    // authority — it scans the whole transcript — so it is consulted
+    // lazily; the cached project index answers the common explorer path.
+    let cited: boolean | null = null;
+    const isCited = () => (cited ??= referencedBySession(context, reference));
+    if (!(await isIndexedProjectFile(context.cwd, lexicalPath)) && !isCited()) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
@@ -207,12 +211,10 @@ export class ResourceStore {
 
     // Index authority ends at the workspace boundary: a project symlink
     // never opens an outside file the way an explicit citation can.
-    if (!cited) {
-      const workspaceRoot = await realpath(context.cwd).catch(() => null);
-      const within = workspaceRoot === null ? ".." : relative(workspaceRoot, path);
-      if (within.startsWith("..") || isAbsolute(within)) {
-        throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
-      }
+    const workspaceRoot = await realpath(context.cwd).catch(() => null);
+    const within = workspaceRoot === null ? ".." : relative(workspaceRoot, path);
+    if (escapesBase(within) && !isCited()) {
+      throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
     const details = await stat(path);

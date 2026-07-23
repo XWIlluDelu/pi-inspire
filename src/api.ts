@@ -2,6 +2,7 @@ import type {
   ActiveSnapshot,
   BootstrapResponse,
   InspirePreferences,
+  ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
   SessionListResponse,
@@ -11,11 +12,6 @@ import type {
 export interface ProjectFileResult {
   path: string;
   name: string;
-}
-
-export interface ProjectDirEntry {
-  name: string;
-  type: "dir" | "file";
 }
 
 const TOKEN_KEY = "inspire.token";
@@ -78,11 +74,7 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
   return (await response.json()) as T;
 }
 
-export interface ResourceContent {
-  blob: Blob;
-}
-
-async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<ResourceContent> {
+async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<Blob> {
   const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -90,7 +82,7 @@ async function fetchResourceContent(token: string, id: string, sessionId: string
     },
   });
   await ensureOk(response);
-  return { blob: await response.blob() };
+  return response.blob();
 }
 
 async function uploadFiles(token: string, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {

@@ -32,6 +32,16 @@ export function safeProjection(value: unknown, depth = 0): unknown {
   );
 }
 
+/** Matches a typed `/compact [instructions]` command. Pi's RPC prompt parses
+ * only extension commands, not built-ins, so the host routes this one to its
+ * RPC equivalent itself. One authority for the boundary; the mock reuses it. */
+export function parseCompactCommand(message: string): { instructions?: string } | null {
+  const match = /^\/compact(?:\s+([\s\S]+))?$/.exec(message.trim());
+  if (!match) return null;
+  const instructions = match[1]?.trim();
+  return instructions ? { instructions } : {};
+}
+
 export interface RuntimeLike {
   readonly activeCwd: string | null;
   on(event: "event", listener: (event: unknown) => void): this;
@@ -331,12 +341,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async prompt(request: PromptRequest): Promise<void> {
     const slot = this.requireSelectedSlot();
     const message = request.message.trim();
-    // Pi's RPC prompt does not interpret built-in slash commands (only
-    // extension commands), so the host routes the one typed command it
-    // supports — `/compact [instructions]` — to its RPC equivalent.
-    const compact = /^\/compact(?:\s+([\s\S]+))?$/.exec(message);
-    if (compact) {
-      await this.compact(compact[1]?.trim() || undefined);
+    // A bare typed /compact runs the compaction control. With attachments or
+    // file references present the text is not a command and flows through as
+    // an ordinary prompt, so nothing the user staged is silently dropped.
+    const compact = parseCompactCommand(message);
+    if (compact && !request.attachmentIds?.length && !request.projectFiles?.length) {
+      await this.compact(compact.instructions);
       return;
     }
     const [readySlot, resolved, projectFiles] = await Promise.all([

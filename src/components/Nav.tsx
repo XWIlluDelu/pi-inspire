@@ -11,10 +11,15 @@ import {
   Search,
 } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-import type { ProjectDirEntry } from "../api";
-import { projectNameFromCwd, type SessionIndicator, type SessionSummary } from "../../shared/contracts";
+import {
+  projectNameFromCwd,
+  type ProjectDirEntry,
+  type SessionIndicator,
+  type SessionSummary,
+} from "../../shared/contracts";
 import { store, useAppState } from "../store";
 import { relativeTime } from "./Transcript";
+import { Wordmark } from "./Wordmark";
 
 export interface SessionGroup {
   cwd: string;
@@ -91,7 +96,11 @@ function WorkspaceExplorer() {
   }, [cwd]);
 
   const load = (dir: string) => {
+    // The listing resolves against whichever workspace the host has active
+    // when it lands; drop it if this explorer no longer shows that one.
+    const owner = cwd;
     void store.listProjectDirectory(dir).then((entries) => {
+      if (store.getState().cwd !== owner) return;
       setLevels((previous) => new Map(previous).set(dir, entries));
     });
   };
@@ -282,9 +291,7 @@ export function Nav({
   return (
     <nav className="nav" aria-label="Sessions">
       <div className="nav__header">
-        <span className="wordmark">
-          ins<em>π</em>re
-        </span>
+        <Wordmark />
         {state.mock ? <span className="nav__mock">mock</span> : null}
       </div>
       <div className="nav__controls">

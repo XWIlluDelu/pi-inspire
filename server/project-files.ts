@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { opendir } from "node:fs/promises";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { promisify } from "node:util";
+import type { ProjectDirEntry } from "../shared/contracts.js";
+import { escapesBase } from "./paths.js";
 
 const execFileAsync = promisify(execFile);
 const ignored = new Set([".git", "node_modules", "dist", "coverage", ".cache", ".pi-subagents"]);
@@ -59,11 +61,6 @@ export async function searchProjectFiles(cwd: string, query = "", limit = 50): P
     .map((path) => ({ path, name: basename(path) }));
 }
 
-export interface ProjectDirEntry {
-  name: string;
-  type: "dir" | "file";
-}
-
 /** One directory level derived from a flat cwd-relative path list: no
  * filesystem resolution happens against the requested dir, so the explorer
  * can only ever surface what the project index already contains. */
@@ -92,6 +89,6 @@ export async function listProjectDirectory(cwd: string, dir = ""): Promise<Proje
  * (node_modules, .git, …) stay out of reach. */
 export async function isIndexedProjectFile(cwd: string, absolutePath: string): Promise<boolean> {
   const relativePath = relative(cwd, absolutePath);
-  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) return false;
+  if (!relativePath || escapesBase(relativePath)) return false;
   return (await projectPaths(cwd)).includes(relativePath);
 }

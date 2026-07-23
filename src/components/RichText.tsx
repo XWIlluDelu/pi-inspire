@@ -1,13 +1,14 @@
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import { Check, Copy } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { isLocalResourceReference } from "../../shared/resource-references";
+import { useCopied } from "../use-copied";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 
@@ -78,20 +79,10 @@ function escapeHtml(value: string): string {
 }
 
 export function CodeBlock({ language, code }: { language: string; code: string }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopied();
   const highlighted = hljs.getLanguage(language)
     ? hljs.highlight(code, { language }).value
     : escapeHtml(code);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      // clipboard unavailable (permissions); leave state unchanged
-    }
-  };
 
   return (
     <div className="code-block">
@@ -100,7 +91,7 @@ export function CodeBlock({ language, code }: { language: string; code: string }
         <button
           type="button"
           className="code-block__copy"
-          onClick={() => void copy()}
+          onClick={() => void copy(code)}
           aria-label={copied ? "Copied" : "Copy code"}
           title={copied ? "Copied" : "Copy code"}
         >

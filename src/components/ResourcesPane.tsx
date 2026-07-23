@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
+import { formatBytes } from "../format";
 import { collectResources, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
 import { store, TEXT_PREVIEW_BYTES, useAppState, type ResourcePreview } from "../store";
 import { CodeBlock, RichText } from "./RichText";
@@ -18,12 +19,6 @@ const ICONS: Record<ResourceIcon, typeof File> = {
   text: FileText,
   file: File,
 };
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** hljs language id for a previewed file name. */
 function languageFor(name: string, kind: ResourceKind): string {

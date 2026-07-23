@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, Loader2, Send } from "lucide-react";
 import { useState } from "react";
 import { store, useAppState } from "../store";
 import { relativeTime } from "./Transcript";
+import { Wordmark } from "./Wordmark";
 
 /**
  * Landing surface: one inline composer starts a session with its first
@@ -26,9 +27,14 @@ export function Welcome() {
     const target = directory.trim();
     setStarting(true);
     try {
-      // newSession resolves once the runtime is ready to accept a prompt.
+      // newSession resolves once the runtime is ready to accept a prompt. A
+      // failed creation keeps the previous session selected (the store maps
+      // the error into a banner), so the draft only fires into a session
+      // this submission actually created.
+      const before = store.getState().sessionId;
       await store.newSession(target || undefined);
-      if (store.getState().sessionId) {
+      const opened = store.getState().sessionId;
+      if (opened && opened !== before) {
         const sent = await store.sendPrompt(message);
         if (sent) setDraft("");
       }
@@ -40,9 +46,7 @@ export function Welcome() {
   return (
     <div className="welcome">
       <div className="welcome__hero">
-        <span className="wordmark wordmark--large">
-          ins<em>π</em>re
-        </span>
+        <Wordmark large />
         <p className="welcome__tagline">A workbench for Pi</p>
       </div>
 
