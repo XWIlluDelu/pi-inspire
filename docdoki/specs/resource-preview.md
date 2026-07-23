@@ -3,6 +3,7 @@ purpose: Pi conversation references resolve into an authenticated, session-bound
 covers:
   - shared/contracts.ts
   - server/resources.ts
+  - server/project-files.ts
   - server/app.ts
   - server/runtime.ts
   - src/resources.ts
@@ -27,7 +28,7 @@ Make files and artifacts referenced during Pi work inspectable beside the conver
 
 - The right contextual region presents files and resources referenced by the selected session, and selecting a reference opens its preview in that region.
 - Resource discovery understands Pi’s structured tool path arguments, embedded image content, CLI `<file name="…">` references, explicit local Markdown links and images, `file://` links, and credible inline local path references without treating remote web URLs as local files.
-- Relative references resolve against the owning session’s project directory, but every local file—including a project-local file—requires an exact reference in the owning session’s authoritative message projection.
+- Relative references resolve against the owning session’s project directory. A local file becomes previewable through exactly two authorities: an exact reference in the owning session’s authoritative message projection, or membership in the session workspace’s project index (the same index behind composer file search and the navigation explorer). Index authority ends at the workspace realpath boundary — an indexed symlink never opens an outside file — and ignored trees such as `node_modules` are reachable only through an explicit transcript reference.
 - The host returns an opaque authenticated resource handle after validation and never accepts that handle as authority for another unreferenced path.
 - Images use an image preview, PDFs use the browser’s document viewer, Markdown/text/code remain readable and copyable, and supported audio or video uses browser-native controls; unsupported or missing files produce explicit metadata and error states.
 - HTML stays outside the conversation DOM and previews in a sandboxed frame without scripts, same-origin privilege, forms, top-level navigation, or unrestricted subresource loading.

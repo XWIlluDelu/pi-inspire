@@ -1,12 +1,64 @@
-import { AlertTriangle, FileText, FolderSearch, Loader2, Paperclip, Send, Square, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  FileText,
+  FolderSearch,
+  Loader2,
+  Paperclip,
+  Send,
+  Square,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ProjectFileResult } from "../api";
-import { isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
+import { contextUsage, isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
 
 function formatSize(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+const RING_RADIUS = 5;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+/** Context-window occupancy: a small ring plus percent, colored by how full
+ * the window is. Hidden while Pi has no fresh usage data (no stats yet, or
+ * immediately after a compaction). */
+function ContextMeter() {
+  const state = useAppState();
+  const usage = contextUsage(state.stats);
+  if (!usage || usage.percent === null) return null;
+  const percent = Math.max(0, Math.min(100, usage.percent));
+  const tone = percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
+  const tokens =
+    usage.tokens !== null
+      ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
+      : `${usage.contextWindow.toLocaleString()}-token window`;
+  return (
+    <div
+      className={`meter ${tone}`}
+      role="meter"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(percent)}
+      title={`Context ${Math.round(percent)}% full (${tokens}) — type /compact to summarize`}
+      aria-label={`Context ${Math.round(percent)} percent full`}
+    >
+      <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
+        <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
+        <circle
+          className="meter__ring-fill"
+          cx="7"
+          cy="7"
+          r={RING_RADIUS}
+          strokeDasharray={`${(percent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+          transform="rotate(-90 7 7)"
+        />
+      </svg>
+      <span aria-hidden>{Math.round(percent)}%</span>
+    </div>
+  );
 }
 
 function AttachmentChip({ item }: { item: PendingAttachment }) {
@@ -114,6 +166,15 @@ export function Composer() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const busy = isBusyRunState(state.runState);
 
+  // Display names drop the provider prefix; it returns only when two
+  // providers offer the same model id.
+  const modelIdCounts = new Map<string, number>();
+  for (const model of state.availableModels) {
+    modelIdCounts.set(model.id, (modelIdCounts.get(model.id) ?? 0) + 1);
+  }
+  const modelLabel = (model: { provider: string; id: string; name?: string }) =>
+    (modelIdCounts.get(model.id) ?? 0) > 1 ? `${model.name ?? model.id} (${model.provider})` : (model.name ?? model.id);
+
   useEffect(() => {
     const element = textareaRef.current;
     if (!element) return;
@@ -218,9 +279,7 @@ export function Composer() {
         className="composer__input"
         rows={1}
         value={draft}
-        placeholder={
-          busy ? "Steer the running task… (Ctrl+Enter to queue a follow-up)" : "Message Pi… (paste or drop files to attach)"
-        }
+        placeholder={busy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
@@ -246,40 +305,52 @@ export function Composer() {
         >
           <FolderSearch size={14} aria-hidden />
         </button>
-        <select
-          className="composer__select"
-          aria-label="Model"
-          value={modelValue}
-          onChange={(event) => {
-            const [provider, ...rest] = event.target.value.split(":");
-            if (provider && rest.length) void store.setModel(provider, rest.join(":"));
-          }}
-          disabled={state.availableModels.length === 0}
-        >
-          {state.availableModels.length === 0 ? (
-            <option value="">{state.model ? `${state.model.provider}/${state.model.id}` : "No session model"}</option>
-          ) : (
-            state.availableModels.map((model) => (
-              <option key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>
-                {model.name ?? `${model.provider}/${model.id}`}
+        <label className="composer__control" title="Model">
+          <span className="composer__control-value" aria-hidden>
+            {state.model ? (state.model.name ?? state.model.id) : "No session model"}
+          </span>
+          <ChevronDown size={11} aria-hidden />
+          <select
+            className="composer__control-select"
+            aria-label="Model"
+            value={modelValue}
+            onChange={(event) => {
+              const [provider, ...rest] = event.target.value.split(":");
+              if (provider && rest.length) void store.setModel(provider, rest.join(":"));
+            }}
+            disabled={state.availableModels.length === 0}
+          >
+            {state.availableModels.length === 0 ? (
+              <option value="">{state.model ? (state.model.name ?? state.model.id) : "No session model"}</option>
+            ) : (
+              state.availableModels.map((model) => (
+                <option key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>
+                  {modelLabel(model)}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <label className="composer__control" title="Thinking level">
+          <span className="composer__control-value" aria-hidden>
+            {state.thinkingLevel}
+          </span>
+          <ChevronDown size={11} aria-hidden />
+          <select
+            className="composer__control-select"
+            aria-label="Thinking level"
+            value={state.thinkingLevel}
+            onChange={(event) => void store.setThinkingLevel(event.target.value)}
+          >
+            {THINKING_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
               </option>
-            ))
-          )}
-        </select>
-        <select
-          className="composer__select"
-          aria-label="Thinking level"
-          value={state.thinkingLevel}
-          onChange={(event) => void store.setThinkingLevel(event.target.value)}
-        >
-          {THINKING_LEVELS.map((level) => (
-            <option key={level} value={level}>
-              thinking: {level}
-            </option>
-          ))}
-        </select>
-        {state.project ? <span className="composer__project">{state.project}</span> : null}
+            ))}
+          </select>
+        </label>
         <span className="composer__spacer" />
+        <ContextMeter />
         {busy ? (
           <button
             type="button"

@@ -68,6 +68,7 @@ export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveS
     isStreaming: false,
     isCompacting: false,
     messages: [],
+    stats: { contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 } },
     availableModels: [],
     commands: [],
     ...overrides,

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { opendir } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -57,4 +57,41 @@ export async function searchProjectFiles(cwd: string, query = "", limit = 50): P
     .filter((path) => words.every((word) => path.toLocaleLowerCase().includes(word)))
     .slice(0, Math.min(100, Math.max(1, limit)))
     .map((path) => ({ path, name: basename(path) }));
+}
+
+export interface ProjectDirEntry {
+  name: string;
+  type: "dir" | "file";
+}
+
+/** One directory level derived from a flat cwd-relative path list: no
+ * filesystem resolution happens against the requested dir, so the explorer
+ * can only ever surface what the project index already contains. */
+export function directoryEntries(paths: string[], dir: string): ProjectDirEntry[] {
+  const prefix = dir ? `${dir.replace(/\/+$/, "")}/` : "";
+  const seen = new Map<string, ProjectDirEntry["type"]>();
+  for (const path of paths) {
+    if (!path.startsWith(prefix)) continue;
+    const rest = path.slice(prefix.length);
+    if (!rest) continue;
+    const slash = rest.indexOf("/");
+    if (slash === -1) seen.set(rest, "file");
+    else if (!seen.has(rest.slice(0, slash))) seen.set(rest.slice(0, slash), "dir");
+  }
+  return [...seen.entries()]
+    .map(([name, type]) => ({ name, type }))
+    .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+}
+
+export async function listProjectDirectory(cwd: string, dir = ""): Promise<ProjectDirEntry[]> {
+  return directoryEntries(await projectPaths(cwd), dir);
+}
+
+/** Whether an absolute path names a file the project index contains. The
+ * index — not mere cwd containment — is the authority, so ignored trees
+ * (node_modules, .git, …) stay out of reach. */
+export async function isIndexedProjectFile(cwd: string, absolutePath: string): Promise<boolean> {
+  const relativePath = relative(cwd, absolutePath);
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) return false;
+  return (await projectPaths(cwd)).includes(relativePath);
 }

@@ -15,7 +15,7 @@ tokens:
     ink: "#1c2321"
     body: "#2e3634"
     muted: "#5d6664"
-    faint: "#838c88"
+    faint: "#6d7873"          # weakest text that is still text: ≥4.5:1 on surface
     accent: "#00928c"          # teal-500, brand anchor (borders, icons, selection, focus)
     accent-hover: "#00a29b"
     accent-fill: "#00827c"     # teal-600, filled controls with on-accent text (≥4.5:1)
@@ -27,32 +27,40 @@ tokens:
     warning: "#9a6b00"
     error: "#b3403c"
     error-tint: "rgba(179, 64, 60, 0.08)"
+    warning-tint: "rgba(154, 107, 0, 0.08)"
+    info: "#33649e"            # annotation: tool activity
+    think: "#7b5fc0"           # annotation: reasoning blocks
+    think-tint: "rgba(123, 95, 192, 0.06)"
   colors-dark:
-    canvas: "#131615"
-    surface: "#1a1e1d"
-    surface-raised: "#222726"
-    surface-inset: "#101312"
-    hairline: "#2e3533"
-    hairline-strong: "#3d4643"
-    ink: "#e8ebea"
-    body: "#cdd3d1"
-    muted: "#8f9996"
-    faint: "#667069"
-    accent: "#d8f03c"          # lime-400, industrial chartreuse anchor (links, focus, selection, running)
-    accent-hover: "#e7f76a"
-    accent-fill: "#bfd52f"     # lime-500, filled controls with on-accent text
-    accent-deep: "#d8f03c"     # same as accent: already ≥13:1 on dark surfaces
-    accent-active: "#9db023"
-    accent-tint: "rgba(216, 240, 60, 0.10)"
-    on-accent: "#141a06"
-    success: "#6dbb8a"
-    warning: "#d9a94a"
-    error: "#e07b74"
-    error-tint: "rgba(224, 123, 116, 0.12)"
+    canvas: "#111413"
+    surface: "#191e1d"
+    surface-raised: "#232928"
+    surface-inset: "#0c0f0e"
+    hairline: "#2c3331"
+    hairline-strong: "#414947"
+    ink: "#ecefee"
+    body: "#ccd2d0"
+    muted: "#939d99"
+    faint: "#7f8983"
+    accent: "#4dd8cd"          # teal-300: the light anchor's hue, raised for dark
+    accent-hover: "#71e3d9"
+    accent-fill: "#3fcfc4"     # filled controls carry near-black on-accent text
+    accent-deep: "#4dd8cd"     # equals accent: already ample contrast on dark
+    accent-active: "#2aa89e"
+    accent-tint: "rgba(77, 216, 205, 0.09)"
+    on-accent: "#06211f"
+    success: "#5fc78e"
+    warning: "#e0b054"
+    error: "#e5837b"
+    error-tint: "rgba(229, 131, 123, 0.12)"
+    warning-tint: "rgba(224, 176, 84, 0.12)"
+    info: "#7ea9dd"
+    think: "#b9a7ee"
+    think-tint: "rgba(185, 167, 238, 0.10)"
   typography:
-    sans: "'IBM Plex Sans SC', 'IBM Plex Sans', sans-serif"
+    sans: "'Noto Sans SC', 'IBM Plex Sans', sans-serif"
     serif: "'IBM Plex Serif', serif"          # wordmark only
-    mono: "'IBM Plex Mono', 'Noto Sans Mono CJK SC', monospace"
+    mono: "'IBM Plex Mono', 'Noto Sans SC', monospace"
     size-xs: 11.5px      # chip, meta rows
     size-sm: 12.5px      # secondary UI, code, card summaries
     size-base: 14px      # controls, nav, composer
@@ -72,7 +80,7 @@ tokens:
     scale: [4, 8, 12, 16, 20, 24, 32, 48, 64]
     reading-column: 760px
     nav-width: 272px
-    context-width: 320px
+    context-width: "clamp(340px, 38vw, 760px)"   # wide enough to genuinely preview documents
   rounded:
     xs: 4px       # inline code
     sm: 6px       # buttons, inputs, selects
@@ -96,26 +104,31 @@ tokens:
 
 insπre reads as a restrained scientific instrument: near-neutral paper
 surfaces with a faint cool-green cast, hairline boundaries, soft radii, one
-accent per theme, and IBM Plex as the single type voice for interface,
-Chinese text, and code. Content — Markdown, KaTeX mathematics, highlighted
-code — carries the character; chrome stays quiet.
+teal accent family, and one type voice — Noto Sans SC for interface and
+Chinese text, IBM Plex for the wordmark and code. Content — Markdown, KaTeX
+mathematics, highlighted code — carries the character; chrome stays quiet.
 
-The two themes share one component architecture and one information
-hierarchy. Their only deliberate personality difference is the accent hue:
-**teal `{colors-light.accent}` in light**, **industrial chartreuse
-`{colors-dark.accent}` in dark**. Everything else (structure, spacing, type,
-motion) is theme-invariant. Light is the primary tuning target; dark follows
-it and is verified, not separately designed.
+The two themes share one component architecture, one information hierarchy,
+and one accent hue: **teal `{colors-light.accent}` in light**, the same hue
+raised to a **luminous teal `{colors-dark.accent}` in dark**. (The earlier
+dark chartreuse was reviewed on 2026-07-23 and replaced: high-chroma lime
+against muted green-grays read harsh and murky; the brighter teal keeps the
+brand hue and calms the theme.) Beyond the accent, a small **annotation
+palette** color-codes conversation block types in both themes. Light is the
+primary tuning target; dark follows it and is verified, not separately
+designed.
 
 Key characteristics:
 
 - Paper-not-cream neutrals: the light canvas is a cool-green-tinted white,
   deliberately away from both Anthropic cream and dev-tool blue-gray.
-- One accent family per theme with named roles (`accent`, `accent-fill`,
-  `accent-deep`, `accent-tint`); no second decorative hue.
-- IBM Plex Sans SC everywhere, so Chinese and Latin share one family with no
-  fallback seam; serif exists only in the `insπre` wordmark; Plex Mono owns
-  code and machine data with a CJK mono fallback for aligned comments.
+- One interactive accent family per theme with named roles (`accent`,
+  `accent-fill`, `accent-deep`, `accent-tint`); annotation hues are
+  semantic block coding, never decoration.
+- Noto Sans SC everywhere, so Chinese and Latin share one family with no
+  fallback seam; serif exists only in the `insπre` wordmark (set italic,
+  with the π in KaTeX's math italic face); Plex Mono owns code and machine
+  data with the sans CJK face as its CJK fallback.
 - KaTeX renders with its own bundled fonts; the system never restyles formula
   glyphs, only the spacing around them.
 - Hairline borders do the separating; shadows are reserved for genuinely
@@ -132,39 +145,60 @@ intermediate values:
 
 - **`accent`** — identity and state: focus rings, selection borders and the π
   in the wordmark, active-session markers, running indicators, checked
-  controls, links in dark theme.
+  controls, links in dark theme, the context gauge.
 - **`accent-fill`** — the only filled-control background (primary button,
-  send button, active chip). Text on it is `on-accent`. Chosen one step
-  deeper than `accent` in light so white text passes 4.5:1.
+  send button, active chip). Text on it is `on-accent`. Light uses a step
+  deeper than `accent` so white text passes 4.5:1; dark uses a bright fill
+  with near-black text.
 - **`accent-deep`** — small accent text on light surfaces (links, inline
   emphasis); equals `accent` in dark where contrast is already ample.
 - **`accent-tint`** — low-alpha wash for selected rows, drop targets, and the
   user bubble background.
 
+### Annotation palette
+
+Conversation block types are color-coded by a 3px left edge plus a matching
+icon — the same grammar toast notices already use. The hues are semantic,
+theme-tuned, and graphics-only (edges and 14px icons, ≥3:1; never text,
+never fills):
+
+- **`think`** (violet) — thinking cards; the expanded body also takes a
+  ~4% violet-tinted inset.
+- **`info`** (blue) — tool cards and live tool-activity chips.
+- **`error`** — failed tool cards and error notices.
+- **`hairline-strong`** (neutral) — unknown/extension content: uncommitted.
+- `success`/`warning` keep their status meanings (result icons, run states,
+  the context gauge's caution tones).
+
 ### Discipline
 
 - Neutral surfaces carry ≥95% of any screen; accent appears only where it
-  communicates interaction or state.
-- The dark chartreuse is a small-area color: focus rings, selection edges,
-  links, running dots, and the compact `accent-fill` controls. It is never a
-  panel background, banner fill, or large illustration color.
+  communicates interaction or state, annotation hues only on block edges
+  and icons.
+- The dark teal is a small-area color: focus rings, selection edges, links,
+  running dots, the gauge, and the compact `accent-fill` controls. It is
+  never a panel background, banner fill, or large illustration color.
 - Semantic colors (success/warning/error) appear only with a semantic
   meaning, tuned per theme, and never as decoration.
 - All text/background pairs meet WCAG AA (4.5:1 body, 3:1 large or UI
-  graphics) in both themes; `accent` on light is a 3:1 graphics-only color —
-  small accent text must use `accent-deep`.
+  graphics) in both themes; `accent` on light and the annotation hues are
+  3:1 graphics-only colors — small accent text must use `accent-deep`, and
+  `faint` is tuned to stay ≥4.5:1 on `surface` in both themes.
 
 ## Typography
 
 ### Families
 
-- **Sans — IBM Plex Sans SC** (weights 400/500/600, self-hosted, subset):
-  interface, transcript body, Chinese and Latin alike. `IBM Plex Sans` may
-  serve as a Latin-first sibling ahead of the SC face; generic `sans-serif`
-  closes the stack.
+- **Sans — Noto Sans SC** (weights 400/500/600, self-hosted, one Latin and
+  one CJK subset per weight): interface, transcript body, Chinese and Latin
+  alike. The 2026-07-22 decision picked IBM Plex Sans SC, but IBM does not
+  publish it to npm and no vendorable woff2 subset exists; Noto Sans SC is
+  the same grotesque voice with first-class CJK, keeps the single-family,
+  no-fallback-seam property, and ships from `@fontsource/noto-sans-sc`.
+  Generic `sans-serif` closes the stack.
 - **Serif — IBM Plex Serif**: the `insπre` wordmark only. No reading mode,
   no serif body text; the wordmark is Latin + π so no CJK serif is needed.
-- **Mono — IBM Plex Mono** with `Noto Sans Mono CJK SC` fallback: code
+- **Mono — IBM Plex Mono** with the sans CJK face as its CJK fallback: code
   blocks, inline code, session IDs, paths, tool arguments and results.
 
 ### Hierarchy
@@ -250,57 +284,105 @@ run state, tool activity, queue counts, and statuses. Variants: muted
 `accent`-alpha border, filled `accent-fill` only for the primary run state),
 warning/error/info via semantic colors. Chips are single-line, icon 12px.
 
+### Workbench chrome
+
+- **Header line** — all three regions (nav, topbar, context pane) share a
+  48px header row with one continuous bottom hairline. The nav header holds
+  the italic serif wordmark (π in KaTeX math italic) and the mock badge; the
+  rail shows the math-italic π alone.
+- **Topbar identity** — the session title (600) is the rename affordance
+  (click to edit in place); beside it the project location renders in mono
+  `{typography.size-xs}` `faint` — folder name or full path per the
+  `projectDisplay` preference — and clicking it copies the absolute path.
+  The model is never shown here.
+- **Topbar actions** — nav toggle at the left; command palette, settings
+  (opens the settings overlay), and context-pane toggle at the right. There
+  is no compact button: users type `/compact [instructions]`, which the
+  host routes to Pi's RPC compact command.
+
 ### Navigation
 
-- Session rows: full-width, `{rounded.md}`, title at
-  `{typography.size-base}`/500 + meta line at `{typography.size-xs}`
-  `muted`; hover `surface-inset`; active row `accent-tint` background with a
-  2px `accent` inset edge at the left; running dot in `accent`.
-- The nav footer holds preference controls as quiet labeled fields; the
-  wordmark block is the only serif on screen.
+- Folder-first hierarchy: group headers at `{typography.size-base}`/600
+  `muted` (chevron, folder icon, name, count) sit above session rows at
+  `{typography.size-sm}`/400 `ink` indented one step, with a
+  `{typography.size-xs}` `muted` meta line.
+- Groups collapse freely — including the active session's group; a collapsed
+  folder that hides the active session takes the `accent-tint` highlight and
+  2px `accent` left edge itself. Active search overrides collapse.
+- Row hover shows `surface-inset`; the active row shows `accent-tint` plus a
+  2px `accent` inset edge; running/attention dots use `accent`,
+  `success`, `error`.
+- The pin action floats at the row's right edge and appears on hover/focus
+  (always on touch); pinned sessions live in one global Pinned section.
+- The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
+  single header bar (folder icon + project name + chevron); expanded it takes
+  up to half the column with a lazily loaded tree derived from the host's
+  project index (directories first), and clicking a file opens the
+  session-bound preview pane.
+- The nav column holds only brand, new-session, search, sessions, and the
+  explorer — settings and refresh live in the topbar and palette
+  respectively.
 
 ### Transcript
 
-- **User bubble** — right-aligned, max-width 85% of the reading column,
-  `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
-  `{typography.size-md}` text.
-- **Assistant flow** — no container: an open document flow on canvas, left
-  aligned, with a `{typography.size-xs}` `muted` attribution line above and
-  meta line below.
+- **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
+  column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
+  `{typography.size-md}` text; the full timestamp is the tooltip. Extra
+  spacing before each user turn groups a prompt with its response.
+- **Assistant flow** — no container: one attribution head line ("Pi" at
+  `{typography.size-sm}`/600 with model, time, and any unusual end reason in
+  `{typography.size-xs}` `faint`/`warning`) above an open document flow. The
+  model appears exactly once per turn, and routine `stop` reasons are
+  hidden. There is no footer meta line.
 - **Thinking card / tool card / generic card** — one collapsible card
-  anatomy: 32px header row (icon 14px, label, one-line `muted` summary,
-  status icon, chevron), `{rounded.md}`, `surface` background, hairline
-  border. Thinking uses a brain icon and renders Markdown at
-  `{typography.size-sm}`; tool cards show `mono` name, argument summary,
-  and result in `mono` `{typography.size-sm}` with error state coloring the
-  status icon and result edge `error`; unknown content uses the generic
-  card with lossless JSON. Expanded bodies are inset with a hairline top.
+  anatomy: ~34px header row (icon 14px, label, one-line summary, status
+  icon, chevron), `{rounded.md}`, `surface` background, hairline border,
+  and a 3px annotation-colored left edge (`think` violet / `info` blue /
+  `error` when failed / `hairline-strong` unknown) with the icon in the
+  same hue. Thinking summaries are sans prose; tool summaries are mono;
+  labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded
+  bodies are inset with a hairline top; thinking bodies take a faint violet
+  tint.
 - **Code block** — `surface` (dark: `surface-inset`) background, hairline
   border, `{rounded.md}`, header bar with language label
-  (`{typography.size-xs}` `muted`) and copy action; code at
+  (`{typography.size-xs}` `faint`) and copy action; code at
   `{typography.size-sm}`/`{typography.leading-mono}`. Syntax colors derive
   from the theme palette: accent for keywords, warning-adjacent for
   strings, `muted` for comments — max five hue roles.
 - **Tables** — hairline row separators only, semibold header row, no zebra.
-- **KaTeX** — display math gets 12px vertical margin and horizontal scroll
+- **KaTeX** — display math gets 12px vertical margin, inner padding so tall
+  glyphs clear the scroll container's clip edge, and horizontal scroll
   containment; never restyled glyphs.
 
 ### Composer
 
 A level-0 surface at the reading column width: attachment/reference chip
 rows on top, auto-growing textarea (`{typography.size-md}`, max 40vh), and
-a meta row (attach, project files, model and thinking selects as quiet
-borderless selects, project name, send/abort). Focus shows a 2px `accent`
-ring on the whole composer, not the inner textarea. Drop targeting tints
-the composer with `accent-tint` and a dashed `accent` border.
+a meta row. Model and thinking level are quiet content-sized controls: a
+`{typography.size-sm}` value plus 11px chevron with an invisible native
+select stretched over the control, so the closed control hugs its value
+while keyboard, dropdown, and accessible naming stay native. Model options
+drop the provider prefix unless two providers share an id; thinking levels
+read lowercase (`medium`, `xhigh`). At the right, the **context gauge** — a
+14px ring plus percent in `{typography.size-xs}` — reports context-window
+occupancy from Pi's session stats: calm `muted`/`accent` below 60%,
+`warning` from 60%, `error` from 85%, with exact token counts and a
+`/compact` reminder in the tooltip; it hides when Pi has no fresh usage
+data (right after compaction). Focus shows a 2px `accent` ring on the whole
+composer. Drop targeting tints the composer with `accent-tint` and a dashed
+`accent` border.
 
-### Command palette & dialogs
+### Command palette, settings & dialogs
 
-Centered overlay at Level 2 on a 40%-alpha scrim; palette 560px wide,
+Centered overlays at Level 2 on a 40%-alpha scrim; palette 560px wide,
 `{rounded.lg}`, input row + grouped result list (group label
-`{typography.size-xs}` uppercase `faint`); active row `accent-tint` with
-`accent` left edge. Extension dialogs share the same surface with title at
-`{typography.size-lg}` semibold and right-aligned action row.
+`{typography.size-xs}` uppercase tracked `faint`); active row `accent-tint`
+with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
+within 80dvh), not a page: sectioned cards for appearance (theme, project
+location), card visibility, startup, and about; Escape and the scrim close
+it, and Escape never leaks to the global abort shortcut. Extension dialogs
+share the same surface with title at `{typography.size-lg}` semibold and
+right-aligned action row.
 
 ### Notices & banners
 
@@ -328,8 +410,10 @@ layout only. `prefers-reduced-motion` reduces everything to opacity.
 
 - Route every color, size, radius, and duration through the token layer in
   `src/styles.css`; components reference custom properties only.
-- Keep the chartreuse small: if a dark-theme accent area exceeds a chip or
-  a 2px edge, use `accent-tint` instead.
+- Keep accent fills small in both themes: beyond a chip, the gauge ring, or
+  a 3px edge, use `accent-tint` instead.
+- Use the annotation hues only through the 3px left-edge grammar, icon
+  tints, and their paired tint washes; running text stays neutral.
 - Let long technical answers dominate: chrome may not compete with content
   for contrast.
 - Verify both themes by screenshot after any component change; light is
@@ -340,17 +424,21 @@ layout only. `prefers-reduced-motion` reduces everything to opacity.
 - No serif outside the wordmark; no reading-mode font switching.
 - No weight 700+, no letter-spacing on CJK, no font-size improvisation
   outside the scale.
-- No second decorative hue, no gradients, no glow, no large lemon fills.
+- No second decorative hue — the annotation palette is semantic, never
+  ornament — no gradients, no glow, no large accent fills.
 - No shadows on resting surfaces; no borderless floating cards.
 - No per-component palette values, and no theme-specific component
   structure.
 
 ## Known gaps
 
-- The current implementation still uses the draft palette, Inter-era system
-  stack, and the `readingSerif` preference; adoption is tracked in the
-  active design-system stage.
-- IBM Plex fonts are not yet vendored; self-hosting with CJK subsetting is
-  part of adoption.
-- KaTeX and highlight.js theme variables must be mapped to these tokens
-  during adoption.
+None standing. The 2026-07-22 adoption installed this token layer in
+`src/styles.css`, vendored the fonts under `src/assets/fonts` (SIL OFL
+license texts beside them in `src/assets/licenses`), mapped highlight.js
+token colors onto the palette roles, and removed the `readingSerif`
+reading-mode preference end to end; Noto Sans SC replaced IBM Plex Sans SC
+along the way (see Families). The 2026-07-23 redesign round replaced the
+dark chartreuse with the luminous teal family, added the annotation
+palette and workbench chrome contracts above, and set the wordmark in
+italic serif with a KaTeX math π. Process history and decisions live in
+the adoption stage.

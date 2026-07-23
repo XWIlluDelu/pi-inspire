@@ -51,16 +51,13 @@ export function CommandPalette({
       { id: "ctx", group: "Actions", title: "Toggle resources panel", hint: "Ctrl+.", run: onToggleCtx },
     ];
     if (state.sessionId) {
-      actions.push(
-        {
-          id: "rename",
-          group: "Actions",
-          title: "Rename session…",
-          keepOpen: true,
-          run: () => setRenaming(true),
-        },
-        { id: "compact", group: "Actions", title: "Compact context", run: () => void store.compact() },
-      );
+      actions.push({
+        id: "rename",
+        group: "Actions",
+        title: "Rename session…",
+        keepOpen: true,
+        run: () => setRenaming(true),
+      });
     }
     if (busy) {
       actions.push({ id: "abort", group: "Actions", title: "Abort running task", hint: "Esc", run: () => void store.abort() });
@@ -75,13 +72,6 @@ export function CommandPalette({
       });
     }
     actions.push(
-      {
-        id: "serif",
-        group: "Preferences",
-        title: `Reading font: ${state.prefs.readingSerif ? "Sans" : "Serif"}`,
-        hint: "toggle",
-        run: () => store.setReadingSerif(!state.prefs.readingSerif),
-      },
       {
         id: "launch-welcome",
         group: "Preferences",

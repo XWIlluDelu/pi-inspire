@@ -39,7 +39,6 @@ export interface RuntimeLike {
   newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot>;
   prompt(request: PromptRequest): Promise<void>;
   abort(): Promise<void>;
-  compact(customInstructions?: string): Promise<unknown>;
   rename(name: string): Promise<void>;
   setModel(provider: string, modelId: string): Promise<unknown>;
   setThinkingLevel(level: string): Promise<void>;
@@ -332,6 +331,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async prompt(request: PromptRequest): Promise<void> {
     const slot = this.requireSelectedSlot();
     const message = request.message.trim();
+    // Pi's RPC prompt does not interpret built-in slash commands (only
+    // extension commands), so the host routes the one typed command it
+    // supports — `/compact [instructions]` — to its RPC equivalent.
+    const compact = /^\/compact(?:\s+([\s\S]+))?$/.exec(message);
+    if (compact) {
+      await this.compact(compact[1]?.trim() || undefined);
+      return;
+    }
     const [readySlot, resolved, projectFiles] = await Promise.all([
       this.ensureProcess(slot),
       this.attachments.resolveForPrompt(request.attachmentIds),

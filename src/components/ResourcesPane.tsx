@@ -5,7 +5,6 @@ import {
   FileText,
   Image as ImageIcon,
   Loader2,
-  PanelRight,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
@@ -210,21 +209,17 @@ export function ResourcesPane() {
   };
   return (
     <aside className="ctx res" aria-label="Files and resources" onClick={openNestedReference}>
+      {/* Closing lives in the topbar toggle; the header stays a plain label. */}
       <div className="ctx__header">
         <span>Files</span>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => store.setResourcesOpen(false)}
-          aria-label="Close resources panel"
-        >
-          <PanelRight size={15} aria-hidden />
-        </button>
+        {resources.length > 0 ? <span className="ctx__count">{resources.length}</span> : null}
       </div>
       {resources.length === 0 ? (
-        <div className="res__empty">
-          No files referenced yet — files Pi reads, writes, or you mention appear here.
-        </div>
+        state.resourcePreview ? null : (
+          <div className="res__empty">
+            No files referenced yet — files Pi reads, writes, or you mention appear here.
+          </div>
+        )
       ) : (
         <div className="res__list" aria-label="Referenced files">
           {resources.map((row) => (

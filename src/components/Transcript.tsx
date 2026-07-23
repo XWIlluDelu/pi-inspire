@@ -71,9 +71,12 @@ function CollapsibleCard({ defaultVisibility, className, icon, label, summary, s
       >
         <span className="card__icon">{icon}</span>
         <span className="card__label">{label}</span>
-        {summary ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary) : null}
+        {/* The one-line summary only earns its place while collapsed. */}
+        {!open && summary ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary) : null}
         <span className="card__status">{status}</span>
-        {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        <span className="card__chevron">
+          {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        </span>
       </button>
       {open ? <div className="card__body">{children}</div> : null}
     </section>
@@ -91,7 +94,7 @@ function ThinkingCard({ text, visibility }: { text: string; visibility: Visibili
       className="card--thinking"
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
-      summary={firstLine.slice(0, 90)}
+      summary={<span className="card__summary card__summary--prose">{firstLine.slice(0, 90)}</span>}
     >
       <RichText text={clean} variant="thinking" />
     </CollapsibleCard>
@@ -201,7 +204,7 @@ function ToolCard({
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
-      className="card--tool"
+      className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
       icon={<Wrench size={14} aria-hidden />}
       label={<code className="card__tool-name">{call.name}</code>}
       summary={<ToolSummary call={call} />}
@@ -251,10 +254,13 @@ function GenericCard({ item, visibility }: { item: AssistantContent & { type: st
 // --- Turns ---
 
 const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage }) {
+  const timestamp = message.timestamp;
   return (
     <div className="turn turn--user">
-      <div className="turn__label">You · {clockTime(message.timestamp)}</div>
-      <div className="user-bubble">
+      <div
+        className="user-bubble"
+        title={timestamp != null ? new Date(timestamp).toLocaleString() : undefined}
+      >
         <RichText text={messageText(message)} variant="user" />
       </div>
     </div>
@@ -277,7 +283,16 @@ const AssistantTurn = memo(function AssistantTurn({
   const items = contentItems(message);
   return (
     <div className="turn turn--assistant">
-      <div className="turn__label">Pi{message.model ? ` · ${message.model}` : ""}</div>
+      {/* One attribution line: who, model (exactly once), time, and any
+          unusual end reason. Routine "stop" is noise and stays hidden. */}
+      <div className="turn__head">
+        <span className="turn__who">Pi</span>
+        {message.model ? <span className="turn__detail">{message.model}</span> : null}
+        {message.timestamp != null ? <span className="turn__detail">{clockTime(message.timestamp)}</span> : null}
+        {message.stopReason && message.stopReason !== "stop" ? (
+          <span className="turn__flag">{message.stopReason}</span>
+        ) : null}
+      </div>
       <div className="assistant-doc">
         {items.map((item, index) => {
           if (item.type === "text") {
@@ -303,11 +318,6 @@ const AssistantTurn = memo(function AssistantTurn({
           }
           return <GenericCard key={index} item={item as AssistantContent & { type: string }} visibility={toolVisibility} />;
         })}
-      </div>
-      <div className="turn__meta">
-        {message.model ? <span>{message.model}</span> : null}
-        <span>{clockTime(message.timestamp)}</span>
-        {message.stopReason ? <span>{message.stopReason}</span> : null}
       </div>
     </div>
   );

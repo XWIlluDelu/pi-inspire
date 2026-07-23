@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -80,7 +80,7 @@ describe("local host API", () => {
       launch: "continue",
       thinkingVisibility: "expanded",
       toolVisibility: "hidden",
-      readingSerif: true,
+      projectDisplay: "path",
       pinnedSessionIds: [],
       navCollapsedGroups: ["/home/demo/older"],
     };
@@ -107,14 +107,35 @@ describe("local host API", () => {
       launch: "welcome",
       thinkingVisibility: "collapsed",
       toolVisibility: "expanded",
-      readingSerif: false,
     };
     await writeFile(join(temporary, "preferences.json"), JSON.stringify(legacy));
     const response = await request(application.server)
       .get("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(response.body).toEqual({ ...legacy, pinnedSessionIds: [], navCollapsedGroups: [] });
+    expect(response.body).toEqual({
+      ...legacy,
+      projectDisplay: "folder",
+      pinnedSessionIds: [],
+      navCollapsedGroups: [],
+    });
+  });
+
+  it("lists workspace directory levels only inside the project index", async () => {
+    await request(application.server)
+      .post("/api/sessions/open")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active" })
+      .expect(200);
+    await request(application.server)
+      .get("/api/files/list?dir=..%2Fetc")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+    const listed = await request(application.server)
+      .get("/api/files/list")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(listed.body.entries)).toBe(true);
   });
 
   it("persists session pins outside Pi history and returns pinned summaries by id", async () => {
@@ -141,8 +162,12 @@ describe("local host API", () => {
       .expect((response) => expect(response.body.pinnedSessionIds).toEqual([]));
   });
 
-  it("resolves and serves only files referenced by the visible session", async () => {
+  it("serves transcript-referenced and workspace-indexed files, nothing else", async () => {
     await writeFile(join(temporary, "preview.md"), "# Host preview\n");
+    await writeFile(join(temporary, "notes.txt"), "workspace note\n");
+    await mkdir(join(temporary, "node_modules"));
+    await writeFile(join(temporary, "node_modules", "mentioned.txt"), "vendored but cited\n");
+    await writeFile(join(temporary, "node_modules", "hidden.txt"), "vendored\n");
     const opened = await request(application.server)
       .post("/api/sessions/new")
       .set("Authorization", `Bearer ${token}`)
@@ -152,7 +177,7 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ message: "Open [the preview](preview.md)." })
+      .send({ message: "Open [the preview](preview.md) and [the vendored note](node_modules/mentioned.txt)." })
       .expect(202);
 
     const resolved = await request(application.server)
@@ -168,6 +193,25 @@ describe("local host API", () => {
       .expect(200);
     expect(content.text).toBe("# Host preview\n");
 
+    // Indexed workspace files preview without a transcript mention — the
+    // explorer's click path.
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "notes.txt" })
+      .expect(200);
+    // A transcript mention still reaches files the index ignores.
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "node_modules/mentioned.txt" })
+      .expect(200);
+    // Existing inside the cwd is not enough: neither indexed nor mentioned.
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "node_modules/hidden.txt" })
+      .expect(403);
     await request(application.server)
       .post("/api/resources/resolve")
       .set("Authorization", `Bearer ${token}`)

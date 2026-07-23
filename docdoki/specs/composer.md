@@ -25,7 +25,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - Images can be pasted, dropped, or selected and previewed before submission.
 - Ordinary files can be selected or dropped, with their name, type, size, and submission meaning visible before sending.
 - Input submitted while Pi is active is explicitly sent as steering input or queued as a follow-up.
-- The composer displays the selected model, thinking level, current project, and destination session without crowding the writing surface.
+- A typed `/compact [instructions]` is routed at the host prompt boundary to Pi's compact control, because the runtime does not parse built-in commands out of prompt text.
+- The composer displays the selected model, thinking level, and context occupancy as quiet controls that do not crowd the writing surface; project identity lives in the topbar per [[workbench]].
+- The start surface accepts the first message together with an optional project directory, so a new session can begin in a chosen workspace.
 - Submission errors preserve the draft and attachments.
 - Attachment data crosses the trusted host only through bounded, validated operations and is not silently uploaded elsewhere by inspire.
 

@@ -9,7 +9,7 @@ const preferencesSchema = z.object({
   launch: z.enum(["welcome", "continue"]),
   thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
-  readingSerif: z.boolean(),
+  projectDisplay: z.enum(["folder", "path"]).default("folder"),
   pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100).default([]),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500).default([]),
 });

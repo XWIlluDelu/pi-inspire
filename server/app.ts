@@ -13,7 +13,7 @@ import {
 } from "../shared/contracts.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { PreferencesStore } from "./preferences.js";
-import { searchProjectFiles } from "./project-files.js";
+import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
@@ -41,6 +41,13 @@ const sessionQuerySchema = z.object({
 const fileQuerySchema = z.object({
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const fileListSchema = z.object({
+  dir: z
+    .string()
+    .max(4_096)
+    .default("")
+    .refine((value) => !value.split("/").includes(".."), "dir must stay inside the project"),
 });
 const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(100) });
 const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
@@ -195,10 +202,6 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     await deps.runtime.abort();
     response.json({ ok: true });
   });
-  app.post("/api/control/compact", async (request, response) => {
-    const customInstructions = z.object({ customInstructions: z.string().max(10_000).optional() }).parse(request.body).customInstructions;
-    response.json(await deps.runtime.compact(customInstructions));
-  });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);
     response.json(await deps.runtime.setModel(value.provider, value.modelId));
@@ -217,6 +220,11 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
     const { q, limit } = fileQuerySchema.parse(request.query);
     response.json({ files: await searchProjectFiles(deps.runtime.activeCwd, q, limit) });
+  });
+  app.get("/api/files/list", async (request, response) => {
+    if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
+    const { dir } = fileListSchema.parse(request.query);
+    response.json({ entries: await listProjectDirectory(deps.runtime.activeCwd, dir) });
   });
 
   app.post("/api/resources/resolve", async (request, response) => {

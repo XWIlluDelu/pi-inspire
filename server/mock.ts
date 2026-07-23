@@ -175,6 +175,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async prompt(request: PromptRequest): Promise<void> {
     const active = this.state.active;
     if (!active) throw new Error("Open a mock session first");
+    // Match the real host's prompt boundary: a typed /compact runs the
+    // compaction flow instead of prompting.
+    if (/^\/compact(?:\s|$)/.test(request.message.trim())) {
+      await this.compact();
+      return;
+    }
     if (active.isStreaming) throw new Error("Mock session is already streaming");
     const sessionId = active.sessionId;
     const timestamp = Date.now();

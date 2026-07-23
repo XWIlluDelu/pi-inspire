@@ -648,7 +648,7 @@ describe("resource previews", () => {
             reference: body.reference,
             name: body.reference.split("/").pop(),
             mimeType: "text/markdown",
-            size: 42,
+            size: 12, // matches the stubbed "# Notes body" content exactly
             kind: "markdown",
           },
         };
@@ -682,6 +682,15 @@ describe("resource previews", () => {
     expect(state.selectedResourceReference).toBe("notes/result.md");
     expect(state.resourcePreview).toMatchObject({ status: "ready", truncated: false });
     expect((state.resourcePreview as { text?: string }).text).toContain("Notes body");
+  });
+
+  it("marks the preview truncated only when the body is shorter than the file", async () => {
+    installFetch(resourceRoutes());
+    stubContent("# Notes bo"); // 10 of the descriptor's 12 bytes arrived
+    const { store } = await initStore();
+
+    await store.openResource("notes/result.md");
+    expect(store.getState().resourcePreview).toMatchObject({ status: "ready", truncated: true });
   });
 
   it("surfaces a truthful error state when the host rejects the reference", async () => {

@@ -1,5 +1,6 @@
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
+import { Check, Copy } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -96,8 +97,14 @@ export function CodeBlock({ language, code }: { language: string; code: string }
     <div className="code-block">
       <div className="code-block__bar">
         <span className="code-block__lang">{language}</span>
-        <button type="button" className="code-block__copy" onClick={() => void copy()}>
-          {copied ? "Copied" : "Copy"}
+        <button
+          type="button"
+          className="code-block__copy"
+          onClick={() => void copy()}
+          aria-label={copied ? "Copied" : "Copy code"}
+          title={copied ? "Copied" : "Copy code"}
+        >
+          {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
         </button>
       </div>
       <pre className="code-block__pre">

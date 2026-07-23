@@ -5,11 +5,10 @@ import {
   Clock,
   Command,
   Loader2,
-  Minimize2,
   PanelLeft,
   PanelRight,
-  Pencil,
   RefreshCw,
+  Settings as SettingsIcon,
   X,
   XCircle,
 } from "lucide-react";
@@ -74,10 +73,11 @@ function StateChip({ runState }: { runState: RunState }) {
   }
 }
 
-function SessionTitle() {
+function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boolean }) {
   const state = useAppState();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
+  const [copied, setCopied] = useState(false);
 
   if (editing) {
     return (
@@ -109,13 +109,38 @@ function SessionTitle() {
     );
   }
 
+  // Without a session the nav brand already identifies the product; the
+  // serif wordmark steps in here only while the nav is a rail.
+  if (!show || !state.sessionId) {
+    return navCollapsed ? (
+      <h1 className="topbar__title">
+        <span className="wordmark">
+          ins<em>π</em>re
+        </span>
+      </h1>
+    ) : null;
+  }
+
+  const copyPath = async () => {
+    if (!state.cwd) return;
+    try {
+      await navigator.clipboard.writeText(state.cwd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      // clipboard unavailable; leave state unchanged
+    }
+  };
+
+  // The title itself is the rename affordance: click to edit in place. The
+  // project location sits beside it — folder name or full path per the
+  // preference — and clicking it copies the absolute path.
   return (
-    <>
-      <h1 className="topbar__title">{state.sessionName || (state.sessionId ? "Untitled session" : "insπre")}</h1>
-      {state.sessionId ? (
+    <div className="topbar__ident">
+      <h1 className="topbar__title">
         <button
           type="button"
-          className="icon-button"
+          className="topbar__title-button"
           aria-label="Rename session"
           title="Rename session"
           onClick={() => {
@@ -123,10 +148,31 @@ function SessionTitle() {
             setEditing(true);
           }}
         >
-          <Pencil size={13} aria-hidden />
+          {state.sessionName || "Untitled session"}
+        </button>
+      </h1>
+      {state.cwd ? (
+        <button
+          type="button"
+          className="topbar__project"
+          onClick={() => void copyPath()}
+          title={copied ? "Copied" : `Copy path — ${state.cwd}`}
+          aria-label="Copy project path"
+        >
+          {/* Both layers always occupy the same grid cell, so toggling the
+              copied state never shifts the layout. */}
+          <span className={`topbar__project-layer ${copied ? "topbar__project-layer--hidden" : ""}`}>
+            {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
+          </span>
+          <span
+            className={`topbar__project-layer ${copied ? "" : "topbar__project-layer--hidden"}`}
+            aria-hidden={!copied}
+          >
+            <Check size={11} aria-hidden /> Copied
+          </span>
         </button>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -193,16 +239,26 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // "New session" opens the start surface (message + project directory)
+  // instead of immediately creating a session in the current project.
+  const [draftingNew, setDraftingNew] = useState(false);
 
   const openSession = (id: string) => {
     setSettingsOpen(false);
+    setDraftingNew(false);
     void store.openSession(id);
   };
 
   const newSession = () => {
     setSettingsOpen(false);
-    void store.newSession();
+    setDraftingNew(true);
   };
+
+  const activeSessionId = state.sessionId;
+  useEffect(() => {
+    // A session opened from the start surface (or anywhere else) ends the draft.
+    if (activeSessionId) setDraftingNew(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -213,10 +269,6 @@ export function App() {
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [state.prefs.theme]);
-
-  useEffect(() => {
-    document.documentElement.dataset.reading = state.prefs.readingSerif ? "serif" : "sans";
-  }, [state.prefs.readingSerif]);
 
   useEffect(() => {
     document.title = state.windowTitle ?? "insπre";
@@ -238,6 +290,7 @@ export function App() {
         event.key === "Escape" &&
         !event.defaultPrevented &&
         !paletteOpen &&
+        !settingsOpen &&
         !state.extensionUi &&
         isBusyRunState(state.runState)
       ) {
@@ -246,7 +299,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.runState, state.extensionUi, paletteOpen]);
+  }, [state.runState, state.extensionUi, paletteOpen, settingsOpen]);
 
   if (state.needsToken) return <TokenGate />;
 
@@ -254,12 +307,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Nav
-        collapsed={navCollapsed}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onNewSession={newSession}
-        onSelectSession={openSession}
-      />
+      <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />
       <main className="center">
         <header className="topbar">
           <button
@@ -271,7 +319,7 @@ export function App() {
           >
             <PanelLeft size={15} aria-hidden />
           </button>
-          <SessionTitle />
+          <SessionIdent show={!draftingNew} navCollapsed={navCollapsed} />
           <StateChip runState={state.runState} />
           {statuses.map(([key, text]) => (
             <span key={key} className="chip chip--muted">
@@ -285,17 +333,6 @@ export function App() {
               {state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
             </span>
           ) : null}
-          {state.sessionId ? (
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void store.compact()}
-              aria-label="Compact context"
-              title="Compact context"
-            >
-              <Minimize2 size={15} aria-hidden />
-            </button>
-          ) : null}
           <button
             type="button"
             className="icon-button"
@@ -304,6 +341,15 @@ export function App() {
             title="Command palette (Ctrl+K)"
           >
             <Command size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+            onClick={() => setSettingsOpen((value) => !value)}
+            aria-label="Settings"
+            title="Settings"
+          >
+            <SettingsIcon size={15} aria-hidden />
           </button>
           <button
             type="button"
@@ -328,9 +374,8 @@ export function App() {
             Connection to the insπre host interrupted — retrying automatically. The last settled state stays visible.
           </div>
         ) : null}
-        {settingsOpen ? (
-          <Settings onClose={() => setSettingsOpen(false)} />
-        ) : state.sessionId ? (
+        {settingsOpen ? <Settings onClose={() => setSettingsOpen(false)} /> : null}
+        {state.sessionId && !draftingNew ? (
           <>
             <Transcript
               messages={state.messages}
