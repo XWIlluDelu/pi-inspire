@@ -5,11 +5,10 @@ import {
   Clock,
   Command,
   Loader2,
-  Minimize2,
   PanelLeft,
   PanelRight,
-  Pencil,
   RefreshCw,
+  Settings as SettingsIcon,
   X,
   XCircle,
 } from "lucide-react";
@@ -25,47 +24,51 @@ import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
+import { Wordmark } from "./components/Wordmark";
 import { isBusyRunState, store, useAppState } from "./store";
+import { useCopied } from "./use-copied";
 
 export function resolveTheme(pref: ThemePreference, systemDark: boolean): "light" | "dark" {
   return pref === "system" ? (systemDark ? "dark" : "light") : pref;
 }
 
 function StateChip({ runState }: { runState: RunState }) {
+  // Keys force a remount across state changes so the entrance animation
+  // replays; `chip--live` marks states still in progress (they breathe).
   switch (runState) {
     case "running":
       return (
-        <span className="chip chip--accent">
+        <span key="running" className="chip chip--accent chip--live">
           <Loader2 size={12} className="spin" aria-hidden /> Running
         </span>
       );
     case "retrying":
       return (
-        <span className="chip chip--warning">
+        <span key="retrying" className="chip chip--warning chip--live">
           <AlertTriangle size={12} aria-hidden /> Retrying
         </span>
       );
     case "compacting":
       return (
-        <span className="chip chip--info">
-          <RefreshCw size={12} aria-hidden /> Compacting
+        <span key="compacting" className="chip chip--info chip--live">
+          <RefreshCw size={12} className="spin-slow" aria-hidden /> Compacting
         </span>
       );
     case "queued":
       return (
-        <span className="chip chip--muted">
+        <span key="queued" className="chip chip--muted">
           <Clock size={12} aria-hidden /> Queued
         </span>
       );
     case "aborted":
       return (
-        <span className="chip chip--error">
+        <span key="aborted" className="chip chip--error">
           <Ban size={12} aria-hidden /> Aborted
         </span>
       );
     case "failed":
       return (
-        <span className="chip chip--error">
+        <span key="failed" className="chip chip--error">
           <XCircle size={12} aria-hidden /> Failed
         </span>
       );
@@ -74,10 +77,11 @@ function StateChip({ runState }: { runState: RunState }) {
   }
 }
 
-function SessionTitle() {
+function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boolean }) {
   const state = useAppState();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
+  const { copied, copy } = useCopied();
 
   if (editing) {
     return (
@@ -109,13 +113,25 @@ function SessionTitle() {
     );
   }
 
+  // Without a session the nav brand already identifies the product; the
+  // serif wordmark steps in here only while the nav is a rail.
+  if (!show || !state.sessionId) {
+    return navCollapsed ? (
+      <h1 className="topbar__title">
+        <Wordmark />
+      </h1>
+    ) : null;
+  }
+
+  // The title itself is the rename affordance: click to edit in place. The
+  // project location sits beside it — folder name or full path per the
+  // preference — and clicking it copies the absolute path.
   return (
-    <>
-      <h1 className="topbar__title">{state.sessionName || (state.sessionId ? "Untitled session" : "insπre")}</h1>
-      {state.sessionId ? (
+    <div className="topbar__ident">
+      <h1 className="topbar__title">
         <button
           type="button"
-          className="icon-button"
+          className="topbar__title-button"
           aria-label="Rename session"
           title="Rename session"
           onClick={() => {
@@ -123,10 +139,31 @@ function SessionTitle() {
             setEditing(true);
           }}
         >
-          <Pencil size={13} aria-hidden />
+          {state.sessionName || "Untitled session"}
+        </button>
+      </h1>
+      {state.cwd ? (
+        <button
+          type="button"
+          className="topbar__project"
+          onClick={() => void copy(state.cwd ?? "")}
+          title={copied ? "Copied" : `Copy path — ${state.cwd}`}
+          aria-label="Copy project path"
+        >
+          {/* Both layers always occupy the same grid cell, so toggling the
+              copied state never shifts the layout. */}
+          <span className={`topbar__project-layer ${copied ? "topbar__project-layer--hidden" : ""}`}>
+            {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
+          </span>
+          <span
+            className={`topbar__project-layer ${copied ? "" : "topbar__project-layer--hidden"}`}
+            aria-hidden={!copied}
+          >
+            <Check size={11} aria-hidden /> Copied
+          </span>
         </button>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -135,7 +172,7 @@ function TokenGate() {
   return (
     <div className="token-gate">
       <div className="token-gate__card">
-        <span className="wordmark wordmark--large">insπre</span>
+        <Wordmark large />
         <p className="token-gate__hint">
           This insπre host requires its access token. Open the URL printed by the host (it contains{" "}
           <code>?token=…</code>), or paste the token below.
@@ -193,16 +230,26 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // "New session" opens the start surface (message + project directory)
+  // instead of immediately creating a session in the current project.
+  const [draftingNew, setDraftingNew] = useState(false);
 
   const openSession = (id: string) => {
     setSettingsOpen(false);
+    setDraftingNew(false);
     void store.openSession(id);
   };
 
   const newSession = () => {
     setSettingsOpen(false);
-    void store.newSession();
+    setDraftingNew(true);
   };
+
+  const activeSessionId = state.sessionId;
+  useEffect(() => {
+    // A session opened from the start surface (or anywhere else) ends the draft.
+    if (activeSessionId) setDraftingNew(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -215,12 +262,9 @@ export function App() {
   }, [state.prefs.theme]);
 
   useEffect(() => {
-    document.documentElement.dataset.reading = state.prefs.readingSerif ? "serif" : "sans";
-  }, [state.prefs.readingSerif]);
-
-  useEffect(() => {
-    document.title = state.windowTitle ?? "insπre";
-  }, [state.windowTitle]);
+    // Pi-driven titles win; otherwise the session name identifies the tab.
+    document.title = state.windowTitle ?? (state.sessionName ? `${state.sessionName} · insπre` : "insπre");
+  }, [state.windowTitle, state.sessionName]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -254,12 +298,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Nav
-        collapsed={navCollapsed}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onNewSession={newSession}
-        onSelectSession={openSession}
-      />
+      <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />
       <main className="center">
         <header className="topbar">
           <button
@@ -271,7 +310,7 @@ export function App() {
           >
             <PanelLeft size={15} aria-hidden />
           </button>
-          <SessionTitle />
+          <SessionIdent show={!draftingNew} navCollapsed={navCollapsed} />
           <StateChip runState={state.runState} />
           {statuses.map(([key, text]) => (
             <span key={key} className="chip chip--muted">
@@ -280,21 +319,10 @@ export function App() {
           ))}
           <span className="topbar__spacer" />
           {state.connection !== "open" ? (
-            <span className="chip chip--warning">
+            <span className="chip chip--warning chip--live">
               <Loader2 size={12} className="spin" aria-hidden />
               {state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
             </span>
-          ) : null}
-          {state.sessionId ? (
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void store.compact()}
-              aria-label="Compact context"
-              title="Compact context"
-            >
-              <Minimize2 size={15} aria-hidden />
-            </button>
           ) : null}
           <button
             type="button"
@@ -304,6 +332,15 @@ export function App() {
             title="Command palette (Ctrl+K)"
           >
             <Command size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+            onClick={() => setSettingsOpen((value) => !value)}
+            aria-label="Settings"
+            title="Settings"
+          >
+            <SettingsIcon size={15} aria-hidden />
           </button>
           <button
             type="button"
@@ -328,9 +365,8 @@ export function App() {
             Connection to the insπre host interrupted — retrying automatically. The last settled state stays visible.
           </div>
         ) : null}
-        {settingsOpen ? (
-          <Settings onClose={() => setSettingsOpen(false)} />
-        ) : state.sessionId ? (
+        {settingsOpen ? <Settings onClose={() => setSettingsOpen(false)} /> : null}
+        {state.sessionId && !draftingNew ? (
           <>
             <Transcript
               messages={state.messages}

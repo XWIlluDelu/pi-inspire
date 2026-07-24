@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
 import {
@@ -33,7 +33,16 @@ beforeAll(async () => {
           sessionId: requested,
           sessionName: requested === older.id ? older.title : summary.title,
           cwd: summary.cwd,
-          messages: [{ role: "user", content: "hello world", timestamp: 1 }],
+          messages: [
+            { role: "user", content: "hello world", timestamp: 1 },
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "answer text" }],
+              model: "kimi-k3",
+              stopReason: "stop",
+              timestamp: 2,
+            },
+          ],
         }),
       };
     }
@@ -49,6 +58,34 @@ beforeAll(async () => {
       abortCalls += 1;
       return { body: { ok: true } };
     }
+    if (url.startsWith("/api/files/list")) {
+      const dir = new URL(url, "http://localhost").searchParams.get("dir") ?? "";
+      return {
+        body: {
+          entries:
+            dir === ""
+              ? [
+                  { name: "src", type: "dir" },
+                  { name: "README.md", type: "file" },
+                ]
+              : [{ name: "main.ts", type: "file" }],
+        },
+      };
+    }
+    if (url.startsWith("/api/resources/resolve")) {
+      const body = jsonBody(init);
+      return {
+        body: {
+          id: "r1",
+          sessionId: String(body.sessionId ?? ""),
+          reference: String(body.reference ?? ""),
+          name: "README.md",
+          mimeType: "application/octet-stream",
+          size: 5,
+          kind: "binary",
+        },
+      };
+    }
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     return undefined;
   });
@@ -57,17 +94,23 @@ beforeAll(async () => {
 });
 
 describe("welcome flow", () => {
-  it("offers continue-previous and recent sessions, and continuing opens the transcript", async () => {
+  it("lists recent sessions in a collapsible list and opens one into the transcript", async () => {
     render(<App />);
     // welcome page with the real routes
     const heading = await screen.findByText("Recent sessions");
     expect(screen.getByLabelText("Project directory")).toBeInTheDocument();
-    // the session featured as "Continue previous" is not repeated in recents
+    // no separate continue-previous card: the list carries every recent session
+    expect(screen.queryByText("Continue previous")).not.toBeInTheDocument();
     const recent = within(heading.closest(".welcome__recent") as HTMLElement);
     expect(recent.getByText("Older work")).toBeInTheDocument();
-    expect(recent.queryByText("Previous work")).not.toBeInTheDocument();
+    expect(recent.getByText("Previous work")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Continue previous/ }));
+    // the list can be closed and reopened
+    fireEvent.click(recent.getByRole("button", { name: /Recent sessions/ }));
+    expect(recent.queryByText("Older work")).not.toBeInTheDocument();
+    fireEvent.click(recent.getByRole("button", { name: /Recent sessions/ }));
+
+    fireEvent.click(recent.getByText("Previous work"));
     // the opened session's message renders in the transcript
     expect(await screen.findByText("hello world")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toBeInTheDocument(); // composer docked
@@ -83,13 +126,44 @@ describe("welcome flow", () => {
     expect(renamedTo).toBe("Spectral analysis");
   });
 
+  it("shows the project location and copies the absolute path on click", async () => {
+    render(<App />);
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", { value: { writeText }, configurable: true });
+    const project = await screen.findByRole("button", { name: "Copy project path" });
+    expect(project).toHaveTextContent("demo"); // folder name is the default display
+    expect(project).toHaveAttribute("title", expect.stringContaining("/demo"));
+    fireEvent.click(project);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("/demo"));
+  });
+
+  it("New session opens the start surface with a project directory field", async () => {
+    render(<App />);
+    const nav = screen.getByRole("navigation", { name: "Sessions" });
+    fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
+    expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
+    expect(screen.getByLabelText("First message")).toBeInTheDocument();
+  });
+
+  it("attributes an assistant turn exactly once, in its head line", async () => {
+    render(<App />);
+    await screen.findByText("answer text");
+    const transcript = within(screen.getByRole("log"));
+    // model appears once (head line), not repeated in a footer meta line
+    expect(transcript.getAllByText("kimi-k3")).toHaveLength(1);
+    // user bubbles carry no label; routine "stop" end reasons stay hidden
+    expect(transcript.queryByText(/You ·/)).not.toBeInTheDocument();
+    expect(transcript.queryByText("stop")).not.toBeInTheDocument();
+  });
+
   it("opens the command palette with Ctrl+K over real actions", async () => {
     render(<App />);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const palette = await screen.findByRole("dialog", { name: "Command palette" });
     expect(palette).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Compact context/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Reading font: Serif/ })).toBeInTheDocument();
+    // Compact is deliberately not an action: users type /compact themselves.
+    expect(screen.queryByRole("option", { name: /Compact context/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Theme: Dark/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Previous work/ })).toBeInTheDocument();
     // focus lands in the filter input, so Escape is pressed there
     fireEvent.keyDown(screen.getByLabelText("Filter commands"), { key: "Escape" });
@@ -129,7 +203,7 @@ describe("welcome flow", () => {
     act(() => ws.emit({ type: "agent_settled" }));
     await waitFor(() => expect(store.getState().runState).toBe("idle"));
     act(() => ws.emit({ type: "snapshot", data: { active: null, runState: "idle", sessionStatuses: {} } }));
-    fireEvent.click(screen.getByRole("button", { name: /Continue previous/ }));
+    fireEvent.click(sessionRowButton(screen.getByRole("navigation", { name: "Sessions" }), "Previous work"));
     await screen.findByText("hello world");
   });
 
@@ -146,7 +220,7 @@ describe("welcome flow", () => {
 
   it("has no axe-detectable accessibility violations", async () => {
     const { container } = render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Continue previous/ }));
+    fireEvent.click(sessionRowButton(screen.getByRole("navigation", { name: "Sessions" }), "Previous work"));
     await screen.findByText("hello world");
     const results = await axe.run(container, {
       // jsdom cannot compute layout or real colors, so contrast results would be noise
@@ -257,53 +331,57 @@ describe("folder grouping and settings page", () => {
     expect(sessionRowButton(nav, "Older work")).toBeInTheDocument();
   });
 
-  it("moves persistent preference controls into a draft settings page with a way back", async () => {
+  it("keeps preference controls in a settings overlay opened from the topbar", async () => {
     render(<App />);
     const nav = screen.getByRole("navigation", { name: "Sessions" });
-    // nav no longer carries the persistent preference controls
+    // the nav carries no settings entry anymore; the topbar gear does
+    expect(within(nav).queryByRole("button", { name: /settings/i })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("group", { name: "Theme" })).not.toBeInTheDocument();
-    expect(within(nav).queryByLabelText("Thinking cards")).not.toBeInTheDocument();
 
-    fireEvent.click(within(nav).getByRole("button", { name: "Settings" }));
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByText("Draft")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Theme" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Thinking cards")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tool cards")).toBeInTheDocument();
-    expect(screen.getByLabelText("Reading font")).toBeInTheDocument();
-    expect(screen.getByLabelText("On launch")).toBeInTheDocument();
-    // the settings page replaces the center content while the nav stays visible
-    expect(screen.queryByText("hello world")).not.toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Sessions" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("group", { name: "Theme" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("group", { name: "Project location" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Thinking cards")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Tool cards")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
+    // the overlay floats above the conversation instead of replacing it
+    expect(screen.getByText("hello world")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  it("leaves settings before acknowledging a selected session", async () => {
+  it("closes the settings overlay with Escape without touching a busy run", async () => {
     render(<App />);
-    const targetId = store.getState().sessionId === "s0" ? "s1" : "s0";
-    const targetTitle = targetId === "s0" ? "Older work" : "Previous work";
     const ws = FakeWebSocket.instances.at(-1)!;
-    act(() =>
-      ws.emit({
-        type: "agent_settled",
-        sessionId: targetId,
-        sessionStatus: { runState: "idle", indicator: "completed" },
-      }),
-    );
+    const abortsBefore = abortCalls;
+    act(() => ws.emit({ type: "agent_start" }));
 
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    const targetRow = sessionRowButton(nav, targetTitle);
-    expect(within(targetRow).getByRole("img", { name: "Completed" })).toBeInTheDocument();
-    fireEvent.click(within(nav).getByRole("button", { name: "Settings" }));
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+    expect(abortCalls).toBe(abortsBefore);
 
-    fireEvent.click(targetRow);
-    await waitFor(() => expect(store.getState().sessionId).toBe(targetId));
-    expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
-    expect(await screen.findByText("hello world")).toBeInTheDocument();
-    expect(within(targetRow).queryByRole("img", { name: "Completed" })).not.toBeInTheDocument();
+    act(() => ws.emit({ type: "agent_settled" }));
+    await waitFor(() => expect(store.getState().runState).toBe("idle"));
+  });
+
+  it("explores the workspace from the nav and opens a file preview", async () => {
+    render(<App />);
+    const region = screen.getByRole("region", { name: "Workspace files" });
+    fireEvent.click(within(region).getByRole("button", { name: /demo/ }));
+
+    expect(await within(region).findByRole("button", { name: /README\.md/ })).toBeInTheDocument();
+    // directories expand lazily one level at a time
+    fireEvent.click(within(region).getByRole("button", { name: /src/ }));
+    expect(await within(region).findByRole("button", { name: /main\.ts/ })).toBeInTheDocument();
+
+    fireEvent.click(within(region).getByRole("button", { name: /README\.md/ }));
+    expect(await screen.findByRole("complementary", { name: "Files and resources" })).toBeInTheDocument();
+    expect(await screen.findByText("No preview available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle resources panel" }));
   });
 
   it("keeps command-palette preference actions working after the move", async () => {

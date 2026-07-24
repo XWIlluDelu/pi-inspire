@@ -59,7 +59,7 @@ describe("Files pane", () => {
     expect(frame).toHaveAttribute("sandbox", "");
     expect(URL.createObjectURL).toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close resources panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle resources panel" }));
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Files and resources" })).not.toBeInTheDocument());
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
   });

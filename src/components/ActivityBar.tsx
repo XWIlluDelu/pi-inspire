@@ -18,14 +18,14 @@ export function ActivityBar() {
   return (
     <div className="activity" role="status" aria-label="Current activity">
       {state.retry ? (
-        <span className="chip chip--warning">
+        <span className="chip chip--warning chip--live">
           <AlertTriangle size={12} aria-hidden />
           Retry {state.retry.attempt}/{state.retry.maxAttempts}
           {state.retry.message ? ` — ${state.retry.message}` : ""}
         </span>
       ) : null}
       {running.map((tool) => (
-        <span key={tool.id} className="chip chip--info">
+        <span key={tool.id} className="chip chip--info chip--live">
           <Loader2 size={12} className="spin" aria-hidden />
           {tool.name}
           {tool.detail ? ` — ${tool.detail}` : ""}

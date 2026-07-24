@@ -40,12 +40,7 @@ describe("session navigation controls", () => {
   it("collapses folders, exposes search matches, and pins without selecting", async () => {
     const onSelect = vi.fn();
     render(
-      <Nav
-        collapsed={false}
-        onOpenSettings={() => undefined}
-        onNewSession={() => undefined}
-        onSelectSession={onSelect}
-      />,
+      <Nav collapsed={false} onNewSession={() => undefined} onSelectSession={onSelect} />,
     );
 
     const alphaGroup = screen.getByRole("button", { name: "alpha" });

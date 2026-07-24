@@ -50,14 +50,6 @@ describe("preference persistence", () => {
     expect(saved.at(-1)).toMatchObject({ theme: "dark" });
   });
 
-  it("setReadingSerif toggles the reading font preference", async () => {
-    const store = new AppStore();
-    await store.init("token");
-    store.setReadingSerif(true);
-    expect(store.getState().prefs.readingSerif).toBe(true);
-    await vi.waitFor(() => expect(saved.some((body) => body.readingSerif === true)).toBe(true));
-  });
-
   it("setLaunch switches the launch behavior preference", async () => {
     const store = new AppStore();
     await store.init("token");

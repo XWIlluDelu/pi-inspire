@@ -87,4 +87,18 @@ describe("ResourceStore", () => {
 
     await expect(resources.resolve({ sessionId: "s1", cwd: project, messages: [] }, "linked.txt")).rejects.toMatchObject({ status: 403 });
   });
+
+  it("keeps a git-indexed symlink inside the workspace boundary", async () => {
+    const { root, project } = await workspace();
+    const secret = join(root, "outside.txt");
+    await writeFile(secret, "outside");
+    await symlink(secret, join(project, "linked.txt"));
+    // A git cwd indexes the symlink itself (ls-files -co), unlike the
+    // bounded walk — index membership must still not follow it outside.
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    await promisify(execFile)("git", ["-C", project, "init", "-q"]);
+
+    await expect(resources.resolve({ sessionId: "s1", cwd: project, messages: [] }, "linked.txt")).rejects.toMatchObject({ status: 403 });
+  });
 });

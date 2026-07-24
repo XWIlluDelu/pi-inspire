@@ -8,6 +8,8 @@ import {
   type ActiveSnapshot,
   type InspirePreferences,
   type LaunchPreference,
+  type ProjectDirEntry,
+  type ProjectDisplayPreference,
   type ResourceDescriptor,
   type RunState,
   type SessionRuntimeStatus,
@@ -52,7 +54,8 @@ export type { ActivityTool, ExtensionUiRequest, Notice, QueueInfo, RetryInfo, Wi
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "offline";
 
-/** Text-like previews are range-capped; the host answers 206 when truncated. */
+/** Text-like previews are range-capped; a body shorter than the file's
+ * size marks the preview truncated. */
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
 
 /** In-document CSP injected into sandboxed HTML previews: no scripts (the
@@ -100,6 +103,35 @@ export interface PiCommand {
   source?: string;
 }
 
+/** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
+ * null right after a compaction until the next assistant response reports
+ * fresh usage; the whole value is null when Pi provides no usable stats. */
+export interface ContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}
+
+export function contextUsage(stats: unknown): ContextUsage | null {
+  if (!stats || typeof stats !== "object") return null;
+  const raw = (stats as { contextUsage?: unknown }).contextUsage;
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const contextWindow =
+    typeof record.contextWindow === "number" && Number.isFinite(record.contextWindow) && record.contextWindow > 0
+      ? record.contextWindow
+      : null;
+  if (contextWindow === null) return null;
+  const tokens = typeof record.tokens === "number" && Number.isFinite(record.tokens) ? record.tokens : null;
+  const percent =
+    typeof record.percent === "number" && Number.isFinite(record.percent)
+      ? record.percent
+      : tokens !== null
+        ? (tokens / contextWindow) * 100
+        : null;
+  return { tokens, contextWindow, percent };
+}
+
 export interface PendingAttachment {
   localId: string;
   fileName: string;
@@ -117,6 +149,8 @@ export interface AppState extends EventSlice {
   connection: ConnectionState;
   bootstrapped: boolean;
   mock: boolean;
+  /** Host-reported insπre version, shown on the settings page. */
+  version: string;
   prefs: InspirePreferences;
   sessionId: string | null;
   sessionName: string;
@@ -126,7 +160,9 @@ export interface AppState extends EventSlice {
   thinkingLevel: string;
   availableModels: ModelOption[];
   commands: PiCommand[];
-  stats: unknown;
+  /** Context-window occupancy parsed from Pi's session stats at the
+   * snapshot boundary; null when Pi provides no usable data. */
+  contextUsage: ContextUsage | null;
   sessions: SessionSummary[];
   sessionQuery: string;
   /** Authoritative per-session runtime status for every live session worker,
@@ -154,6 +190,7 @@ const initialState: AppState = {
   connection: "connecting",
   bootstrapped: false,
   mock: false,
+  version: "",
   prefs: defaultPreferences,
   sessionId: null,
   sessionName: "",
@@ -163,7 +200,7 @@ const initialState: AppState = {
   thinkingLevel: "medium",
   availableModels: [],
   commands: [],
-  stats: null,
+  contextUsage: null,
   sessions: [],
   sessionQuery: "",
   sessionStatuses: {},
@@ -232,6 +269,7 @@ export class AppStore {
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
+        version: boot.version,
         bootstrapped: true,
         needsToken: false,
       });
@@ -281,7 +319,7 @@ export class AppStore {
       thinkingLevel: typeof active?.thinkingLevel === "string" ? active.thinkingLevel : this.state.thinkingLevel,
       availableModels: Array.isArray(active?.availableModels) ? (active.availableModels as ModelOption[]) : [],
       commands: Array.isArray(active?.commands) ? (active.commands as PiCommand[]) : [],
-      stats: active?.stats ?? null,
+      contextUsage: contextUsage(active?.stats ?? null),
       messages,
       streaming: Boolean(active?.isStreaming),
       runState: snapshot.runState,
@@ -619,16 +657,6 @@ export class AppStore {
     }
   };
 
-  compact = async (customInstructions?: string): Promise<void> => {
-    if (!this.api) return;
-    try {
-      await this.api.compact(customInstructions);
-      this.set({ error: null });
-    } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to compact");
-    }
-  };
-
   setModel = async (provider: string, modelId: string): Promise<void> => {
     if (!this.api) return;
     try {
@@ -725,6 +753,16 @@ export class AppStore {
     return result.files;
   };
 
+  /** One level of the workspace explorer; failures read as an empty level. */
+  listProjectDirectory = async (dir: string): Promise<ProjectDirEntry[]> => {
+    if (!this.api) return [];
+    try {
+      return (await this.api.listFiles(dir)).entries;
+    } catch {
+      return [];
+    }
+  };
+
   private clearComposerArtifacts(): void {
     for (const item of this.state.attachments) {
       if (item.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(item.previewUrl);
@@ -770,7 +808,8 @@ export class AppStore {
 
   setTheme = (theme: ThemePreference): void => this.savePrefs({ ...this.state.prefs, theme });
   setLaunch = (launch: LaunchPreference): void => this.savePrefs({ ...this.state.prefs, launch });
-  setReadingSerif = (readingSerif: boolean): void => this.savePrefs({ ...this.state.prefs, readingSerif });
+  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void =>
+    this.savePrefs({ ...this.state.prefs, projectDisplay });
   setThinkingVisibility = (value: VisibilityPreference): void =>
     this.savePrefs({ ...this.state.prefs, thinkingVisibility: value });
   setToolVisibility = (value: VisibilityPreference): void =>
@@ -823,7 +862,7 @@ export class AppStore {
         return;
       }
       const textLike = descriptor.kind === "text" || descriptor.kind === "markdown" || descriptor.kind === "html";
-      const { blob, truncated } = await this.api.resourceContent(
+      const blob = await this.api.resourceContent(
         descriptor.id,
         sessionId,
         textLike ? TEXT_PREVIEW_BYTES : undefined,
@@ -843,7 +882,9 @@ export class AppStore {
             reference,
             descriptor,
             text,
-            truncated,
+            // A 206 also answers full-coverage ranges, so judge truncation
+            // by what actually arrived against the file's stat size.
+            truncated: blob.size < descriptor.size,
             ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
           },
         });

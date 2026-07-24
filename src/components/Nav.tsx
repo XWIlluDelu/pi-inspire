@@ -1,18 +1,26 @@
 import {
-  ChevronDown,
   ChevronRight,
+  ChevronUp,
+  FileText,
   Folder,
+  Inbox,
   Loader2,
   Pin,
   PinOff,
   Plus,
-  RefreshCw,
   Search,
-  Settings as SettingsIcon,
+  SearchX,
 } from "lucide-react";
-import { projectNameFromCwd, type SessionIndicator, type SessionSummary } from "../../shared/contracts";
+import { Fragment, useEffect, useState } from "react";
+import {
+  projectNameFromCwd,
+  type ProjectDirEntry,
+  type SessionIndicator,
+  type SessionSummary,
+} from "../../shared/contracts";
 import { store, useAppState } from "../store";
 import { relativeTime } from "./Transcript";
+import { Wordmark } from "./Wordmark";
 
 export interface SessionGroup {
   cwd: string;
@@ -71,6 +79,112 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
   failed: "Failed",
 };
 
+/** Read-only explorer for the visible session's workspace. Collapsed it is a
+ * single bar at the bottom of the nav; expanded it takes the lower half.
+ * Levels come from the host's project index (same source as the composer's
+ * file search), and clicking a file opens the session-bound preview. */
+function WorkspaceExplorer() {
+  const state = useAppState();
+  const cwd = state.sessionId ? state.cwd : null;
+  const [open, setOpen] = useState(false);
+  const [levels, setLevels] = useState<Map<string, ProjectDirEntry[]>>(new Map());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // The tree always reflects the visible session's workspace.
+  useEffect(() => {
+    setLevels(new Map());
+    setExpanded(new Set());
+  }, [cwd]);
+
+  const load = (dir: string) => {
+    // The listing resolves against whichever workspace the host has active
+    // when it lands; drop it if this explorer no longer shows that one.
+    const owner = cwd;
+    void store.listProjectDirectory(dir).then((entries) => {
+      if (store.getState().cwd !== owner) return;
+      setLevels((previous) => new Map(previous).set(dir, entries));
+    });
+  };
+
+  useEffect(() => {
+    if (open && cwd !== null) load("");
+    // the reset effect above clears levels on cwd change; reloading the root
+    // on open/cwd keeps the visible tree fresh without polling
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, cwd]);
+
+  if (!cwd) return null;
+
+  const toggleDir = (path: string) => {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    if (!levels.has(path)) load(path);
+  };
+
+  const renderLevel = (dir: string, depth: number): React.ReactNode => {
+    const entries = levels.get(dir);
+    const indent = { paddingLeft: `${12 + depth * 14}px` };
+    if (!entries) return <div className="explorer__note" style={indent}>Loading…</div>;
+    if (entries.length === 0) return <div className="explorer__note" style={indent}>Empty</div>;
+    return entries.map((entry) => {
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.type === "dir") {
+        const isOpen = expanded.has(path);
+        return (
+          <Fragment key={path}>
+            <button
+              type="button"
+              className="explorer__row"
+              style={indent}
+              aria-expanded={isOpen}
+              onClick={() => toggleDir(path)}
+            >
+              <ChevronRight size={11} className={`chev ${isOpen ? "chev--open" : ""}`} aria-hidden />
+              <Folder size={12} aria-hidden />
+              <span className="explorer__name">{entry.name}</span>
+            </button>
+            {isOpen ? renderLevel(path, depth + 1) : null}
+          </Fragment>
+        );
+      }
+      return (
+        <button
+          key={path}
+          type="button"
+          className="explorer__row explorer__row--file"
+          style={indent}
+          title={path}
+          onClick={() => void store.openResource(path)}
+        >
+          <FileText size={12} aria-hidden />
+          <span className="explorer__name">{entry.name}</span>
+        </button>
+      );
+    });
+  };
+
+  return (
+    <section className={`explorer ${open ? "explorer--open" : ""}`} aria-label="Workspace files">
+      <button
+        type="button"
+        className="explorer__header"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title={cwd}
+      >
+        <Folder size={13} aria-hidden />
+        <span className="explorer__title">{state.project}</span>
+        <ChevronUp size={12} className={`chev-flip ${open ? "chev-flip--open" : ""}`} aria-hidden />
+      </button>
+      {open ? <div className="explorer__tree">{renderLevel("", 0)}</div> : null}
+    </section>
+  );
+}
+
 function SessionRow({
   session,
   showProject = false,
@@ -101,6 +215,7 @@ function SessionRow({
         onClick={() => onSelect(session.id)}
         disabled={state.openingSessionId !== null}
         aria-busy={opening}
+        title={title}
       >
         <span className="nav__row-title">
           {opening ? (
@@ -113,8 +228,7 @@ function SessionRow({
               title={INDICATOR_LABELS[attention]}
             />
           ) : null}
-          {pinned ? <Pin size={11} className="nav__row-pin-glyph" aria-hidden /> : null}
-          {title}
+          <span className="nav__row-name">{title}</span>
         </span>
         <span className="nav__row-meta">
           {showProject ? <span className="nav__row-project">{projectNameFromCwd(session.cwd)}</span> : null}
@@ -147,12 +261,10 @@ function SessionRow({
 
 export function Nav({
   collapsed,
-  onOpenSettings,
   onNewSession,
   onSelectSession,
 }: {
   collapsed: boolean;
-  onOpenSettings: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
 }) {
@@ -161,15 +273,11 @@ export function Nav({
   if (collapsed) {
     return (
       <nav className="nav nav--rail" aria-label="Sessions">
-        <div className="nav__brand nav__brand--rail" title="insπre">
+        <div className="nav__brand-rail" title="insπre" aria-hidden>
           π
         </div>
         <button type="button" className="icon-button" onClick={onNewSession} title="New session" aria-label="New session">
           <Plus size={16} aria-hidden />
-        </button>
-        <span className="nav__rail-spacer" />
-        <button type="button" className="icon-button" onClick={onOpenSettings} title="Settings" aria-label="Open settings">
-          <SettingsIcon size={16} aria-hidden />
         </button>
       </nav>
     );
@@ -184,14 +292,14 @@ export function Nav({
 
   return (
     <nav className="nav" aria-label="Sessions">
-      <div className="nav__brand">
-        <span className="wordmark">insπre</span>
+      <div className="nav__header">
+        <Wordmark />
         {state.mock ? <span className="nav__mock">mock</span> : null}
       </div>
-      <button type="button" className="button button--primary nav__new" onClick={onNewSession}>
-        <Plus size={14} aria-hidden /> New session
-      </button>
-      <div className="nav__search-row">
+      <div className="nav__controls">
+        <button type="button" className="button button--primary nav__new" onClick={onNewSession}>
+          <Plus size={14} aria-hidden /> New session
+        </button>
         <label className="nav__search">
           <Search size={13} aria-hidden />
           <input
@@ -202,21 +310,12 @@ export function Nav({
             onChange={(event) => store.searchSessions(event.target.value)}
           />
         </label>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => void store.refreshSessions()}
-          title="Refresh session list"
-          aria-label="Refresh session list"
-        >
-          <RefreshCw size={14} aria-hidden />
-        </button>
       </div>
       <div className="nav__list">
         {pinned.length > 0 ? (
           <section className="nav__group nav__group--pinned" aria-labelledby="nav-pinned-title">
             <h2 className="nav__group-title" id="nav-pinned-title">
-              <Pin size={11} aria-hidden />
+              <Pin size={12} aria-hidden />
               <span className="nav__group-name">Pinned</span>
             </h2>
             {pinned.map((session) => (
@@ -225,15 +324,18 @@ export function Nav({
           </section>
         ) : null}
         {groups.map((group, groupIndex) => {
-          // The active session's group is never hidden behind a collapse.
-          const expanded =
-            searching ||
-            !collapsedGroups.has(group.cwd) ||
-            group.sessions.some((session) => session.id === state.sessionId);
+          const expanded = searching || !collapsedGroups.has(group.cwd);
+          // A collapsed folder that hides the active session carries the
+          // active highlight itself.
+          const activeInside = group.sessions.some((session) => session.id === state.sessionId);
           const headingId = `nav-group-title-${groupIndex}`;
           return (
             <section className="nav__group" key={group.cwd} aria-labelledby={headingId}>
-              <h2 className="nav__group-title" title={group.cwd} id={headingId}>
+              <h2
+                className={`nav__group-title ${!expanded && activeInside ? "nav__group-title--active" : ""}`}
+                title={group.cwd}
+                id={headingId}
+              >
                 <button
                   type="button"
                   className="nav__group-toggle"
@@ -241,12 +343,8 @@ export function Nav({
                   disabled={searching}
                   onClick={() => store.toggleNavGroup(group.cwd)}
                 >
-                  {expanded ? (
-                    <ChevronDown size={11} aria-hidden />
-                  ) : (
-                    <ChevronRight size={11} aria-hidden />
-                  )}
-                  <Folder size={11} aria-hidden />
+                  <ChevronRight size={12} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
+                  <Folder size={13} aria-hidden />
                   <span className="nav__group-name">{group.name}</span>
                   {(nameCounts.get(group.name) ?? 0) > 1 ? (
                     <span className="nav__group-context">{parentSegment(group.cwd)}</span>
@@ -264,13 +362,21 @@ export function Nav({
             </section>
           );
         })}
-        {state.sessions.length === 0 ? <div className="nav__empty">No sessions found</div> : null}
+        {state.sessions.length === 0 ? (
+          <div className="empty-state">
+            {searching ? (
+              <SearchX size={26} strokeWidth={1.5} aria-hidden />
+            ) : (
+              <Inbox size={26} strokeWidth={1.5} aria-hidden />
+            )}
+            <span className="empty-state__title">{searching ? "No sessions found" : "No sessions yet"}</span>
+            <span className="empty-state__hint">
+              {searching ? "Try a different keyword" : "Start a session to begin"}
+            </span>
+          </div>
+        ) : null}
       </div>
-      <div className="nav__footer">
-        <button type="button" className="button nav__settings" onClick={onOpenSettings}>
-          <SettingsIcon size={14} aria-hidden /> Settings
-        </button>
-      </div>
+      <WorkspaceExplorer />
     </nav>
   );
 }

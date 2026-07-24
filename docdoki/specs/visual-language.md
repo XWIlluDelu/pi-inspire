@@ -28,12 +28,16 @@ primary interface, and visually independent from its references.
 - Light and dark themes share one component architecture, default to the
   system preference, and preserve the same information hierarchy; light is
   the primary tuning target.
-- Each theme carries exactly one accent family — teal in light, industrial
-  chartreuse in dark — and neutral surfaces carry the rest; the exact
-  values, roles, and usage discipline are the [[design-system]] contract.
-- IBM Plex (Sans SC / Serif / Mono) is the single type voice: sans owns the
-  interface and all reading flow, serif exists only in the `insπre`
-  wordmark, mono owns code and machine-oriented data. There is no
+- Each theme carries exactly one brand accent family — the same teal hue
+  in light and dark, tuned per theme for contrast on its surfaces — plus
+  a small fixed set of semantic annotation hues (thinking violet, tool
+  info blue, failure red) that mark meaning rather than decorate; the
+  exact values, roles, and usage discipline are the [[design-system]]
+  contract.
+- One type voice per role — Noto Sans SC owns the interface and all
+  reading flow (Latin and CJK in a single family), IBM Plex Serif exists
+  only in the italic `insπre` wordmark whose π sets in the KaTeX math
+  face, IBM Plex Mono owns code and machine-oriented data. There is no
   reading-mode font switch.
 - All palette, type, spacing, radius, elevation, and motion values remain
   centralized as shared CSS tokens in `src/styles.css`, implementing the
@@ -51,5 +55,5 @@ primary interface, and visually independent from its references.
 - The visual system does not copy any reference application’s palette,
   typography assets, artwork, or GUI code.
 - Light and dark themes do not become separate product personalities with
-  different navigation or component behavior; the per-theme accent hue is
-  the only sanctioned difference.
+  different navigation or component behavior; per-theme tuning of the
+  shared accent and annotation hues is the only sanctioned difference.

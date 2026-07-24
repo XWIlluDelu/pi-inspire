@@ -151,6 +151,33 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("routes a typed /compact to the RPC compact command instead of prompting", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+
+    await runtime.openSession("a");
+    await runtime.prompt({ message: "/compact focus on the parser work" });
+    expect(worker.commands.find((command) => command.type === "compact")).toMatchObject({
+      customInstructions: "focus on the parser work",
+    });
+    expect(worker.commands.some((command) => command.type === "prompt")).toBe(false);
+
+    // Only the exact command is intercepted; similar text still prompts.
+    await runtime.prompt({ message: "/compaction strategies?" });
+    expect(worker.commands.some((command) => command.type === "prompt")).toBe(true);
+    await runtime.close();
+  });
+
   it("single-flights concurrent opens of the same session", async () => {
     const store = new AttachmentStore();
     attachments.push(store);

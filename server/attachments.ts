@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Express } from "express";
 import { MAX_ATTACHMENTS, MAX_PROJECT_FILES, type UploadedAttachment } from "../shared/contracts.js";
+import { escapesBase } from "./paths.js";
 
 interface StoredAttachment extends UploadedAttachment {
   path: string;
@@ -86,8 +87,7 @@ export async function resolveProjectFiles(cwd: string, requested: string[] = [])
     [...new Set(requested)].slice(0, MAX_PROJECT_FILES).map(async (raw) => {
       const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
       const actual = await realpath(candidate);
-      const rel = relative(root, actual);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
+      if (escapesBase(relative(root, actual))) {
         throw new Error(`Project file is outside the active project: ${raw}`);
       }
       return actual;

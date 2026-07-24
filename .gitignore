@@ -9,5 +9,8 @@
 !.env.example
 *.log
 *.tsbuildinfo
+/output/
+/.playwright-cli/
+/.playwright-mcp/
 /docdoki/stages/archive/
 /docs/redesign/

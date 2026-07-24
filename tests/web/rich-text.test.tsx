@@ -114,6 +114,6 @@ describe("markdown constructs", () => {
     const { container } = render(<RichText text={"```python\nprint(1)\n```"} />);
     expect(container.querySelector(".code-block__lang")?.textContent).toBe("python");
     expect(container.querySelector("code.hljs")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
   });
 });
