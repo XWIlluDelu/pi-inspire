@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   File,
   FileCode,
+  FileSearch,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -211,8 +212,10 @@ export function ResourcesPane() {
       </div>
       {resources.length === 0 ? (
         state.resourcePreview ? null : (
-          <div className="res__empty">
-            No files referenced yet — files Pi reads, writes, or you mention appear here.
+          <div className="empty-state">
+            <FileSearch size={26} strokeWidth={1.5} aria-hidden />
+            <span className="empty-state__title">No files yet</span>
+            <span className="empty-state__hint">Files Pi reads, writes, or you mention appear here</span>
           </div>
         )
       ) : (

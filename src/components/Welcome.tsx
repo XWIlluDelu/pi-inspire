@@ -45,6 +45,7 @@ export function Welcome() {
 
   return (
     <div className="welcome">
+      <span className="welcome__mark" aria-hidden />
       <div className="welcome__hero">
         <Wordmark large />
         <p className="welcome__tagline">A workbench for Pi</p>

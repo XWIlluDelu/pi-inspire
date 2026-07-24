@@ -100,6 +100,33 @@ After the round, `npm run check` is green: typecheck plus 137 tests
 across 18 files, and both themes were re-verified by mock-host
 screenshots.
 
+An element-stylization round followed the same day (2026-07-24), approved
+from rendered HTML samples; layout again untouched:
+
+- Chips became tinted capsules with a motion grammar: entrance
+  fade-scale everywhere, a breathing halo (own hue) on states still in
+  progress — running, retrying, compacting, live tools, reconnect — a
+  slow-rotating icon on compacting, stillness on terminal states. The
+  mock badge joined the same surface.
+- Nav session rows: the active tint fades toward the right (pointing at
+  the accent edge), the running dot breathes, settled attention dots
+  rest under a soft ring. Row-title ellipsis moved to an inner span so
+  the halo is not clipped by the truncation box.
+- One focus grammar for every text field: border settles on accent plus
+  a 3px `accent-tint` halo (the session search previously had no focus
+  feedback at all; the composer used a hard 1px ring). Wrappers stay
+  quiet while an inner field with its own halo holds focus.
+- Primary empty states (session list, palette, files pane) share an
+  icon + title + hint stack; dense-tree notes stay single-line.
+- Modal surfaces gained depth: the scrim blurs the workbench (7px), the
+  dialog pops from 97% with a spring hint, and a dedicated
+  `--shadow-overlay` token survives in dark.
+- The welcome canvas carries a huge 4%-ink KaTeX math-italic π
+  watermark, clipped by its own layer.
+
+`npm run check` stayed green (typecheck + 137 tests); both themes and the
+overlay/empty/focus states were re-verified by screenshot.
+
 ## Next actions
 
 None standing. Future theme tuning happens inside the token layer; new

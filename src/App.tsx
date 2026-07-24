@@ -33,40 +33,42 @@ export function resolveTheme(pref: ThemePreference, systemDark: boolean): "light
 }
 
 function StateChip({ runState }: { runState: RunState }) {
+  // Keys force a remount across state changes so the entrance animation
+  // replays; `chip--live` marks states still in progress (they breathe).
   switch (runState) {
     case "running":
       return (
-        <span className="chip chip--accent">
+        <span key="running" className="chip chip--accent chip--live">
           <Loader2 size={12} className="spin" aria-hidden /> Running
         </span>
       );
     case "retrying":
       return (
-        <span className="chip chip--warning">
+        <span key="retrying" className="chip chip--warning chip--live">
           <AlertTriangle size={12} aria-hidden /> Retrying
         </span>
       );
     case "compacting":
       return (
-        <span className="chip chip--info">
-          <RefreshCw size={12} aria-hidden /> Compacting
+        <span key="compacting" className="chip chip--info chip--live">
+          <RefreshCw size={12} className="spin-slow" aria-hidden /> Compacting
         </span>
       );
     case "queued":
       return (
-        <span className="chip chip--muted">
+        <span key="queued" className="chip chip--muted">
           <Clock size={12} aria-hidden /> Queued
         </span>
       );
     case "aborted":
       return (
-        <span className="chip chip--error">
+        <span key="aborted" className="chip chip--error">
           <Ban size={12} aria-hidden /> Aborted
         </span>
       );
     case "failed":
       return (
-        <span className="chip chip--error">
+        <span key="failed" className="chip chip--error">
           <XCircle size={12} aria-hidden /> Failed
         </span>
       );
@@ -317,7 +319,7 @@ export function App() {
           ))}
           <span className="topbar__spacer" />
           {state.connection !== "open" ? (
-            <span className="chip chip--warning">
+            <span className="chip chip--warning chip--live">
               <Loader2 size={12} className="spin" aria-hidden />
               {state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
             </span>

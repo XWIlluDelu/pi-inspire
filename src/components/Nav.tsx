@@ -3,11 +3,13 @@ import {
   ChevronUp,
   FileText,
   Folder,
+  Inbox,
   Loader2,
   Pin,
   PinOff,
   Plus,
   Search,
+  SearchX,
 } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import {
@@ -226,7 +228,7 @@ function SessionRow({
               title={INDICATOR_LABELS[attention]}
             />
           ) : null}
-          {title}
+          <span className="nav__row-name">{title}</span>
         </span>
         <span className="nav__row-meta">
           {showProject ? <span className="nav__row-project">{projectNameFromCwd(session.cwd)}</span> : null}
@@ -360,7 +362,19 @@ export function Nav({
             </section>
           );
         })}
-        {state.sessions.length === 0 ? <div className="nav__empty">No sessions found</div> : null}
+        {state.sessions.length === 0 ? (
+          <div className="empty-state">
+            {searching ? (
+              <SearchX size={26} strokeWidth={1.5} aria-hidden />
+            ) : (
+              <Inbox size={26} strokeWidth={1.5} aria-hidden />
+            )}
+            <span className="empty-state__title">{searching ? "No sessions found" : "No sessions yet"}</span>
+            <span className="empty-state__hint">
+              {searching ? "Try a different keyword" : "Start a session to begin"}
+            </span>
+          </div>
+        ) : null}
       </div>
       <WorkspaceExplorer />
     </nav>

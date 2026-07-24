@@ -91,11 +91,13 @@ tokens:
     level-0: "none; 1px hairline border"
     level-1: "0 1px 2px rgba(23,31,29,0.06)"
     level-2: "0 4px 16px rgba(23,31,29,0.10)"
-    dark-note: "dark theme replaces shadows with surface-raised + hairline-strong"
+    overlay: "0 24px 64px rgba(23,31,29,0.18); 40%-alpha scrim + 7px backdrop blur"
+    dark-note: "dark theme replaces level-1/2 with surface-raised + hairline-strong; the overlay shadow remains (0 24px 64px rgba(0,0,0,0.40))"
   motion:
     micro: "120ms ease-out"     # hover, focus, chip state
     standard: "180ms ease-out"  # card collapse, palette open
     panel: "240ms ease-out"     # nav/context slide
+    breathe: "1.8–2.4s ease-in-out loop"  # live chips and dots only
 ---
 
 # Design system
@@ -247,10 +249,13 @@ the maximum).
   cards, composer, nav rows, code blocks. Hairline border, no shadow.
 - **Level 1** (`{elevation.level-1}`): sticky/transient in-flow elements —
   jump-to-latest, banners.
-- **Level 2** (`{elevation.level-2}`): floating surfaces — command palette,
-  dialogs, pickers, notices.
-- Dark theme conveys the same three levels with `surface` →
-  `surface-raised` steps and `hairline-strong` edges instead of shadows.
+- **Level 2** (`{elevation.level-2}`): anchored floating surfaces — pickers,
+  notices, dropdowns.
+- **Overlay** (`{elevation.overlay}`): modal surfaces — command palette,
+  settings, extension dialogs. The scrim carries a 7px backdrop blur so the
+  workbench recedes into depth-of-field; this is the one shadow dark keeps.
+- Dark theme conveys levels 0–2 with `surface` → `surface-raised` steps and
+  `hairline-strong` edges instead of shadows.
 
 ## Shapes
 
@@ -278,11 +283,15 @@ code. No other radii.
 
 ### Chips & badges
 
-Pill chips (`{rounded.pill}`, `{typography.size-xs}`, 2px×9px padding) carry
-run state, tool activity, queue counts, and statuses. Variants: muted
-(hairline + `muted`), accent (running/selected: `accent` text with
-`accent`-alpha border, filled `accent-fill` only for the primary run state),
-warning/error/info via semantic colors. Chips are single-line, icon 12px.
+Tinted capsules (`{rounded.pill}`, `{typography.size-xs}`/500, 0.02em
+tracking, 2px×10px padding): each semantic variant fills with its hue at
+10% over a 22% border — accent, warning, info, error — while muted sits on
+`surface-inset` with a plain hairline. Chips are single-line, icon 12px.
+Motion is part of the grammar: every chip enters with a 96%→100%
+fade-scale, and a state still in progress (running, retrying, compacting,
+live tool, reconnect) breathes a soft halo in its own hue
+(`{motion.breathe}`); terminal states rest. The mock badge shares the
+warning capsule surface.
 
 ### Workbench chrome
 
@@ -299,6 +308,10 @@ warning/error/info via semantic colors. Chips are single-line, icon 12px.
   (opens the settings overlay), and context-pane toggle at the right. There
   is no compact button: users type `/compact [instructions]`, which the
   host routes to Pi's RPC compact command.
+- **Start surface** — the welcome canvas carries the one piece of brand
+  ornament: a huge KaTeX math-italic π watermark at 4% ink (5% in dark)
+  receding into the lower-right corner, clipped by its own layer so it
+  never scrolls or intercepts input.
 
 ### Navigation
 
@@ -309,9 +322,11 @@ warning/error/info via semantic colors. Chips are single-line, icon 12px.
 - Groups collapse freely — including the active session's group; a collapsed
   folder that hides the active session takes the `accent-tint` highlight and
   2px `accent` left edge itself. Active search overrides collapse.
-- Row hover shows `surface-inset`; the active row shows `accent-tint` plus a
-  2px `accent` inset edge; running/attention dots use `accent`,
-  `success`, `error`.
+- Row hover shows `surface-inset`; the active row pairs the 2px `accent`
+  inset edge with an `accent-tint` wash that fades toward the right, so the
+  highlight points back at the edge. Running/attention dots use `accent`,
+  `success`, `error`; the running dot breathes (`{motion.breathe}`) while
+  settled attention dots rest under a soft 3px ring of their hue.
 - The pin action floats at the row's right edge and appears on hover/focus
   (always on touch); pinned sessions live in one global Pinned section.
 - The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
@@ -374,8 +389,11 @@ composer. Drop targeting tints the composer with `accent-tint` and a dashed
 
 ### Command palette, settings & dialogs
 
-Centered overlays at Level 2 on a 40%-alpha scrim; palette 560px wide,
-`{rounded.lg}`, input row + grouped result list (group label
+Centered modal surfaces at the Overlay level: the scrim dims at 40% alpha
+and blurs the workbench behind it (7px + 15% saturation lift), and the
+surface pops in — 97%→100% scale with a hint of spring
+(`cubic-bezier(0.2, 0.9, 0.25, 1)`) over `{motion.standard}`. Palette 560px
+wide, `{rounded.lg}`, input row + grouped result list (group label
 `{typography.size-xs}` uppercase tracked `faint`); active row `accent-tint`
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
 within 80dvh), not a page: sectioned cards for appearance (theme, project
@@ -383,6 +401,14 @@ location), card visibility, startup, and about; Escape and the scrim close
 it, and Escape never leaks to the global abort shortcut. Extension dialogs
 share the same surface with title at `{typography.size-lg}` semibold and
 right-aligned action row.
+
+### Empty states
+
+Primary empty surfaces (session list, command palette results, files pane)
+share one stack: a 26px 1.5-stroke `faint` icon, a `{typography.size-sm}`
+500 `muted` title, and one `{typography.size-xs}` `faint` hint line,
+centered. Inline notes inside dense trees (explorer levels, file picker)
+stay single-line text.
 
 ### Notices & banners
 
@@ -395,14 +421,21 @@ hairline.
 
 `:focus-visible` shows a 2px `accent` outline with 2px offset on every
 interactive element in both themes; no focus styling on plain mouse click.
+Text fields use one shared grammar instead of the outline: the border
+settles on `accent` and a 3px `accent-tint` halo marks the focused surface
+(`{motion.micro}` transition). Wrappers light up for the field they carry —
+never two surfaces at once: the welcome composer stays quiet while its
+project-directory field holds focus.
 
 ## Motion
 
 `{motion.micro}` for hover/focus/chip changes, `{motion.standard}` for card
-collapse and palette/dialog entry (opacity + 4px translate),
-`{motion.panel}` for nav/context slide. Spinners are the only looping
-animation. Streaming text must never animate per-token; it appears by
-layout only. `prefers-reduced-motion` reduces everything to opacity.
+collapse, chip entry (fade + 96% scale), and modal pop-in (97% scale with a
+spring hint), `{motion.panel}` for nav/context slide. Looping animation is
+reserved for work in progress: spinners, and the `{motion.breathe}` halo on
+live chips and the running dot. Terminal states never loop. Streaming text
+must never animate per-token; it appears by layout only — the accent caret
+marks arrival. `prefers-reduced-motion` reduces everything to opacity.
 
 ## Do's and don'ts
 
@@ -421,11 +454,15 @@ layout only. `prefers-reduced-motion` reduces everything to opacity.
 
 ### Don't
 
-- No serif outside the wordmark; no reading-mode font switching.
-- No weight 700+, no letter-spacing on CJK, no font-size improvisation
+- No serif outside the wordmark and the welcome watermark; no reading-mode
+  font switching.
+- No weight 700+, no letter-spacing on CJK running text (the 0.02em chip
+  micro-labels are the sanctioned exception), no font-size improvisation
   outside the scale.
 - No second decorative hue — the annotation palette is semantic, never
-  ornament — no gradients, no glow, no large accent fills.
+  ornament. Gradients and glows exist only as sanctioned grammar: the
+  active-row tint fade, the focus halo, and the live breathing pulse — no
+  large accent fills.
 - No shadows on resting surfaces; no borderless floating cards.
 - No per-component palette values, and no theme-specific component
   structure.

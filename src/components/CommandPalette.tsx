@@ -1,3 +1,4 @@
+import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VISIBILITY_PREFERENCES, type ThemePreference } from "../../shared/contracts";
 import { isBusyRunState, store, useAppState } from "../store";
@@ -210,7 +211,13 @@ export function CommandPalette({
                 {item.hint ? <span className="palette__hint-inline">{item.hint}</span> : null}
               </button>
             ))}
-            {filtered.length === 0 ? <div className="palette__empty">No matching commands</div> : null}
+            {filtered.length === 0 ? (
+              <div className="empty-state">
+                <SearchX size={26} strokeWidth={1.5} aria-hidden />
+                <span className="empty-state__title">No matching commands</span>
+                <span className="empty-state__hint">Shorter words match more</span>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
