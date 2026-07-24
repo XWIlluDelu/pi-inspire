@@ -1,7 +1,6 @@
 import {
   Brain,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Loader2,
   Package,
@@ -75,7 +74,7 @@ function CollapsibleCard({ defaultVisibility, className, icon, label, summary, s
         {!open && summary ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary) : null}
         <span className="card__status">{status}</span>
         <span className="card__chevron">
-          {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+          <ChevronRight size={14} className={`chev ${open ? "chev--open" : ""}`} aria-hidden />
         </span>
       </button>
       {open ? <div className="card__body">{children}</div> : null}
@@ -282,7 +281,7 @@ const AssistantTurn = memo(function AssistantTurn({
 }) {
   const items = contentItems(message);
   return (
-    <div className="turn turn--assistant">
+    <div className={`turn turn--assistant ${streaming ? "turn--streaming" : ""}`}>
       {/* One attribution line: who, model (exactly once), time, and any
           unusual end reason. Routine "stop" is noise and stays hidden. */}
       <div className="turn__head">

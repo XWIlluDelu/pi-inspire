@@ -260,8 +260,9 @@ export function App() {
   }, [state.prefs.theme]);
 
   useEffect(() => {
-    document.title = state.windowTitle ?? "insπre";
-  }, [state.windowTitle]);
+    // Pi-driven titles win; otherwise the session name identifies the tab.
+    document.title = state.windowTitle ?? (state.sessionName ? `${state.sessionName} · insπre` : "insπre");
+  }, [state.windowTitle, state.sessionName]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

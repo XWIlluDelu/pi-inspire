@@ -81,7 +81,22 @@ A second, user-directed redesign round rode the same stage on 2026-07-23:
   is pinned to `^0.16.47` so one deduped instance supplies both the
   renderer and the stylesheet; superscripts measure exactly 0.7× again.
 
-After the round, `npm run check` is green: typecheck plus 136 tests
+A detail-polish round followed on 2026-07-24 (layout deliberately
+unchanged — a full restyle was sampled in four rendered directions and
+declined in favor of the current typography):
+
+- Content safety: rich-text images clamp to the column, wide tables
+  scroll internally, long words/paths wrap in prose and user bubbles.
+- Micro-interactions: disclosure chevrons rotate instead of swapping
+  glyphs, card bodies fade in on expand, buttons give press-scale
+  feedback, a quiet accent caret marks streaming text.
+- Small UX: visible text selection color per theme, larger code-copy hit
+  area, session-row/recent-row tooltips for truncated titles, palette
+  keyboard navigation keeps the active row in view, scroll containers use
+  overscroll containment, the tab title falls back to the session name,
+  and the attribution line's model/time render in mono.
+
+After the round, `npm run check` is green: typecheck plus 137 tests
 across 18 files, and both themes were re-verified by mock-host
 screenshots.
 

@@ -1,5 +1,4 @@
 import {
-  ChevronDown,
   ChevronRight,
   ChevronUp,
   FileText,
@@ -142,7 +141,7 @@ function WorkspaceExplorer() {
               aria-expanded={isOpen}
               onClick={() => toggleDir(path)}
             >
-              {isOpen ? <ChevronDown size={11} aria-hidden /> : <ChevronRight size={11} aria-hidden />}
+              <ChevronRight size={11} className={`chev ${isOpen ? "chev--open" : ""}`} aria-hidden />
               <Folder size={12} aria-hidden />
               <span className="explorer__name">{entry.name}</span>
             </button>
@@ -177,7 +176,7 @@ function WorkspaceExplorer() {
       >
         <Folder size={13} aria-hidden />
         <span className="explorer__title">{state.project}</span>
-        {open ? <ChevronDown size={12} aria-hidden /> : <ChevronUp size={12} aria-hidden />}
+        <ChevronUp size={12} className={`chev-flip ${open ? "chev-flip--open" : ""}`} aria-hidden />
       </button>
       {open ? <div className="explorer__tree">{renderLevel("", 0)}</div> : null}
     </section>
@@ -214,6 +213,7 @@ function SessionRow({
         onClick={() => onSelect(session.id)}
         disabled={state.openingSessionId !== null}
         aria-busy={opening}
+        title={title}
       >
         <span className="nav__row-title">
           {opening ? (
@@ -341,11 +341,7 @@ export function Nav({
                   disabled={searching}
                   onClick={() => store.toggleNavGroup(group.cwd)}
                 >
-                  {expanded ? (
-                    <ChevronDown size={12} aria-hidden />
-                  ) : (
-                    <ChevronRight size={12} aria-hidden />
-                  )}
+                  <ChevronRight size={12} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
                   <Folder size={13} aria-hidden />
                   <span className="nav__group-name">{group.name}</span>
                   {(nameCounts.get(group.name) ?? 0) > 1 ? (

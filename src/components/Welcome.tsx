@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Loader2, Send } from "lucide-react";
+import { ChevronRight, Loader2, Send } from "lucide-react";
 import { useState } from "react";
 import { store, useAppState } from "../store";
 import { relativeTime } from "./Transcript";
@@ -104,7 +104,7 @@ export function Welcome() {
               aria-expanded={recentOpen}
               onClick={() => setRecentOpen((value) => !value)}
             >
-              {recentOpen ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+              <ChevronRight size={12} className={`chev ${recentOpen ? "chev--open" : ""}`} aria-hidden />
               Recent sessions
             </button>
           </h2>
@@ -112,7 +112,12 @@ export function Welcome() {
             <div role="list">
               {recent.map((session) => (
                 <div role="listitem" key={session.id}>
-                  <button type="button" className="welcome__row" onClick={() => void store.openSession(session.id)}>
+                  <button
+                    type="button"
+                    className="welcome__row"
+                    title={session.title || "Untitled session"}
+                    onClick={() => void store.openSession(session.id)}
+                  >
                     <span className="welcome__row-title">{session.title || "Untitled session"}</span>
                     <span className="welcome__row-project">{session.project}</span>
                     <span className="welcome__row-time">{relativeTime(session.modified)}</span>

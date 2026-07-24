@@ -208,6 +208,7 @@
   --think: #7b5fc0;
   --think-tint: rgba(123, 95, 192, 0.06);
   --warning-tint: rgba(154, 107, 0, 0.08);
+  --selection: rgba(0, 146, 140, 0.22);
   --shadow-1: 0 1px 2px rgba(23, 31, 29, 0.06);
   --shadow-2: 0 4px 16px rgba(23, 31, 29, 0.1);
   --thumb: rgba(28, 35, 33, 0.18);
@@ -241,6 +242,7 @@
   --think: #b9a7ee;
   --think-tint: rgba(185, 167, 238, 0.1);
   --warning-tint: rgba(224, 176, 84, 0.12);
+  --selection: rgba(77, 216, 205, 0.28);
   --shadow-1: none;
   --shadow-2: none;
   --thumb: rgba(236, 239, 238, 0.16);
@@ -296,7 +298,7 @@ a {
 }
 
 ::selection {
-  background: var(--accent-tint);
+  background: var(--selection);
 }
 
 * {
@@ -373,12 +375,17 @@ a {
   font-size: var(--text-base);
   font-weight: 500;
   transition: background var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
+    border-color var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
 }
 
 .button:hover {
   border-color: var(--hairline-strong);
   background: var(--bg-inset);
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .button:disabled {
@@ -416,12 +423,17 @@ a {
   background: transparent;
   color: var(--muted);
   transition: background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
+    color var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
 }
 
 .icon-button:hover {
   background: var(--bg-inset);
   color: var(--ink);
+}
+
+.icon-button:active {
+  transform: scale(0.94);
 }
 
 .icon-button--active {
@@ -1106,6 +1118,7 @@ a {
 }
 
 .turn__detail {
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--faint);
 }
@@ -1115,8 +1128,24 @@ a {
   color: var(--warning);
 }
 
+/* A quiet caret marks where streamed text is still arriving. */
+.turn--streaming .assistant-doc > .rich-text:last-child > :is(p, h1, h2, h3, h4, li, ul, ol):last-child::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--accent);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .user-bubble {
   max-width: 85%;
+  min-width: 0;
+  overflow-wrap: break-word;
   background: var(--accent-tint);
   border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
   border-radius: var(--radius-lg);
@@ -1308,6 +1337,35 @@ a {
   background: var(--bg-inset);
   padding: var(--space-3);
   font-size: var(--text-sm);
+  animation: body-in var(--dur-standard) var(--ease-standard);
+}
+
+@keyframes body-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Disclosure chevrons rotate instead of swapping glyphs. */
+.chev {
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
+
+.chev--open {
+  transform: rotate(90deg);
+}
+
+.chev-flip {
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
+
+.chev-flip--open {
+  transform: rotate(180deg);
 }
 
 .card__section-label {
@@ -1368,12 +1426,21 @@ a {
 
 /* --- Rich text (rendered Markdown) --- */
 
+.rich-text {
+  overflow-wrap: break-word;
+}
+
 .rich-text > :first-child {
   margin-top: 0;
 }
 
 .rich-text > :last-child {
   margin-bottom: 0;
+}
+
+.rich-text img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
 }
 
 .rich-text h1 {
@@ -1420,6 +1487,10 @@ a {
   border-collapse: collapse;
   margin: var(--space-3) 0;
   font-size: var(--text-sm);
+  /* Wide tables scroll inside the column instead of breaking it. */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* Hairline row separators only; semibold header; no zebra. */
@@ -1498,16 +1569,20 @@ a {
 .code-block__copy {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: 0;
   background: transparent;
   color: var(--faint);
-  padding: 2px;
   border-radius: var(--radius-sm);
-  transition: color var(--dur-micro) var(--ease-standard);
+  transition: color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .code-block__copy:hover {
   color: var(--ink);
+  background: var(--bg-inset);
 }
 
 .code-block__pre {
@@ -1753,11 +1828,16 @@ a {
   border-radius: var(--radius-sm);
   background: var(--accent-fill);
   color: var(--on-accent);
-  transition: background var(--dur-micro) var(--ease-standard);
+  transition: background var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
 }
 
 .composer__send:hover {
   background: var(--accent-hover);
+}
+
+.composer__send:active:not(:disabled) {
+  transform: scale(0.92);
 }
 
 .composer__send:disabled {
@@ -2686,6 +2766,16 @@ a {
   .user-bubble {
     max-width: 88%;
   }
+}
+
+/* Scroll containers keep their momentum to themselves. */
+.transcript,
+.nav__list,
+.explorer__tree,
+.palette__list,
+.picker__list,
+.ctx {
+  overscroll-behavior: contain;
 }
 
 /* --- Reduced motion --- */

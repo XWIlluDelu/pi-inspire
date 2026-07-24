@@ -37,6 +37,7 @@ export function CommandPalette({
   const [index, setIndex] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const busy = isBusyRunState(state.runState);
 
   useEffect(() => {
@@ -131,6 +132,13 @@ export function CommandPalette({
   const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
 
+  // Keyboard navigation must keep the active row visible (jsdom has no
+  // scrollIntoView, hence the guard).
+  useEffect(() => {
+    const active = listRef.current?.querySelector('[aria-selected="true"]');
+    if (active && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest" });
+  }, [clamped, filtered.length]);
+
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
     item.run();
@@ -186,7 +194,7 @@ export function CommandPalette({
         {renaming ? (
           <div className="palette__hint">Enter a new name and press Enter — Esc goes back.</div>
         ) : (
-          <div className="palette__list" role="listbox" aria-label="Commands">
+          <div className="palette__list" role="listbox" aria-label="Commands" ref={listRef}>
             {filtered.map((item, itemIndex) => (
               <button
                 type="button"
