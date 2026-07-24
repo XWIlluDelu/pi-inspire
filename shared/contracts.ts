@@ -7,6 +7,7 @@ export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type LaunchPreference = "welcome" | "continue";
+export type ProjectDisplayPreference = "folder" | "path";
 export type RunState = "idle" | "running" | "retrying" | "compacting" | "queued" | "aborted" | "failed";
 export type SessionIndicator = "running" | "completed" | "failed";
 
@@ -20,7 +21,8 @@ export interface InspirePreferences {
   launch: LaunchPreference;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: VisibilityPreference;
-  readingSerif: boolean;
+  /** How the topbar shows the session's project location. */
+  projectDisplay: ProjectDisplayPreference;
   pinnedSessionIds: string[];
   navCollapsedGroups: string[];
 }
@@ -30,7 +32,7 @@ export const defaultPreferences: InspirePreferences = {
   launch: "welcome",
   thinkingVisibility: "collapsed",
   toolVisibility: "collapsed",
-  readingSerif: false,
+  projectDisplay: "folder",
   pinnedSessionIds: [],
   navCollapsedGroups: [],
 };
@@ -61,6 +63,12 @@ export interface SessionListResponse {
 }
 
 export type ResourceKind = "image" | "html" | "pdf" | "markdown" | "text" | "audio" | "video" | "binary";
+
+/** One entry of a workspace-explorer directory level. */
+export interface ProjectDirEntry {
+  name: string;
+  type: "dir" | "file";
+}
 
 export interface ResourceDescriptor {
   id: string;

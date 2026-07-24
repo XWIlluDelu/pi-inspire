@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Composer } from "../../src/components/Composer";
@@ -98,6 +98,25 @@ describe("composer attachments", () => {
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
     promptFails = false;
     clearLeftovers();
+  });
+});
+
+describe("composer meta row", () => {
+  it("shows the context gauge from session stats with the exact tokens on hover", () => {
+    clearLeftovers();
+    render(<Composer />);
+    const meter = screen.getByLabelText("Context 10 percent full");
+    expect(meter).toHaveTextContent("10%");
+    expect(meter).toHaveAttribute("title", expect.stringContaining("12,640 / 131,072 tokens"));
+    expect(meter.getAttribute("title")).toContain("/compact");
+  });
+
+  it("offers bare lowercase thinking levels", () => {
+    clearLeftovers();
+    render(<Composer />);
+    const select = screen.getByLabelText("Thinking level");
+    expect(within(select).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
+    expect(within(select).queryByRole("option", { name: /thinking:/ })).not.toBeInTheDocument();
   });
 });
 

@@ -9,3 +9,6 @@
 !.env.example
 *.log
 *.tsbuildinfo
+/output/
+/.playwright-cli/
+/.playwright-mcp/

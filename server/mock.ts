@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ActiveSnapshot, PromptRequest, SessionListResponse, SessionSummary } from "../shared/contracts.js";
-import type { RuntimeLike } from "./runtime.js";
+import { parseCompactCommand, type RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
@@ -175,6 +175,11 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async prompt(request: PromptRequest): Promise<void> {
     const active = this.state.active;
     if (!active) throw new Error("Open a mock session first");
+    // Same prompt boundary as the real host: a bare /compact compacts.
+    if (parseCompactCommand(request.message) && !request.attachmentIds?.length && !request.projectFiles?.length) {
+      await this.compact();
+      return;
+    }
     if (active.isStreaming) throw new Error("Mock session is already streaming");
     const sessionId = active.sessionId;
     const timestamp = Date.now();

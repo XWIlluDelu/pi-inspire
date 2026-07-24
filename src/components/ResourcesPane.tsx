@@ -2,13 +2,14 @@ import {
   AlertTriangle,
   File,
   FileCode,
+  FileSearch,
   FileText,
   Image as ImageIcon,
   Loader2,
-  PanelRight,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
+import { formatBytes } from "../format";
 import { collectResources, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
 import { store, TEXT_PREVIEW_BYTES, useAppState, type ResourcePreview } from "../store";
 import { CodeBlock, RichText } from "./RichText";
@@ -19,12 +20,6 @@ const ICONS: Record<ResourceIcon, typeof File> = {
   text: FileText,
   file: File,
 };
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** hljs language id for a previewed file name. */
 function languageFor(name: string, kind: ResourceKind): string {
@@ -210,21 +205,19 @@ export function ResourcesPane() {
   };
   return (
     <aside className="ctx res" aria-label="Files and resources" onClick={openNestedReference}>
+      {/* Closing lives in the topbar toggle; the header stays a plain label. */}
       <div className="ctx__header">
         <span>Files</span>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => store.setResourcesOpen(false)}
-          aria-label="Close resources panel"
-        >
-          <PanelRight size={15} aria-hidden />
-        </button>
+        {resources.length > 0 ? <span className="ctx__count">{resources.length}</span> : null}
       </div>
       {resources.length === 0 ? (
-        <div className="res__empty">
-          No files referenced yet — files Pi reads, writes, or you mention appear here.
-        </div>
+        state.resourcePreview ? null : (
+          <div className="empty-state">
+            <FileSearch size={26} strokeWidth={1.5} aria-hidden />
+            <span className="empty-state__title">No files yet</span>
+            <span className="empty-state__hint">Files Pi reads, writes, or you mention appear here</span>
+          </div>
+        )
       ) : (
         <div className="res__list" aria-label="Referenced files">
           {resources.map((row) => (

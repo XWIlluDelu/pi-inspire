@@ -1,3 +1,4 @@
+import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VISIBILITY_PREFERENCES, type ThemePreference } from "../../shared/contracts";
 import { isBusyRunState, store, useAppState } from "../store";
@@ -37,6 +38,7 @@ export function CommandPalette({
   const [index, setIndex] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const busy = isBusyRunState(state.runState);
 
   useEffect(() => {
@@ -51,16 +53,13 @@ export function CommandPalette({
       { id: "ctx", group: "Actions", title: "Toggle resources panel", hint: "Ctrl+.", run: onToggleCtx },
     ];
     if (state.sessionId) {
-      actions.push(
-        {
-          id: "rename",
-          group: "Actions",
-          title: "Rename session…",
-          keepOpen: true,
-          run: () => setRenaming(true),
-        },
-        { id: "compact", group: "Actions", title: "Compact context", run: () => void store.compact() },
-      );
+      actions.push({
+        id: "rename",
+        group: "Actions",
+        title: "Rename session…",
+        keepOpen: true,
+        run: () => setRenaming(true),
+      });
     }
     if (busy) {
       actions.push({ id: "abort", group: "Actions", title: "Abort running task", hint: "Esc", run: () => void store.abort() });
@@ -75,13 +74,6 @@ export function CommandPalette({
       });
     }
     actions.push(
-      {
-        id: "serif",
-        group: "Preferences",
-        title: `Reading font: ${state.prefs.readingSerif ? "Sans" : "Serif"}`,
-        hint: "toggle",
-        run: () => store.setReadingSerif(!state.prefs.readingSerif),
-      },
       {
         id: "launch-welcome",
         group: "Preferences",
@@ -141,6 +133,13 @@ export function CommandPalette({
   const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
 
+  // Keyboard navigation must keep the active row visible (jsdom has no
+  // scrollIntoView, hence the guard).
+  useEffect(() => {
+    const active = listRef.current?.querySelector('[aria-selected="true"]');
+    if (active && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest" });
+  }, [clamped, filtered.length]);
+
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
     item.run();
@@ -196,7 +195,7 @@ export function CommandPalette({
         {renaming ? (
           <div className="palette__hint">Enter a new name and press Enter — Esc goes back.</div>
         ) : (
-          <div className="palette__list" role="listbox" aria-label="Commands">
+          <div className="palette__list" role="listbox" aria-label="Commands" ref={listRef}>
             {filtered.map((item, itemIndex) => (
               <button
                 type="button"
@@ -212,7 +211,13 @@ export function CommandPalette({
                 {item.hint ? <span className="palette__hint-inline">{item.hint}</span> : null}
               </button>
             ))}
-            {filtered.length === 0 ? <div className="palette__empty">No matching commands</div> : null}
+            {filtered.length === 0 ? (
+              <div className="empty-state">
+                <SearchX size={26} strokeWidth={1.5} aria-hidden />
+                <span className="empty-state__title">No matching commands</span>
+                <span className="empty-state__hint">Shorter words match more</span>
+              </div>
+            ) : null}
           </div>
         )}
       </div>

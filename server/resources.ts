@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, resolve } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type ResourceDescriptor,
   type ResourceKind,
 } from "../shared/contracts.js";
 import { collectSessionResourceReferences } from "../shared/resource-references.js";
+import { escapesBase } from "./paths.js";
+import { isIndexedProjectFile } from "./project-files.js";
 
 export interface ResourceContext {
   sessionId: string;
@@ -188,8 +190,16 @@ export class ResourceStore {
       throw Object.assign(new Error("The file reference is not valid"), { status: 400 });
     }
 
-    if (!referencedBySession(context, reference)) {
-      throw Object.assign(new Error("The file was not referenced by this session"), { status: 403 });
+    // Previewable set: files the transcript references, plus files the
+    // project index contains (the same authority behind @-search and the
+    // workspace explorer). Ignored trees stay out of reach either way
+    // unless the session itself cited them. Citation is the costlier
+    // authority — it scans the whole transcript — so it is consulted
+    // lazily; the cached project index answers the common explorer path.
+    let cited: boolean | null = null;
+    const isCited = () => (cited ??= referencedBySession(context, reference));
+    if (!(await isIndexedProjectFile(context.cwd, lexicalPath)) && !isCited()) {
+      throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
     let path: string;
@@ -197,6 +207,14 @@ export class ResourceStore {
       path = await realpath(lexicalPath);
     } catch {
       throw Object.assign(new Error("The referenced file was not found"), { status: 404 });
+    }
+
+    // Index authority ends at the workspace boundary: a project symlink
+    // never opens an outside file the way an explicit citation can.
+    const workspaceRoot = await realpath(context.cwd).catch(() => null);
+    const within = workspaceRoot === null ? ".." : relative(workspaceRoot, path);
+    if (escapesBase(within) && !isCited()) {
+      throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
     const details = await stat(path);

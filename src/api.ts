@@ -2,6 +2,7 @@ import type {
   ActiveSnapshot,
   BootstrapResponse,
   InspirePreferences,
+  ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
   SessionListResponse,
@@ -73,13 +74,7 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
   return (await response.json()) as T;
 }
 
-export interface ResourceContent {
-  blob: Blob;
-  /** True when the host answered a range request with a partial (206) body. */
-  truncated: boolean;
-}
-
-async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<ResourceContent> {
+async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<Blob> {
   const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -87,7 +82,7 @@ async function fetchResourceContent(token: string, id: string, sessionId: string
     },
   });
   await ensureOk(response);
-  return { blob: await response.blob(), truncated: response.status === 206 };
+  return response.blob();
 }
 
 async function uploadFiles(token: string, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {
@@ -124,8 +119,6 @@ export function createApi(token: string) {
     renameSession: (name: string) => post<{ ok: boolean }>(token, "/api/sessions/rename", { name }),
     prompt: (body: PromptRequest) => post<{ accepted: boolean }>(token, "/api/prompt", body),
     abort: () => post<{ ok: boolean }>(token, "/api/control/abort"),
-    compact: (customInstructions?: string) =>
-      post<unknown>(token, "/api/control/compact", { customInstructions }),
     setModel: (provider: string, modelId: string) =>
       post<unknown>(token, "/api/control/model", { provider, modelId }),
     setThinkingLevel: (level: string) => post<{ ok: boolean }>(token, "/api/control/thinking", { level }),
@@ -135,6 +128,8 @@ export function createApi(token: string) {
         token,
         `/api/files?q=${encodeURIComponent(query)}&limit=${limit}`,
       ),
+    listFiles: (dir: string) =>
+      request<{ entries: ProjectDirEntry[] }>(token, `/api/files/list?dir=${encodeURIComponent(dir)}`),
     resolveResource: (sessionId: string, reference: string) =>
       post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }),
     resourceContent: (id: string, sessionId: string, byteLimit?: number) =>
