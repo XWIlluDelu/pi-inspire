@@ -6,6 +6,7 @@ import {
   projectNameFromCwd,
   THINKING_LEVELS,
   type ActiveSnapshot,
+  type HostDirListing,
   type InspirePreferences,
   type LaunchPreference,
   type ProjectDirEntry,
@@ -761,6 +762,12 @@ export class AppStore {
     } catch {
       return [];
     }
+  };
+
+  /** One level of the host directory picker; the dialog renders failures. */
+  browseHostDirs = async (path?: string): Promise<HostDirListing> => {
+    if (!this.api) throw new Error("Not connected to the insπre host");
+    return this.api.browseHostDirs(path);
   };
 
   private clearComposerArtifacts(): void {

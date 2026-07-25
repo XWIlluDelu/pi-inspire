@@ -7,12 +7,13 @@ import {
   Image as ImageIcon,
   Loader2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
 import { formatBytes } from "../format";
 import { collectResources, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
 import { store, TEXT_PREVIEW_BYTES, useAppState, type ResourcePreview } from "../store";
 import { CodeBlock, RichText } from "./RichText";
+import { ScrollRail } from "./ScrollRail";
 
 const ICONS: Record<ResourceIcon, typeof File> = {
   image: ImageIcon,
@@ -193,6 +194,7 @@ function PreviewRegion() {
 
 export function ResourcesPane() {
   const state = useAppState();
+  const paneRef = useRef<HTMLElement>(null);
   // Extraction is a pure pass over the visible messages; recompute only when
   // the message list itself changes.
   const resources = useMemo(() => collectResources(state.messages), [state.messages]);
@@ -204,7 +206,7 @@ export function ResourcesPane() {
     void store.openResource(reference);
   };
   return (
-    <aside className="ctx res" aria-label="Files and resources" onClick={openNestedReference}>
+    <aside className="ctx res" aria-label="Files and resources" onClick={openNestedReference} ref={paneRef}>
       {/* Closing lives in the topbar toggle; the header stays a plain label. */}
       <div className="ctx__header">
         <span>Files</span>
@@ -226,6 +228,8 @@ export function ResourcesPane() {
         </div>
       )}
       <PreviewRegion />
+      <ScrollRail container={paneRef} scroller=".res__list" variant="ctx" />
+      <ScrollRail container={paneRef} scroller=".res__preview-fill" variant="ctx" />
     </aside>
   );
 }

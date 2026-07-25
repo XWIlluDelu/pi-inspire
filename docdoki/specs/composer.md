@@ -20,7 +20,7 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
 ## Checks
 
-- The composer accepts multiline text and preserves a draft while the user changes sessions only when that behavior is unambiguous.
+- The composer accepts multiline text; each session keeps its own unsent draft, restored when the user switches back (in-memory — a draft does not survive a reload).
 - Project files can be found and referenced through an explicit picker or completion flow.
 - Images can be pasted, dropped, or selected and previewed before submission.
 - Ordinary files can be selected or dropped, with their name, type, size, and submission meaning visible before sending.

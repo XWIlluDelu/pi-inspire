@@ -7,6 +7,7 @@ import type {
   VisibilityPreference,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
+import { Dropdown } from "./Dropdown";
 
 const THEMES: Array<{ value: ThemePreference; label: string; icon: React.ReactNode }> = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
@@ -98,46 +99,43 @@ export function Settings({ onClose }: { onClose: () => void }) {
 
         <section className="settings__section" aria-label="Cards">
           <h3 className="settings__section-title">Cards</h3>
-          <label className="settings__field">
+          <div className="settings__field">
             <span className="settings__field-label">Thinking cards</span>
-            <select
+            <Dropdown
+              label="Thinking cards"
+              className="dropdown--field"
               value={state.prefs.thinkingVisibility}
-              onChange={(event) => store.setThinkingVisibility(event.target.value as VisibilityPreference)}
-            >
-              {VISIBILITIES.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="settings__field">
+              options={VISIBILITIES}
+              onChange={(value) => store.setThinkingVisibility(value as VisibilityPreference)}
+            />
+          </div>
+          <div className="settings__field">
             <span className="settings__field-label">Tool cards</span>
-            <select
+            <Dropdown
+              label="Tool cards"
+              className="dropdown--field"
               value={state.prefs.toolVisibility}
-              onChange={(event) => store.setToolVisibility(event.target.value as VisibilityPreference)}
-            >
-              {VISIBILITIES.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+              options={VISIBILITIES}
+              onChange={(value) => store.setToolVisibility(value as VisibilityPreference)}
+            />
+          </div>
         </section>
 
         <section className="settings__section" aria-label="Startup">
           <h3 className="settings__section-title">Startup</h3>
-          <label className="settings__field">
+          <div className="settings__field">
             <span className="settings__field-label">On launch</span>
-            <select
+            <Dropdown
+              label="On launch"
+              className="dropdown--field"
               value={state.prefs.launch}
-              onChange={(event) => store.setLaunch(event.target.value as LaunchPreference)}
-            >
-              <option value="welcome">Show welcome page</option>
-              <option value="continue">Continue previous session</option>
-            </select>
-          </label>
+              options={[
+                { value: "welcome", label: "Show welcome page" },
+                { value: "continue", label: "Continue previous session" },
+              ]}
+              onChange={(value) => store.setLaunch(value as LaunchPreference)}
+            />
+          </div>
         </section>
 
         <section className="settings__section" aria-label="About">

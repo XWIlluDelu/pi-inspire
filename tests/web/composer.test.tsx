@@ -114,9 +114,10 @@ describe("composer meta row", () => {
   it("offers bare lowercase thinking levels", () => {
     clearLeftovers();
     render(<Composer />);
-    const select = screen.getByLabelText("Thinking level");
-    expect(within(select).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
-    expect(within(select).queryByRole("option", { name: /thinking:/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
+    const listbox = screen.getByRole("listbox", { name: "Thinking level" });
+    expect(within(listbox).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
+    expect(within(listbox).queryByRole("option", { name: /thinking:/ })).not.toBeInTheDocument();
   });
 });
 

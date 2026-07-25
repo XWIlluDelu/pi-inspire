@@ -234,14 +234,19 @@ breathing room).
   `{spacing.reading-column}` centered.
 - Right context pane: `{spacing.context-width}`, overlay-or-column, opens on
   demand.
-- Topbar: 48px tall, canvas background, hairline bottom border.
+- Topbar: 48px tall, canvas background, no separating line — scrolled
+  transcript content dissolves under it through a short top fade mask.
 
 ### Whitespace philosophy
 
 Medium density: the workbench shows structure without console clutter.
-Separation prefers whitespace and hairlines over boxes-in-boxes; a surface
-nests at most one level deep inside another surface (card → code block is
-the maximum).
+Structural seams between the workbench regions are carried by background
+steps alone (`surface` panes against the `canvas` center — no vertical
+hairlines, no line under the header row); hairlines belong to in-content
+structure — cards, code blocks, tables, the composer — where they mark
+instruments, not architecture. Separation prefers whitespace over
+boxes-in-boxes; a surface nests at most one level deep inside another
+surface (card → code block is the maximum).
 
 ## Elevation & depth
 
@@ -295,10 +300,11 @@ warning capsule surface.
 
 ### Workbench chrome
 
-- **Header line** — all three regions (nav, topbar, context pane) share a
-  48px header row with one continuous bottom hairline. The nav header holds
-  the italic serif wordmark (π in KaTeX math italic) and the mock badge; the
-  rail shows the math-italic π alone.
+- **Header row** — all three regions (nav, topbar, context pane) share a
+  48px header height with no underline; the seam is the background step and,
+  in the center, the scroll-under fade. The nav header holds the italic
+  serif wordmark (π in KaTeX math italic) and the mock badge; the rail shows
+  the math-italic π alone.
 - **Topbar identity** — the session title (600) is the rename affordance
   (click to edit in place); beside it the project location renders in mono
   `{typography.size-xs}` `faint` — folder name or full path per the
@@ -373,12 +379,17 @@ warning capsule surface.
 
 A level-0 surface at the reading column width: attachment/reference chip
 rows on top, auto-growing textarea (`{typography.size-md}`, max 40vh), and
-a meta row. Model and thinking level are quiet content-sized controls: a
-`{typography.size-sm}` value plus 11px chevron with an invisible native
-select stretched over the control, so the closed control hugs its value
-while keyboard, dropdown, and accessible naming stay native. Model options
-drop the provider prefix unless two providers share an id; thinking levels
-read lowercase (`medium`, `xhigh`). At the right, the **context gauge** — a
+a meta row. Model and thinking level are quiet content-sized dropdowns: a
+`{typography.size-sm}` value plus 11px chevron (flips while open) that
+hugs its value when closed. The menu is the themed replacement for the
+OS-drawn native option popup — a Level-2 anchored listbox (raised surface,
+hairline border, `{rounded.md}`, float-in) that opens upward from the
+bottom-docked composer; the selected option reads `accent-deep` with a
+check glyph, the pointed row rests on the inset background. The control
+follows the select-only combobox pattern: focus stays on the trigger,
+arrows/Home/End move, Enter picks, Escape closes without reaching the
+global abort. Model options drop the provider prefix unless two providers
+share an id; thinking levels read lowercase (`medium`, `xhigh`). At the right, the **context gauge** — a
 14px ring plus percent in `{typography.size-xs}` — reports context-window
 occupancy from Pi's session stats: calm `muted`/`accent` below 60%,
 `warning` from 60%, `error` from 85%, with exact token counts and a
@@ -398,9 +409,25 @@ wide, `{rounded.lg}`, input row + grouped result list (group label
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
 within 80dvh), not a page: sectioned cards for appearance (theme, project
 location), card visibility, startup, and about; Escape and the scrim close
-it, and Escape never leaks to the global abort shortcut. Extension dialogs
-share the same surface with title at `{typography.size-lg}` semibold and
-right-aligned action row.
+it, and Escape never leaks to the global abort shortcut. Preference selects
+render as the composer's dropdown in a bordered field variant — hairline
+border on the canvas background, opening downward, focused/open state
+following the text-field grammar (accent border + tint halo). Extension
+dialogs share the same surface with title at `{typography.size-lg}`
+semibold and right-aligned action row.
+
+### Scroll rails
+
+Pane scrollers hide the native bar; a 6px `--thumb` pill straddles the
+pane's boundary — the nav on its right edge, the context pane on its left —
+and the transcript uses a mid-height rail floating in the reading margin:
+its offset grows with the available whitespace and its length runs ≈62% of
+the pane height, long enough for precise dragging without a full gutter.
+Thumbs rest faintly visible (40% strength) so the grab point stays
+discoverable, rise to full strength on scroll or hover, and settle back
+after ~0.9s idle; hover and drag deepen them through ink mixes. They are pointer affordances only — wheel
+and keyboard scrolling stay native, and the rails are hidden from the
+accessibility tree.
 
 ### Empty states
 
