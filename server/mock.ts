@@ -153,6 +153,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private nextSession = 0;
 
+  get activeSessionId(): string | null {
+    return this.state.active?.sessionId ?? null;
+  }
+
   private activate(id = "mock-active", cwd = "/home/demo/research"): ActiveSnapshot {
     const summary = summaries.find((item) => item.id === id);
     let active = this.sessions.get(id);

@@ -35,7 +35,7 @@ Let the user move between existing terminal Pi and inspire without losing histor
 - Each session activated in inspire owns an independent Pi runtime, and selecting another conversation changes only the browser projection; background runs continue without interruption.
 - Navigation exposes current work and unseen completion per session: running, successful completion awaiting review, and error completion awaiting review remain distinct until the user opens that session.
 - Persistent pin and folder-collapse metadata belongs to inspire preferences, not Pi JSONL; pinned sessions remain discoverable even when they fall outside the first chronological catalog page.
-- A dialog request raised by a background extension remains attached to its owning worker and is restored when that session is viewed; responses carry both session and request identity so concurrent navigation cannot misroute or orphan required input.
+- A dialog request raised by a background extension remains attached to its owning worker and is restored when that session is viewed; responses carry both session and request identity so concurrent navigation cannot misroute or orphan required input. A dialog raised while a new session still carries its provisional identity is rebound to Pi’s final session id — provisional ids never leave the host — so early extension questions stay answerable.
 - inspire never starts a second worker for a session it already owns and does not modify session JSONL directly while a Pi runtime owns it.
 
 ## Non-goals

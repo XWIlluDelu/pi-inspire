@@ -124,6 +124,8 @@ export function createApi(token: string) {
       post<unknown>(token, "/api/control/model", { provider, modelId }),
     setThinkingLevel: (level: string) => post<{ ok: boolean }>(token, "/api/control/thinking", { level }),
     uploadAttachments: (files: File[]) => uploadFiles(token, files),
+    deleteAttachment: (id: string) =>
+      request<{ ok: boolean }>(token, `/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }),
     searchFiles: (query: string, limit = 50) =>
       request<{ files: ProjectFileResult[] }>(
         token,
@@ -139,8 +141,8 @@ export function createApi(token: string) {
       fetchResourceContent(token, id, sessionId, byteLimit),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
-    savePreferences: (prefs: InspirePreferences) =>
-      request<InspirePreferences>(token, "/api/preferences", { method: "PUT", body: JSON.stringify(prefs) }),
+    savePreferences: (patch: Partial<InspirePreferences>) =>
+      request<InspirePreferences>(token, "/api/preferences", { method: "PATCH", body: JSON.stringify(patch) }),
   };
 }
 

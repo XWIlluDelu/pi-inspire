@@ -535,9 +535,10 @@ export class AppStore {
     });
     try {
       // The pin endpoint persists the preference host-side and answers with
-      // the updated preferences; no separate save is needed.
+      // the stored preferences. Only the pin field is taken from the answer:
+      // other fields may have newer local changes still queued for saving.
       const prefs = await this.api.setSessionPinned(id, pinned);
-      this.set({ prefs });
+      this.set({ prefs: { ...this.state.prefs, pinnedSessionIds: prefs.pinnedSessionIds } });
       await this.loadSessions(this.state.sessionQuery);
     } catch (error) {
       // Truthful control: a rejected pin cannot leave the UI claiming it.
@@ -717,6 +718,14 @@ export class AppStore {
             : item;
         }),
       });
+      // An item removed while its upload was in flight never got a chance to
+      // delete its host copy; reclaim it now.
+      pending.forEach((candidate, index) => {
+        const id = uploaded[index]?.id;
+        if (id && !this.state.attachments.some((item) => item.localId === candidate.localId)) {
+          void this.api?.deleteAttachment(id).catch(() => undefined);
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
       this.set({
@@ -733,6 +742,8 @@ export class AppStore {
     const target = this.state.attachments.find((item) => item.localId === localId);
     if (target?.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(target.previewUrl);
     this.set({ attachments: this.state.attachments.filter((item) => item.localId !== localId) });
+    // A withdrawn upload is unreferenced; reclaim its host cache file too.
+    if (target?.uploadedId) void this.api?.deleteAttachment(target.uploadedId).catch(() => undefined);
   };
 
   addProjectFile = (path: string): void => {
@@ -806,26 +817,30 @@ export class AppStore {
 
   // --- Preferences ---
 
-  private savePrefs(prefs: InspirePreferences): void {
-    this.set({ prefs });
-    void this.api?.savePreferences(prefs).catch(() => {
-      // preference persistence is best-effort; local state already applied
-    });
+  /** Preference writes queue behind one another so field patches reach the
+   * host in the order the user made them; each patch carries only its own
+   * fields, so out-of-order arrival can no longer resurrect stale values. */
+  private prefsWrites: Promise<unknown> = Promise.resolve();
+
+  private savePrefs(patch: Partial<InspirePreferences>): void {
+    this.set({ prefs: { ...this.state.prefs, ...patch } });
+    // Persistence stays best-effort; local state already applied.
+    this.prefsWrites = this.prefsWrites
+      .then(() => this.api?.savePreferences(patch))
+      .catch(() => undefined);
   }
 
-  setTheme = (theme: ThemePreference): void => this.savePrefs({ ...this.state.prefs, theme });
-  setLaunch = (launch: LaunchPreference): void => this.savePrefs({ ...this.state.prefs, launch });
-  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void =>
-    this.savePrefs({ ...this.state.prefs, projectDisplay });
-  setThinkingVisibility = (value: VisibilityPreference): void =>
-    this.savePrefs({ ...this.state.prefs, thinkingVisibility: value });
-  setToolVisibility = (value: VisibilityPreference): void =>
-    this.savePrefs({ ...this.state.prefs, toolVisibility: value });
+  setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
+  setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
+  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void => this.savePrefs({ projectDisplay });
+  setThinkingVisibility = (thinkingVisibility: VisibilityPreference): void =>
+    this.savePrefs({ thinkingVisibility });
+  setToolVisibility = (toolVisibility: VisibilityPreference): void => this.savePrefs({ toolVisibility });
 
   toggleNavGroup = (cwd: string): void => {
     const current = this.state.prefs.navCollapsedGroups;
     const navCollapsedGroups = current.includes(cwd) ? current.filter((item) => item !== cwd) : [...current, cwd];
-    this.savePrefs({ ...this.state.prefs, navCollapsedGroups });
+    this.savePrefs({ navCollapsedGroups });
   };
 
   // --- Files/resources pane ---

@@ -14,6 +14,11 @@ const preferencesSchema = z.object({
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500).default([]),
 });
 
+// Writes are field-scoped patches merged over the stored file, never full
+// snapshots, so concurrent writers can only contend on the fields they
+// actually changed. `.strict()` keeps unknown keys out of the stored file.
+const preferencesPatchSchema = preferencesSchema.partial().strict();
+
 export class PreferencesStore {
   readonly path: string;
   private writes: Promise<void> = Promise.resolve();
@@ -52,14 +57,14 @@ export class PreferencesStore {
     return result;
   }
 
-  async write(value: unknown): Promise<InspirePreferences> {
-    const preferences = preferencesSchema.parse(value);
+  async patch(value: unknown): Promise<InspirePreferences> {
+    const patch = preferencesPatchSchema.parse(value);
     return this.enqueue(async () => {
+      const preferences = preferencesSchema.parse({ ...(await this.readDisk()), ...patch });
       await this.persist(preferences);
       return preferences;
     });
   }
-
 
   update(mutator: (current: InspirePreferences) => InspirePreferences): Promise<InspirePreferences> {
     return this.enqueue(async () => {

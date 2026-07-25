@@ -74,31 +74,43 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
-  it("persists validated interface preferences", async () => {
-    const value = {
-      theme: "dark",
-      launch: "continue",
-      thinkingVisibility: "expanded",
-      toolVisibility: "hidden",
-      projectDisplay: "path",
-      pinnedSessionIds: [],
-      navCollapsedGroups: ["/home/demo/older"],
-    };
+  it("persists field-scoped preference patches without losing concurrent fields", async () => {
     await request(application.server)
-      .put("/api/preferences")
+      .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
-      .send(value)
-      .expect(200, value);
+      .send({ theme: "dark" })
+      .expect(200)
+      .expect((response) => expect(response.body.theme).toBe("dark"));
+    // Two patches racing on different fields must both survive.
+    const racing = await Promise.all([
+      request(application.server)
+        .patch("/api/preferences")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ toolVisibility: "hidden" }),
+      request(application.server)
+        .patch("/api/preferences")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ navCollapsedGroups: ["/home/demo/older"] }),
+    ]);
+    expect(racing.map((response) => response.status)).toEqual([200, 200]);
     await request(application.server)
-      .put("/api/preferences")
+      .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
-      .send({ ...value, theme: "sepia" })
+      .send({ theme: "sepia" })
       .expect(400);
     const stored = await request(application.server)
       .get("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(stored.body).toEqual(value);
+    expect(stored.body).toEqual({
+      theme: "dark",
+      launch: "welcome",
+      thinkingVisibility: "collapsed",
+      toolVisibility: "hidden",
+      projectDisplay: "folder",
+      pinnedSessionIds: [],
+      navCollapsedGroups: ["/home/demo/older"],
+    });
   });
 
   it("migrates existing preferences by supplying navigation defaults", async () => {
@@ -238,6 +250,40 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "unmentioned.txt" })
       .expect(403);
+
+    // A handle resolved here must stop serving once another session is the
+    // visible one, even though the handle itself is still alive.
+    await request(application.server)
+      .post("/api/sessions/open")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active" })
+      .expect(200);
+    await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
+  });
+
+  it("deletes withdrawn attachments from the host cache", async () => {
+    const uploaded = await request(application.server)
+      .post("/api/attachments")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("files", Buffer.from("draft"), { filename: "draft.txt", contentType: "text/plain" })
+      .expect(200);
+    const id = uploaded.body.attachments[0].id as string;
+    await request(application.server)
+      .delete(`/api/attachments/${id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200, { ok: true });
+    // Idempotent: a second delete of the same id still succeeds.
+    await request(application.server)
+      .delete(`/api/attachments/${id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200, { ok: true });
+    await request(application.server)
+      .delete("/api/attachments/not-a-uuid")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
   });
 
   it("accepts bounded attachments and streams prompt events over an authenticated socket", async () => {

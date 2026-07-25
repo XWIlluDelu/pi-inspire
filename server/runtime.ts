@@ -44,6 +44,9 @@ export function parseCompactCommand(message: string): { instructions?: string } 
 
 export interface RuntimeLike {
   readonly activeCwd: string | null;
+  /** Id of the currently visible session; session-bound routes compare
+   * against this so stale handles cannot outlive a selection change. */
+  readonly activeSessionId: string | null;
   on(event: "event", listener: (event: unknown) => void): this;
   openSession(id: string): Promise<ActiveSnapshot>;
   newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot>;
@@ -94,6 +97,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.selectedSlot()?.cwd ?? null;
   }
 
+  get activeSessionId(): string | null {
+    return this.selectedSessionId;
+  }
+
   private selectedSlot(): RuntimeSlot | null {
     return this.selectedSessionId ? (this.slots.get(this.selectedSessionId) ?? null) : null;
   }
@@ -121,6 +128,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private emitSlotEvent(slot: RuntimeSlot, event: unknown): void {
+    // A slot enters the registry only under its final Pi session id. Before
+    // that (newSession's provisional phase) its events would broadcast an
+    // unaddressable `pending-*` id, so they stay local; the creating request
+    // returns the full state once the real id is known.
+    if (this.slots.get(slot.id) !== slot) return;
     const projected = safeProjection(event);
     const body = projected && typeof projected === "object" && !Array.isArray(projected)
       ? projected as Record<string, unknown>
@@ -325,6 +337,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (this.slots.has(sessionId)) throw new Error("Pi created a duplicate session id");
       slot.id = sessionId;
       slot.sessionPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : null;
+      // An extension may have asked for input while the slot still carried
+      // its provisional id; rebind the request so it is answerable through
+      // the final session identity.
+      if (slot.pendingExtensionUi) slot.pendingExtensionUi = { ...slot.pendingExtensionUi, sessionId };
       this.slots.set(sessionId, slot);
       this.selectedSessionId = sessionId;
       this.catalog.invalidate();
@@ -363,6 +379,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
       ...(request.behavior ? { streamingBehavior: request.behavior } : {}),
     });
+    // Delivered: image bytes travelled inside the request, so their upload
+    // cache entries are no longer needed. File attachments stay (their host
+    // paths are part of the conversation text).
+    if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
   }
 
   async abort(): Promise<void> {
@@ -466,6 +486,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     let messages = slot.preview?.messages ?? [];
     if (slot.process && slot.ready) {
       const current = await slot.process.request<{ messages: unknown[] }>({ type: "get_messages" });
+      // The user may have switched sessions while the fetch was in flight;
+      // serving would leak the old session's content into the new view.
+      if (this.selectedSessionId !== slot.id) {
+        throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+      }
       messages = current.messages;
     }
     return {

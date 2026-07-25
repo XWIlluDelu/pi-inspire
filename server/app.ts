@@ -55,6 +55,7 @@ const hostDirsSchema = z.object({
 });
 const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(100) });
 const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
+const attachmentIdSchema = z.string().uuid();
 const resourceResolveSchema = z.object({
   sessionId: z.string().min(1).max(128),
   reference: z.string().min(1).max(8_192),
@@ -197,6 +198,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     if (files.length === 0) return response.status(400).json({ error: "No files provided" });
     response.json({ attachments: await Promise.all(files.map((file) => deps.attachments.add(file))) });
   });
+  app.delete("/api/attachments/:id", async (request, response) => {
+    await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
+    response.json({ ok: true });
+  });
 
   app.post("/api/prompt", async (request, response) => {
     await deps.runtime.prompt(promptSchema.parse(request.body));
@@ -253,6 +258,12 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
   app.get("/api/resources/:id/content", async (request, response) => {
     const { sessionId } = resourceContentSchema.parse(request.query);
+    // Handles are bound to the session they were resolved in AND to that
+    // session still being the visible one — a handle from session A must not
+    // keep serving content after the user switches to session B.
+    if (deps.runtime.activeSessionId !== sessionId) {
+      throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+    }
     const resource = deps.resources.get(String(request.params.id), sessionId);
     response.set({
       "Content-Type": resource.descriptor.mimeType,
@@ -269,8 +280,8 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
 
   app.get("/api/preferences", async (_request, response) => response.json(await deps.preferences.read()));
-  app.put("/api/preferences", async (request, response) => {
-    response.json(await deps.preferences.write(request.body));
+  app.patch("/api/preferences", async (request, response) => {
+    response.json(await deps.preferences.patch(request.body));
   });
   app.get("/api/snapshot", async (_request, response) => response.json(await deps.runtime.snapshot()));
 

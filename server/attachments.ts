@@ -70,6 +70,29 @@ export class AttachmentStore {
     return { files, images };
   }
 
+  /** Remove one staged attachment (user withdrew it before sending). */
+  async remove(id: string): Promise<void> {
+    const value = this.values.get(id);
+    if (!value) return;
+    this.values.delete(id);
+    await rm(value.path, { force: true });
+  }
+
+  /** Reclaim attachments a delivered prompt consumed. Image bytes were
+   * inlined into the request, so their cache files can go; ordinary files
+   * are referenced by host path inside the conversation text and must stay
+   * readable for the rest of the host's lifetime. */
+  async releaseConsumed(ids: string[]): Promise<void> {
+    await Promise.all(
+      ids.map(async (id) => {
+        const value = this.values.get(id);
+        if (value?.kind !== "image") return;
+        this.values.delete(id);
+        await rm(value.path, { force: true });
+      }),
+    );
+  }
+
   private publicValue(value: StoredAttachment): UploadedAttachment {
     const { path: _path, ...publicValue } = value;
     return publicValue;

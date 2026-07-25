@@ -30,6 +30,7 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - The start surface accepts the first message together with an optional project directory, so a new session can begin in a chosen workspace.
 - Submission errors preserve the draft and attachments.
 - Attachment data crosses the trusted host only through bounded, validated operations and is not silently uploaded elsewhere by inspire.
+- Uploaded attachments have a bounded host-side lifetime: withdrawing a staged attachment deletes its host cache copy, image bytes are reclaimed once a delivered prompt has consumed them, and ordinary files persist for the host’s lifetime because their host paths are referenced by the conversation text.
 
 ## Non-goals
 

@@ -34,6 +34,7 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
 - The welcome page starts a session from a first message with an optional project directory and offers a collapsible recent-sessions list as the route back to previous work.
 - The project directory can be typed or chosen through a host-side directory picker: the host process lists its own filesystem (`GET /api/host/dirs`, bearer-token guarded, session-independent), so over SSH forwards or remote deployments the browsed tree is always the machine sessions run on, and entry paths arrive joined with the host's own separators. A missing or relative starting point falls back to the host home.
 - Persistent interface preferences live in a floating settings overlay opened from the topbar rather than consuming the session-navigation column.
+- Preference persistence is field-scoped and ordered: each change patches only its own fields through a serialized write path, so rapid or concurrent changes — including pin updates — can never overwrite one another with stale full snapshots.
 - Tool-card and thinking-card visibility preferences are independent and each supports hidden, collapsed, and expanded defaults.
 - Users can change the shared card default and can override an individual card without changing that saved preference.
 - Visible controls make core operations discoverable while keyboard shortcuts and a command interface accelerate the same operations instead of replacing them.

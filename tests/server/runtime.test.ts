@@ -353,4 +353,65 @@ describe("RuntimeController concurrent sessions", () => {
     expect((await runtime.openSession("a")).pendingExtensionUi).toBeNull();
     await runtime.close();
   });
+
+  it("rebinds an extension dialog raised before Pi reports the final session id", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const events: Array<Record<string, unknown>> = [];
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        const start = worker.start.bind(worker);
+        worker.start = async () => {
+          await start();
+          // Arrives while the slot still carries its provisional identity.
+          worker.emit("event", { type: "extension_ui_request", id: "trust-1", method: "confirm", title: "Trust?" });
+        };
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    runtime.on("event", (event) => events.push(event as Record<string, unknown>));
+
+    const created = await runtime.newSession("/tmp");
+    expect(created.active?.sessionId).toBe("new-id");
+    expect(created.pendingExtensionUi).toMatchObject({ sessionId: "new-id", id: "trust-1", method: "confirm" });
+    // No event may ever leave the host addressed to a pending-* session.
+    expect(events.every((event) => !String(event.sessionId ?? "").startsWith("pending-"))).toBe(true);
+    await runtime.extensionUiResponse({ sessionId: "new-id", id: "trust-1", value: true });
+    expect(worker.uiResponses).toEqual([{ id: "trust-1", value: true }]);
+    await runtime.close();
+  });
+
+  it("reclaims consumed image uploads after a delivered prompt but keeps file uploads readable", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const upload = (name: string, type: string) =>
+      store.add({
+        originalname: name,
+        mimetype: type,
+        buffer: Buffer.from("payload"),
+        size: 7,
+      } as unknown as Parameters<AttachmentStore["add"]>[0]);
+    const image = await upload("shot.png", "image/png");
+    const file = await upload("notes.txt", "text/plain");
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+    );
+
+    await runtime.openSession("a");
+    await runtime.prompt({ message: "use these", attachmentIds: [image.id, file.id] });
+    // Image bytes travelled inside the prompt request; the cache entry is gone.
+    await expect(store.resolveForPrompt([image.id])).rejects.toThrow(/expired/);
+    // The ordinary file's host path is referenced by the conversation text.
+    const kept = await store.resolveForPrompt([file.id]);
+    expect(kept.files[0]?.kind).toBe("file");
+    await runtime.close();
+  });
 });
