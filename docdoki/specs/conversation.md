@@ -27,6 +27,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 - Thinking appears separately from answer text, follows the user’s independent hidden, collapsed, or expanded preference, and drops terminal-only control formatting at the display boundary without rewriting Pi history.
 - Each tool call is correlated with its live status, partial output, final result, and failure state.
 - Tool activity uses compact cards by default while retaining an explicit path to complete arguments and output when safe to show.
+- A tool result recognized as a unified diff renders as typed, tinted lines (added, removed, context, hunk, file markers) instead of a raw dump, and is never truncated; recognition is strict enough that prose with leading `-`/`+` characters is never recolored.
 - Structured file paths and explicit local file references in conversation content remain distinguishable from external web links and can open the owning session’s resource preview.
 - Unknown tools and extension messages receive a generic, lossless fallback instead of disappearing.
 - The user can abort active work, send steering input during work, and queue follow-up input for after completion.

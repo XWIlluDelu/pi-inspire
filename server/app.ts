@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { WebSocket, WebSocketServer } from "ws";
@@ -12,6 +12,7 @@ import {
   type BootstrapResponse,
 } from "../shared/contracts.js";
 import type { AttachmentStore } from "./attachments.js";
+import { listHostDirectories } from "./host-dirs.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
@@ -48,6 +49,9 @@ const fileListSchema = z.object({
     .max(4_096)
     .default("")
     .refine((value) => !value.split("/").includes(".."), "dir must stay inside the project"),
+});
+const hostDirsSchema = z.object({
+  path: z.string().min(1).max(4_096).refine(isAbsolute, "path must be absolute").optional(),
 });
 const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(100) });
 const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
@@ -225,6 +229,21 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
     const { dir } = fileListSchema.parse(request.query);
     response.json({ entries: await listProjectDirectory(deps.runtime.activeCwd, dir) });
+  });
+  // Session-independent: the picker browses the host filesystem before any
+  // session exists. The bearer token is the guard, as everywhere else.
+  app.get("/api/host/dirs", async (request, response) => {
+    const { path } = hostDirsSchema.parse(request.query);
+    try {
+      response.json(await listHostDirectories(path));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR")
+        throw Object.assign(new Error("No such directory on the host"), { status: 404 });
+      if (code === "EACCES" || code === "EPERM")
+        throw Object.assign(new Error("The host cannot read that directory"), { status: 403 });
+      throw error;
+    }
   });
 
   app.post("/api/resources/resolve", async (request, response) => {

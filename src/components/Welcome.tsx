@@ -1,6 +1,7 @@
-import { ChevronRight, Loader2, Send } from "lucide-react";
+import { ChevronRight, FolderOpen, Loader2, Send } from "lucide-react";
 import { useState } from "react";
 import { store, useAppState } from "../store";
+import { DirectoryPicker } from "./DirectoryPicker";
 import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
@@ -16,6 +17,7 @@ export function Welcome() {
   const [directory, setDirectory] = useState("");
   const [starting, setStarting] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
+  const [browsing, setBrowsing] = useState(false);
   const recent = state.sessions.slice(0, 6);
 
   // A typed directory wins over the current project; empty means current.
@@ -83,6 +85,15 @@ export function Welcome() {
             aria-label="Project directory"
             spellCheck={false}
           />
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Browse host directories"
+            title="Browse host directories"
+            onClick={() => setBrowsing(true)}
+          >
+            <FolderOpen size={14} aria-hidden />
+          </button>
           <span className="composer__spacer" />
           <button
             type="submit"
@@ -95,6 +106,17 @@ export function Welcome() {
           </button>
         </div>
       </form>
+
+      {browsing ? (
+        <DirectoryPicker
+          initial={directory.trim() || state.cwd || undefined}
+          onCancel={() => setBrowsing(false)}
+          onPick={(path) => {
+            setDirectory(path);
+            setBrowsing(false);
+          }}
+        />
+      ) : null}
 
       {recent.length > 0 ? (
         <div className="welcome__recent">

@@ -78,6 +78,39 @@ const initialMessages = [
     isError: false,
     timestamp: now - 29_000,
   },
+  {
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "mock-tool-2", name: "edit", arguments: { path: "analysis/spectrum.py" } },
+      { type: "text", text: "Tightened the window normalization." },
+    ],
+    provider: "kimi-coding",
+    model: "kimi-k3",
+    usage: { input: 900, output: 160, cacheRead: 620, cacheWrite: 0, totalTokens: 1_680, cost: { total: 0 } },
+    stopReason: "stop",
+    timestamp: now - 26_000,
+  },
+  {
+    role: "toolResult",
+    toolCallId: "mock-tool-2",
+    toolName: "edit",
+    content: [
+      {
+        type: "text",
+        text: [
+          "--- a/analysis/spectrum.py",
+          "+++ b/analysis/spectrum.py",
+          "@@ -12,7 +12,7 @@ def window(samples):",
+          "     total = samples.sum()",
+          "-    scale = 1.0 / len(samples)",
+          "+    scale = 1.0 / max(1, len(samples))",
+          "     return total * scale",
+        ].join("\n"),
+      },
+    ],
+    isError: false,
+    timestamp: now - 25_000,
+  },
 ];
 
 export class MockCatalog implements SessionCatalogLike {

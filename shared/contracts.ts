@@ -70,6 +70,25 @@ export interface ProjectDirEntry {
   type: "dir" | "file";
 }
 
+/** One subdirectory in the host directory picker. The host joins paths with
+ * its own separator, so clients never do path arithmetic. */
+export interface HostDirEntry {
+  name: string;
+  path: string;
+}
+
+/** One level of the host filesystem, listed by the host process itself —
+ * over SSH forwards or remote deployments this is always the machine
+ * sessions actually run on. */
+export interface HostDirListing {
+  /** Absolute, symlink-resolved directory that was listed. */
+  path: string;
+  /** Absolute parent, or null at a filesystem root. */
+  parent: string | null;
+  /** Immediate subdirectories, sorted by name; dotted names stay hidden. */
+  dirs: HostDirEntry[];
+}
+
 export interface ResourceDescriptor {
   id: string;
   sessionId: string;

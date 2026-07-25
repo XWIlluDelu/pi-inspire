@@ -72,6 +72,13 @@ beforeAll(async () => {
         },
       };
     }
+    if (url.startsWith("/api/host/dirs")) {
+      const path = new URL(url, "http://localhost").searchParams.get("path");
+      if (path === "/home/demo/research") return { body: { path, parent: "/home/demo", dirs: [] } };
+      return {
+        body: { path: "/home/demo", parent: "/home", dirs: [{ name: "research", path: "/home/demo/research" }] },
+      };
+    }
     if (url.startsWith("/api/resources/resolve")) {
       const body = jsonBody(init);
       return {
@@ -143,6 +150,21 @@ describe("welcome flow", () => {
     fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
     expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
     expect(screen.getByLabelText("First message")).toBeInTheDocument();
+  });
+
+  it("picks a project directory by browsing the host filesystem", async () => {
+    render(<App />);
+    const nav = screen.getByRole("navigation", { name: "Sessions" });
+    fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Browse host directories" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose project directory" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "research" }));
+    await within(dialog).findByText("No subdirectories");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Use this directory" }));
+
+    expect(screen.queryByRole("dialog", { name: "Choose project directory" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Project directory")).toHaveValue("/home/demo/research");
   });
 
   it("attributes an assistant turn exactly once, in its head line", async () => {

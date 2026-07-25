@@ -20,6 +20,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
+import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
@@ -299,6 +300,18 @@ export function App() {
   return (
     <div className="app">
       <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />
+      {!navCollapsed ? (
+        <PaneResizeHandle
+          cssVar="--nav-w"
+          storageKey="inspire.nav-width"
+          paneSelector=".nav"
+          edge="end"
+          min={220}
+          max={() => 460}
+          label="Resize navigation"
+          variant="nav"
+        />
+      ) : null}
       <main className="center">
         <header className="topbar">
           <button
@@ -383,7 +396,21 @@ export function App() {
           <Welcome />
         )}
       </main>
-      {state.resourcesOpen ? <ResourcesPane /> : null}
+      {state.resourcesOpen ? (
+        <>
+          <PaneResizeHandle
+            cssVar="--ctx-w"
+            storageKey="inspire.ctx-width"
+            paneSelector=".ctx"
+            edge="start"
+            min={320}
+            max={(viewport) => Math.min(920, viewport - 640)}
+            label="Resize files panel"
+            variant="ctx"
+          />
+          <ResourcesPane />
+        </>
+      ) : null}
       {paletteOpen ? (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
