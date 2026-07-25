@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ChevronDown,
   FileText,
   FolderSearch,
   Loader2,
@@ -13,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ProjectFileResult } from "../api";
 import { formatBytes } from "../format";
 import { isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
+import { Dropdown } from "./Dropdown";
 
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -152,14 +152,35 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Unsent composer text, per session. In-memory only: a draft survives
+ * switching between concurrent sessions, not a page reload. */
+const sessionDrafts = new Map<string, string>();
+
 export function Composer() {
   const state = useAppState();
-  const [draft, setDraft] = useState("");
+  const sessionId = state.sessionId;
+  const [draft, setDraft] = useState(() => (sessionId ? (sessionDrafts.get(sessionId) ?? "") : ""));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const busy = isBusyRunState(state.runState);
+
+  // Write-through: the map always mirrors the textarea, so a session switch
+  // only needs to load the destination's draft.
+  const updateDraft = (text: string) => {
+    setDraft(text);
+    if (!sessionId) return;
+    if (text) sessionDrafts.set(sessionId, text);
+    else sessionDrafts.delete(sessionId);
+  };
+
+  const previousSessionRef = useRef(sessionId);
+  useEffect(() => {
+    if (previousSessionRef.current === sessionId) return;
+    previousSessionRef.current = sessionId;
+    setDraft(sessionId ? (sessionDrafts.get(sessionId) ?? "") : "");
+  }, [sessionId]);
 
   // Display names drop the provider prefix; it returns only when two
   // providers offer the same model id.
@@ -180,7 +201,7 @@ export function Composer() {
   // Extensions can place text into the composer (set_editor_text).
   const editorNonce = state.editorText?.nonce;
   useEffect(() => {
-    if (state.editorText) setDraft(state.editorText.text);
+    if (state.editorText) updateDraft(state.editorText.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorNonce]);
 
@@ -192,7 +213,7 @@ export function Composer() {
     const message = draft;
     if (!canSend) return;
     const sent = await store.sendPrompt(message, behavior);
-    if (sent) setDraft(""); // failed sends keep the draft and attachments intact
+    if (sent) updateDraft(""); // failed sends keep the draft and attachments intact
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -275,7 +296,7 @@ export function Composer() {
         rows={1}
         value={draft}
         placeholder={busy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => updateDraft(event.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         aria-label="Message"
@@ -300,50 +321,30 @@ export function Composer() {
         >
           <FolderSearch size={14} aria-hidden />
         </button>
-        <label className="composer__control" title="Model">
-          <span className="composer__control-value" aria-hidden>
-            {state.model ? modelLabel(state.model) : "No session model"}
-          </span>
-          <ChevronDown size={11} aria-hidden />
-          <select
-            className="composer__control-select"
-            aria-label="Model"
-            value={modelValue}
-            onChange={(event) => {
-              const [provider, ...rest] = event.target.value.split(":");
-              if (provider && rest.length) void store.setModel(provider, rest.join(":"));
-            }}
-            disabled={state.availableModels.length === 0}
-          >
-            {state.availableModels.length === 0 ? (
-              <option value="">{state.model ? (state.model.name ?? state.model.id) : "No session model"}</option>
-            ) : (
-              state.availableModels.map((model) => (
-                <option key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>
-                  {modelLabel(model)}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-        <label className="composer__control" title="Thinking level">
-          <span className="composer__control-value" aria-hidden>
-            {state.thinkingLevel}
-          </span>
-          <ChevronDown size={11} aria-hidden />
-          <select
-            className="composer__control-select"
-            aria-label="Thinking level"
-            value={state.thinkingLevel}
-            onChange={(event) => void store.setThinkingLevel(event.target.value)}
-          >
-            {THINKING_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Dropdown
+          label="Model"
+          title="Model"
+          direction="up"
+          value={modelValue}
+          display={state.model ? modelLabel(state.model) : "No session model"}
+          disabled={state.availableModels.length === 0}
+          options={state.availableModels.map((model) => ({
+            value: `${model.provider}:${model.id}`,
+            label: modelLabel(model),
+          }))}
+          onChange={(value) => {
+            const [provider, ...rest] = value.split(":");
+            if (provider && rest.length) void store.setModel(provider, rest.join(":"));
+          }}
+        />
+        <Dropdown
+          label="Thinking level"
+          title="Thinking level"
+          direction="up"
+          value={state.thinkingLevel}
+          options={THINKING_LEVELS.map((level) => ({ value: level, label: level }))}
+          onChange={(value) => void store.setThinkingLevel(value)}
+        />
         <span className="composer__spacer" />
         <ContextMeter />
         {busy ? (

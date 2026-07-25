@@ -23,7 +23,9 @@ import {
   type ToolCallContent,
 } from "../store";
 import { RichText } from "./RichText";
+import { ScrollRail } from "./ScrollRail";
 import { stripTerminalSequences } from "../ansi";
+import { parseUnifiedDiff, type DiffLine } from "../diff";
 
 export function relativeTime(timestamp: number | string): string {
   const time = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
@@ -185,6 +187,21 @@ function statusIcon(status: ToolStatus) {
   }
 }
 
+/** A tool result recognized as a unified diff renders as colored lines; the
+ * diff is the whole point of an edit result, so it is never truncated. */
+function DiffView({ lines }: { lines: DiffLine[] }) {
+  return (
+    <pre className="card__mono diff">
+      {lines.map((line, index) => (
+        <span key={index} className={`diff__line diff__line--${line.type}`}>
+          {line.text}
+          {"\n"}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
 function ToolCard({
   call,
   result,
@@ -199,7 +216,8 @@ function ToolCard({
   const [showAll, setShowAll] = useState(false);
   const status: ToolStatus = result ? (result.isError ? "failure" : "success") : streaming ? "running" : "unknown";
   const output = result ? toolResultText(result) : "";
-  const truncated = output.length > 600;
+  const diff = result && !result.isError ? parseUnifiedDiff(output) : null;
+  const truncated = !diff && output.length > 600;
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
@@ -220,9 +238,13 @@ function ToolCard({
       {result ? (
         <>
           <div className="card__section-label">Result</div>
-          <pre className={`card__mono ${result.isError ? "card__mono--error" : ""}`}>
-            {showAll || !truncated ? output : `${output.slice(0, 600)}…`}
-          </pre>
+          {diff ? (
+            <DiffView lines={diff} />
+          ) : (
+            <pre className={`card__mono ${result.isError ? "card__mono--error" : ""}`}>
+              {showAll || !truncated ? output : `${output.slice(0, 600)}…`}
+            </pre>
+          )}
           {truncated ? (
             <button type="button" className="card__show-all" onClick={() => setShowAll((value) => !value)}>
               {showAll ? "Show less" : "Show all"}
@@ -506,6 +528,7 @@ export function Transcript({
           </div>
         )}
       </div>
+      <ScrollRail container={scrollRef} variant="reading" />
       {!pinned ? (
         <button type="button" className="jump-to-latest" onClick={jumpToLatest}>
           Jump to latest

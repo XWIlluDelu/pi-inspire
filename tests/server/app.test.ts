@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -70,7 +70,7 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ id: "mock-active" })
       .expect(200);
-    expect(opened.body.active.messages).toHaveLength(3);
+    expect(opened.body.active.messages).toHaveLength(5);
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
@@ -136,6 +136,27 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(Array.isArray(listed.body.entries)).toBe(true);
+  });
+
+  it("browses host directories without a session and rejects relative paths", async () => {
+    await mkdir(join(temporary, "projects"));
+    const listing = await request(application.server)
+      .get(`/api/host/dirs?path=${encodeURIComponent(temporary)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(listing.body.dirs).toEqual(
+      expect.arrayContaining([{ name: "projects", path: join(listing.body.path, "projects") }]),
+    );
+    expect(listing.body.parent).toBe(dirname(listing.body.path));
+
+    await request(application.server)
+      .get("/api/host/dirs?path=relative/path")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+    await request(application.server)
+      .get(`/api/host/dirs?path=${encodeURIComponent(join(temporary, "missing"))}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
   });
 
   it("persists session pins outside Pi history and returns pinned summaries by id", async () => {

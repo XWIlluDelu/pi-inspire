@@ -127,6 +127,30 @@ from rendered HTML samples; layout again untouched:
 `npm run check` stayed green (typecheck + 137 tests); both themes and the
 overlay/empty/focus states were re-verified by screenshot.
 
+2026-07-25 round — native selects, scroll rails, structural seams:
+
+- Native `<select>` popups (composer model/thinking, settings preferences)
+  are replaced by a token-styled select-only combobox (`Dropdown`): quiet
+  trigger in the composer opening upward, bordered field variant in
+  settings opening downward; Escape closes without reaching the global
+  abort, focus stays on the trigger.
+- Pane scrollers hide native bars behind boundary-straddling scroll rails
+  (`ScrollRail`, technique learned from the docdoki panel library): nav on
+  its right edge, context pane on its left, transcript as a mid-height
+  rail floating in the reading margin (~62% pane height, whitespace-scaled
+  offset). Drag, hover-reveal, wheel pass-through, 0.9s idle fade.
+- Structural hairlines were removed (nav right, context left, the
+  continuous header underline): the surface-vs-canvas background step
+  already encoded those seams, so the lines were double-encoding; the
+  transcript gained a 20px top fade mask so scrolled content dissolves
+  under the topbar instead of colliding with the session title. In-content
+  hairlines (cards, code blocks, tables, composer) deliberately stay — they
+  mark instruments, not architecture.
+- The reading column stays at 760px: measured against a Claude chat
+  screenshot (sidebar calibrated at its known 288px), Claude's prose runs
+  ≈643px against insπre's 728px of text — the "too narrow" impression was
+  framing, not fact.
+
 ## Next actions
 
 None standing. Future theme tuning happens inside the token layer; new

@@ -1,6 +1,7 @@
 import type {
   ActiveSnapshot,
   BootstrapResponse,
+  HostDirListing,
   InspirePreferences,
   ProjectDirEntry,
   PromptRequest,
@@ -130,6 +131,8 @@ export function createApi(token: string) {
       ),
     listFiles: (dir: string) =>
       request<{ entries: ProjectDirEntry[] }>(token, `/api/files/list?dir=${encodeURIComponent(dir)}`),
+    browseHostDirs: (path?: string) =>
+      request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
     resolveResource: (sessionId: string, reference: string) =>
       post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }),
     resourceContent: (id: string, sessionId: string, byteLimit?: number) =>

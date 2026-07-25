@@ -11,7 +11,7 @@ import {
   Search,
   SearchX,
 } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   projectNameFromCwd,
   type ProjectDirEntry,
@@ -19,6 +19,7 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
+import { ScrollRail } from "./ScrollRail";
 import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
@@ -269,6 +270,7 @@ export function Nav({
   onSelectSession: (id: string) => void;
 }) {
   const state = useAppState();
+  const navRef = useRef<HTMLElement>(null);
 
   if (collapsed) {
     return (
@@ -291,7 +293,7 @@ export function Nav({
   const searching = state.sessionQuery.trim() !== "";
 
   return (
-    <nav className="nav" aria-label="Sessions">
+    <nav className="nav" aria-label="Sessions" ref={navRef}>
       <div className="nav__header">
         <Wordmark />
         {state.mock ? <span className="nav__mock">mock</span> : null}
@@ -377,6 +379,8 @@ export function Nav({
         ) : null}
       </div>
       <WorkspaceExplorer />
+      <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
+      <ScrollRail container={navRef} scroller=".explorer__tree" variant="nav" />
     </nav>
   );
 }
