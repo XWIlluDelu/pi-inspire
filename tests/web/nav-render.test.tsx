@@ -30,7 +30,7 @@ describe("session navigation controls", () => {
       if (url.startsWith("/api/sessions")) {
         return { body: { sessions: [alpha, beta], total: 2, offset: 0, limit: 40 } };
       }
-      if (url.startsWith("/api/preferences") && init.method === "PUT") return { body: jsonBody(init) };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") return { body: jsonBody(init) };
       return undefined;
     });
     await store.init("token");

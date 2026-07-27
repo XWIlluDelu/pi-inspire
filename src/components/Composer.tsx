@@ -57,6 +57,9 @@ function ContextMeter() {
 }
 
 function AttachmentChip({ item }: { item: PendingAttachment }) {
+  // Withdrawal freezes while a prompt is delivering; the host may be
+  // resolving this file into the outgoing message.
+  const sending = useAppState().sending;
   return (
     <li className={`attachment attachment--${item.status}`} title={item.error ?? item.fileName}>
       {item.kind === "image" && item.previewUrl ? (
@@ -73,6 +76,7 @@ function AttachmentChip({ item }: { item: PendingAttachment }) {
       <button
         type="button"
         className="attachment__remove"
+        disabled={sending}
         onClick={() => store.removeAttachment(item.localId)}
         aria-label={`Remove ${item.fileName}`}
       >
@@ -108,7 +112,16 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+    // Re-scoped to the visible session: switching cancels the in-flight search
+    // (its results would be another session's paths) and re-queries the new
+    // workspace.
+  }, [query, state.sessionId]);
+
+  // A session switch invalidates the currently listed paths immediately, so
+  // none of session A's files can be picked while session B is visible.
+  useEffect(() => {
+    setResults([]);
+  }, [state.sessionId]);
 
   return (
     <div className="picker" role="dialog" aria-label="Add project files">
@@ -211,9 +224,18 @@ export function Composer() {
 
   const submit = async (behavior?: "steer" | "followUp") => {
     const message = draft;
-    if (!canSend) return;
+    if (!canSend || state.sending) return;
+    const owner = sessionId;
     const sent = await store.sendPrompt(message, behavior);
-    if (sent) updateDraft(""); // failed sends keep the draft and attachments intact
+    if (!sent || !owner) return; // failed sends keep the draft and attachments intact
+    // Clear the sent text only if nothing new was typed while the send was in
+    // flight — the textarea stays editable during delivery, and a changed
+    // draft belongs to the next message.
+    if ((sessionDrafts.get(owner) ?? "") !== message) return;
+    sessionDrafts.delete(owner);
+    // A slow send may settle after a session switch; only the owner's visible
+    // textarea clears, never the session the user is typing in now.
+    if (store.getState().sessionId === owner) setDraft("");
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -361,7 +383,7 @@ export function Composer() {
           <button
             type="submit"
             className="composer__send"
-            disabled={!canSend}
+            disabled={!canSend || state.sending}
             aria-label="Send message"
             title="Send"
           >

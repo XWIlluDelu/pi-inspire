@@ -152,6 +152,17 @@ const components: Components = {
         </button>
       );
     }
+    // A remote image must not load on render: merely reading a message would
+    // fire a GET to an attacker-chosen host. The reference stays reachable as
+    // an explicit link the user chooses to open.
+    if (src && /^https?:/i.test(src)) {
+      return (
+        <a href={src} target="_blank" rel="noreferrer noopener" title={src}>
+          <span aria-hidden>▧ </span>
+          {alt || src}
+        </a>
+      );
+    }
     return <img src={src} alt={alt ?? ""} />;
   },
 };

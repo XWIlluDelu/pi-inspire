@@ -19,17 +19,52 @@ need_node() {
   fi
 }
 
-ensure_deps() {
-  if [[ ! -d node_modules ]]; then
-    echo "Installing dependencies…"
-    npm install
+# Portable SHA-256 of stdin; falls back across common tools.
+hash_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    cksum | cut -d' ' -f1
   fi
 }
 
+deps_hash() {
+  hash_stdin < package-lock.json 2>/dev/null || true
+}
+
+# A fingerprint of every input that affects the built client, so a pulled
+# source or config change forces a rebuild instead of running an old bundle.
+source_hash() {
+  {
+    find src shared public index.html vite.config.ts tsconfig.json tsconfig.web.json tsconfig.server.json package-lock.json \
+      -type f 2>/dev/null | sort | while IFS= read -r file; do
+      printf '%s ' "$file"
+      hash_stdin < "$file" 2>/dev/null || true
+    done
+  } | hash_stdin
+}
+
+ensure_deps() {
+  local want stamp="node_modules/.inspire-deps"
+  want="$(deps_hash)"
+  if [[ ! -d node_modules || "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]]; then
+    echo "Installing dependencies…"
+    npm install
+    printf '%s\n' "$want" > "$stamp"
+  fi
+}
+
+do_build() {
+  echo "Building client…"
+  npm run build
+  printf '%s\n' "$(source_hash)" > dist/.inspire-build
+}
+
 ensure_build() {
-  if [[ ! -f dist/index.html ]]; then
-    echo "Building client…"
-    npm run build
+  if [[ ! -f dist/index.html || "$(cat dist/.inspire-build 2>/dev/null || true)" != "$(source_hash)" ]]; then
+    do_build
   fi
 }
 
@@ -78,7 +113,7 @@ case "$mode" in
   build)
     need_node
     ensure_deps
-    exec npm run build
+    do_build
     ;;
   -h | --help | help)
     sed -n '2,8p' "$0"

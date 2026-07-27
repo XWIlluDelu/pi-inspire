@@ -43,6 +43,54 @@ describe("ResourceStore", () => {
     expect(() => resources.get(descriptor.id, "s2")).toThrow("no longer available");
   });
 
+  it("does not load the transcript for an indexed workspace file", async () => {
+    const { project } = await workspace();
+    await writeFile(join(project, "indexed.txt"), "indexed\n");
+    let messageLoads = 0;
+
+    const descriptor = await resources.resolve(
+      {
+        sessionId: "s1",
+        cwd: project,
+        loadMessages: async () => {
+          messageLoads += 1;
+          return [];
+        },
+      },
+      "indexed.txt",
+    );
+
+    expect(descriptor.name).toBe("indexed.txt");
+    expect(messageLoads).toBe(0);
+  });
+
+  it("binds serving to the inode inspected at resolve, refusing a swapped file", async () => {
+    const { root, project } = await workspace();
+    await writeFile(join(project, "report.md"), "# Result\n");
+    await writeFile(join(root, "secret.txt"), "SECRET\n");
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "[report](report.md)" }] }];
+    const descriptor = await resources.resolve({ sessionId: "s1", cwd: project, messages }, "report.md");
+    const resource = resources.get(descriptor.id, "s1");
+    const opened = await resources.openForServing(resource);
+    expect(opened.size).toBe("# Result\n".length);
+    const original = await opened.handle.readFile("utf8");
+    expect(original).toBe("# Result\n");
+    await opened.handle.close();
+
+    // Swapping the file for a symlink to an outside secret changes its inode:
+    // the read is refused, never followed to the new target.
+    const { rm } = await import("node:fs/promises");
+    await rm(join(project, "report.md"));
+    await symlink(join(root, "secret.txt"), join(project, "report.md"));
+    await expect(resources.openForServing(resource)).rejects.toMatchObject({ status: 409 });
+
+    // Same-path regeneration is a new inode too: the stale handle must be
+    // re-resolved rather than silently serving different bytes.
+    await rm(join(project, "report.md"));
+    await writeFile(join(project, "report.md"), "# Regenerated\n");
+    await expect(resources.openForServing(resource)).rejects.toMatchObject({ status: 409 });
+  });
+
   it("allows a file only when the owning session explicitly references it", async () => {
     const { root, project } = await workspace();
     const artifact = join(root, "artifact.pdf");
@@ -76,7 +124,7 @@ describe("ResourceStore", () => {
     const descriptor = await resources.resolve({ sessionId: "s1", cwd: project, messages }, "pi-embedded://0/0");
     const resolved = resources.get(descriptor.id, "s1");
     expect(descriptor).toMatchObject({ kind: "image", mimeType: "image/png", size: 11 });
-    expect(resources.embeddedData(resolved, { sessionId: "s1", cwd: project, messages }).toString()).toBe("image-bytes");
+    expect((await resources.embeddedData(resolved, { sessionId: "s1", cwd: project, messages })).toString()).toBe("image-bytes");
   });
 
   it("does not treat a project symlink as authority for an outside file", async () => {

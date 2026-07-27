@@ -33,7 +33,7 @@ describe("preference persistence", () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload() };
       if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
-      if (url.startsWith("/api/preferences") && init.method === "PUT") {
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
         saved.push(jsonBody(init));
         return { body: jsonBody(init) };
       }
@@ -41,13 +41,23 @@ describe("preference persistence", () => {
     });
   });
 
-  it("setTheme updates local state and persists via PUT /api/preferences", async () => {
+  it("setTheme updates local state and persists a field-scoped PATCH", async () => {
     const store = new AppStore();
     await store.init("token");
     store.setTheme("dark");
     expect(store.getState().prefs.theme).toBe("dark");
     await vi.waitFor(() => expect(saved.length).toBeGreaterThan(0));
-    expect(saved.at(-1)).toMatchObject({ theme: "dark" });
+    expect(saved.at(-1)).toEqual({ theme: "dark" });
+  });
+
+  it("queues rapid changes in order, each patch carrying only its own field", async () => {
+    const store = new AppStore();
+    await store.init("token");
+    store.setTheme("dark");
+    store.setToolVisibility("hidden");
+    expect(store.getState().prefs).toMatchObject({ theme: "dark", toolVisibility: "hidden" });
+    await vi.waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved).toEqual([{ theme: "dark" }, { toolVisibility: "hidden" }]);
   });
 
   it("setLaunch switches the launch behavior preference", async () => {

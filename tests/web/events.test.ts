@@ -64,6 +64,22 @@ describe("message reconciliation", () => {
     expect(second.slice.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 
+  it("does not overwrite an older keyed turn when its end event is absent", () => {
+    const slice = emptyEventSlice();
+    slice.messages = [
+      { role: "assistant", content: [{ type: "text", text: "first answer" }], timestamp: 2 },
+      { role: "user", content: "second question", timestamp: 3 },
+    ];
+
+    const next = reduce(slice, new Set(), {
+      type: "message_start",
+      message: { role: "assistant", content: [{ type: "text", text: "second answer" }], timestamp: 4 },
+    });
+
+    expect(next.slice.messages.map((message) => message.timestamp)).toEqual([2, 3, 4]);
+    expect(next.slice.messages[0]!.content).toEqual([{ type: "text", text: "first answer" }]);
+  });
+
   it("requests an authoritative resync on settle and clears transient activity", () => {
     const slice = emptyEventSlice();
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };

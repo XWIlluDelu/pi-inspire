@@ -2,6 +2,7 @@ import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VISIBILITY_PREFERENCES, type ThemePreference } from "../../shared/contracts";
 import { isBusyRunState, store, useAppState } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 import { relativeTime } from "./Transcript";
 
 interface PaletteItem {
@@ -39,6 +40,7 @@ export function CommandPalette({
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useModalFocus<HTMLDivElement>();
   const busy = isBusyRunState(state.runState);
 
   useEffect(() => {
@@ -154,10 +156,12 @@ export function CommandPalette({
   return (
     <div className="overlay" role="presentation" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="palette"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <input
