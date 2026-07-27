@@ -9,6 +9,7 @@ covers:
   - src/store.ts
   - src/components/Composer.tsx
   - tests/server/app.test.ts
+  - tests/web/composer-sessions.test.tsx
   - tests/web/composer.test.tsx
 ---
 
@@ -20,7 +21,7 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
 ## Checks
 
-- The composer accepts multiline text; each session keeps its own unsent draft, restored when the user switches back (in-memory — a draft does not survive a reload).
+- The composer accepts multiline text; each session keeps its own unsent draft, staged attachments, and project-file references, restored when the user switches back (in-memory — staged work does not survive a reload). Empty session partitions are discarded, while non-empty partitions remain until their user-owned work is sent or removed.
 - Project files can be found and referenced through an explicit picker or completion flow.
 - Images can be pasted, dropped, or selected and previewed before submission.
 - Ordinary files can be selected or dropped, with their name, type, size, and submission meaning visible before sending.

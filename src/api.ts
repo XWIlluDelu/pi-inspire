@@ -75,11 +75,22 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
   return (await response.json()) as T;
 }
 
-async function fetchResourceContent(token: string, id: string, sessionId: string, byteLimit?: number): Promise<Blob> {
+interface ResourceContentOptions {
+  byteLimit?: number;
+  signal?: AbortSignal;
+}
+
+async function fetchResourceContent(
+  token: string,
+  id: string,
+  sessionId: string,
+  options: ResourceContentOptions = {},
+): Promise<Blob> {
   const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
+    signal: options.signal,
     headers: {
       Authorization: `Bearer ${token}`,
-      ...(byteLimit ? { Range: `bytes=0-${Math.max(0, byteLimit - 1)}` } : {}),
+      ...(options.byteLimit ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` } : {}),
     },
   });
   await ensureOk(response);
@@ -99,8 +110,8 @@ async function uploadFiles(token: string, files: File[]): Promise<{ attachments:
   return (await response.json()) as { attachments: UploadedAttachment[] };
 }
 
-function post<T>(token: string, path: string, body?: unknown): Promise<T> {
-  return request<T>(token, path, { method: "POST", body: JSON.stringify(body ?? {}) });
+function post<T>(token: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+  return request<T>(token, path, { ...init, method: "POST", body: JSON.stringify(body ?? {}) });
 }
 
 export function createApi(token: string) {
@@ -117,28 +128,33 @@ export function createApi(token: string) {
     setSessionPinned: (id: string, pinned: boolean) => post<InspirePreferences>(token, "/api/sessions/pin", { id, pinned }),
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
     newSession: (cwd: string, name?: string) => post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, name }),
-    renameSession: (name: string) => post<{ ok: boolean }>(token, "/api/sessions/rename", { name }),
+    renameSession: (sessionId: string, name: string) =>
+      post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
     prompt: (body: PromptRequest) => post<{ accepted: boolean }>(token, "/api/prompt", body),
-    abort: () => post<{ ok: boolean }>(token, "/api/control/abort"),
-    setModel: (provider: string, modelId: string) =>
-      post<unknown>(token, "/api/control/model", { provider, modelId }),
-    setThinkingLevel: (level: string) => post<{ ok: boolean }>(token, "/api/control/thinking", { level }),
+    abort: (sessionId: string) => post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
+    setModel: (sessionId: string, provider: string, modelId: string) =>
+      post<unknown>(token, "/api/control/model", { sessionId, provider, modelId }),
+    setThinkingLevel: (sessionId: string, level: string) =>
+      post<{ ok: boolean }>(token, "/api/control/thinking", { sessionId, level }),
     uploadAttachments: (files: File[]) => uploadFiles(token, files),
     deleteAttachment: (id: string) =>
       request<{ ok: boolean }>(token, `/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    searchFiles: (query: string, limit = 50) =>
+    searchFiles: (sessionId: string, query: string, limit = 50) =>
       request<{ files: ProjectFileResult[] }>(
         token,
-        `/api/files?q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}`,
       ),
-    listFiles: (dir: string) =>
-      request<{ entries: ProjectDirEntry[] }>(token, `/api/files/list?dir=${encodeURIComponent(dir)}`),
+    listFiles: (sessionId: string, dir: string) =>
+      request<{ entries: ProjectDirEntry[] }>(
+        token,
+        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}`,
+      ),
     browseHostDirs: (path?: string) =>
       request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
-    resolveResource: (sessionId: string, reference: string) =>
-      post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }),
-    resourceContent: (id: string, sessionId: string, byteLimit?: number) =>
-      fetchResourceContent(token, id, sessionId, byteLimit),
+    resolveResource: (sessionId: string, reference: string, signal?: AbortSignal) =>
+      post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }, { signal }),
+    resourceContent: (id: string, sessionId: string, options?: ResourceContentOptions) =>
+      fetchResourceContent(token, id, sessionId, options),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
     savePreferences: (patch: Partial<InspirePreferences>) =>

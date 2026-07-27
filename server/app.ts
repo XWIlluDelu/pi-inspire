@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { WebSocket, WebSocketServer } from "ws";
@@ -21,17 +21,24 @@ import type { SessionCatalogLike } from "./session-catalog.js";
 
 const openSchema = z.object({ id: z.string().min(1).max(128) });
 const newSchema = z.object({ cwd: z.string().min(1).max(4_096), name: z.string().max(160).optional() });
+const sessionIdField = z.string().min(1).max(200);
 const promptSchema = z.object({
+  sessionId: sessionIdField,
   message: z.string().max(500_000),
   attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
   projectFiles: z.array(z.string().max(4_096)).max(MAX_PROJECT_FILES).optional(),
   behavior: z.enum(["steer", "followUp"]).optional(),
 });
-const renameSchema = z.object({ name: z.string().max(160) });
-const modelSchema = z.object({ provider: z.string().min(1).max(120), modelId: z.string().min(1).max(240) });
-const thinkingSchema = z.object({ level: z.enum(THINKING_LEVELS) });
+const abortSchema = z.object({ sessionId: sessionIdField });
+const renameSchema = z.object({ sessionId: sessionIdField, name: z.string().max(160) });
+const modelSchema = z.object({
+  sessionId: sessionIdField,
+  provider: z.string().min(1).max(120),
+  modelId: z.string().min(1).max(240),
+});
+const thinkingSchema = z.object({ sessionId: sessionIdField, level: z.enum(THINKING_LEVELS) });
 const extensionSchema = z.object({
-  sessionId: z.string().min(1).max(200),
+  sessionId: sessionIdField,
   id: z.string().min(1).max(200),
 }).passthrough();
 const sessionQuerySchema = z.object({
@@ -40,10 +47,12 @@ const sessionQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(40),
 });
 const fileQuerySchema = z.object({
+  sessionId: sessionIdField,
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 const fileListSchema = z.object({
+  sessionId: sessionIdField,
   dir: z
     .string()
     .max(4_096)
@@ -57,10 +66,13 @@ const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max
 const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
 const attachmentIdSchema = z.string().uuid();
 const resourceResolveSchema = z.object({
-  sessionId: z.string().min(1).max(128),
+  sessionId: sessionIdField,
   reference: z.string().min(1).max(8_192),
 });
-const resourceContentSchema = z.object({ sessionId: z.string().min(1).max(128) });
+const resourceContentSchema = z.object({ sessionId: sessionIdField });
+
+export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
+export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
 
 export interface AppDependencies {
   token: string;
@@ -91,6 +103,19 @@ function originAllowed(origin: string | undefined, host: string | undefined): bo
   }
 }
 
+/** This endpoint deliberately supports one byte range. Express owns RFC
+ * parsing (including suffix and open-ended forms); malformed, unsatisfiable,
+ * non-byte, and multi-range requests fail rather than unexpectedly receiving
+ * the whole potentially large resource. */
+function resourceByteRange(request: Request, size: number): { start: number; end: number } | null {
+  if (!request.get("range")) return null;
+  const ranges = request.range(size);
+  if (!Array.isArray(ranges) || ranges.type !== "bytes" || ranges.length !== 1) {
+    throw Object.assign(new Error("The requested byte range cannot be served"), { status: 416 });
+  }
+  return ranges[0]!;
+}
+
 function apiError(error: unknown, request: Request, response: Response, _next: NextFunction): void {
   const status =
     error instanceof ZodError
@@ -119,7 +144,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self' data:",
-        "img-src 'self' data: blob: http: https:",
+        // Remote images stay out: untrusted transcript content must not be
+        // able to fire network requests just by being rendered.
+        "img-src 'self' data: blob:",
         "connect-src 'self' ws: wss:",
         "frame-src 'self' blob:",
         "object-src 'none'",
@@ -184,8 +211,8 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json(await deps.runtime.newSession(cwd, name));
   });
   app.post("/api/sessions/rename", async (request, response) => {
-    const { name } = renameSchema.parse(request.body);
-    await deps.runtime.rename(name);
+    const { sessionId, name } = renameSchema.parse(request.body);
+    await deps.runtime.rename(sessionId, name);
     response.json({ ok: true });
   });
 
@@ -207,17 +234,18 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     await deps.runtime.prompt(promptSchema.parse(request.body));
     response.status(202).json({ accepted: true });
   });
-  app.post("/api/control/abort", async (_request, response) => {
-    await deps.runtime.abort();
+  app.post("/api/control/abort", async (request, response) => {
+    const { sessionId } = abortSchema.parse(request.body);
+    await deps.runtime.abort(sessionId);
     response.json({ ok: true });
   });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);
-    response.json(await deps.runtime.setModel(value.provider, value.modelId));
+    response.json(await deps.runtime.setModel(value.sessionId, value.provider, value.modelId));
   });
   app.post("/api/control/thinking", async (request, response) => {
-    const { level } = thinkingSchema.parse(request.body);
-    await deps.runtime.setThinkingLevel(level);
+    const { sessionId, level } = thinkingSchema.parse(request.body);
+    await deps.runtime.setThinkingLevel(sessionId, level);
     response.json({ ok: true });
   });
   app.post("/api/extension-ui", async (request, response) => {
@@ -226,14 +254,16 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
 
   app.get("/api/files", async (request, response) => {
-    if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
-    const { q, limit } = fileQuerySchema.parse(request.query);
-    response.json({ files: await searchProjectFiles(deps.runtime.activeCwd, q, limit) });
+    const { sessionId, q, limit } = fileQuerySchema.parse(request.query);
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    response.json({ files: await searchProjectFiles(cwd, q, limit) });
   });
   app.get("/api/files/list", async (request, response) => {
-    if (!deps.runtime.activeCwd) return response.status(409).json({ error: "Open or create a session first" });
-    const { dir } = fileListSchema.parse(request.query);
-    response.json({ entries: await listProjectDirectory(deps.runtime.activeCwd, dir) });
+    const { sessionId, dir } = fileListSchema.parse(request.query);
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    response.json({ entries: await listProjectDirectory(cwd, dir) });
   });
   // Session-independent: the picker browses the host filesystem before any
   // session exists. The bearer token is the guard, as everywhere else.
@@ -257,6 +287,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json(await deps.resources.resolve(context, reference));
   });
   app.get("/api/resources/:id/content", async (request, response) => {
+    let closed = response.destroyed;
+    response.once("close", () => {
+      closed = true;
+    });
     const { sessionId } = resourceContentSchema.parse(request.query);
     // Handles are bound to the session they were resolved in AND to that
     // session still being the visible one — a handle from session A must not
@@ -271,9 +305,50 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     });
     if (resource.embedded) {
       const context = await deps.runtime.resourceContext(sessionId);
-      response.send(deps.resources.embeddedData(resource, context));
+      if (closed || response.destroyed) return;
+      const data = await deps.resources.embeddedData(resource, context);
+      if (closed || response.destroyed) return;
+      const range = resourceByteRange(request, data.length);
+      response.set("Accept-Ranges", "bytes");
+      if (range) {
+        response.status(206).set({
+          "Content-Range": `bytes ${range.start}-${range.end}/${data.length}`,
+          "Content-Length": String(range.end - range.start + 1),
+        });
+        response.send(data.subarray(range.start, range.end + 1));
+      } else {
+        response.set("Content-Length", String(data.length));
+        response.send(data);
+      }
     } else if (resource.path) {
-      response.sendFile(resource.path);
+      const { handle, size } = await deps.resources.openForServing(resource);
+      if (closed || response.destroyed) {
+        await handle.close();
+        return;
+      }
+      let range: { start: number; end: number } | null;
+      try {
+        range = resourceByteRange(request, size);
+      } catch (error) {
+        await handle.close();
+        throw error;
+      }
+      response.set("Accept-Ranges", "bytes");
+      if (range) {
+        response.status(206).set({
+          "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
+          "Content-Length": String(range.end - range.start + 1),
+        });
+      } else {
+        response.set("Content-Length", String(size));
+      }
+      const stream = handle.createReadStream(range ? { start: range.start, end: range.end } : {});
+      response.on("close", () => stream.destroy());
+      stream.on("error", () => {
+        if (!response.headersSent) response.status(500);
+        response.end();
+      });
+      stream.pipe(response);
     } else {
       response.status(404).json({ error: "The resource preview is no longer available" });
     }
@@ -287,17 +362,57 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    app.use(express.static(distDir, { index: false, fallthrough: true, immutable: true, maxAge: "1y" }));
-    app.get("*path", (_request, response) => response.sendFile(resolve(distDir, "index.html")));
+    // Content-hashed bundles under /assets are safe to cache forever. Every
+    // other dist file is unhashed — theme-init.js, index.html — so it must
+    // revalidate, or a rebuild is served stale for up to a year.
+    app.use(
+      "/assets",
+      express.static(join(distDir, "assets"), { immutable: true, maxAge: "1y", fallthrough: true }),
+    );
+    app.use(express.static(distDir, { index: false, fallthrough: true, maxAge: 0 }));
+    app.get("*path", (_request, response) => {
+      response.set("Cache-Control", "no-cache");
+      response.sendFile(resolve(distDir, "index.html"));
+    });
   }
 
   app.use(apiError);
   const server = createServer(app);
   const websocket = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   const sockets = new Set<WebSocket>();
+  /** Sockets still waiting for their snapshot; live events queue here so the
+   * first frame a client processes is always the authoritative snapshot,
+   * with the queued events flushed after it in arrival order. */
+  const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
+  const closeLaggingSocket = (socket: WebSocket, reason: string) => {
+    joining.delete(socket);
+    if (socket.readyState === WebSocket.OPEN) socket.close(1013, reason);
+  };
+  const sendBounded = (socket: WebSocket, message: string): boolean => {
+    if (socket.readyState !== WebSocket.OPEN) return false;
+    if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_SOCKET_BUFFERED_BYTES) {
+      closeLaggingSocket(socket, "Client fell behind");
+      return false;
+    }
+    socket.send(message);
+    return true;
+  };
   deps.runtime.on("event", (event) => {
     const message = JSON.stringify(event);
-    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(message);
+    const messageBytes = Buffer.byteLength(message);
+    for (const socket of sockets) {
+      const queue = joining.get(socket);
+      if (queue) {
+        if (queue.bytes + messageBytes > MAX_JOINING_EVENT_BYTES) {
+          closeLaggingSocket(socket, "Snapshot backlog exceeded");
+        } else {
+          queue.messages.push(message);
+          queue.bytes += messageBytes;
+        }
+      } else {
+        sendBounded(socket, message);
+      }
+    }
   });
 
   server.on("upgrade", (request, socket, head) => {
@@ -322,10 +437,25 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
 
   websocket.on("connection", (socket) => {
     sockets.add(socket);
-    socket.on("close", () => sockets.delete(socket));
+    joining.set(socket, { messages: [], bytes: 0 });
+    socket.on("close", () => {
+      sockets.delete(socket);
+      joining.delete(socket);
+    });
     void deps.runtime.snapshot().then(
-      (snapshot) => socket.send(JSON.stringify({ type: "snapshot", data: snapshot })),
-      () => socket.close(1011, "Unable to load session state"),
+      (snapshot) => {
+        const queued = joining.get(socket);
+        joining.delete(socket);
+        if (!queued || socket.readyState !== WebSocket.OPEN) return;
+        if (!sendBounded(socket, JSON.stringify({ type: "snapshot", data: snapshot }))) return;
+        for (const message of queued.messages) {
+          if (!sendBounded(socket, message)) break;
+        }
+      },
+      () => {
+        joining.delete(socket);
+        socket.close(1011, "Unable to load session state");
+      },
     );
   });
 

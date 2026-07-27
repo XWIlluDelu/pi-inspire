@@ -2,6 +2,7 @@ import { CornerLeftUp, Folder, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { HostDirListing } from "../../shared/contracts";
 import { store } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 
 /**
  * Host-side directory browser for the session-start surface. The host
@@ -22,6 +23,7 @@ export function DirectoryPicker({
   const [listing, setListing] = useState<HostDirListing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const dialogRef = useModalFocus<HTMLDivElement>();
   // Only the newest request may write state — rapid navigation must not
   // let a slow earlier level overwrite a later one.
   const ticket = useRef(0);
@@ -68,10 +70,12 @@ export function DirectoryPicker({
   return (
     <div className="overlay" role="presentation" onClick={onCancel}>
       <div
+        ref={dialogRef}
         className="dialog dirpicker"
         role="dialog"
         aria-modal="true"
         aria-label="Choose project directory"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="dialog__title">Choose project directory</h2>

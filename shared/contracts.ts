@@ -170,6 +170,9 @@ export interface UploadedAttachment {
 }
 
 export interface PromptRequest {
+  /** Target session: writes never fall back to the host's current selection,
+   * so a concurrent navigation cannot redirect a prompt. */
+  sessionId: string;
   message: string;
   attachmentIds?: string[];
   projectFiles?: string[];

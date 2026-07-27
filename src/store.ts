@@ -58,6 +58,10 @@ export type ConnectionState = "connecting" | "open" | "reconnecting" | "offline"
 /** Text-like previews are range-capped; a body shorter than the file's
  * size marks the preview truncated. */
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
+/** Blob-backed image/PDF/audio/video previews must fit in browser memory.
+ * Fetch one sentinel byte beyond the limit so a same-inode file growth cannot
+ * masquerade as a complete preview. */
+export const MAX_MEDIA_PREVIEW_BYTES = 32 * 1024 * 1024;
 
 /** In-document CSP injected into sandboxed HTML previews: no scripts (the
  * iframe sandbox enforces that too), no remote subresources. */
@@ -65,16 +69,20 @@ const HTML_PREVIEW_CSP =
   "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'";
 
 export function injectHtmlPreviewCsp(html: string): string {
-  // Sandbox blocks script execution and privilege; remove document-controlled
-  // navigation primitives as well so a preview cannot immediately leave its
-  // isolated blob document or choose a local/remote base URL.
-  const inert = html
-    .replace(/<base\b[^>]*>/gi, "")
-    .replace(/<meta\b(?=[^>]*http-equiv\s*=\s*["']?refresh\b)[^>]*>/gi, "");
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">`;
-  const head = /<head[^>]*>/i.exec(inert);
-  if (head) return `${inert.slice(0, head.index + head[0].length)}${meta}${inert.slice(head.index + head[0].length)}`;
-  return `${meta}${inert}`;
+  // Sandbox blocks script execution and privilege; the injected CSP removes
+  // network reach and navigation primitives. Parse rather than regex-splice:
+  // a fake "<head>" inside a comment must not choose the injection point.
+  // parseFromString is inert — nothing loads or executes during parsing.
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  for (const element of [...parsed.querySelectorAll("base")]) element.remove();
+  for (const element of [...parsed.querySelectorAll("meta[http-equiv]")]) {
+    if (/^refresh$/i.test(element.getAttribute("http-equiv") ?? "")) element.remove();
+  }
+  const meta = parsed.createElement("meta");
+  meta.setAttribute("http-equiv", "Content-Security-Policy");
+  meta.setAttribute("content", HTML_PREVIEW_CSP);
+  parsed.head.insertBefore(meta, parsed.head.firstChild);
+  return `<!DOCTYPE html>${parsed.documentElement.outerHTML}`;
 }
 
 export type ResourcePreview =
@@ -89,6 +97,8 @@ export type ResourcePreview =
       truncated?: boolean;
       /** Object URL for binary-backed previews (image/pdf/audio/video/html). */
       objectUrl?: string;
+      /** The descriptor remains inspectable even when its bytes are withheld. */
+      contentUnavailable?: "too-large";
     };
 
 export interface ModelOption {
@@ -145,6 +155,14 @@ export interface PendingAttachment {
   error?: string;
 }
 
+/** One session's staged composer work; AppState.attachments/projectFiles/
+ * sending mirror the visible session's partition. */
+interface ComposerPartition {
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  sending: boolean;
+}
+
 export interface AppState extends EventSlice {
   needsToken: boolean;
   connection: ConnectionState;
@@ -171,8 +189,15 @@ export interface AppState extends EventSlice {
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   /** Session switch currently in flight; duplicate selections are ignored until it settles. */
   openingSessionId: string | null;
+  /** The visible session's composer slice. Authoritative copies live in
+   * per-session partitions inside the store; a session switch swaps the
+   * slice, so staged work never leaks across sessions. */
   attachments: PendingAttachment[];
   projectFiles: string[];
+  /** Prompt delivery in flight for the visible session: repeat sends are
+   * refused and attachment withdrawals freeze, so a DELETE cannot race the
+   * host resolving those same files into the outgoing message. */
+  sending: boolean;
   /** Pin mutation in flight for this session id; the row stays truthful. */
   pinningSessionId: string | null;
   /** Files/resources pane visibility (Ctrl+.). */
@@ -208,6 +233,7 @@ const initialState: AppState = {
   openingSessionId: null,
   attachments: [],
   projectFiles: [],
+  sending: false,
   pinningSessionId: null,
   resourcesOpen: false,
   selectedResourceReference: null,
@@ -227,8 +253,13 @@ export class AppStore {
   private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
   private selectionGeneration = 0;
+  /** Latest-wins guard for selection intent: openSession/newSession and every
+   * authoritative WebSocket snapshot bump it, so a slower open/new HTTP
+   * response cannot overwrite a newer selection the client already applied. */
+  private selectionRequest = 0;
   private readyWhileOpening = new Set<string>();
   private previewObjectUrl: string | null = null;
+  private resourceRequest: AbortController | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -305,7 +336,8 @@ export class AppStore {
     if (sessionChanged) {
       this.selectionGeneration += 1;
       // Previews are authorized against the owning session; a switch must not
-      // leak the previous session's selection or object URLs.
+      // leak the previous session's selection, transfer, or object URLs.
+      this.cancelResourceRequest();
       this.revokePreviewObjectUrl();
     }
     const messages = (active?.messages ?? []).map(asMessage);
@@ -334,7 +366,16 @@ export class AppStore {
       queue: IDLE_QUEUE,
       extensionUi: snapshot.pendingExtensionUi ?? null,
       ...(sessionChanged
-        ? { statuses: {}, editorText: null, windowTitle: null, selectedResourceReference: null, resourcePreview: null }
+        ? {
+            statuses: {},
+            editorText: null,
+            windowTitle: null,
+            selectedResourceReference: null,
+            resourcePreview: null,
+            // Composer work belongs to its session; the switch swaps in the
+            // destination's staged slice.
+            ...this.composerSlice(nextSessionId),
+          }
         : {}),
     });
   }
@@ -359,7 +400,12 @@ export class AppStore {
 
   private applyEvent(event: WireEvent): void {
     if (event.type === "snapshot") {
-      if (event.data) this.applySnapshot(event.data as ActiveSnapshot);
+      if (event.data) {
+        // An authoritative push is the newest selection truth: invalidate any
+        // open/new response still in flight so it cannot overwrite this.
+        this.selectionRequest += 1;
+        this.applySnapshot(event.data as ActiveSnapshot);
+      }
       return;
     }
 
@@ -487,8 +533,13 @@ export class AppStore {
 
   // --- Sessions ---
 
+  /** Latest-wins ticket: a slower, earlier list response must not overwrite
+   * the results of a newer query or refresh. */
+  private sessionLoadTicket = 0;
+
   loadSessions = async (query: string): Promise<void> => {
     if (!this.api) return;
+    const ticket = ++this.sessionLoadTicket;
     try {
       const list = await this.api.sessions(query);
       const sessions = this.withPinnedFlags(list.sessions);
@@ -507,8 +558,10 @@ export class AppStore {
           }
         }
       }
+      if (ticket !== this.sessionLoadTicket) return;
       this.set({ sessions });
     } catch (error) {
+      if (ticket !== this.sessionLoadTicket) return; // a newer load owns the outcome
       if (error instanceof ApiError && error.status === 401) this.handleAuthFailure();
       else this.fail(error instanceof Error ? error.message : "Failed to list sessions");
     }
@@ -542,7 +595,15 @@ export class AppStore {
       await this.loadSessions(this.state.sessionQuery);
     } catch (error) {
       // Truthful control: a rejected pin cannot leave the UI claiming it.
-      this.set({ prefs: previousPrefs, sessions: previousSessions });
+      // Only pin state rolls back; preferences edited while the request was
+      // in flight (theme, visibility, …) keep their newer local values.
+      const wasPinned = previousPrefs.pinnedSessionIds.includes(id);
+      this.set({
+        prefs: { ...this.state.prefs, pinnedSessionIds: previousPrefs.pinnedSessionIds },
+        sessions: this.state.sessions.map((session) =>
+          session.id === id ? { ...session, pinned: wasPinned } : session,
+        ),
+      });
       this.fail(error instanceof Error ? error.message : "Failed to update the pin");
     } finally {
       this.set({ pinningSessionId: null });
@@ -570,15 +631,20 @@ export class AppStore {
     if (!this.api) return;
     if (this.state.openingSessionId) return; // one switch at a time
     if (id === this.state.sessionId) return; // already active: no-op
+    const ticket = ++this.selectionRequest;
     this.set({ openingSessionId: id });
     try {
-      this.applySnapshot(await this.api.openSession(id));
+      const snapshot = await this.api.openSession(id);
+      // A newer selection (another open/new, or an authoritative push) won the
+      // race; this stale response must not reinstate its session.
+      if (ticket !== this.selectionRequest) return;
+      this.applySnapshot(snapshot);
       this.set({ error: null });
       if (this.readyWhileOpening.delete(id)) {
         void this.resync(id, this.selectionGeneration);
       }
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to open session");
+      if (ticket === this.selectionRequest) this.fail(error instanceof Error ? error.message : "Failed to open session");
     } finally {
       this.readyWhileOpening.delete(id);
       this.set({ openingSessionId: null });
@@ -594,20 +660,26 @@ export class AppStore {
       this.fail("Enter a project directory to start a session");
       return;
     }
+    const ticket = ++this.selectionRequest;
     try {
-      this.applySnapshot(await this.api.newSession(target, name));
+      const snapshot = await this.api.newSession(target, name);
+      if (ticket !== this.selectionRequest) return; // superseded by a newer selection
+      this.applySnapshot(snapshot);
       this.set({ error: null });
       void this.loadSessions(this.state.sessionQuery);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to create session");
+      if (ticket === this.selectionRequest) this.fail(error instanceof Error ? error.message : "Failed to create session");
     }
   };
 
   renameSession = async (name: string): Promise<boolean> => {
-    if (!this.api || !name.trim()) return false;
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId || !name.trim()) return false;
     try {
-      await this.api.renameSession(name.trim());
-      this.set({ sessionName: name.trim(), error: null });
+      await this.api.renameSession(sessionId, name.trim());
+      // The response may return after a session switch; only the owning
+      // session's visible title updates.
+      if (this.state.sessionId === sessionId) this.set({ sessionName: name.trim(), error: null });
       void this.loadSessions(this.state.sessionQuery);
       return true;
     } catch (error) {
@@ -619,50 +691,73 @@ export class AppStore {
   // --- Prompting ---
 
   sendPrompt = async (message: string, behavior?: "steer" | "followUp"): Promise<boolean> => {
-    if (!this.api) return false;
-    if (this.state.attachments.some((item) => item.status === "uploading")) {
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return false;
+    const composer = this.composerFor(sessionId);
+    if (composer.sending) return false;
+    if (composer.attachments.some((item) => item.status === "uploading")) {
       this.fail("Attachments are still uploading");
       return false;
     }
-    if (this.state.attachments.some((item) => item.status === "error")) {
+    if (composer.attachments.some((item) => item.status === "error")) {
       this.fail("Remove failed attachments before sending");
       return false;
     }
-    const attachmentIds = this.state.attachments
+    const included = composer.attachments;
+    const attachmentIds = included
       .map((item) => item.uploadedId)
       .filter((id): id is string => Boolean(id));
-    const projectFiles = this.state.projectFiles;
+    const projectFiles = composer.projectFiles;
     if (!message.trim() && attachmentIds.length === 0 && projectFiles.length === 0) return false;
+    composer.sending = true;
+    this.publishComposer(sessionId);
     try {
       await this.api.prompt({
+        sessionId,
         message,
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(projectFiles.length > 0 ? { projectFiles } : {}),
         behavior,
       });
-      // Accepted: clear attachments and references. Failures keep everything.
-      this.clearComposerArtifacts();
+      // Accepted: clear exactly what was delivered, from the owner session's
+      // partition — never from whichever session is visible by now.
+      // Artifacts staged while the request was in flight belong to the next
+      // message. Failures keep everything.
+      const sentIds = new Set(included.map((item) => item.localId));
+      const sentPaths = new Set(projectFiles);
+      for (const item of composer.attachments) {
+        if (!sentIds.has(item.localId)) continue;
+        if (item.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(item.previewUrl);
+      }
+      composer.attachments = composer.attachments.filter((item) => !sentIds.has(item.localId));
+      composer.projectFiles = composer.projectFiles.filter((path) => !sentPaths.has(path));
       this.set({ error: null });
       return true;
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to send");
       return false;
+    } finally {
+      composer.sending = false;
+      this.pruneComposer(sessionId, composer);
+      this.publishComposer(sessionId);
     }
   };
 
   abort = async (): Promise<void> => {
-    if (!this.api) return;
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return;
     try {
-      await this.api.abort();
+      await this.api.abort(sessionId);
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to abort");
     }
   };
 
   setModel = async (provider: string, modelId: string): Promise<void> => {
-    if (!this.api) return;
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return;
     try {
-      await this.api.setModel(provider, modelId);
+      await this.api.setModel(sessionId, provider, modelId);
       await this.resync();
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to set model");
@@ -670,24 +765,64 @@ export class AppStore {
   };
 
   setThinkingLevel = async (level: string): Promise<void> => {
-    if (!this.api) return;
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return;
     const previous = this.state.thinkingLevel;
     this.set({ thinkingLevel: level });
     try {
-      await this.api.setThinkingLevel(level);
+      await this.api.setThinkingLevel(sessionId, level);
     } catch (error) {
-      // Truthful control: a rejected change cannot leave the UI claiming it.
-      this.set({ thinkingLevel: previous });
+      // Truthful control: a rejected change cannot leave the UI claiming it —
+      // but only roll back if that session is still visible. After a switch
+      // the visible level belongs to another session and must stay untouched.
+      if (this.state.sessionId === sessionId) {
+        this.set({ thinkingLevel: previous });
+        void this.resync();
+      }
       this.fail(error instanceof Error ? error.message : "Failed to set thinking level");
-      void this.resync();
     }
   };
 
   // --- Composer attachments & project files ---
 
+  /** Authoritative per-session composer partitions; AppState carries only
+   * the visible session's slice. */
+  private readonly composers = new Map<string, ComposerPartition>();
+
+  private composerFor(sessionId: string): ComposerPartition {
+    let composer = this.composers.get(sessionId);
+    if (!composer) {
+      composer = { attachments: [], projectFiles: [], sending: false };
+      this.composers.set(sessionId, composer);
+    }
+    return composer;
+  }
+
+  private composerSlice(sessionId: string | null): Pick<AppState, "attachments" | "projectFiles" | "sending"> {
+    const composer = sessionId ? this.composers.get(sessionId) : undefined;
+    return composer
+      ? { attachments: composer.attachments, projectFiles: composer.projectFiles, sending: composer.sending }
+      : { attachments: [], projectFiles: [], sending: false };
+  }
+
+  private pruneComposer(sessionId: string, composer: ComposerPartition): void {
+    if (!composer.sending && composer.attachments.length === 0 && composer.projectFiles.length === 0) {
+      this.composers.delete(sessionId);
+    }
+  }
+
+  /** Republish a partition into visible state when it belongs to the
+   * visible session; background sessions' staged work stays put. */
+  private publishComposer(sessionId: string): void {
+    if (this.state.sessionId !== sessionId) return;
+    this.set(this.composerSlice(sessionId));
+  }
+
   addFiles = async (files: File[]): Promise<void> => {
-    if (!this.api || files.length === 0) return;
-    const room = MAX_ATTACHMENTS - this.state.attachments.length;
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId || files.length === 0) return;
+    const composer = this.composerFor(sessionId);
+    const room = MAX_ATTACHMENTS - composer.attachments.length;
     const accepted = files.slice(0, Math.max(0, room));
     if (accepted.length < files.length) this.fail(`At most ${MAX_ATTACHMENTS} attachments per message`);
     if (accepted.length === 0) return;
@@ -705,71 +840,94 @@ export class AppStore {
         status: "uploading" as const,
       };
     });
-    this.set({ attachments: [...this.state.attachments, ...pending] });
+    composer.attachments = [...composer.attachments, ...pending];
+    this.publishComposer(sessionId);
 
     try {
       const { attachments: uploaded } = await this.api.uploadAttachments(accepted);
-      this.set({
-        attachments: this.state.attachments.map((item) => {
-          const index = pending.findIndex((candidate) => candidate.localId === item.localId);
-          const result = index >= 0 ? uploaded[index] : undefined;
-          return result
-            ? { ...item, status: "ready" as const, uploadedId: result.id, fileName: result.fileName, kind: result.kind }
-            : item;
-        }),
+      composer.attachments = composer.attachments.map((item) => {
+        const index = pending.findIndex((candidate) => candidate.localId === item.localId);
+        const result = index >= 0 ? uploaded[index] : undefined;
+        return result
+          ? { ...item, status: "ready" as const, uploadedId: result.id, fileName: result.fileName, kind: result.kind }
+          : item;
       });
+      this.publishComposer(sessionId);
       // An item removed while its upload was in flight never got a chance to
       // delete its host copy; reclaim it now.
       pending.forEach((candidate, index) => {
         const id = uploaded[index]?.id;
-        if (id && !this.state.attachments.some((item) => item.localId === candidate.localId)) {
+        if (id && !composer.attachments.some((item) => item.localId === candidate.localId)) {
           void this.api?.deleteAttachment(id).catch(() => undefined);
         }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
-      this.set({
-        attachments: this.state.attachments.map((item) =>
-          pending.some((candidate) => candidate.localId === item.localId)
-            ? { ...item, status: "error" as const, error: message }
-            : item,
-        ),
-      });
+      composer.attachments = composer.attachments.map((item) =>
+        pending.some((candidate) => candidate.localId === item.localId)
+          ? { ...item, status: "error" as const, error: message }
+          : item,
+      );
+      this.publishComposer(sessionId);
     }
   };
 
   removeAttachment = (localId: string): void => {
-    const target = this.state.attachments.find((item) => item.localId === localId);
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return;
+    const composer = this.composers.get(sessionId);
+    if (!composer) return;
+    // Frozen while a prompt is delivering: the host may be resolving these
+    // very files into the outgoing message.
+    if (composer.sending) return;
+    const target = composer.attachments.find((item) => item.localId === localId);
     if (target?.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(target.previewUrl);
-    this.set({ attachments: this.state.attachments.filter((item) => item.localId !== localId) });
+    composer.attachments = composer.attachments.filter((item) => item.localId !== localId);
+    this.pruneComposer(sessionId, composer);
+    this.publishComposer(sessionId);
     // A withdrawn upload is unreferenced; reclaim its host cache file too.
     if (target?.uploadedId) void this.api?.deleteAttachment(target.uploadedId).catch(() => undefined);
   };
 
   addProjectFile = (path: string): void => {
-    if (!path || this.state.projectFiles.includes(path)) return;
-    if (this.state.projectFiles.length >= MAX_PROJECT_FILES) {
+    const sessionId = this.state.sessionId;
+    if (!sessionId || !path) return;
+    const composer = this.composerFor(sessionId);
+    if (composer.projectFiles.includes(path)) return;
+    if (composer.projectFiles.length >= MAX_PROJECT_FILES) {
       this.fail(`At most ${MAX_PROJECT_FILES} project files per message`);
       return;
     }
-    this.set({ projectFiles: [...this.state.projectFiles, path] });
+    composer.projectFiles = [...composer.projectFiles, path];
+    this.publishComposer(sessionId);
   };
 
   removeProjectFile = (path: string): void => {
-    this.set({ projectFiles: this.state.projectFiles.filter((item) => item !== path) });
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return;
+    const composer = this.composers.get(sessionId);
+    if (!composer) return;
+    // Frozen while delivering: a sent path removed and re-added mid-flight
+    // would otherwise be swept by the delivery's scoped clear.
+    if (composer.sending) return;
+    composer.projectFiles = composer.projectFiles.filter((item) => item !== path);
+    this.pruneComposer(sessionId, composer);
+    this.publishComposer(sessionId);
   };
 
   searchProjectFiles = async (query: string): Promise<ProjectFileResult[]> => {
-    if (!this.api) return [];
-    const result = await this.api.searchFiles(query);
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return [];
+    const result = await this.api.searchFiles(sessionId, query);
     return result.files;
   };
 
   /** One level of the workspace explorer; failures read as an empty level. */
   listProjectDirectory = async (dir: string): Promise<ProjectDirEntry[]> => {
-    if (!this.api) return [];
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return [];
     try {
-      return (await this.api.listFiles(dir)).entries;
+      return (await this.api.listFiles(sessionId, dir)).entries;
     } catch {
       return [];
     }
@@ -780,13 +938,6 @@ export class AppStore {
     if (!this.api) throw new Error("Not connected to the insπre host");
     return this.api.browseHostDirs(path);
   };
-
-  private clearComposerArtifacts(): void {
-    for (const item of this.state.attachments) {
-      if (item.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(item.previewUrl);
-    }
-    this.set({ attachments: [], projectFiles: [] });
-  }
 
   // --- Extension UI ---
 
@@ -850,6 +1001,11 @@ export class AppStore {
     this.set({ resourcesOpen });
   };
 
+  private cancelResourceRequest(): void {
+    this.resourceRequest?.abort();
+    this.resourceRequest = null;
+  }
+
   private revokePreviewObjectUrl(): void {
     if (this.previewObjectUrl && typeof URL.revokeObjectURL === "function") {
       URL.revokeObjectURL(this.previewObjectUrl);
@@ -858,6 +1014,7 @@ export class AppStore {
   }
 
   clearResourceSelection = (): void => {
+    this.cancelResourceRequest();
     this.revokePreviewObjectUrl();
     if (this.state.selectedResourceReference === null && this.state.resourcePreview === null) return;
     this.set({ selectedResourceReference: null, resourcePreview: null });
@@ -869,26 +1026,35 @@ export class AppStore {
     if (!this.api) return;
     const sessionId = this.state.sessionId;
     if (!sessionId) return;
+    this.cancelResourceRequest();
+    const request = new AbortController();
+    this.resourceRequest = request;
     this.revokePreviewObjectUrl();
     this.set({
       resourcesOpen: true,
       selectedResourceReference: reference,
       resourcePreview: { status: "loading", reference },
     });
-    const stale = () => this.state.selectedResourceReference !== reference || this.state.sessionId !== sessionId;
+    const stale = () =>
+      this.resourceRequest !== request ||
+      this.state.selectedResourceReference !== reference ||
+      this.state.sessionId !== sessionId;
     try {
-      const descriptor = await this.api.resolveResource(sessionId, reference);
+      const descriptor = await this.api.resolveResource(sessionId, reference, request.signal);
       if (stale()) return;
       if (descriptor.kind === "binary") {
         this.set({ resourcePreview: { status: "ready", reference, descriptor } });
         return;
       }
       const textLike = descriptor.kind === "text" || descriptor.kind === "markdown" || descriptor.kind === "html";
-      const blob = await this.api.resourceContent(
-        descriptor.id,
-        sessionId,
-        textLike ? TEXT_PREVIEW_BYTES : undefined,
-      );
+      if (!textLike && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
+        this.set({ resourcePreview: { status: "ready", reference, descriptor, contentUnavailable: "too-large" } });
+        return;
+      }
+      const blob = await this.api.resourceContent(descriptor.id, sessionId, {
+        byteLimit: textLike ? TEXT_PREVIEW_BYTES : MAX_MEDIA_PREVIEW_BYTES + 1,
+        signal: request.signal,
+      });
       if (stale()) return;
       if (textLike) {
         const text = await blob.text();
@@ -912,6 +1078,10 @@ export class AppStore {
         });
         return;
       }
+      if (blob.size > MAX_MEDIA_PREVIEW_BYTES) {
+        this.set({ resourcePreview: { status: "ready", reference, descriptor, contentUnavailable: "too-large" } });
+        return;
+      }
       if (typeof URL.createObjectURL === "function") {
         this.previewObjectUrl = URL.createObjectURL(blob);
       }
@@ -932,6 +1102,8 @@ export class AppStore {
           message: error instanceof Error ? error.message : "Preview failed",
         },
       });
+    } finally {
+      if (this.resourceRequest === request) this.resourceRequest = null;
     }
   };
 }

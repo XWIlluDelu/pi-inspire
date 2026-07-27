@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { AttachmentStore } from "../../server/attachments.js";
-import { createInspireServer } from "../../server/app.js";
+import { createInspireServer, MAX_JOINING_EVENT_BYTES } from "../../server/app.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
@@ -16,17 +16,19 @@ const token = "test-local-token";
 describe("local host API", () => {
   let temporary: string;
   let application: ReturnType<typeof createInspireServer>;
+  let resources: ResourceStore;
   let baseUrl: string;
 
   beforeEach(async () => {
     temporary = await mkdtemp(join(tmpdir(), "inspire-test-"));
+    resources = new ResourceStore();
     application = createInspireServer({
       token,
       runtime: new MockRuntime(),
       catalog: new MockCatalog(),
       attachments: new AttachmentStore(join(temporary, "uploads")),
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
-      resources: new ResourceStore(),
+      resources,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -51,6 +53,46 @@ describe("local host API", () => {
     expect(response.body).toMatchObject({ appName: "insπre", mock: true, piVersion: "0.80.10" });
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.headers["content-security-policy"]).toContain("default-src 'self'");
+    // Remote images are barred so untrusted transcript content cannot fire
+    // network requests just by rendering.
+    expect(response.headers["content-security-policy"]).toContain("img-src 'self' data: blob:");
+    expect(response.headers["content-security-policy"]).not.toMatch(/img-src[^;]*https:/);
+  });
+
+  it("caches hashed assets immutably but revalidates unhashed dist files", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "inspire-dist-"));
+    await mkdir(join(dist, "assets"));
+    await writeFile(join(dist, "assets", "index-abc123.js"), "console.log(1)\n");
+    await writeFile(join(dist, "theme-init.js"), "/* theme */\n");
+    await writeFile(join(dist, "index.html"), "<!doctype html><title>insπre</title>");
+    const served = createInspireServer({
+      token,
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(dist, "uploads")),
+      preferences: new PreferencesStore(join(dist, "preferences.json")),
+      resources: new ResourceStore(),
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      distDir: dist,
+    });
+    await new Promise<void>((resolve) => served.server.listen(0, "127.0.0.1", resolve));
+    try {
+      const hashed = await request(served.server).get("/assets/index-abc123.js").expect(200);
+      expect(hashed.headers["cache-control"]).toContain("immutable");
+      expect(hashed.headers["cache-control"]).toContain("max-age=31536000");
+      // Unhashed root script must revalidate, never inherit the 1y policy.
+      const theme = await request(served.server).get("/theme-init.js").expect(200);
+      expect(theme.headers["cache-control"]).not.toContain("immutable");
+      expect(theme.headers["cache-control"]).toContain("max-age=0");
+      // The SPA shell is always revalidated so a new bundle hash is picked up.
+      const shell = await request(served.server).get("/some/deep/route").expect(200);
+      expect(shell.headers["cache-control"]).toBe("no-cache");
+    } finally {
+      await served.close();
+      await rm(dist, { recursive: true, force: true });
+    }
   });
 
   it("lists and opens Pi sessions through the typed API", async () => {
@@ -113,6 +155,31 @@ describe("local host API", () => {
     });
   });
 
+  it("keeps unpatched defaulted fields intact across field-scoped patches", async () => {
+    // Start from non-default values for every field the schema defaults:
+    // a later patch must not resurrect those defaults over stored state.
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ projectDisplay: "path", pinnedSessionIds: ["session-a"], navCollapsedGroups: ["/project/a"] })
+      .expect(200);
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ theme: "dark" })
+      .expect(200);
+    const stored = await request(application.server)
+      .get("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(stored.body).toMatchObject({
+      theme: "dark",
+      projectDisplay: "path",
+      pinnedSessionIds: ["session-a"],
+      navCollapsedGroups: ["/project/a"],
+    });
+  });
+
   it("migrates existing preferences by supplying navigation defaults", async () => {
     const legacy = {
       theme: "light",
@@ -140,14 +207,20 @@ describe("local host API", () => {
       .send({ id: "mock-active" })
       .expect(200);
     await request(application.server)
-      .get("/api/files/list?dir=..%2Fetc")
+      .get("/api/files/list?sessionId=mock-active&dir=..%2Fetc")
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
     const listed = await request(application.server)
-      .get("/api/files/list")
+      .get("/api/files/list?sessionId=mock-active")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(Array.isArray(listed.body.entries)).toBe(true);
+    // The list is session-addressed: an unopened session id cannot borrow
+    // the current selection's workspace.
+    await request(application.server)
+      .get("/api/files/list?sessionId=not-open")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
   });
 
   it("browses host directories without a session and rejects relative paths", async () => {
@@ -195,6 +268,131 @@ describe("local host API", () => {
       .expect((response) => expect(response.body.pinnedSessionIds).toEqual([]));
   });
 
+  it("delivers the snapshot before any live event on a new socket", async () => {
+    let releaseSnapshot!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      releaseSnapshot = resolveGate;
+    });
+    class GatedRuntime extends MockRuntime {
+      override async snapshot() {
+        await gate;
+        return super.snapshot();
+      }
+    }
+    const runtime = new GatedRuntime();
+    const gatedApp = createInspireServer({
+      token,
+      runtime,
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "uploads-gated")),
+      preferences: new PreferencesStore(join(temporary, "preferences-gated.json")),
+      resources: new ResourceStore(),
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      distDir: join(temporary, "missing-dist"),
+    });
+    await new Promise<void>((resolve) => gatedApp.server.listen(0, "127.0.0.1", resolve));
+    const address = gatedApp.server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/events?token=${token}`);
+    const frames: Array<Record<string, unknown>> = [];
+    socket.on("message", (data) => frames.push(JSON.parse(data.toString()) as Record<string, unknown>));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+
+      // A live event lands while the snapshot is still loading; it must not
+      // overtake the snapshot frame.
+      runtime.emit("event", { type: "message_update", sessionId: "mock-active" });
+      releaseSnapshot();
+
+      await new Promise<void>((resolve, reject) => {
+        let poll: ReturnType<typeof setInterval>;
+        const timeout = setTimeout(() => {
+          clearInterval(poll);
+          reject(new Error("socket frames did not arrive"));
+        }, 2_000);
+        poll = setInterval(() => {
+          if (frames.length < 2) return;
+          clearInterval(poll);
+          clearTimeout(timeout);
+          resolve();
+        }, 10);
+      });
+      expect(frames[0]?.type).toBe("snapshot");
+      expect(frames[1]?.type).toBe("message_update");
+    } finally {
+      releaseSnapshot();
+      socket.close();
+      await gatedApp.close();
+    }
+  });
+
+  it("closes a joining socket whose pre-snapshot event backlog exceeds the bound", async () => {
+    let releaseSnapshot!: () => void;
+    const gate = new Promise<void>((resolveGate) => (releaseSnapshot = resolveGate));
+    class GatedRuntime extends MockRuntime {
+      override async snapshot() {
+        await gate;
+        return super.snapshot();
+      }
+    }
+    const runtime = new GatedRuntime();
+    const gatedApp = createInspireServer({
+      token,
+      runtime,
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "uploads-backlog")),
+      preferences: new PreferencesStore(join(temporary, "preferences-backlog.json")),
+      resources: new ResourceStore(),
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      distDir: join(temporary, "missing-dist"),
+    });
+    await new Promise<void>((resolve) => gatedApp.server.listen(0, "127.0.0.1", resolve));
+    const address = gatedApp.server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/events?token=${token}`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+      const closed = new Promise<number>((resolve) => socket.once("close", resolve));
+      const payload = "x".repeat(64 * 1024);
+      for (let sent = 0; sent <= MAX_JOINING_EVENT_BYTES; sent += payload.length) {
+        runtime.emit("event", { type: "message_update", payload });
+      }
+      expect(await closed).toBe(1013);
+    } finally {
+      releaseSnapshot();
+      socket.close();
+      await gatedApp.close();
+    }
+  });
+
+  it("rejects session-scoped writes that do not name their session", async () => {
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ message: "no target" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/control/abort")
+      .set("Authorization", `Bearer ${token}`)
+      .send({})
+      .expect(400);
+    // An addressed write to a session the host has not opened is refused,
+    // never redirected to the current selection.
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "never-opened", message: "hello" })
+      .expect(409);
+  });
+
   it("serves transcript-referenced and workspace-indexed files, nothing else", async () => {
     await writeFile(join(temporary, "preview.md"), "# Host preview\n");
     await writeFile(join(temporary, "notes.txt"), "workspace note\n");
@@ -210,7 +408,7 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ message: "Open [the preview](preview.md) and [the vendored note](node_modules/mentioned.txt)." })
+      .send({ sessionId, message: "Open [the preview](preview.md) and [the vendored note](node_modules/mentioned.txt)." })
       .expect(202);
 
     const resolved = await request(application.server)
@@ -225,6 +423,22 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(content.text).toBe("# Host preview\n");
+    expect(content.headers["accept-ranges"]).toBe("bytes");
+
+    // A head-slice Range (how the client caps text previews) yields 206.
+    const ranged = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("Range", "bytes=0-5")
+      .expect(206);
+    expect(ranged.headers["content-range"]).toBe("bytes 0-5/15");
+    expect(ranged.text).toBe("# Host");
+    // Invalid ranges must not fall back to serving the complete file.
+    await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("Range", "bytes=999-1000")
+      .expect(416);
 
     // Indexed workspace files preview without a transcript mention — the
     // explorer's click path.
@@ -262,6 +476,107 @@ describe("local host API", () => {
       .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(409);
+  });
+
+  it("closes an opened file when the client aborts during authorization", async () => {
+    await writeFile(join(temporary, "slow.md"), "slow preview\n");
+    const openedSession = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = openedSession.body.active.sessionId as string;
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, message: "Open [slow](slow.md)." })
+      .expect(202);
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "slow.md" })
+      .expect(200);
+
+    let releaseOpen!: () => void;
+    const gate = new Promise<void>((resolveGate) => (releaseOpen = resolveGate));
+    let opened!: () => void;
+    const openedHandle = new Promise<void>((resolveOpened) => (opened = resolveOpened));
+    let handle: Awaited<ReturnType<ResourceStore["openForServing"]>>["handle"] | null = null;
+    const openForServing = resources.openForServing.bind(resources);
+    resources.openForServing = async (resource) => {
+      const result = await openForServing(resource);
+      handle = result.handle;
+      opened();
+      await gate;
+      return result;
+    };
+
+    const controller = new AbortController();
+    const fetching = fetch(
+      `${baseUrl}/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal },
+    ).catch((error: Error) => error);
+    await openedHandle;
+    controller.abort();
+    const failure = await fetching;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).name).toBe("AbortError");
+    releaseOpen();
+
+    await vi.waitFor(async () => {
+      await expect(handle!.stat()).rejects.toMatchObject({ code: "EBADF" });
+    });
+  });
+
+  it("honors byte ranges for embedded resources as well as filesystem files", async () => {
+    const sessionId = "embedded-session";
+    class EmbeddedRuntime extends MockRuntime {
+      override get activeSessionId(): string {
+        return sessionId;
+      }
+      override async resourceContext(requestedSessionId: string) {
+        if (requestedSessionId !== sessionId) throw Object.assign(new Error("Wrong session"), { status: 409 });
+        return {
+          sessionId,
+          cwd: temporary,
+          messages: [
+            {
+              role: "toolResult",
+              content: [{ type: "image", data: Buffer.from("image-bytes").toString("base64"), mimeType: "image/png" }],
+            },
+          ],
+        };
+      }
+    }
+    const served = createInspireServer({
+      token,
+      runtime: new EmbeddedRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "embedded-uploads")),
+      preferences: new PreferencesStore(join(temporary, "embedded-preferences.json")),
+      resources: new ResourceStore(),
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      distDir: join(temporary, "missing-embedded-dist"),
+    });
+    await new Promise<void>((resolve) => served.server.listen(0, "127.0.0.1", resolve));
+    try {
+      const resolved = await request(served.server)
+        .post("/api/resources/resolve")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ sessionId, reference: "pi-embedded://0/0" })
+        .expect(200);
+      const ranged = await request(served.server)
+        .get(`/api/resources/${resolved.body.id}/content?sessionId=${sessionId}`)
+        .set("Authorization", `Bearer ${token}`)
+        .set("Range", "bytes=0-4")
+        .expect(206);
+      expect(ranged.headers["content-range"]).toBe("bytes 0-4/11");
+      expect(Buffer.from(ranged.body).toString()).toBe("image");
+    } finally {
+      await served.close();
+    }
   });
 
   it("deletes withdrawn attachments from the host cache", async () => {
@@ -312,7 +627,7 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ message: "Integrate this note", attachmentIds: [uploaded.body.attachments[0].id] })
+      .send({ sessionId: "mock-active", message: "Integrate this note", attachmentIds: [uploaded.body.attachments[0].id] })
       .expect(202, { accepted: true });
 
     await new Promise<void>((resolve, reject) => {

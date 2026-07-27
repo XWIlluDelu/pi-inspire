@@ -150,12 +150,14 @@ function indexOfKey(messages: ChatMessage[], key: string): number {
   return -1;
 }
 
-/** Replace the message identified by key, else the trailing unsettled assistant, else append. */
+/** Replace the message identified by key. Only keyless defensive events may
+ * fall back to the trailing unsettled assistant; a new keyed turn must never
+ * overwrite an older turn merely because its end event was absent. */
 function upsert(messages: ChatMessage[], incoming: ChatMessage, settledKeys: ReadonlySet<string>): ChatMessage[] {
   const next = [...messages];
   const key = messageKey(incoming);
   let index = key ? indexOfKey(next, key) : -1;
-  if (index === -1 && incoming.role === "assistant") {
+  if (index === -1 && !key && incoming.role === "assistant") {
     for (let i = next.length - 1; i >= 0; i -= 1) {
       const candidate = next[i]!;
       const candidateKey = messageKey(candidate);

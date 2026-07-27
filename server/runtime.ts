@@ -18,6 +18,9 @@ import type { ResourceContext } from "./resources.js";
 const REDACTED = "[redacted]";
 const SENSITIVE_KEY = /(api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)$/i;
 const BUSY_STATES = new Set<RunState>(["running", "retrying", "compacting", "queued"]);
+/** Keep a small warm cache, but never stop selected, busy, in-use, or
+ * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
+export const MAX_IDLE_WORKERS = 3;
 
 export function safeProjection(value: unknown, depth = 0): unknown {
   if (depth > 20) return "[depth limited]";
@@ -42,19 +45,29 @@ export function parseCompactCommand(message: string): { instructions?: string } 
   return instructions ? { instructions } : {};
 }
 
+/** Full diagnostics stay in the host log; the browser only ever sees
+ * `error.message`. */
+function logRuntimeError(sessionId: string, error: unknown): void {
+  const detail = (error as { detail?: unknown } | null)?.detail;
+  console.error(`[pi ${sessionId}]`, error, ...(typeof detail === "string" ? [detail] : []));
+}
+
 export interface RuntimeLike {
-  readonly activeCwd: string | null;
   /** Id of the currently visible session; session-bound routes compare
    * against this so stale handles cannot outlive a selection change. */
   readonly activeSessionId: string | null;
   on(event: "event", listener: (event: unknown) => void): this;
+  /** Working directory of an open session, or null when it is not open.
+   * Project-file routes scope to the session the client names, never to
+   * the host's current selection. */
+  sessionCwd(sessionId: string): string | null;
   openSession(id: string): Promise<ActiveSnapshot>;
   newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot>;
   prompt(request: PromptRequest): Promise<void>;
-  abort(): Promise<void>;
-  rename(name: string): Promise<void>;
-  setModel(provider: string, modelId: string): Promise<unknown>;
-  setThinkingLevel(level: string): Promise<void>;
+  abort(sessionId: string): Promise<void>;
+  rename(sessionId: string, name: string): Promise<void>;
+  setModel(sessionId: string, provider: string, modelId: string): Promise<unknown>;
+  setThinkingLevel(sessionId: string, level: string): Promise<void>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(): Promise<ActiveSnapshot>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
@@ -68,6 +81,9 @@ interface RuntimeSlot {
   cwd: string;
   sessionPath: string | null;
   process: PiRpcProcess | null;
+  /** A reclaimed worker must finish stopping before the same session starts
+   * another one, preserving Pi's one-writer-per-session rule. */
+  stopping: Promise<void> | null;
   ready: boolean;
   preview: ActiveSessionSnapshot | null;
   runState: RunState;
@@ -75,6 +91,10 @@ interface RuntimeSlot {
   pendingExtensionUi: ExtensionUiRequest | null;
   availableModels: unknown[] | null;
   commands: unknown[] | null;
+  lastUsed: number;
+  activeOperations: number;
+  messageRevision: number;
+  previewRevision: number;
 }
 
 export class RuntimeController extends EventEmitter implements RuntimeLike {
@@ -82,7 +102,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly loadingSlots = new Map<string, Promise<RuntimeSlot>>();
   private readonly opening = new Map<string, Promise<RuntimeSlot>>();
   private selectedSessionId: string | null = null;
+  /** Monotonic selection age: a slower, earlier open/new completion must not
+   * steal the selection back from a newer one. */
+  private selectionSequence = 0;
   private provisionalSequence = 0;
+  private useSequence = 0;
+  private workerMaintenance: Promise<void> = Promise.resolve();
+  private workerMaintenanceRunning = false;
+  private workerMaintenanceRequested = false;
+  private closing = false;
 
   constructor(
     private readonly catalog: SessionCatalogLike,
@@ -93,26 +121,112 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     super();
   }
 
-  get activeCwd(): string | null {
-    return this.selectedSlot()?.cwd ?? null;
-  }
-
   get activeSessionId(): string | null {
     return this.selectedSessionId;
+  }
+
+  sessionCwd(sessionId: string): string | null {
+    return this.slots.get(sessionId)?.cwd ?? null;
   }
 
   private selectedSlot(): RuntimeSlot | null {
     return this.selectedSessionId ? (this.slots.get(this.selectedSessionId) ?? null) : null;
   }
 
-  private requireSelectedSlot(): RuntimeSlot {
-    const slot = this.selectedSlot();
-    if (!slot) throw Object.assign(new Error("Open or create a session first"), { status: 409 });
+  private touch(slot: RuntimeSlot): void {
+    slot.lastUsed = ++this.useSequence;
+  }
+
+  /** Protect an RPC operation from idle-worker reclamation. */
+  private async useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T> {
+    slot.activeOperations += 1;
+    this.touch(slot);
+    try {
+      return await operation();
+    } finally {
+      slot.activeOperations -= 1;
+      this.scheduleIdleWorkerEviction();
+    }
+  }
+
+  private scheduleIdleWorkerEviction(): void {
+    if (this.closing) return;
+    this.workerMaintenanceRequested = true;
+    if (this.workerMaintenanceRunning) return;
+    this.workerMaintenanceRunning = true;
+    this.workerMaintenance = this.runWorkerMaintenance();
+  }
+
+  private async runWorkerMaintenance(): Promise<void> {
+    try {
+      while (this.workerMaintenanceRequested && !this.closing) {
+        this.workerMaintenanceRequested = false;
+        await this.evictIdleWorkers();
+      }
+    } catch (error) {
+      console.error("Failed to reclaim an idle Pi worker", error);
+    } finally {
+      this.workerMaintenanceRunning = false;
+      if (this.workerMaintenanceRequested && !this.closing) this.scheduleIdleWorkerEviction();
+    }
+  }
+
+  private async evictIdleWorkers(): Promise<void> {
+    const candidates = [...this.slots.values()]
+      .filter((slot) => this.canEvict(slot))
+      .sort((left, right) => left.lastUsed - right.lastUsed);
+    const excess = candidates.length - MAX_IDLE_WORKERS;
+    if (excess <= 0) return;
+
+    const stopping: Promise<void>[] = [];
+    for (const slot of candidates) {
+      if (stopping.length >= excess) break;
+      // Detach every selected worker synchronously before awaiting any stop;
+      // independent 1.5 s force-kill windows then run in parallel.
+      if (!this.canEvict(slot)) continue;
+      const rpc = slot.process;
+      if (!rpc) continue;
+      slot.process = null;
+      slot.ready = false;
+      // The read-only transcript can be large; it is reloadable from Pi's
+      // session file and must not turn the lightweight slot registry into a
+      // second unbounded conversation cache.
+      slot.preview = null;
+      slot.previewRevision = -1;
+      slot.availableModels = null;
+      slot.commands = null;
+      const stop = rpc.stop().catch((error) => logRuntimeError(slot.id, error));
+      slot.stopping = stop;
+      stopping.push(
+        stop.finally(() => {
+          if (slot.stopping === stop) slot.stopping = null;
+        }),
+      );
+    }
+    await Promise.all(stopping);
+  }
+
+  private canEvict(slot: RuntimeSlot): boolean {
+    return Boolean(
+      slot.process &&
+      slot.ready &&
+      slot.id !== this.selectedSessionId &&
+      !BUSY_STATES.has(slot.runState) &&
+      !slot.pendingExtensionUi &&
+      slot.activeOperations === 0 &&
+      !this.opening.has(slot.id),
+    );
+  }
+
+  /** Writes are addressed: the caller names the session, and a concurrent
+   * selection change on the host can never redirect them. */
+  private requireSlot(sessionId: string): RuntimeSlot {
+    const slot = this.slots.get(sessionId);
+    if (!slot) throw Object.assign(new Error("That session is not open on this host"), { status: 409 });
     return slot;
   }
 
-  private async requireSelectedReady(): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    const slot = this.requireSelectedSlot();
+  private async ensureReady(slot: RuntimeSlot): Promise<RuntimeSlot & { process: PiRpcProcess }> {
     await this.ensureProcess(slot);
     if (!slot.process || !slot.ready) throw Object.assign(new Error("Pi runtime failed to start"), { status: 503 });
     return slot as RuntimeSlot & { process: PiRpcProcess };
@@ -146,6 +260,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private handleEvent(slot: RuntimeSlot, event: unknown): void {
     const record = event && typeof event === "object" ? event as Record<string, unknown> : {};
+    if (record.type === "message_start" || record.type === "message_update" || record.type === "message_end") {
+      slot.messageRevision += 1;
+    }
     switch (record.type) {
       case "extension_ui_request":
         slot.pendingExtensionUi = parseExtensionUiRequest({ ...record, sessionId: slot.id }) ?? slot.pendingExtensionUi;
@@ -175,6 +292,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.runState = slot.runState === "failed" ? "failed" : slot.runState === "aborted" ? "aborted" : "idle";
         slot.attention = this.selectedSessionId === slot.id ? null : outcome;
         this.catalog.invalidate();
+        this.scheduleIdleWorkerEviction();
         break;
       }
     }
@@ -182,7 +300,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private attachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void {
-    rpc.on("event", (event) => this.handleEvent(slot, event));
+    rpc.on("event", (event) => {
+      if (slot.process === rpc) this.handleEvent(slot, event);
+    });
     rpc.on("exit", (error: Error) => {
       if (slot.process !== rpc) return;
       slot.process = null;
@@ -190,6 +310,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.runState = "failed";
       slot.attention = this.selectedSessionId === slot.id ? null : "failed";
       slot.pendingExtensionUi = null;
+      logRuntimeError(slot.id, error);
       this.emitSlotEvent(slot, { type: "runtime_error", error: error.message });
     });
   }
@@ -220,6 +341,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.sessionPath = preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path);
         current.runState = "idle";
         current.pendingExtensionUi = null;
+        current.previewRevision = current.messageRevision;
         return current;
       }
 
@@ -228,6 +350,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         cwd: preview.cwd,
         sessionPath: preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path),
         process: null,
+        stopping: null,
         ready: false,
         preview,
         runState: "idle",
@@ -235,6 +358,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         pendingExtensionUi: null,
         availableModels: null,
         commands: null,
+        lastUsed: 0,
+        activeOperations: 0,
+        messageRevision: 0,
+        previewRevision: 0,
       };
       this.slots.set(slot.id, slot);
       return slot;
@@ -249,6 +376,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async startSlot(slot: RuntimeSlot): Promise<RuntimeSlot> {
     if (!slot.sessionPath) throw new Error("Session file is not available");
+    if (slot.stopping) await slot.stopping;
     const rpc = this.createProcess({ cwd: slot.cwd, args: ["--session", slot.sessionPath] });
     slot.process = rpc;
     slot.ready = false;
@@ -260,6 +388,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await rpc.start();
       slot.ready = true;
       this.emitSlotEvent(slot, { type: "runtime_ready" });
+      this.scheduleIdleWorkerEviction();
       return slot;
     } catch (error) {
       if (slot.process === rpc) {
@@ -267,6 +396,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.ready = false;
         slot.runState = "failed";
         slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+        logRuntimeError(slot.id, error);
         this.emitSlotEvent(slot, { type: "runtime_error", error: error instanceof Error ? error.message : String(error) });
       }
       await rpc.stop();
@@ -285,16 +415,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       return await opening;
     } finally {
       this.opening.delete(slot.id);
+      this.scheduleIdleWorkerEviction();
     }
   }
 
   async openSession(id: string): Promise<ActiveSnapshot> {
+    const selection = ++this.selectionSequence;
     const session = await this.catalog.get(id);
     if (!session) throw Object.assign(new Error("Session not found"), { status: 404 });
 
     const slot = await this.prepareSlot(session);
-    this.selectedSessionId = slot.id;
-    slot.attention = null;
+    if (selection === this.selectionSequence) {
+      this.selectedSessionId = slot.id;
+      slot.attention = null;
+      this.touch(slot);
+      this.scheduleIdleWorkerEviction();
+    }
     if (slot.process && slot.ready) return this.snapshotSlot(slot);
 
     const snapshot = this.previewSnapshot(slot);
@@ -303,6 +439,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot> {
+    const selection = ++this.selectionSequence;
     const cwd = resolve(cwdInput);
     let details;
     try {
@@ -319,6 +456,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       cwd,
       sessionPath: null,
       process: rpc,
+      stopping: null,
       ready: false,
       preview: null,
       runState: "idle",
@@ -326,6 +464,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       pendingExtensionUi: null,
       availableModels: null,
       commands: null,
+      lastUsed: 0,
+      activeOperations: 0,
+      messageRevision: 0,
+      previewRevision: -1,
     };
     this.attachProcess(slot, rpc);
     try {
@@ -342,7 +484,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // the final session identity.
       if (slot.pendingExtensionUi) slot.pendingExtensionUi = { ...slot.pendingExtensionUi, sessionId };
       this.slots.set(sessionId, slot);
-      this.selectedSessionId = sessionId;
+      if (selection === this.selectionSequence) {
+        this.selectedSessionId = sessionId;
+        this.touch(slot);
+        this.scheduleIdleWorkerEviction();
+      }
       this.catalog.invalidate();
       this.emitSlotEvent(slot, { type: "runtime_ready" });
       return this.snapshotSlot(slot);
@@ -355,60 +501,112 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async prompt(request: PromptRequest): Promise<void> {
-    const slot = this.requireSelectedSlot();
-    const message = request.message.trim();
-    // A bare typed /compact runs the compaction control. With attachments or
-    // file references present the text is not a command and flows through as
-    // an ordinary prompt, so nothing the user staged is silently dropped.
-    const compact = parseCompactCommand(message);
-    if (compact && !request.attachmentIds?.length && !request.projectFiles?.length) {
-      await this.compact(compact.instructions);
-      return;
-    }
-    const [readySlot, resolved, projectFiles] = await Promise.all([
-      this.ensureProcess(slot),
-      this.attachments.resolveForPrompt(request.attachmentIds),
-      resolveProjectFiles(slot.cwd, request.projectFiles),
-    ]);
-    if (!readySlot.process || !readySlot.ready) throw Object.assign(new Error("Pi runtime failed to start"), { status: 503 });
-    const fullMessage = addAttachmentContext(message, resolved.files, projectFiles);
-    if (!fullMessage && resolved.images.length === 0) throw new Error("Message or attachment is required");
-    await readySlot.process.request({
-      type: "prompt",
-      message: fullMessage,
-      ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
-      ...(request.behavior ? { streamingBehavior: request.behavior } : {}),
+    const slot = this.requireSlot(request.sessionId);
+    await this.useSlot(slot, async () => {
+      const message = request.message.trim();
+      // A bare typed /compact runs the compaction control. With attachments or
+      // file references present the text is not a command and flows through as
+      // an ordinary prompt, so nothing the user staged is silently dropped.
+      const compact = parseCompactCommand(message);
+      if (compact && !request.attachmentIds?.length && !request.projectFiles?.length) {
+        await this.compactSlot(slot, compact.instructions);
+        return;
+      }
+      const resolving = this.attachments.resolveForPrompt(request.attachmentIds);
+      try {
+        const [readySlot, resolved, projectFiles] = await Promise.all([
+          this.ensureProcess(slot),
+          resolving,
+          resolveProjectFiles(slot.cwd, request.projectFiles),
+        ]);
+        if (!readySlot.process || !readySlot.ready) {
+          throw Object.assign(new Error("Pi runtime failed to start"), { status: 503 });
+        }
+        const fullMessage = addAttachmentContext(message, resolved.files, projectFiles);
+        if (!fullMessage && resolved.images.length === 0) throw new Error("Message or attachment is required");
+        const previousRunState = slot.runState;
+        // Pi acknowledges prompt acceptance before agent_start can cross the
+        // event channel. Mark the handoff queued so idle reclamation cannot
+        // stop the worker in that gap.
+        slot.runState = "queued";
+        try {
+          await readySlot.process.request({
+            type: "prompt",
+            message: fullMessage,
+            ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
+            ...(request.behavior ? { streamingBehavior: request.behavior } : {}),
+          });
+        } catch (error) {
+          if (slot.runState === "queued") slot.runState = previousRunState;
+          throw error;
+        }
+      } catch (error) {
+        // Failed delivery hands leased attachments back to the staged state,
+        // so the client can still withdraw or resend them — but only when this
+        // prompt's resolve took the leases: a rejected resolve holds nothing,
+        // and a lease held by a concurrent prompt must not be disturbed. The
+        // handback settles before the failure response goes out, because the
+        // client may react to the error instantly by withdrawing the files.
+        try {
+          await resolving;
+          this.attachments.restage(request.attachmentIds);
+        } catch {
+          // The resolve rolled its own leases back when it rejected.
+        }
+        throw error;
+      }
+      // Delivered: image bytes travelled inside the request, so their upload
+      // cache entries are no longer needed. File attachments stay (their host
+      // paths are part of the conversation text).
+      if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
     });
-    // Delivered: image bytes travelled inside the request, so their upload
-    // cache entries are no longer needed. File attachments stay (their host
-    // paths are part of the conversation text).
-    if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
   }
 
-  async abort(): Promise<void> {
-    const slot = await this.requireSelectedReady();
-    await slot.process.request({ type: "abort" });
+  async abort(sessionId: string): Promise<void> {
+    const slot = this.requireSlot(sessionId);
+    await this.useSlot(slot, async () => {
+      const ready = await this.ensureReady(slot);
+      await ready.process.request({ type: "abort" });
+    });
   }
 
-  async compact(customInstructions?: string): Promise<unknown> {
-    const slot = await this.requireSelectedReady();
-    return slot.process.request({ type: "compact", customInstructions }, 180_000);
+  private async compactSlot(slot: RuntimeSlot, customInstructions?: string): Promise<unknown> {
+    const ready = await this.ensureReady(slot);
+    const previousRunState = slot.runState;
+    slot.runState = "compacting";
+    try {
+      const result = await ready.process.request({ type: "compact", customInstructions }, 180_000);
+      if (slot.runState === "compacting") slot.runState = "idle";
+      return result;
+    } catch (error) {
+      if (slot.runState === "compacting") slot.runState = previousRunState;
+      throw error;
+    }
   }
 
-  async rename(name: string): Promise<void> {
-    const slot = await this.requireSelectedReady();
-    await slot.process.request({ type: "set_session_name", name: name.trim().slice(0, 160) });
-    this.catalog.invalidate();
+  async rename(sessionId: string, name: string): Promise<void> {
+    const slot = this.requireSlot(sessionId);
+    await this.useSlot(slot, async () => {
+      const ready = await this.ensureReady(slot);
+      await ready.process.request({ type: "set_session_name", name: name.trim().slice(0, 160) });
+      this.catalog.invalidate();
+    });
   }
 
-  async setModel(provider: string, modelId: string): Promise<unknown> {
-    const slot = await this.requireSelectedReady();
-    return slot.process.request({ type: "set_model", provider, modelId });
+  async setModel(sessionId: string, provider: string, modelId: string): Promise<unknown> {
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      const ready = await this.ensureReady(slot);
+      return ready.process.request({ type: "set_model", provider, modelId });
+    });
   }
 
-  async setThinkingLevel(level: string): Promise<void> {
-    const slot = await this.requireSelectedReady();
-    await slot.process.request({ type: "set_thinking_level", level });
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    const slot = this.requireSlot(sessionId);
+    await this.useSlot(slot, async () => {
+      const ready = await this.ensureReady(slot);
+      await ready.process.request({ type: "set_thinking_level", level });
+    });
   }
 
   async extensionUiResponse(response: Record<string, unknown>): Promise<void> {
@@ -422,60 +620,79 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       throw Object.assign(new Error("The extension request is no longer pending"), { status: 409 });
     }
     const { sessionId: _owner, ...wireResponse } = response;
-    slot.process.sendExtensionUiResponse(wireResponse);
-    slot.pendingExtensionUi = null;
+    await this.useSlot(slot, async () => {
+      const rpc = slot.process;
+      if (!rpc || !slot.ready) {
+        throw Object.assign(new Error("The extension request no longer has a live Pi runtime"), { status: 409 });
+      }
+      rpc.sendExtensionUiResponse(wireResponse);
+      slot.pendingExtensionUi = null;
+      // stdin is ordered: a get_state response proves Pi consumed the
+      // preceding fire-and-forget extension response before reclamation can
+      // consider this worker idle.
+      await rpc.request({ type: "get_state" });
+    });
   }
 
   private async snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot> {
-    const rpc = slot.process;
-    if (!rpc || !slot.ready) return this.previewSnapshot(slot);
-    const [state, messages, stats, models, commands] = await Promise.all([
-      rpc.request<Record<string, unknown>>({ type: "get_state" }),
-      rpc.request<{ messages: unknown[] }>({ type: "get_messages" }),
-      rpc.request({ type: "get_session_stats" }).catch(() => undefined),
-      slot.availableModels
-        ? Promise.resolve(slot.availableModels)
-        : rpc.request<{ models: unknown[] }>({ type: "get_available_models" }).then(
-            (result) => (slot.availableModels = result.models),
-            () => [],
-          ),
-      slot.commands
-        ? Promise.resolve(slot.commands)
-        : rpc.request<{ commands: unknown[] }>({ type: "get_commands" }).then(
-            (result) => (slot.commands = result.commands),
-            () => [],
-          ),
-    ]);
-    slot.sessionPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : slot.sessionPath;
-    const snapshot = safeProjection({
-      active: {
-        sessionId: slot.id,
-        sessionFile: slot.sessionPath ?? undefined,
-        sessionName: typeof state.sessionName === "string" ? state.sessionName : undefined,
-        cwd: slot.cwd,
-        model: state.model,
-        thinkingLevel: String(state.thinkingLevel ?? "off"),
-        isStreaming: Boolean(state.isStreaming),
-        isCompacting: Boolean(state.isCompacting),
-        messages: messages.messages,
-        stats,
-        availableModels: models,
-        commands,
-      },
-      runState: slot.runState,
-      sessionStatuses: this.sessionStatuses(),
-      pendingExtensionUi: slot.pendingExtensionUi,
-    }) as ActiveSnapshot;
-    if (snapshot.active) {
-      slot.preview = { ...snapshot.active, isStreaming: false, isCompacting: false };
-    }
-    return snapshot;
+    return this.useSlot(slot, async () => {
+      const rpc = slot.process;
+      if (!rpc || !slot.ready) return this.previewSnapshot(slot);
+      const messageRevision = slot.messageRevision;
+      const [state, messages, stats, models, commands] = await Promise.all([
+        rpc.request<Record<string, unknown>>({ type: "get_state" }),
+        rpc.request<{ messages: unknown[] }>({ type: "get_messages" }),
+        rpc.request({ type: "get_session_stats" }).catch(() => undefined),
+        slot.availableModels
+          ? Promise.resolve(slot.availableModels)
+          : rpc.request<{ models: unknown[] }>({ type: "get_available_models" }).then(
+              (result) => (slot.availableModels = result.models),
+              () => [],
+            ),
+        slot.commands
+          ? Promise.resolve(slot.commands)
+          : rpc.request<{ commands: unknown[] }>({ type: "get_commands" }).then(
+              (result) => (slot.commands = result.commands),
+              () => [],
+            ),
+      ]);
+      slot.sessionPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : slot.sessionPath;
+      const snapshot = safeProjection({
+        active: {
+          sessionId: slot.id,
+          sessionFile: slot.sessionPath ?? undefined,
+          sessionName: typeof state.sessionName === "string" ? state.sessionName : undefined,
+          cwd: slot.cwd,
+          model: state.model,
+          thinkingLevel: String(state.thinkingLevel ?? "off"),
+          isStreaming: Boolean(state.isStreaming),
+          isCompacting: Boolean(state.isCompacting),
+          messages: messages.messages,
+          stats,
+          availableModels: models,
+          commands,
+        },
+        runState: slot.runState,
+        sessionStatuses: this.sessionStatuses(),
+        pendingExtensionUi: slot.pendingExtensionUi,
+      }) as ActiveSnapshot;
+      if (snapshot.active) {
+        slot.preview = { ...snapshot.active, isStreaming: false, isCompacting: false };
+        slot.previewRevision = slot.messageRevision === messageRevision ? messageRevision : -1;
+      }
+      return snapshot;
+    });
   }
 
   async snapshot(): Promise<ActiveSnapshot> {
-    const slot = this.selectedSlot();
-    if (!slot) return { active: null, runState: "idle", sessionStatuses: this.sessionStatuses() };
-    return slot.process && slot.ready ? this.snapshotSlot(slot) : this.previewSnapshot(slot);
+    while (true) {
+      const slot = this.selectedSlot();
+      if (!slot) return { active: null, runState: "idle", sessionStatuses: this.sessionStatuses() };
+      const snapshot = slot.process && slot.ready ? await this.snapshotSlot(slot) : this.previewSnapshot(slot);
+      // The RPC reads above may have overlapped a newer open/new selection.
+      // Only a snapshot of the still-selected slot is authoritative.
+      if (this.selectedSessionId === slot.id) return snapshot;
+    }
   }
 
   async resourceContext(sessionId: string): Promise<ResourceContext> {
@@ -483,31 +700,50 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!slot || slot.id !== sessionId) {
       throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
     }
-    let messages = slot.preview?.messages ?? [];
-    if (slot.process && slot.ready) {
-      const current = await slot.process.request<{ messages: unknown[] }>({ type: "get_messages" });
-      // The user may have switched sessions while the fetch was in flight;
-      // serving would leak the old session's content into the new view.
-      if (this.selectedSessionId !== slot.id) {
-        throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
-      }
-      messages = current.messages;
-    }
     return {
       sessionId: slot.id,
       cwd: slot.cwd,
-      messages,
+      loadMessages: () => this.resourceMessages(slot),
     };
   }
 
+  private async resourceMessages(slot: RuntimeSlot): Promise<unknown[]> {
+    return this.useSlot(slot, async () => {
+      if (this.selectedSessionId !== slot.id) {
+        throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+      }
+      if (slot.preview && slot.previewRevision === slot.messageRevision) return slot.preview.messages;
+
+      let messages = slot.preview?.messages ?? [];
+      const revision = slot.messageRevision;
+      if (slot.process && slot.ready) {
+        const current = await slot.process.request<{ messages: unknown[] }>({ type: "get_messages" });
+        // The user may have switched sessions while the fetch was in flight;
+        // serving would leak the old session's content into the new view.
+        if (this.selectedSessionId !== slot.id) {
+          throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+        }
+        messages = current.messages;
+      }
+      if (slot.preview && slot.messageRevision === revision) {
+        slot.preview = { ...slot.preview, messages };
+        slot.previewRevision = revision;
+      }
+      return messages;
+    });
+  }
+
   async close(): Promise<void> {
+    this.closing = true;
     await Promise.allSettled(this.loadingSlots.values());
     await Promise.allSettled(this.opening.values());
+    await this.workerMaintenance;
     for (const slot of this.slots.values()) {
       const rpc = slot.process;
       slot.process = null;
       slot.ready = false;
       if (rpc) await rpc.stop();
+      if (slot.stopping) await slot.stopping;
     }
     this.slots.clear();
     this.selectedSessionId = null;

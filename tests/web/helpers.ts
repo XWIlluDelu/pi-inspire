@@ -8,12 +8,18 @@ export interface RouteResponse {
   body: unknown;
 }
 
-export type RouteHandler = (url: string, init: RequestInit) => RouteResponse | undefined;
+export type RouteHandler = (
+  url: string,
+  init: RequestInit,
+) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
 
 export function installFetch(handler: RouteHandler) {
   const fn = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
-    const route = handler(url, init ?? {}) ?? { status: 404, body: { error: `No mock route for ${url}` } };
+    const route = (await handler(url, init ?? {})) ?? {
+      status: 404,
+      body: { error: `No mock route for ${url}` },
+    };
     return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
       headers: { "Content-Type": "application/json" },

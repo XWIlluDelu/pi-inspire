@@ -147,7 +147,6 @@ export class MockCatalog implements SessionCatalogLike {
 }
 
 export class MockRuntime extends EventEmitter implements RuntimeLike {
-  activeCwd: string | null = null;
   private state: ActiveSnapshot = { active: null, runState: "idle", sessionStatuses: {} };
   private readonly sessions = new Map<string, NonNullable<ActiveSnapshot["active"]>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
@@ -155,6 +154,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
 
   get activeSessionId(): string | null {
     return this.state.active?.sessionId ?? null;
+  }
+
+  sessionCwd(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.cwd ?? null;
+  }
+
+  private requireSession(sessionId: string): NonNullable<ActiveSnapshot["active"]> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw Object.assign(new Error("That session is not open on this host"), { status: 409 });
+    return session;
   }
 
   private activate(id = "mock-active", cwd = "/home/demo/research"): ActiveSnapshot {
@@ -187,7 +196,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const currentStatus = this.state.sessionStatuses[id] ?? { runState: "idle" as const };
     const viewedStatus =
       currentStatus.indicator === "running" ? currentStatus : { runState: currentStatus.runState };
-    this.activeCwd = active.cwd;
     this.state.active = active;
     this.state.runState = viewedStatus.runState;
     this.state.sessionStatuses[id] = viewedStatus;
@@ -210,11 +218,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
 
   async prompt(request: PromptRequest): Promise<void> {
-    const active = this.state.active;
-    if (!active) throw new Error("Open a mock session first");
+    const active = this.requireSession(request.sessionId);
     // Same prompt boundary as the real host: a bare /compact compacts.
     if (parseCompactCommand(request.message) && !request.attachmentIds?.length && !request.projectFiles?.length) {
-      await this.compact();
+      await this.compact(request.sessionId);
       return;
     }
     if (active.isStreaming) throw new Error("Mock session is already streaming");
@@ -223,7 +230,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const user = { role: "user", content: request.message, timestamp };
     active.messages.push(user);
     active.isStreaming = true;
-    this.state.runState = "running";
+    if (this.state.active?.sessionId === sessionId) this.state.runState = "running";
     this.state.sessionStatuses[sessionId] = { runState: "running", indicator: "running" };
     this.emitSession(sessionId, { type: "message_start", message: user });
     this.emitSession(sessionId, { type: "agent_start" });
@@ -266,39 +273,39 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     this.timers.set(sessionId, timer);
   }
 
-  async abort(): Promise<void> {
-    const active = this.state.active;
-    if (!active) return;
+  async abort(sessionId: string): Promise<void> {
+    const active = this.requireSession(sessionId);
     const timer = this.timers.get(active.sessionId);
     if (timer) clearInterval(timer);
     this.timers.delete(active.sessionId);
     active.isStreaming = false;
     this.state.sessionStatuses[active.sessionId] = { runState: "aborted" };
-    this.state.runState = "aborted";
+    if (this.state.active?.sessionId === active.sessionId) this.state.runState = "aborted";
     this.emitSession(active.sessionId, { type: "agent_settled" });
   }
 
-  async compact(): Promise<unknown> {
-    const sessionId = this.state.active?.sessionId;
-    if (!sessionId) throw new Error("Open a mock session first");
-    this.state.runState = "compacting";
+  async compact(sessionId = this.state.active?.sessionId ?? ""): Promise<unknown> {
+    this.requireSession(sessionId);
+    const selected = this.state.active?.sessionId === sessionId;
+    if (selected) this.state.runState = "compacting";
     this.state.sessionStatuses[sessionId] = { runState: "compacting", indicator: "running" };
     this.emitSession(sessionId, { type: "compaction_start", reason: "manual" });
-    this.state.runState = "idle";
+    if (selected) this.state.runState = "idle";
     this.state.sessionStatuses[sessionId] = { runState: "idle" };
     this.emitSession(sessionId, { type: "compaction_end", reason: "manual", result: { tokensBefore: 12_640 } });
     return { tokensBefore: 12_640, estimatedTokensAfter: 4_200 };
   }
 
-  async rename(name: string): Promise<void> {
-    if (this.state.active) this.state.active.sessionName = name;
+  async rename(sessionId: string, name: string): Promise<void> {
+    this.requireSession(sessionId).sessionName = name;
   }
-  async setModel(provider: string, modelId: string): Promise<unknown> {
-    if (this.state.active) this.state.active.model = { provider, id: modelId };
-    return this.state.active?.model;
+  async setModel(sessionId: string, provider: string, modelId: string): Promise<unknown> {
+    const session = this.requireSession(sessionId);
+    session.model = { provider, id: modelId };
+    return session.model;
   }
-  async setThinkingLevel(level: string): Promise<void> {
-    if (this.state.active) this.state.active.thinkingLevel = level;
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    this.requireSession(sessionId).thinkingLevel = level;
   }
   async extensionUiResponse(): Promise<void> {}
   async snapshot(): Promise<ActiveSnapshot> {

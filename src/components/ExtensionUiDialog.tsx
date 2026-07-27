@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { store, useAppState, type ExtensionUiRequest } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 
 function cancel(request: ExtensionUiRequest): void {
   void store.respondExtensionUi({ id: request.id, cancelled: true });
@@ -118,10 +119,21 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
 export function ExtensionUiDialog() {
   const state = useAppState();
   const request = state.extensionUi;
+  const dialogRef = useModalFocus<HTMLDivElement>(
+    Boolean(request),
+    request ? `${request.sessionId}:${request.id}` : null,
+  );
   if (!request) return null;
   return (
     <div className="overlay" role="presentation">
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={request.title || "Pi extension request"}>
+      <div
+        ref={dialogRef}
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={request.title || "Pi extension request"}
+        tabIndex={-1}
+      >
         {/* key remounts the form state per request */}
         <DialogBody key={`${request.sessionId}:${request.id}`} request={request} />
       </div>

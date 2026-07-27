@@ -6,6 +6,21 @@ afterEach(() => {
 });
 
 describe("MockRuntime concurrent sessions", () => {
+  it("keeps addressed background compaction from changing the selected run state", async () => {
+    vi.useFakeTimers();
+    const runtime = new MockRuntime();
+    await runtime.openSession("mock-active");
+    await runtime.openSession("mock-history");
+    await runtime.prompt({ sessionId: "mock-history", message: "selected work" });
+
+    await runtime.compact("mock-active");
+    const snapshot = await runtime.snapshot();
+    expect(snapshot.active?.sessionId).toBe("mock-history");
+    expect(snapshot.runState).toBe("running");
+    expect(snapshot.sessionStatuses["mock-history"]).toEqual({ runState: "running", indicator: "running" });
+    await runtime.close();
+  });
+
   it("keeps background streams attributed to their owning session", async () => {
     vi.useFakeTimers();
     const runtime = new MockRuntime();
@@ -13,9 +28,9 @@ describe("MockRuntime concurrent sessions", () => {
     runtime.on("event", (event) => events.push(event as Record<string, unknown>));
 
     await runtime.openSession("mock-active");
-    await runtime.prompt({ message: "first task" });
+    await runtime.prompt({ sessionId: "mock-active", message: "first task" });
     await runtime.openSession("mock-history");
-    await runtime.prompt({ message: "second task" });
+    await runtime.prompt({ sessionId: "mock-history", message: "second task" });
     await vi.runAllTimersAsync();
 
     const snapshot = await runtime.snapshot();

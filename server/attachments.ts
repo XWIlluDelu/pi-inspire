@@ -8,6 +8,10 @@ import { escapesBase } from "./paths.js";
 
 interface StoredAttachment extends UploadedAttachment {
   path: string;
+  /** Withdrawal lifecycle: only staged files may be deleted. A file leased
+   * to an in-flight prompt or consumed by a delivered one is (about to be)
+   * referenced from the conversation and must survive a racing DELETE. */
+  state: "staged" | "in-flight" | "consumed";
 }
 
 function safeName(name: string): string {
@@ -46,6 +50,7 @@ export class AttachmentStore {
       size: file.size,
       kind: isImage(file.mimetype) ? "image" : "file",
       path,
+      state: "staged",
     };
     this.values.set(id, value);
     return this.publicValue(value);
@@ -58,43 +63,77 @@ export class AttachmentStore {
     const unique = [...new Set(ids)].slice(0, MAX_ATTACHMENTS);
     const files = unique.map((id) => this.values.get(id)).filter((item): item is StoredAttachment => Boolean(item));
     if (files.length !== unique.length) throw new Error("One or more attachments expired; add them again");
-    const images = await Promise.all(
-      files
-        .filter((item) => item.kind === "image")
-        .map(async (item) => ({
-          type: "image" as const,
-          data: (await readFile(item.path)).toString("base64"),
-          mimeType: item.mimeType,
-        })),
-    );
-    return { files, images };
+    // One staging, one send: a file already leased to an in-flight prompt or
+    // consumed by a delivered one cannot join a second message.
+    if (files.some((file) => file.state !== "staged")) {
+      throw new Error("One or more attachments already belong to another message");
+    }
+    // Lease before the first await: from here the prompt owns these files,
+    // and a concurrent withdrawal can no longer delete them mid-delivery.
+    for (const file of files) file.state = "in-flight";
+    try {
+      const images = await Promise.all(
+        files
+          .filter((item) => item.kind === "image")
+          .map(async (item) => ({
+            type: "image" as const,
+            data: (await readFile(item.path)).toString("base64"),
+            mimeType: item.mimeType,
+          })),
+      );
+      return { files, images };
+    } catch (error) {
+      // All-or-nothing: a rejected resolve holds no leases.
+      for (const file of files) {
+        if (file.state === "in-flight") file.state = "staged";
+      }
+      throw error;
+    }
   }
 
-  /** Remove one staged attachment (user withdrew it before sending). */
+  /** Remove one staged attachment (user withdrew it before sending). A file
+   * leased to an in-flight prompt or consumed by a delivered one is
+   * referenced from the conversation and stays; the late withdrawal is
+   * moot, not an error. */
   async remove(id: string): Promise<void> {
     const value = this.values.get(id);
-    if (!value) return;
+    if (value?.state !== "staged") return;
     this.values.delete(id);
     await rm(value.path, { force: true });
   }
 
+  /** A prompt that failed before delivery hands its leased files back:
+   * they become withdrawable (and resendable) again. */
+  restage(ids: string[] = []): void {
+    for (const id of ids) {
+      const value = this.values.get(id);
+      if (value?.state === "in-flight") value.state = "staged";
+    }
+  }
+
   /** Reclaim attachments a delivered prompt consumed. Image bytes were
    * inlined into the request, so their cache files can go; ordinary files
-   * are referenced by host path inside the conversation text and must stay
-   * readable for the rest of the host's lifetime. */
+   * are referenced by host path inside the conversation text and are marked
+   * consumed so they stay readable for the rest of the host's lifetime. */
   async releaseConsumed(ids: string[]): Promise<void> {
     await Promise.all(
       ids.map(async (id) => {
         const value = this.values.get(id);
-        if (value?.kind !== "image") return;
+        if (!value) return;
+        if (value.kind !== "image") {
+          value.state = "consumed";
+          return;
+        }
         this.values.delete(id);
-        await rm(value.path, { force: true });
+        // Best-effort: the prompt is already delivered, so a failed cleanup
+        // must not turn the response into an error the client would retry.
+        await rm(value.path, { force: true }).catch(() => undefined);
       }),
     );
   }
 
   private publicValue(value: StoredAttachment): UploadedAttachment {
-    const { path: _path, ...publicValue } = value;
+    const { path: _path, state: _state, ...publicValue } = value;
     return publicValue;
   }
 

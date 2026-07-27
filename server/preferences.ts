@@ -4,20 +4,32 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { defaultPreferences, type InspirePreferences } from "../shared/contracts.js";
 
-const preferencesSchema = z.object({
+// Field validators stay default-free here: `.partial()` keeps `.default()`,
+// so a patch schema derived from defaulted fields would fill absent keys and
+// clobber stored values on every patch.
+const preferenceFields = {
   theme: z.enum(["system", "light", "dark"]),
   launch: z.enum(["welcome", "continue"]),
   thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
-  projectDisplay: z.enum(["folder", "path"]).default("folder"),
-  pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100).default([]),
-  navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500).default([]),
+  projectDisplay: z.enum(["folder", "path"]),
+  pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100),
+  navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
+};
+
+// Full reads keep defaults so stored files predating the navigation fields
+// still parse.
+const preferencesSchema = z.object({
+  ...preferenceFields,
+  projectDisplay: preferenceFields.projectDisplay.default("folder"),
+  pinnedSessionIds: preferenceFields.pinnedSessionIds.default([]),
+  navCollapsedGroups: preferenceFields.navCollapsedGroups.default([]),
 });
 
 // Writes are field-scoped patches merged over the stored file, never full
 // snapshots, so concurrent writers can only contend on the fields they
 // actually changed. `.strict()` keeps unknown keys out of the stored file.
-const preferencesPatchSchema = preferencesSchema.partial().strict();
+const preferencesPatchSchema = z.object(preferenceFields).partial().strict();
 
 export class PreferencesStore {
   readonly path: string;
