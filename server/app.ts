@@ -167,6 +167,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     next();
   });
 
+  app.get("/api/health", (_request, response) => {
+    response.json({ appName: "insπre", mock: deps.mock });
+  });
+
   app.get("/api/bootstrap", async (_request, response) => {
     const body: BootstrapResponse = {
       appName: "insπre",
@@ -466,9 +470,11 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       for (const socket of sockets) socket.close(1001, "Server shutting down");
       await deps.runtime.close();
       await deps.attachments.close();
-      await new Promise<void>((resolveClose, reject) =>
-        server.close((error) => (error ? reject(error) : resolveClose())),
-      );
+      if (server.listening) {
+        await new Promise<void>((resolveClose, reject) =>
+          server.close((error) => (error ? reject(error) : resolveClose())),
+        );
+      }
     },
   };
 }
