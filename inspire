@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # One-command local host for insπre.
 # Usage:
-#   ./inspire          production host (build if needed, open browser)
+#   ./inspire          start, or reopen the already-running instance
+#   ./inspire restart  gracefully replace the managed local instance
+#   ./inspire stop     stop the managed local instance
+#   ./inspire status   show the managed local instance
 #   ./inspire mock     mock host for UI-only acceptance
 #   ./inspire dev      Vite + host with hot reload
 #   ./inspire build    build only
@@ -11,6 +14,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 
 mode="${1:-start}"
+instance_host=""
+instance_port=""
+state_path=""
+lock_path=""
+stop_request_path=""
 
 need_node() {
   if ! command -v node >/dev/null 2>&1; then
@@ -77,26 +85,236 @@ open_url() {
   fi
 }
 
-run_host() {
-  local mock="${1:-0}"
-  need_node
-  ensure_deps
-  ensure_build
+init_instance() {
+  instance_host="${INSPIRE_HOST:-127.0.0.1}"
+  instance_port="${INSPIRE_PORT:-4587}"
+  if [[ -n "${INSPIRE_STATE_PATH:-}" ]]; then
+    state_path="$INSPIRE_STATE_PATH"
+    mkdir -p "$(dirname "$state_path")"
+  else
+    local runtime_dir key
+    runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/inspire-$UID}/inspire"
+    install -d -m 700 "$runtime_dir"
+    key="$(printf '%s\0%s\0%s' "$root" "$instance_host" "$instance_port" | hash_stdin)"
+    state_path="$runtime_dir/${key}.json"
+  fi
+  lock_path="${state_path}.lock"
+  stop_request_path="${state_path}.stop-request"
+  export INSPIRE_STATE_PATH="$state_path"
+  export INSPIRE_STOP_REQUEST_PATH="$stop_request_path"
+}
 
+inspect_instance() {
+  local mock="$1"
+  node "$root/server/instance-state.mjs" inspect \
+    "$state_path" "$root" "$instance_host" "$instance_port" "$mock"
+}
+
+show_existing() {
+  local mock="$1" url code
+  if url="$(inspect_instance "$mock")"; then
+    echo "insπre is already running."
+    echo "$url"
+    if [[ "${INSPIRE_OPEN:-1}" == "1" ]]; then open_url "$url"; fi
+    return 0
+  else
+    code=$?
+  fi
+  case "$code" in
+    3) return 3 ;;
+    4)
+      echo "A managed insπre process exists but is not responding." >&2
+      echo "Use './inspire restart' for an explicit graceful replacement." >&2
+      return 1
+      ;;
+    5)
+      echo "This port is occupied by insπre in a different runtime mode." >&2
+      echo "Use './inspire stop' before switching between real and mock modes." >&2
+      return 1
+      ;;
+    *)
+      echo "Unable to inspect the existing insπre instance." >&2
+      return 1
+      ;;
+  esac
+}
+
+acquire_instance_lock() {
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "flock is required for safe single-instance startup." >&2
+    return 1
+  fi
+  local old_umask url
+  old_umask="$(umask)"
+  umask 077
+  exec 9>>"$lock_path"
+  umask "$old_umask"
+  for _ in {1..75}; do
+    if flock -n 9; then return 0; fi
+    if url="$(inspect_instance "$1" 2>/dev/null)"; then
+      echo "insπre is already running."
+      echo "$url"
+      if [[ "${INSPIRE_OPEN:-1}" == "1" ]]; then open_url "$url"; fi
+      return 2
+    fi
+    sleep 0.2
+  done
+  echo "Another insπre launcher is still starting or stopping this instance." >&2
+  return 1
+}
+
+require_free_port() {
+  if ! node "$root/server/instance-state.mjs" port \
+    "$state_path" "$root" "$instance_host" "$instance_port"; then
+    echo "Port ${instance_host}:${instance_port} is already in use, but no healthy managed insπre state was found." >&2
+    echo "Refusing to stop an unknown process. Inspect it with:" >&2
+    echo "  ss -ltnp 'sport = :${instance_port}'" >&2
+    return 1
+  fi
+}
+
+run_host() {
+  local mock="${1:-0}" lock_result
+  need_node
   export NODE_ENV=production
   export INSPIRE_OPEN="${INSPIRE_OPEN:-1}"
+  init_instance
+
+  if show_existing "$mock"; then return 0; else
+    [[ "$?" == "3" ]] || return 1
+  fi
+
+  if acquire_instance_lock "$mock"; then
+    :
+  else
+    lock_result=$?
+    [[ "$lock_result" == "2" ]] && return 0
+    return 1
+  fi
+
+  # Recheck after taking the startup lock: another launcher may have completed
+  # between the first inspection and lock acquisition.
+  if show_existing "$mock"; then return 0; else
+    [[ "$?" == "3" ]] || return 1
+  fi
+  require_free_port
+  ensure_deps
+  ensure_build
+  if [[ -e "$stop_request_path" ]]; then
+    rm -f "$stop_request_path"
+    echo "insπre startup was cancelled by a concurrent stop request."
+    return 0
+  fi
+
   if [[ "$mock" == "1" ]]; then
     export INSPIRE_MOCK=1
   else
     unset INSPIRE_MOCK || true
   fi
-
   exec npx --no-install tsx server/index.ts
+}
+
+stop_host() {
+  need_node
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "flock is required for safe instance shutdown." >&2
+    return 1
+  fi
+  init_instance
+  local code old_umask
+  if node "$root/server/instance-state.mjs" stop \
+    "$state_path" "$root" "$instance_host" "$instance_port"; then
+    return 0
+  else
+    code=$?
+  fi
+  case "$code" in
+    4) echo "The managed process could not be stopped." >&2; return 1 ;;
+    6) echo "Timed out waiting for insπre to stop; it was not force-killed." >&2; return 1 ;;
+    3) ;;
+    *) echo "Unable to stop the managed insπre instance." >&2; return 1 ;;
+  esac
+
+  # No state may simply mean a launcher is still installing or building. If
+  # its lifetime lock is held, publish a private cancellation request and
+  # wait until that launcher either exits or publishes a stoppable process.
+  old_umask="$(umask)"
+  umask 077
+  exec 8>>"$lock_path"
+  umask "$old_umask"
+  if flock -n 8; then
+    rm -f "$stop_request_path"
+    echo "No managed insπre instance is running."
+    return 0
+  fi
+  printf '%s\n' "stop requested at $(date -u +%FT%TZ)" > "$stop_request_path"
+  for _ in {1..300}; do
+    if node "$root/server/instance-state.mjs" stop \
+      "$state_path" "$root" "$instance_host" "$instance_port" >/dev/null 2>&1; then
+      rm -f "$stop_request_path"
+      echo "Stopped the insπre instance that was starting."
+      return 0
+    else
+      code=$?
+    fi
+    if [[ "$code" != "3" ]]; then
+      rm -f "$stop_request_path"
+      echo "Unable to stop the insπre instance that was starting." >&2
+      return 1
+    fi
+    if flock -n 8; then
+      rm -f "$stop_request_path"
+      echo "Cancelled the pending insπre startup."
+      return 0
+    fi
+    sleep 0.1
+  done
+  rm -f "$stop_request_path"
+  echo "Timed out waiting for the pending insπre startup; it was not force-killed." >&2
+  return 1
+}
+
+status_host() {
+  need_node
+  init_instance
+  local url code
+  if url="$(inspect_instance 0)"; then
+    echo "insπre is running."
+    echo "$url"
+    return 0
+  else
+    code=$?
+  fi
+  if [[ "$code" == "5" ]]; then
+    if url="$(inspect_instance 1)"; then
+      echo "insπre mock is running."
+      echo "$url"
+      return 0
+    else
+      code=$?
+    fi
+  fi
+  if [[ "$code" == "4" ]]; then
+    echo "A managed insπre process exists but is not responding." >&2
+  else
+    echo "insπre is not running."
+  fi
+  return 1
 }
 
 case "$mode" in
   start | host | "")
     run_host 0
+    ;;
+  restart)
+    stop_host
+    run_host 0
+    ;;
+  stop)
+    stop_host
+    ;;
+  status)
+    status_host
     ;;
   mock)
     run_host 1
@@ -116,11 +334,11 @@ case "$mode" in
     do_build
     ;;
   -h | --help | help)
-    sed -n '2,8p' "$0"
+    sed -n '2,10p' "$0"
     ;;
   *)
     echo "Unknown mode: $mode" >&2
-    echo "Use: ./inspire | ./inspire mock | ./inspire dev | ./inspire build" >&2
+    echo "Use: ./inspire | ./inspire restart | ./inspire stop | ./inspire status | ./inspire mock | ./inspire dev | ./inspire build" >&2
     exit 1
     ;;
 esac

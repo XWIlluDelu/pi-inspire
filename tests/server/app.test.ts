@@ -49,6 +49,11 @@ describe("local host API", () => {
   it("requires the launch token and rejects foreign origins", async () => {
     await request(application.server).get("/api/bootstrap").expect(401);
     await api().set("Origin", "https://example.invalid").expect(403);
+    const health = await request(application.server)
+      .get("/api/health")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(health.body).toEqual({ appName: "insπre", mock: true });
     const response = await api().expect(200);
     expect(response.body).toMatchObject({ appName: "insπre", mock: true, piVersion: "0.80.10" });
     expect(response.headers["cache-control"]).toBe("no-store");
