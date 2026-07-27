@@ -21,7 +21,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 
 ## Checks
 
-- User and assistant messages appear in source order without duplicate or missing settled content after reconnecting.
+- User and assistant messages appear in source order without duplicate or missing settled content after reconnecting. A keyed message updates only its own key; if an earlier turn lacks its end event, the next keyed assistant turn appends rather than overwriting it.
 - User turns appear as compact bubbles while assistant answers use an open, left-aligned document flow suitable for long Markdown, mathematical notation, code, and structured activity.
 - Assistant text streams smoothly without visually rebuilding the entire transcript for every fragment.
 - Thinking appears separately from answer text, follows the user’s independent hidden, collapsed, or expanded preference, and drops terminal-only control formatting at the display boundary without rewriting Pi history.

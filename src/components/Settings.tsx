@@ -7,6 +7,7 @@ import type {
   VisibilityPreference,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
 
 const THEMES: Array<{ value: ThemePreference; label: string; icon: React.ReactNode }> = [
@@ -30,6 +31,7 @@ const PROJECT_DISPLAYS: Array<{ value: ProjectDisplayPreference; label: string }
  * thinking-level controls stay in the composer. */
 export function Settings({ onClose }: { onClose: () => void }) {
   const state = useAppState();
+  const dialogRef = useModalFocus<HTMLDivElement>();
 
   useEffect(() => {
     // Capture phase: the dialog must own Escape before the global abort
@@ -46,10 +48,12 @@ export function Settings({ onClose }: { onClose: () => void }) {
   return (
     <div className="overlay" role="presentation" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="dialog settings"
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="settings__header">

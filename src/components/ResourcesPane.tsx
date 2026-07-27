@@ -11,7 +11,13 @@ import { useMemo, useRef, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
 import { formatBytes } from "../format";
 import { collectResources, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
-import { store, TEXT_PREVIEW_BYTES, useAppState, type ResourcePreview } from "../store";
+import {
+  MAX_MEDIA_PREVIEW_BYTES,
+  store,
+  TEXT_PREVIEW_BYTES,
+  useAppState,
+  type ResourcePreview,
+} from "../store";
 import { CodeBlock, RichText } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
 
@@ -73,7 +79,16 @@ function HtmlPreview({ name, text, objectUrl }: { name: string; text: string; ob
 }
 
 function PreviewBody({ preview }: { preview: Extract<ResourcePreview, { status: "ready" }> }) {
-  const { descriptor, text, truncated, objectUrl } = preview;
+  const { descriptor, text, truncated, objectUrl, contentUnavailable } = preview;
+  if (contentUnavailable === "too-large") {
+    return (
+      <Unsupported
+        descriptorName={descriptor.name}
+        size={descriptor.size}
+        reason={`Preview limit: ${formatBytes(MAX_MEDIA_PREVIEW_BYTES)}`}
+      />
+    );
+  }
   const truncatedNote = truncated ? (
     <div className="res__preview-note">Truncated — first {formatBytes(TEXT_PREVIEW_BYTES)} shown.</div>
   ) : null;
@@ -139,13 +154,13 @@ function PreviewBody({ preview }: { preview: Extract<ResourcePreview, { status: 
   }
 }
 
-function Unsupported({ descriptorName, size }: { descriptorName: string; size: number }) {
+function Unsupported({ descriptorName, size, reason }: { descriptorName: string; size: number; reason?: string }) {
   return (
     <div className="res__state">
       <File size={18} aria-hidden />
       <p className="res__state-title">No preview available</p>
       <p className="res__state-hint">
-        {descriptorName} · {formatBytes(size)}
+        {descriptorName} · {formatBytes(size)}{reason ? ` · ${reason}` : ""}
       </p>
     </div>
   );

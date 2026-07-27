@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
+import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,12 +14,21 @@ import { isIndexedProjectFile } from "./project-files.js";
 export interface ResourceContext {
   sessionId: string;
   cwd: string;
-  messages: unknown[];
+  /** Tests and static runtimes may provide messages directly; the real
+   * runtime supplies a lazy loader so indexed workspace previews avoid a
+   * complete transcript RPC read. */
+  messages?: unknown[];
+  loadMessages?: () => Promise<unknown[]>;
 }
 
 export interface ResolvedResource {
   descriptor: ResourceDescriptor;
   path?: string;
+  /** Filesystem identity captured at resolve time. Serving re-opens and
+   * re-stats, then binds the object it streams to this exact inode so a
+   * file swapped for a symlink (or any other file) after authorization is
+   * refused, not followed. */
+  fileId?: { dev: number; ino: number };
   embedded?: { messageIndex: number; partIndex: number };
 }
 
@@ -130,14 +139,19 @@ function kindFor(mimeType: string): ResourceKind {
   return "binary";
 }
 
-function referencedBySession(context: ResourceContext, requested: string): boolean {
+async function contextMessages(context: ResourceContext): Promise<unknown[]> {
+  if (context.messages) return context.messages;
+  return context.loadMessages ? context.loadMessages() : [];
+}
+
+function referencedBySession(context: ResourceContext, messages: unknown[], requested: string): boolean {
   let requestedPath: string;
   try {
     requestedPath = referencePath(requested, context.cwd);
   } catch {
     return false;
   }
-  return collectSessionResourceReferences(context.messages).some((item) => {
+  return collectSessionResourceReferences(messages).some((item) => {
     if (!item.reference) return false;
     try {
       return referencePath(item.reference, context.cwd) === requestedPath;
@@ -153,7 +167,8 @@ export class ResourceStore {
   async resolve(context: ResourceContext, reference: string): Promise<ResourceDescriptor> {
     const embedded = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
     if (embedded) {
-      const message = context.messages[Number(embedded[1])];
+      const messages = await contextMessages(context);
+      const message = messages[Number(embedded[1])];
       const messageRecord = message && typeof message === "object" ? message as Record<string, unknown> : undefined;
       if (messageRecord?.display === false) {
         throw Object.assign(new Error("The embedded image is no longer available"), { status: 404 });
@@ -196,9 +211,10 @@ export class ResourceStore {
     // unless the session itself cited them. Citation is the costlier
     // authority — it scans the whole transcript — so it is consulted
     // lazily; the cached project index answers the common explorer path.
-    let cited: boolean | null = null;
-    const isCited = () => (cited ??= referencedBySession(context, reference));
-    if (!(await isIndexedProjectFile(context.cwd, lexicalPath)) && !isCited()) {
+    let cited: Promise<boolean> | null = null;
+    const isCited = () =>
+      (cited ??= contextMessages(context).then((messages) => referencedBySession(context, messages, reference)));
+    if (!(await isIndexedProjectFile(context.cwd, lexicalPath)) && !(await isCited())) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
@@ -213,7 +229,7 @@ export class ResourceStore {
     // never opens an outside file the way an explicit citation can.
     const workspaceRoot = await realpath(context.cwd).catch(() => null);
     const within = workspaceRoot === null ? ".." : relative(workspaceRoot, path);
-    if (escapesBase(within) && !isCited()) {
+    if (escapesBase(within) && !(await isCited())) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
@@ -229,8 +245,30 @@ export class ResourceStore {
       size: details.size,
       kind: kindFor(mimeType),
     };
-    this.remember({ descriptor, path });
+    this.remember({ descriptor, path, fileId: { dev: details.dev, ino: details.ino } });
     return descriptor;
+  }
+
+  /** Open the resource for serving, bound to the inode inspected at resolve.
+   * The returned handle is the exact object streamed to the client — no
+   * second path lookup follows — so a file swapped after authorization can
+   * neither be opened as the original nor slipped in between check and read. */
+  async openForServing(resource: ResolvedResource): Promise<{ handle: FileHandle; size: number }> {
+    if (!resource.path || !resource.fileId) {
+      throw Object.assign(new Error("The resource preview is no longer available"), { status: 404 });
+    }
+    const handle = await open(resource.path, "r").catch(() => null);
+    if (!handle) throw Object.assign(new Error("The referenced file was not found"), { status: 404 });
+    try {
+      const details = await handle.stat();
+      if (!details.isFile() || details.dev !== resource.fileId.dev || details.ino !== resource.fileId.ino) {
+        throw Object.assign(new Error("The referenced file changed on disk; open it again"), { status: 409 });
+      }
+      return { handle, size: details.size };
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   private remember(resource: ResolvedResource): void {
@@ -246,9 +284,10 @@ export class ResourceStore {
     return resource;
   }
 
-  embeddedData(resource: ResolvedResource, context: ResourceContext): Buffer {
+  async embeddedData(resource: ResolvedResource, context: ResourceContext): Promise<Buffer> {
     const embedded = resource.embedded;
-    const message = embedded ? context.messages[embedded.messageIndex] : undefined;
+    const messages = await contextMessages(context);
+    const message = embedded ? messages[embedded.messageIndex] : undefined;
     const content = message && typeof message === "object" ? (message as Record<string, unknown>).content : undefined;
     const part = embedded && Array.isArray(content) ? content[embedded.partIndex] : undefined;
     const record = part && typeof part === "object" ? part as Record<string, unknown> : undefined;

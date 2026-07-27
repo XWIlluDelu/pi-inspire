@@ -19,6 +19,11 @@ interface RpcResponse {
   error?: string;
 }
 
+/** Pi RPC is JSONL. A malformed child must not retain an arbitrarily large
+ * unterminated line in the long-lived host; ordinary Pi events are far below
+ * this ceiling, while the browser projection is capped more tightly still. */
+export const MAX_RPC_LINE_BYTES = 8 * 1024 * 1024;
+
 export interface PiRpcOptions {
   cwd: string;
   args?: string[];
@@ -61,12 +66,12 @@ export class PiRpcProcess extends EventEmitter {
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-65_536);
     });
-    child.stdout.on("error", (error) => this.handleExit(error));
-    child.stdin.on("error", (error) => this.handleExit(error));
-    child.once("error", (error) => this.handleExit(error));
+    child.stdout.on("error", (error) => this.handleExit(child, error));
+    child.stdin.on("error", (error) => this.handleExit(child, error));
+    child.once("error", (error) => this.handleExit(child, error));
     child.once("exit", (code, signal) => {
       if (this.stopping) return;
-      this.handleExit(new Error(`Pi RPC exited (code=${code}, signal=${signal})`));
+      this.handleExit(child, new Error(`Pi RPC exited (code=${code}, signal=${signal})`));
     });
 
     this.attachLineReader(child);
@@ -74,24 +79,61 @@ export class PiRpcProcess extends EventEmitter {
   }
 
   private attachLineReader(child: ChildProcessWithoutNullStreams): void {
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
+    let decoder = new StringDecoder("utf8");
+    let parts: string[] = [];
+    let lineBytes = 0;
+    let failed = false;
+
+    const failOversizedLine = () => {
+      if (failed) return;
+      failed = true;
+      parts = [];
+      this.stopping = true; // suppress the duplicate process-exit notification
+      this.handleExit(child, new Error(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`));
+      child.kill("SIGKILL");
+    };
+
+    const append = (part: Buffer): boolean => {
+      lineBytes += part.length;
+      if (lineBytes > MAX_RPC_LINE_BYTES) {
+        failOversizedLine();
+        return false;
+      }
+      const decoded = decoder.write(part);
+      if (decoded) parts.push(decoded);
+      return true;
+    };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      buffer += decoder.write(chunk);
-      while (true) {
-        const newline = buffer.indexOf("\n");
-        if (newline < 0) break;
-        let line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
+      if (failed) return;
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(0x0a, start);
+        const end = newline < 0 ? chunk.length : newline;
+        if (!append(chunk.subarray(start, end))) return;
+        if (newline < 0) return;
+
+        const tail = decoder.end();
+        if (tail) parts.push(tail);
+        let line = parts.join("");
         if (line.endsWith("\r")) line = line.slice(0, -1);
+        parts = [];
+        lineBytes = 0;
+        decoder = new StringDecoder("utf8");
         this.handleLine(line);
+        start = newline + 1;
       }
     });
 
     child.stdout.on("end", () => {
-      buffer += decoder.end();
-      if (buffer) this.handleLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
+      if (failed) return;
+      const tail = decoder.end();
+      if (tail) parts.push(tail);
+      if (parts.length > 0) {
+        let line = parts.join("");
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        this.handleLine(line);
+      }
     });
   }
 
@@ -119,7 +161,8 @@ export class PiRpcProcess extends EventEmitter {
     this.emit("event", value);
   }
 
-  private handleExit(error: Error): void {
+  private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
+    if (this.child !== child) return;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(this.withStderr(error));
@@ -129,9 +172,13 @@ export class PiRpcProcess extends EventEmitter {
     this.emit("exit", this.withStderr(error));
   }
 
+  /** Host-side diagnostics ride along as a `detail` property for the host
+   * log. They never join `message` — that string reaches the browser through
+   * runtime_error events and API error bodies, and raw stderr can carry
+   * anything the child process printed, credentials included. */
   private withStderr(error: Error): Error {
-    const suffix = this.stderr.trim() ? `\nPi stderr: ${this.stderr.trim()}` : "";
-    return new Error(`${error.message}${suffix}`);
+    const detail = this.stderr.trim();
+    return detail ? Object.assign(error, { detail: `Pi stderr: ${detail}` }) : error;
   }
 
   async request<T = unknown>(command: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {

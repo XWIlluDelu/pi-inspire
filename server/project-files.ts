@@ -24,6 +24,32 @@ async function fromGit(cwd: string): Promise<string[]> {
   return stdout.split("\0").filter(Boolean);
 }
 
+/** Whether a directory is definitely outside any git work tree (or the host
+ * has no git at all). Only then may the filesystem walker run: an
+ * operational git failure — timeout, output over the buffer cap — must fail
+ * closed instead of widening what the explorer and preview authority see. */
+async function isNonGitDirectory(cwd: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024,
+      timeout: 4_000,
+    });
+    return stdout.trim() !== "true";
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stderr?: unknown };
+    if (failure.code === "ENOENT") return true; // no git binary on this host
+    // "Not a repository" and "directory does not exist" are definite
+    // negatives; a missing directory has nothing to leak either way.
+    return (
+      typeof failure.stderr === "string" &&
+      /not a git repository|cannot change to|no such file or directory/i.test(failure.stderr)
+    );
+  }
+}
+
+/** Non-git walker. Without .gitignore semantics available, hidden entries
+ * stay out wholesale — they are where credentials live (.env, .ssh, …). */
 async function fromFilesystem(cwd: string, cap = 10_000): Promise<string[]> {
   const values: string[] = [];
   const pending = [cwd];
@@ -36,7 +62,7 @@ async function fromFilesystem(cwd: string, cap = 10_000): Promise<string[]> {
       continue;
     }
     for await (const entry of entries) {
-      if (entry.isSymbolicLink() || ignored.has(entry.name)) continue;
+      if (entry.isSymbolicLink() || ignored.has(entry.name) || entry.name.startsWith(".")) continue;
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) pending.push(absolute);
       else if (entry.isFile()) values.push(relative(cwd, absolute));
@@ -48,7 +74,15 @@ async function fromFilesystem(cwd: string, cap = 10_000): Promise<string[]> {
 
 function projectPaths(cwd: string): Promise<string[]> {
   if (cache?.cwd === cwd && cache.expiresAt > Date.now()) return cache.paths;
-  const paths = fromGit(cwd).catch(() => fromFilesystem(cwd));
+  const paths = fromGit(cwd).catch(async (error) => {
+    if (await isNonGitDirectory(cwd)) return fromFilesystem(cwd);
+    throw error;
+  });
+  // A failure is not an index: evict it so the next request retries instead
+  // of serving the cached rejection for the whole cache window.
+  paths.catch(() => {
+    if (cache?.paths === paths) cache = null;
+  });
   cache = { cwd, expiresAt: Date.now() + CACHE_MS, paths };
   return paths;
 }

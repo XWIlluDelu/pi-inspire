@@ -57,6 +57,16 @@ describe("raw HTML and unsafe URL defense", () => {
     expect(link).toHaveAttribute("rel", "noreferrer noopener");
     expect(link).toHaveAttribute("target", "_blank");
   });
+
+  it("renders remote markdown images as links instead of fetching them", () => {
+    const { container } = render(<RichText text="![tracking pixel](https://attacker.invalid/pixel.png)" />);
+    // No <img>: rendering a message must not fire a request to an
+    // attacker-chosen host. The reference stays reachable by choice.
+    expect(container.querySelector("img")).toBeNull();
+    const link = screen.getByRole("link", { name: /tracking pixel/ });
+    expect(link).toHaveAttribute("href", "https://attacker.invalid/pixel.png");
+    expect(link).toHaveAttribute("rel", "noreferrer noopener");
+  });
 });
 
 describe("local file references", () => {
@@ -84,13 +94,15 @@ describe("local file references", () => {
     }
   });
 
-  it("makes local images open the preview and leaves remote images plain", () => {
+  it("makes local images open the preview and remote images click-through links", () => {
     const { container } = render(<RichText text="![chart](./chart.png) and ![logo](https://pi.dev/logo.png)" />);
     const local = screen.getByRole("button", { name: "Preview chart" });
     expect(local).toHaveAttribute("data-file-path", "./chart.png");
-    const remote = container.querySelector('img[src="https://pi.dev/logo.png"]');
-    expect(remote).toBeTruthy();
-    expect(remote!.closest("[data-file-path]")).toBeNull();
+    // Remote images never auto-load; the reference becomes an explicit link.
+    expect(container.querySelector("img")).toBeNull();
+    const remote = screen.getByRole("link", { name: /logo/ });
+    expect(remote).toHaveAttribute("href", "https://pi.dev/logo.png");
+    expect(remote.closest("[data-file-path]")).toBeNull();
   });
 
   it("makes credible inline-code paths clickable without touching ordinary code", () => {

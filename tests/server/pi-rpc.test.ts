@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { MAX_RPC_LINE_BYTES, PiRpcProcess } from "../../server/pi-rpc.js";
 
 const processes: PiRpcProcess[] = [];
 const directories: string[] = [];
@@ -48,6 +48,86 @@ process.stdin.on("data", chunk => {
     const result = await rpc.request<{ value: string }>({ type: "echo", value: "ok" });
     expect(result).toEqual({ value: "ok" });
     expect(events).toEqual([{ type: "notice", value: "left right" }]);
+  });
+
+  it("keeps stderr out of error messages, carrying it as host-side detail", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-stderr-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, index);
+    buffer = buffer.slice(index + 1);
+    const command = JSON.parse(line);
+    if (command.type === "die") {
+      process.stderr.write("token=super-secret-credential\\n");
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    const exits: Error[] = [];
+    rpc.on("exit", (error: Error) => exits.push(error));
+    await rpc.start();
+    await rpc.request({ type: "ping" });
+
+    const failure = (await rpc.request({ type: "die" }).catch((error: Error) => error)) as Error & {
+      detail?: string;
+    };
+    expect(failure).toBeInstanceOf(Error);
+    // The browser-visible message stays clean; diagnostics ride in `detail`.
+    expect(failure.message).not.toContain("super-secret-credential");
+    expect(failure.detail).toContain("super-secret-credential");
+    expect(exits[0]?.message ?? "").not.toContain("super-secret-credential");
+  });
+
+  it("terminates a child that emits an oversized unterminated JSONL line", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-line-limit-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    if (command.type === "overflow") {
+      process.stdout.write("x".repeat(${MAX_RPC_LINE_BYTES + 1}));
+    } else {
+      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+    }
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    const exits: Error[] = [];
+    rpc.on("exit", (error: Error) => exits.push(error));
+    await rpc.start();
+
+    await expect(rpc.request({ type: "overflow" }, 10_000)).rejects.toThrow(
+      `Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`,
+    );
+    expect(exits).toHaveLength(1);
   });
 
   it("starts the installed Pi RPC runtime without invoking a model", async () => {
