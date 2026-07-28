@@ -15,13 +15,26 @@ export interface ProjectFileResult {
   name: string;
 }
 
-async function fromGit(cwd: string): Promise<string[]> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, "ls-files", "-co", "--exclude-standard", "-z"], {
+async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
     encoding: "utf8",
     maxBuffer: 4 * 1024 * 1024,
     timeout: 4_000,
   });
   return stdout.split("\0").filter(Boolean);
+}
+
+async function fromGit(cwd: string): Promise<string[]> {
+  const [listed, deleted] = await Promise.all([
+    gitPaths(cwd, ["ls-files", "-co", "--exclude-standard", "-z"]),
+    // A tracked file stays listed after its worktree copy is removed. Without
+    // subtracting those, the explorer and search keep offering paths whose
+    // preview can only 404.
+    gitPaths(cwd, ["ls-files", "-d", "-z"]),
+  ]);
+  if (deleted.length === 0) return listed;
+  const gone = new Set(deleted);
+  return listed.filter((path) => !gone.has(path));
 }
 
 /** Whether a directory is definitely outside any git work tree (or the host
@@ -125,4 +138,24 @@ export async function isIndexedProjectFile(cwd: string, absolutePath: string): P
   const relativePath = relative(cwd, absolutePath);
   if (!relativePath || escapesBase(relativePath)) return false;
   return (await projectPaths(cwd)).includes(relativePath);
+}
+
+/** Indexed files whose basename matches, as cwd-relative paths. This is the
+ * only recovery route for a bare textual reference, so it stays inside the
+ * project index and never searches the filesystem. */
+export async function indexedBasenameMatches(cwd: string, name: string, limit = 12): Promise<string[]> {
+  const matches: string[] = [];
+  for (const path of await projectPaths(cwd)) {
+    if (basename(path) !== name) continue;
+    matches.push(path);
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
+/** Drop a cached index that has proved stale — a path it offered no longer
+ * exists — so the next request rescans instead of serving the same missing
+ * file for the rest of the cache window. */
+export function invalidateProjectIndex(cwd: string): void {
+  if (cache?.cwd === cwd) cache = null;
 }

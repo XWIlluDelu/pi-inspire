@@ -3,6 +3,7 @@ import {
   collectSessionResourceReferences,
   isLocalResourceReference,
 } from "../../shared/resource-references";
+import { collectResources, MAX_RESOURCE_ROWS } from "../../src/resources";
 
 describe("Pi resource references", () => {
   it("collects structured tool paths, local Markdown targets, attachment tags, and embedded images", () => {
@@ -69,5 +70,21 @@ describe("Pi resource references", () => {
     expect(isLocalResourceReference("report.pdf#L2")).toBe(true);
     expect(isLocalResourceReference("report.pdf#page=2")).toBe(true);
     expect(isLocalResourceReference("../figures/chart.svg")).toBe(true);
+  });
+
+  it("stops the recent-first walk at the presented bound, leaving authority callers complete", () => {
+    const messages = Array.from({ length: 20 }, (_, index) => ({
+      role: "assistant",
+      content: [{ type: "text", text: `wrote \`file-${index}.md\`` }],
+    }));
+
+    const bounded = collectSessionResourceReferences(messages, MAX_RESOURCE_ROWS);
+    expect(bounded).toHaveLength(MAX_RESOURCE_ROWS);
+    // Newest first: the bound keeps the most recent references, not the first.
+    expect(bounded[0]?.reference).toBe("file-19.md");
+    expect(bounded.at(-1)?.reference).toBe(`file-${20 - MAX_RESOURCE_ROWS}.md`);
+    // No limit means no truncation — the authorization path sees everything.
+    expect(collectSessionResourceReferences(messages)).toHaveLength(20);
+    expect(collectResources(messages, MAX_RESOURCE_ROWS)).toHaveLength(MAX_RESOURCE_ROWS);
   });
 });

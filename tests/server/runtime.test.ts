@@ -109,6 +109,7 @@ function catalog(records: SessionRecord[]): SessionCatalogLike {
     get: async (id) => byId.get(id),
     list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
     listByIds: async () => [],
+    listByCwds: async () => [],
     invalidate: () => undefined,
   };
 }

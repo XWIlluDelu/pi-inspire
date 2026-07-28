@@ -143,6 +143,10 @@ export class MockCatalog implements SessionCatalogLike {
     const requested = new Set(ids);
     return summaries.filter((session) => requested.has(session.id));
   }
+  async listByCwds(cwds: readonly string[]): Promise<SessionSummary[]> {
+    const requested = new Set(cwds);
+    return summaries.filter((session) => requested.has(session.cwd));
+  }
   invalidate(): void {}
 }
 

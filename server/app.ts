@@ -62,8 +62,11 @@ const fileListSchema = z.object({
 const hostDirsSchema = z.object({
   path: z.string().min(1).max(4_096).refine(isAbsolute, "path must be absolute").optional(),
 });
-const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(100) });
-const pinSchema = z.object({ id: z.string().min(1).max(128), pinned: z.boolean() });
+// Wide enough for the navigation to hydrate every curated identity at once:
+// the preference file caps pins at 100 and hidden sessions at 500.
+const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(600) });
+// Folder pins carry the same 100-entry cap as session pins.
+const sessionCwdsSchema = z.object({ cwds: z.array(z.string().min(1).max(4_096)).max(100) });
 const attachmentIdSchema = z.string().uuid();
 const resourceResolveSchema = z.object({
   sessionId: sessionIdField,
@@ -127,7 +130,9 @@ function apiError(error: unknown, request: Request, response: Response, _next: N
         : Number((error as { status?: unknown })?.status) || 500;
   const message = error instanceof Error ? error.message : "Unexpected server error";
   if (status >= 500) console.error(`[${request.method} ${request.path}]`, error);
-  response.status(status).json({ error: message });
+  // A refusal may carry the candidates the host declined to choose between.
+  const matches = (error as { matches?: unknown })?.matches;
+  response.status(status).json(Array.isArray(matches) ? { error: message, matches } : { error: message });
 }
 
 export function createInspireServer(deps: AppDependencies): { app: express.Express; server: Server; close: () => Promise<void> } {
@@ -195,16 +200,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     const { ids } = sessionIdsSchema.parse(request.body);
     response.json({ sessions: await deps.catalog.listByIds(ids) });
   });
-  app.post("/api/sessions/pin", async (request, response) => {
-    const { id, pinned } = pinSchema.parse(request.body);
-    if (!(await deps.catalog.get(id))) return response.status(404).json({ error: "Session not found" });
-    const preferences = await deps.preferences.update((current) => ({
-      ...current,
-      pinnedSessionIds: pinned
-        ? [id, ...current.pinnedSessionIds.filter((candidate) => candidate !== id)]
-        : current.pinnedSessionIds.filter((candidate) => candidate !== id),
-    }));
-    response.json(preferences);
+  app.post("/api/sessions/by-cwd", async (request, response) => {
+    const { cwds } = sessionCwdsSchema.parse(request.body);
+    response.json({ sessions: await deps.catalog.listByCwds(cwds) });
   });
   app.post("/api/sessions/open", async (request, response) => {
     const { id } = openSchema.parse(request.body);

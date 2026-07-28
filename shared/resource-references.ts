@@ -97,24 +97,30 @@ function textReferences(text: string): Array<{ reference: string; source: Resour
  * tool paths and image blocks are authoritative; text parsing is deliberately
  * limited to explicit Markdown/file tags, OSC 8 links, code spans, and visibly
  * path-shaped tokens.
+ *
+ * `limit` bounds a recent-first product projection and stops the walk once it
+ * is full; authority callers pass no limit and keep the complete set.
  */
-export function collectSessionResourceReferences(messages: readonly unknown[]): SessionResourceReference[] {
+export function collectSessionResourceReferences(
+  messages: readonly unknown[],
+  limit = Number.POSITIVE_INFINITY,
+): SessionResourceReference[] {
   const resources: SessionResourceReference[] = [];
   const seen = new Set<string>();
   const add = (resource: SessionResourceReference) => {
-    if (seen.has(resource.key)) return;
+    if (resources.length >= limit || seen.has(resource.key)) return;
     seen.add(resource.key);
     resources.push(resource);
   };
 
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0 && resources.length < limit; messageIndex -= 1) {
     const raw = messages[messageIndex];
     if (!raw || typeof raw !== "object") continue;
     const message = raw as Record<string, unknown>;
     // Content Pi marked as non-display is not a visible reference source.
     if (message.display === false) continue;
     const parts = contentParts(message);
-    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+    for (let partIndex = parts.length - 1; partIndex >= 0 && resources.length < limit; partIndex -= 1) {
       const part = parts[partIndex]!;
       if (part.type === "image" && typeof part.data === "string") {
         const mimeType = typeof part.mimeType === "string" ? part.mimeType : "image/unknown";

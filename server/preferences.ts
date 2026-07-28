@@ -14,6 +14,8 @@ const preferenceFields = {
   toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   projectDisplay: z.enum(["folder", "path"]),
   pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100),
+  pinnedProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
+  hiddenSessionIds: z.array(z.string().min(1).max(128)).max(500),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
 };
 
@@ -23,6 +25,8 @@ const preferencesSchema = z.object({
   ...preferenceFields,
   projectDisplay: preferenceFields.projectDisplay.default("folder"),
   pinnedSessionIds: preferenceFields.pinnedSessionIds.default([]),
+  pinnedProjectCwds: preferenceFields.pinnedProjectCwds.default([]),
+  hiddenSessionIds: preferenceFields.hiddenSessionIds.default([]),
   navCollapsedGroups: preferenceFields.navCollapsedGroups.default([]),
 });
 
@@ -73,14 +77,6 @@ export class PreferencesStore {
     const patch = preferencesPatchSchema.parse(value);
     return this.enqueue(async () => {
       const preferences = preferencesSchema.parse({ ...(await this.readDisk()), ...patch });
-      await this.persist(preferences);
-      return preferences;
-    });
-  }
-
-  update(mutator: (current: InspirePreferences) => InspirePreferences): Promise<InspirePreferences> {
-    return this.enqueue(async () => {
-      const preferences = preferencesSchema.parse(mutator(await this.readDisk()));
       await this.persist(preferences);
       return preferences;
     });

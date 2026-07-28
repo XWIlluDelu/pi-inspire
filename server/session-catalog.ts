@@ -38,11 +38,33 @@ function slimSession(session: SessionInfo): SessionRecord {
   };
 }
 
+/** The newest sessions of each named working directory, bounded per directory.
+ * Selection is separate from projection so the ordering and the bound stay
+ * checkable without a Pi session tree. */
+export function newestPerCwd(
+  sessions: readonly SessionRecord[],
+  cwds: readonly string[],
+  limitPerCwd: number,
+): SessionRecord[] {
+  const wanted = new Set(cwds);
+  if (wanted.size === 0) return [];
+  const matching = sessions.filter((session) => wanted.has(session.cwd));
+  matching.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  const taken = new Map<string, number>();
+  return matching.filter((session) => {
+    const count = taken.get(session.cwd) ?? 0;
+    if (count >= limitPerCwd) return false;
+    taken.set(session.cwd, count + 1);
+    return true;
+  });
+}
+
 export interface SessionCatalogLike {
   refresh(force?: boolean): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
   list(options?: { query?: string; offset?: number; limit?: number }): Promise<SessionListResponse>;
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
+  listByCwds(cwds: readonly string[], limitPerCwd?: number): Promise<SessionSummary[]>;
   invalidate(): void;
 }
 
@@ -109,6 +131,14 @@ export class SessionCatalog implements SessionCatalogLike {
       const session = this.byId.get(id);
       return session ? [this.project(session)] : [];
     });
+  }
+
+  /** The newest sessions of each named working directory. A folder pinned as
+   * a whole is a complete navigation section, so it cannot depend on which of
+   * its sessions happen to fall inside the first chronological page. */
+  async listByCwds(cwds: readonly string[], limitPerCwd = 40): Promise<SessionSummary[]> {
+    if (cwds.length === 0) return [];
+    return newestPerCwd(await this.refresh(), cwds, limitPerCwd).map((session) => this.project(session));
   }
 
   project(session: SessionRecord): SessionSummary {

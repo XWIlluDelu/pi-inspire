@@ -24,6 +24,12 @@ export interface InspirePreferences {
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
   pinnedSessionIds: string[];
+  /** Project directories pinned as a whole. Identity is the exact cwd, the
+   * same identity navigation groups and collapse state already use. */
+  pinnedProjectCwds: string[];
+  /** Sessions moved into the reversible Hidden group. Navigation metadata
+   * only: nothing in Pi's session storage changes. */
+  hiddenSessionIds: string[];
   navCollapsedGroups: string[];
 }
 
@@ -34,6 +40,8 @@ export const defaultPreferences: InspirePreferences = {
   toolVisibility: "collapsed",
   projectDisplay: "folder",
   pinnedSessionIds: [],
+  pinnedProjectCwds: [],
+  hiddenSessionIds: [],
   navCollapsedGroups: [],
 };
 
@@ -51,7 +59,6 @@ export interface SessionSummary {
   created: string;
   modified: string;
   messageCount: number;
-  pinned?: boolean;
   parentSessionId?: string;
 }
 

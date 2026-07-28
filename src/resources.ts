@@ -26,11 +26,16 @@ export function resourceIcon(row: Pick<ResourceRow, "extension" | "mimeType">): 
   return "file";
 }
 
+/** How many recent references the files pane presents. The pane is a
+ * recent-first product projection, not the authority: older references stay
+ * reachable through the transcript and the workspace explorer. */
+export const MAX_RESOURCE_ROWS = 8;
+
 /** Derive the deduplicated, recent-first resource list for the visible
  * session's messages. Extraction rules live in the shared pure module; this
  * only adds presentation metadata. */
-export function collectResources(messages: readonly unknown[]): ResourceRow[] {
-  return collectSessionResourceReferences(messages).map((reference) => {
+export function collectResources(messages: readonly unknown[], limit?: number): ResourceRow[] {
+  return collectSessionResourceReferences(messages, limit).map((reference) => {
     const displayReference = reference.label.replace(/[?#].*$/u, "").replace(/:\d+(?::\d+)?$/, "");
     const rawBasename = displayReference.split(/[\\/]/).pop() || displayReference;
     let basename = rawBasename;
