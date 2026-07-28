@@ -12,3 +12,4 @@
 /output/
 /.playwright-cli/
 /.playwright-mcp/
+/.playwright/
