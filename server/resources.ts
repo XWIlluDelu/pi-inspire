@@ -9,7 +9,7 @@ import {
 } from "../shared/contracts.js";
 import { collectSessionResourceReferences } from "../shared/resource-references.js";
 import { escapesBase } from "./paths.js";
-import { isIndexedProjectFile } from "./project-files.js";
+import { indexedBasenameMatches, invalidateProjectIndex, isIndexedProjectFile } from "./project-files.js";
 
 export interface ResourceContext {
   sessionId: string;
@@ -128,6 +128,17 @@ function mimeTypeFor(path: string): string {
   return MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
+/** The bare name a reference carries, or null when it makes a location claim
+ * of its own. Only a bare name — `kernel.py`, never `src/kernel.py`, `./x`,
+ * or a URL — is shorthand the project index may recover. */
+function bareName(reference: string): string | null {
+  let value = reference.trim().replace(/^@/, "");
+  if (value.startsWith("<") && value.endsWith(">")) value = value.slice(1, -1);
+  value = decoded(stripLocation(value));
+  if (!value || value === "~" || /[\\/]/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return null;
+  return value;
+}
+
 function kindFor(mimeType: string): ResourceKind {
   if (mimeType === "text/html") return "html";
   if (mimeType === "application/pdf") return "pdf";
@@ -214,22 +225,39 @@ export class ResourceStore {
     let cited: Promise<boolean> | null = null;
     const isCited = () =>
       (cited ??= contextMessages(context).then((messages) => referencedBySession(context, messages, reference)));
-    if (!(await isIndexedProjectFile(context.cwd, lexicalPath)) && !(await isCited())) {
+    const indexed = await isIndexedProjectFile(context.cwd, lexicalPath);
+    if (!indexed && !(await isCited())) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
-    let path: string;
-    try {
-      path = await realpath(lexicalPath);
-    } catch {
+    let path = await realpath(lexicalPath).catch(() => null);
+    // A resolved location the index believed in is gone: rescan, so neither
+    // the explorer nor search keeps offering it.
+    if (path === null && indexed) invalidateProjectIndex(context.cwd);
+    // A bare textual mention is shorthand, not a location claim: recover it
+    // from the index when exactly one indexed file carries that name, and
+    // refuse to guess when several do.
+    const name = path === null ? bareName(reference) : null;
+    const matches = name ? await indexedBasenameMatches(context.cwd, name) : [];
+    const recovered = matches.length === 1 ? matches[0]! : null;
+    if (path === null && matches.length > 1) {
+      throw Object.assign(new Error(`"${name}" names ${matches.length} files in this workspace`), {
+        status: 409,
+        matches,
+      });
+    }
+    if (path === null && recovered) path = await realpath(resolve(context.cwd, recovered)).catch(() => null);
+    if (path === null) {
       throw Object.assign(new Error("The referenced file was not found"), { status: 404 });
     }
 
     // Index authority ends at the workspace boundary: a project symlink
-    // never opens an outside file the way an explicit citation can.
+    // never opens an outside file the way an explicit citation can, and a
+    // recovered name answers with an indexed file only — never on the
+    // strength of a citation that named something else.
     const workspaceRoot = await realpath(context.cwd).catch(() => null);
     const within = workspaceRoot === null ? ".." : relative(workspaceRoot, path);
-    if (escapesBase(within) && !(await isCited())) {
+    if (escapesBase(within) && (recovered !== null || !(await isCited()))) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
     }
 
@@ -239,7 +267,9 @@ export class ResourceStore {
     const descriptor: ResourceDescriptor = {
       id: randomUUID(),
       sessionId: context.sessionId,
-      reference,
+      // A recovery answers with the location it actually opened, so the
+      // preview never claims the bare shorthand was a real path.
+      reference: recovered ?? reference,
       name: basename(path),
       mimeType,
       size: details.size,

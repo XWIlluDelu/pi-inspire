@@ -1,6 +1,8 @@
 import {
   ChevronRight,
   ChevronUp,
+  Eye,
+  EyeOff,
   FileText,
   Folder,
   Inbox,
@@ -14,13 +16,13 @@ import {
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   projectNameFromCwd,
+  type InspirePreferences,
   type ProjectDirEntry,
   type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
 import { ScrollRail } from "./ScrollRail";
-import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
 export interface SessionGroup {
@@ -52,26 +54,60 @@ export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
   return groups;
 }
 
+/** The curated navigation identities, all of them preference-owned. */
+export type NavCuration = Pick<
+  InspirePreferences,
+  "pinnedSessionIds" | "pinnedProjectCwds" | "hiddenSessionIds"
+>;
+
 export interface NavSections {
-  /** All pinned sessions across projects, newest activity first. */
+  /** Individually pinned sessions across projects, newest activity first. */
   pinned: SessionSummary[];
-  /** Unpinned sessions only, grouped by cwd with the usual sort rules. */
+  /** Groups whose folder is pinned, ordered like ordinary groups. */
+  pinnedGroups: SessionGroup[];
+  /** The remaining folders. */
   groups: SessionGroup[];
+  /** Sessions moved out of the way, newest activity first. */
+  hidden: SessionSummary[];
 }
 
-/** Split the list into the global Pinned section and per-cwd groups. A pinned
- * session appears only in the Pinned section, never duplicated in its folder. */
-export function splitNavSections(sessions: SessionSummary[]): NavSections {
-  const pinned = sessions
-    .filter((session) => session.pinned)
-    .sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
-  return { pinned, groups: groupSessionsByCwd(sessions.filter((session) => !session.pinned)) };
+/** Partition the list into its four navigation sections. A session appears in
+ * exactly one of them: hiding is an explicit per-session act, so it outranks
+ * both pin kinds, and an individual pin outranks its folder's pin. */
+export function splitNavSections(sessions: SessionSummary[], curation: NavCuration): NavSections {
+  const pinnedIds = new Set(curation.pinnedSessionIds);
+  const hiddenIds = new Set(curation.hiddenSessionIds);
+  const pinnedCwds = new Set(curation.pinnedProjectCwds);
+  const byRecency = (a: SessionSummary, b: SessionSummary) => Date.parse(b.modified) - Date.parse(a.modified);
+  const visible = sessions.filter((session) => !hiddenIds.has(session.id));
+  const groups = groupSessionsByCwd(visible.filter((session) => !pinnedIds.has(session.id)));
+  return {
+    pinned: visible.filter((session) => pinnedIds.has(session.id)).sort(byRecency),
+    pinnedGroups: groups.filter((group) => pinnedCwds.has(group.cwd)),
+    groups: groups.filter((group) => !pinnedCwds.has(group.cwd)),
+    hidden: sessions.filter((session) => hiddenIds.has(session.id)).sort(byRecency),
+  };
 }
 
 /** Second-to-last path segment, shown inline only when folder names collide. */
 function parentSegment(cwd: string): string {
   const parts = cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts.length > 1 ? parts[parts.length - 2]! : "";
+}
+
+/** Activity age compressed for the dense row's right column; the exact
+ * timestamp stays available as that column's tooltip. */
+export function compactAge(timestamp: string, now = Date.now()): string {
+  const time = Date.parse(timestamp);
+  if (!Number.isFinite(time)) return "";
+  const minutes = Math.max(0, Math.floor((now - time) / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 const INDICATOR_LABELS: Record<SessionIndicator, string> = {
@@ -186,6 +222,10 @@ function WorkspaceExplorer() {
   );
 }
 
+/** One dense session line: the title at the left and one number at the right —
+ * the activity age, in a fixed column the curation actions take over on hover
+ * or focus. The message count is a tooltip fact, not a second number fighting
+ * for the same edge. */
 function SessionRow({
   session,
   showProject = false,
@@ -198,8 +238,8 @@ function SessionRow({
   const state = useAppState();
   const active = session.id === state.sessionId;
   const opening = state.openingSessionId === session.id;
-  const pinned = Boolean(session.pinned);
-  const pinning = state.pinningSessionId === session.id;
+  const pinned = state.prefs.pinnedSessionIds.includes(session.id);
+  const hidden = state.prefs.hiddenSessionIds.includes(session.id);
   const indicator = state.sessionStatuses[session.id]?.indicator;
   // Yellow stays on while a session works, including the visible one; green
   // and red are unseen-completion attention and clear once the row is viewed.
@@ -207,16 +247,14 @@ function SessionRow({
     indicator === "completed" || indicator === "failed" ? (active ? null : indicator) : (indicator ?? null);
   const title = session.title || "Untitled session";
   return (
-    <div
-      className={`nav__row ${active ? "nav__row--active" : ""} ${pinned ? "nav__row--pinned" : ""}`}
-    >
+    <div className={`nav__row ${active ? "nav__row--active" : ""}`}>
       <button
         type="button"
         className="nav__row-main"
         onClick={() => onSelect(session.id)}
         disabled={state.openingSessionId !== null}
         aria-busy={opening}
-        title={title}
+        title={`${title} · ${session.messageCount} messages`}
       >
         <span className="nav__row-title">
           {opening ? (
@@ -232,31 +270,103 @@ function SessionRow({
           <span className="nav__row-name">{title}</span>
         </span>
         <span className="nav__row-meta">
-          {showProject ? <span className="nav__row-project">{projectNameFromCwd(session.cwd)}</span> : null}
-          {relativeTime(session.modified)}
+          {showProject ? (
+            <span className="nav__row-project">{projectNameFromCwd(session.cwd)}</span>
+          ) : null}
+          <span className="nav__row-age" title={new Date(session.modified).toLocaleString()}>
+            {compactAge(session.modified)}
+          </span>
         </span>
       </button>
-      <button
-        type="button"
-        className="nav__row-pin"
-        aria-pressed={pinned}
-        aria-label={pinned ? `Unpin "${title}"` : `Pin "${title}"`}
-        title={pinned ? "Unpin session" : "Pin session"}
-        disabled={state.pinningSessionId !== null}
-        onClick={(event) => {
-          event.stopPropagation();
-          void store.setSessionPinned(session.id, !pinned);
-        }}
-      >
-        {pinning ? (
-          <Loader2 size={12} className="spin" aria-hidden />
-        ) : pinned ? (
-          <PinOff size={12} aria-hidden />
-        ) : (
-          <Pin size={12} aria-hidden />
-        )}
-      </button>
+      <div className="nav__row-actions">
+        <button
+          type="button"
+          className="nav__row-action"
+          aria-pressed={pinned}
+          aria-label={pinned ? `Unpin "${title}"` : `Pin "${title}"`}
+          title={pinned ? "Unpin session" : "Pin session"}
+          onClick={() => store.toggleSessionPin(session.id)}
+        >
+          {pinned ? <PinOff size={12} aria-hidden /> : <Pin size={12} aria-hidden />}
+        </button>
+        <button
+          type="button"
+          className="nav__row-action"
+          aria-pressed={hidden}
+          aria-label={hidden ? `Unhide "${title}"` : `Hide "${title}"`}
+          title={hidden ? "Move back out of Hidden" : "Hide session"}
+          onClick={() => store.toggleSessionHidden(session.id)}
+        >
+          {hidden ? <Eye size={12} aria-hidden /> : <EyeOff size={12} aria-hidden />}
+        </button>
+      </div>
     </div>
+  );
+}
+
+/** One folder group: a collapsible header that can also be pinned as a whole,
+ * over its session rows. */
+function ProjectGroup({
+  group,
+  headingId,
+  searching,
+  showContext,
+  onSelectSession,
+}: {
+  group: SessionGroup;
+  headingId: string;
+  searching: boolean;
+  showContext: boolean;
+  onSelectSession: (id: string) => void;
+}) {
+  const state = useAppState();
+  // Active search must never hide results inside a collapsed folder.
+  const expanded = searching || !state.prefs.navCollapsedGroups.includes(group.cwd);
+  const pinned = state.prefs.pinnedProjectCwds.includes(group.cwd);
+  // A collapsed folder that hides the active session carries the active
+  // highlight itself.
+  const activeInside = group.sessions.some((session) => session.id === state.sessionId);
+  return (
+    <section className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""}`} aria-labelledby={headingId}>
+      <h2
+        className={`nav__group-title ${!expanded && activeInside ? "nav__group-title--active" : ""}`}
+        title={group.cwd}
+        id={headingId}
+      >
+        <button
+          type="button"
+          className="nav__group-toggle"
+          aria-expanded={expanded}
+          disabled={searching}
+          onClick={() => store.toggleNavGroup(group.cwd)}
+        >
+          <ChevronRight size={12} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
+          <Folder size={13} aria-hidden />
+          <span className="nav__group-name">{group.name}</span>
+          {showContext ? <span className="nav__group-context">{parentSegment(group.cwd)}</span> : null}
+        </button>
+        <button
+          type="button"
+          className="nav__group-pin"
+          aria-pressed={pinned}
+          aria-label={pinned ? `Unpin folder ${group.name}` : `Pin folder ${group.name}`}
+          title={pinned ? "Unpin folder" : "Pin folder"}
+          onClick={() => store.toggleProjectPin(group.cwd)}
+        >
+          {pinned ? <PinOff size={12} aria-hidden /> : <Pin size={12} aria-hidden />}
+        </button>
+        {/* Outside the toggle so it can hold the same right-hand column the
+            session rows give their activity age. */}
+        <span className="nav__group-count" aria-hidden>
+          {group.sessions.length}
+        </span>
+      </h2>
+      {expanded
+        ? group.sessions.map((session) => (
+            <SessionRow key={session.id} session={session} onSelect={onSelectSession} />
+          ))
+        : null}
+    </section>
   );
 }
 
@@ -271,6 +381,7 @@ export function Nav({
 }) {
   const state = useAppState();
   const navRef = useRef<HTMLElement>(null);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
 
   if (collapsed) {
     return (
@@ -285,12 +396,15 @@ export function Nav({
     );
   }
 
-  const { pinned, groups } = splitNavSections(state.sessions);
+  const { pinned, pinnedGroups, groups, hidden } = splitNavSections(state.sessions, state.prefs);
+  const folders = [...pinnedGroups, ...groups];
   const nameCounts = new Map<string, number>();
-  for (const group of groups) nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
-  const collapsedGroups = new Set(state.prefs.navCollapsedGroups);
-  // Active search must never hide results inside a collapsed folder.
+  for (const group of folders) nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
   const searching = state.sessionQuery.trim() !== "";
+  // Hidden is a curation drawer, not a browsing group: it opens on demand and
+  // starts closed again next time. Search reveals matches inside it without
+  // reclassifying them out of Hidden.
+  const hiddenExpanded = searching || hiddenOpen;
 
   return (
     <nav className="nav" aria-label="Sessions" ref={navRef}>
@@ -319,51 +433,50 @@ export function Nav({
             <h2 className="nav__group-title" id="nav-pinned-title">
               <Pin size={12} aria-hidden />
               <span className="nav__group-name">Pinned</span>
+              <span className="nav__group-count" aria-hidden>
+                {pinned.length}
+              </span>
             </h2>
             {pinned.map((session) => (
               <SessionRow key={session.id} session={session} showProject onSelect={onSelectSession} />
             ))}
           </section>
         ) : null}
-        {groups.map((group, groupIndex) => {
-          const expanded = searching || !collapsedGroups.has(group.cwd);
-          // A collapsed folder that hides the active session carries the
-          // active highlight itself.
-          const activeInside = group.sessions.some((session) => session.id === state.sessionId);
-          const headingId = `nav-group-title-${groupIndex}`;
-          return (
-            <section className="nav__group" key={group.cwd} aria-labelledby={headingId}>
-              <h2
-                className={`nav__group-title ${!expanded && activeInside ? "nav__group-title--active" : ""}`}
-                title={group.cwd}
-                id={headingId}
+        {folders.map((group, groupIndex) => (
+          <ProjectGroup
+            key={group.cwd}
+            group={group}
+            headingId={`nav-group-title-${groupIndex}`}
+            searching={searching}
+            showContext={(nameCounts.get(group.name) ?? 0) > 1}
+            onSelectSession={onSelectSession}
+          />
+        ))}
+        {hidden.length > 0 ? (
+          <section className="nav__group nav__group--hidden" aria-labelledby="nav-hidden-title">
+            <h2 className="nav__group-title" id="nav-hidden-title">
+              <button
+                type="button"
+                className="nav__group-toggle"
+                aria-expanded={hiddenExpanded}
+                disabled={searching}
+                onClick={() => setHiddenOpen((value) => !value)}
               >
-                <button
-                  type="button"
-                  className="nav__group-toggle"
-                  aria-expanded={expanded}
-                  disabled={searching}
-                  onClick={() => store.toggleNavGroup(group.cwd)}
-                >
-                  <ChevronRight size={12} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
-                  <Folder size={13} aria-hidden />
-                  <span className="nav__group-name">{group.name}</span>
-                  {(nameCounts.get(group.name) ?? 0) > 1 ? (
-                    <span className="nav__group-context">{parentSegment(group.cwd)}</span>
-                  ) : null}
-                  <span className="nav__group-count" aria-hidden>
-                    {group.sessions.length}
-                  </span>
-                </button>
-              </h2>
-              {expanded
-                ? group.sessions.map((session) => (
-                    <SessionRow key={session.id} session={session} onSelect={onSelectSession} />
-                  ))
-                : null}
-            </section>
-          );
-        })}
+                <ChevronRight size={12} className={`chev ${hiddenExpanded ? "chev--open" : ""}`} aria-hidden />
+                <EyeOff size={13} aria-hidden />
+                <span className="nav__group-name">Hidden</span>
+              </button>
+              <span className="nav__group-count" aria-hidden>
+                {hidden.length}
+              </span>
+            </h2>
+            {hiddenExpanded
+              ? hidden.map((session) => (
+                  <SessionRow key={session.id} session={session} showProject onSelect={onSelectSession} />
+                ))
+              : null}
+          </section>
+        ) : null}
         {state.sessions.length === 0 ? (
           <div className="empty-state">
             {searching ? (

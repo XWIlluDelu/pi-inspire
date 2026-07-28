@@ -88,6 +88,9 @@ export function injectHtmlPreviewCsp(html: string): string {
 export type ResourcePreview =
   | { status: "loading"; reference: string }
   | { status: "error"; reference: string; message: string }
+  /** A bare reference the host refused to guess about: the candidates it
+   * found are offered for the user to choose. */
+  | { status: "ambiguous"; reference: string; message: string; matches: string[] }
   | {
       status: "ready";
       reference: string;
@@ -198,13 +201,15 @@ export interface AppState extends EventSlice {
    * refused and attachment withdrawals freeze, so a DELETE cannot race the
    * host resolving those same files into the outgoing message. */
   sending: boolean;
-  /** Pin mutation in flight for this session id; the row stays truthful. */
-  pinningSessionId: string | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   /** Reference currently selected in the resources pane. */
   selectedResourceReference: string | null;
   resourcePreview: ResourcePreview | null;
+  /** References this session asked for and the host could not serve. A
+   * textual mention is unverified path-shaped text, so once one proves
+   * missing the list stops presenting it as an ordinary file. */
+  unavailableReferences: string[];
   error: string | null;
 }
 
@@ -234,10 +239,10 @@ const initialState: AppState = {
   attachments: [],
   projectFiles: [],
   sending: false,
-  pinningSessionId: null,
   resourcesOpen: false,
   selectedResourceReference: null,
   resourcePreview: null,
+  unavailableReferences: [],
   error: null,
 };
 
@@ -298,6 +303,7 @@ export class AppStore {
     this.api = createApi(token);
     try {
       const boot = await this.api.bootstrap();
+      this.confirmedPrefs = boot.preferences;
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
@@ -372,6 +378,7 @@ export class AppStore {
             windowTitle: null,
             selectedResourceReference: null,
             resourcePreview: null,
+            unavailableReferences: [],
             // Composer work belongs to its session; the switch swaps in the
             // destination's staged slice.
             ...this.composerSlice(nextSessionId),
@@ -542,15 +549,23 @@ export class AppStore {
     const ticket = ++this.sessionLoadTicket;
     try {
       const list = await this.api.sessions(query);
-      const sessions = this.withPinnedFlags(list.sessions);
+      const sessions = [...list.sessions];
       if (!query.trim()) {
-        // Pinned sessions beyond the 40-result page must still surface in the
-        // global Pinned section; fetch them explicitly and merge.
-        const missing = this.state.prefs.pinnedSessionIds.filter((id) => !sessions.some((s) => s.id === id));
-        if (missing.length > 0) {
+        // Curated navigation must survive the 40-result page. Pinned and
+        // hidden sessions come back by id — one to stay reachable, the other
+        // to stay reversible — and a pinned folder comes back by cwd, because
+        // it is a whole section rather than whichever of its sessions happen
+        // to be recent. Fetch the strays and merge.
+        const curated = new Set([...this.state.prefs.pinnedSessionIds, ...this.state.prefs.hiddenSessionIds]);
+        const missing = [...curated].filter((id) => !sessions.some((session) => session.id === id));
+        const pinnedCwds = this.state.prefs.pinnedProjectCwds;
+        if (missing.length > 0 || pinnedCwds.length > 0) {
           try {
-            const extra = await this.api.sessionsByIds(missing);
-            for (const session of this.withPinnedFlags(extra.sessions)) {
+            const [byId, byCwd] = await Promise.all([
+              missing.length > 0 ? this.api.sessionsByIds(missing) : { sessions: [] },
+              pinnedCwds.length > 0 ? this.api.sessionsByCwds(pinnedCwds) : { sessions: [] },
+            ]);
+            for (const session of [...byId.sessions, ...byCwd.sessions]) {
               if (!sessions.some((candidate) => candidate.id === session.id)) sessions.push(session);
             }
           } catch {
@@ -564,49 +579,6 @@ export class AppStore {
       if (ticket !== this.sessionLoadTicket) return; // a newer load owns the outcome
       if (error instanceof ApiError && error.status === 401) this.handleAuthFailure();
       else this.fail(error instanceof Error ? error.message : "Failed to list sessions");
-    }
-  };
-
-  /** Pin state lives in preferences; summaries from the catalog are
-   * normalized against it so rows render one authoritative flag. */
-  private withPinnedFlags(sessions: SessionSummary[]): SessionSummary[] {
-    const pinned = new Set(this.state.prefs.pinnedSessionIds);
-    return sessions.map((session) => ({ ...session, pinned: pinned.has(session.id) }));
-  }
-
-  setSessionPinned = async (id: string, pinned: boolean): Promise<void> => {
-    if (!this.api || this.state.pinningSessionId !== null) return;
-    const previousPrefs = this.state.prefs;
-    const previousSessions = this.state.sessions;
-    const pinnedSessionIds = pinned
-      ? [id, ...previousPrefs.pinnedSessionIds.filter((candidate) => candidate !== id)]
-      : previousPrefs.pinnedSessionIds.filter((candidate) => candidate !== id);
-    this.set({
-      pinningSessionId: id,
-      prefs: { ...previousPrefs, pinnedSessionIds },
-      sessions: previousSessions.map((session) => (session.id === id ? { ...session, pinned } : session)),
-    });
-    try {
-      // The pin endpoint persists the preference host-side and answers with
-      // the stored preferences. Only the pin field is taken from the answer:
-      // other fields may have newer local changes still queued for saving.
-      const prefs = await this.api.setSessionPinned(id, pinned);
-      this.set({ prefs: { ...this.state.prefs, pinnedSessionIds: prefs.pinnedSessionIds } });
-      await this.loadSessions(this.state.sessionQuery);
-    } catch (error) {
-      // Truthful control: a rejected pin cannot leave the UI claiming it.
-      // Only pin state rolls back; preferences edited while the request was
-      // in flight (theme, visibility, …) keep their newer local values.
-      const wasPinned = previousPrefs.pinnedSessionIds.includes(id);
-      this.set({
-        prefs: { ...this.state.prefs, pinnedSessionIds: previousPrefs.pinnedSessionIds },
-        sessions: this.state.sessions.map((session) =>
-          session.id === id ? { ...session, pinned: wasPinned } : session,
-        ),
-      });
-      this.fail(error instanceof Error ? error.message : "Failed to update the pin");
-    } finally {
-      this.set({ pinningSessionId: null });
     }
   };
 
@@ -972,13 +944,36 @@ export class AppStore {
    * host in the order the user made them; each patch carries only its own
    * fields, so out-of-order arrival can no longer resurrect stale values. */
   private prefsWrites: Promise<unknown> = Promise.resolve();
+  /** The last preferences the host confirmed. Rollback restores from here
+   * rather than from whatever was on screen when a write started: with two
+   * refused writes in a row, that earlier screen value was itself never
+   * persisted, and restoring it would show a preference no reload can keep. */
+  private confirmedPrefs: InspirePreferences = defaultPreferences;
 
   private savePrefs(patch: Partial<InspirePreferences>): void {
     this.set({ prefs: { ...this.state.prefs, ...patch } });
-    // Persistence stays best-effort; local state already applied.
     this.prefsWrites = this.prefsWrites
-      .then(() => this.api?.savePreferences(patch))
-      .catch(() => undefined);
+      .then(async () => {
+        if (!this.api) return;
+        await this.api.savePreferences(patch);
+        this.confirmedPrefs = { ...this.confirmedPrefs, ...patch };
+      })
+      .catch((error: unknown) => {
+        // Truthful control: a refused write cannot leave a control claiming
+        // its change. Only fields still carrying this patch's value roll
+        // back — anything a newer local edit has replaced belongs to that
+        // edit and its own write.
+        const stale = (Object.keys(patch) as Array<keyof InspirePreferences>).filter(
+          (field) => this.state.prefs[field] === patch[field],
+        );
+        if (stale.length > 0) {
+          const restored = Object.fromEntries(
+            stale.map((field) => [field, this.confirmedPrefs[field]]),
+          ) as Partial<InspirePreferences>;
+          this.set({ prefs: { ...this.state.prefs, ...restored } });
+        }
+        this.fail(error instanceof Error ? error.message : "Failed to save the preference");
+      });
   }
 
   setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
@@ -992,6 +987,43 @@ export class AppStore {
     const current = this.state.prefs.navCollapsedGroups;
     const navCollapsedGroups = current.includes(cwd) ? current.filter((item) => item !== cwd) : [...current, cwd];
     this.savePrefs({ navCollapsedGroups });
+  };
+
+  /** Pin and Hidden are mutually exclusive, and both are one patch: the two
+   * identity lists move together so navigation can never file a session in
+   * two sections at once. */
+  toggleSessionPin = (id: string): void => {
+    const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
+    const pinned = pinnedSessionIds.includes(id);
+    this.savePrefs({
+      pinnedSessionIds: pinned
+        ? pinnedSessionIds.filter((candidate) => candidate !== id)
+        : [id, ...pinnedSessionIds],
+      ...(!pinned && hiddenSessionIds.includes(id)
+        ? { hiddenSessionIds: hiddenSessionIds.filter((candidate) => candidate !== id) }
+        : {}),
+    });
+  };
+
+  toggleSessionHidden = (id: string): void => {
+    const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
+    const hidden = hiddenSessionIds.includes(id);
+    this.savePrefs({
+      hiddenSessionIds: hidden
+        ? hiddenSessionIds.filter((candidate) => candidate !== id)
+        : [id, ...hiddenSessionIds],
+      ...(!hidden && pinnedSessionIds.includes(id)
+        ? { pinnedSessionIds: pinnedSessionIds.filter((candidate) => candidate !== id) }
+        : {}),
+    });
+  };
+
+  /** Folder pins use the exact cwd identity navigation already groups by. */
+  toggleProjectPin = (cwd: string): void => {
+    const current = this.state.prefs.pinnedProjectCwds;
+    this.savePrefs({
+      pinnedProjectCwds: current.includes(cwd) ? current.filter((item) => item !== cwd) : [cwd, ...current],
+    });
   };
 
   // --- Files/resources pane ---
@@ -1020,6 +1052,29 @@ export class AppStore {
     this.set({ selectedResourceReference: null, resourcePreview: null });
   };
 
+  /** Resolution is where a reference proves itself: a refusal here means it
+   * names nothing previewable in this session, so the list stops inviting the
+   * same failed click. A later transfer failure is a transfer failure — the
+   * reference itself stays good. */
+  private async resolveReference(
+    sessionId: string,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<ResourceDescriptor> {
+    try {
+      return await this.api!.resolveResource(sessionId, reference, signal);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        (error.status === 404 || error.status === 403) &&
+        !this.state.unavailableReferences.includes(reference)
+      ) {
+        this.set({ unavailableReferences: [...this.state.unavailableReferences, reference] });
+      }
+      throw error;
+    }
+  }
+
   /** Resolve a conversation reference through the authenticated host endpoint
    * and load its preview. Replaces any current preview and revokes its URL. */
   openResource = async (reference: string): Promise<void> => {
@@ -1040,8 +1095,12 @@ export class AppStore {
       this.state.selectedResourceReference !== reference ||
       this.state.sessionId !== sessionId;
     try {
-      const descriptor = await this.api.resolveResource(sessionId, reference, request.signal);
+      const descriptor = await this.resolveReference(sessionId, reference, request.signal);
       if (stale()) return;
+      // It resolves after all — created since, or recovered by a rescan.
+      if (this.state.unavailableReferences.includes(reference)) {
+        this.set({ unavailableReferences: this.state.unavailableReferences.filter((item) => item !== reference) });
+      }
       if (descriptor.kind === "binary") {
         this.set({ resourcePreview: { status: "ready", reference, descriptor } });
         return;
@@ -1095,6 +1154,14 @@ export class AppStore {
       });
     } catch (error) {
       if (stale()) return;
+      if (error instanceof ApiError && error.matches && error.matches.length > 0) {
+        this.set({
+          resourcePreview: { status: "ambiguous", reference, message: error.message, matches: error.matches },
+        });
+        return;
+      }
+      // 404/403 mean this reference names nothing previewable in the session;
+      // recorded at the resolve step, which is the only one that judges it.
       this.set({
         resourcePreview: {
           status: "error",

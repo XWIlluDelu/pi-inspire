@@ -497,26 +497,19 @@ describe("notice expiry", () => {
   });
 });
 
-describe("session pinning", () => {
+describe("navigation curation", () => {
   beforeEach(() => installFakeWebSocket());
 
-  const pinnedRoutes = (
-    pinBehavior: "ok" | "fail",
-    onPin?: (pinned: boolean) => void,
+  const curationRoutes = (
+    patchBehavior: "ok" | "fail",
+    onPatch?: (patch: Record<string, unknown>) => void,
   ): RouteHandler => {
-    const summary = { ...activeSnapshot(), };
-    void summary;
     return (url, init) => {
-      if (url.startsWith("/api/sessions/pin")) {
-        const body = jsonBody(init) as { id: string; pinned: boolean };
-        onPin?.(body.pinned);
-        if (pinBehavior === "fail") return { status: 500, body: { error: "pin rejected" } };
-        return {
-          body: {
-            ...bootstrapPayload().preferences,
-            pinnedSessionIds: body.pinned ? [body.id] : [],
-          },
-        };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        const patch = jsonBody(init);
+        onPatch?.(patch);
+        if (patchBehavior === "fail") return { status: 500, body: { error: "preference write rejected" } };
+        return { body: { ...bootstrapPayload().preferences, ...patch } };
       }
       if (url.startsWith("/api/sessions")) {
         return {
@@ -542,88 +535,91 @@ describe("session pinning", () => {
     };
   };
 
-  it("applies the pin optimistically and confirms with the host's preferences", async () => {
-    installFetch(pinnedRoutes("ok"));
+  it("patches only the fields a curation action changes, and keeps pin and hidden exclusive", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    installFetch(curationRoutes("ok", (patch) => patches.push(patch)));
     const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions[0]?.pinned).toBe(false));
 
-    await store.setSessionPinned("s7", true);
-    expect(store.getState().prefs.pinnedSessionIds).toEqual(["s7"]);
-    expect(store.getState().sessions[0]?.pinned).toBe(true);
-    expect(store.getState().pinningSessionId).toBeNull();
+    store.toggleSessionHidden("s7");
+    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s7"]);
+
+    // Pinning a hidden session unhides it, in one patch carrying both lists.
+    store.toggleSessionPin("s7");
+    expect(store.getState().prefs).toMatchObject({ pinnedSessionIds: ["s7"], hiddenSessionIds: [] });
+
+    store.toggleProjectPin("/demo");
+    expect(store.getState().prefs.pinnedProjectCwds).toEqual(["/demo"]);
+
+    await vi.waitFor(() => expect(patches).toHaveLength(3));
+    expect(patches).toEqual([
+      { hiddenSessionIds: ["s7"] },
+      { pinnedSessionIds: ["s7"], hiddenSessionIds: [] },
+      { pinnedProjectCwds: ["/demo"] },
+    ]);
     expect(store.getState().error).toBeNull();
-
-    await store.setSessionPinned("s7", false);
-    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-    expect(store.getState().sessions[0]?.pinned).toBe(false);
   });
 
-  it("rolls back truthfully when the host rejects the pin", async () => {
-    installFetch(pinnedRoutes("fail"));
+  it("rolls a refused curation write back and reports it", async () => {
+    installFetch(curationRoutes("fail"));
     const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions[0]?.pinned).toBe(false));
 
-    await store.setSessionPinned("s7", true);
+    store.toggleSessionPin("s7");
+    expect(store.getState().prefs.pinnedSessionIds).toEqual(["s7"]);
+
+    await vi.waitFor(() => expect(store.getState().error).toBe("preference write rejected"));
     expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-    expect(store.getState().sessions[0]?.pinned).toBe(false);
-    expect(store.getState().error).toBe("pin rejected");
   });
 
-  it("keeps preferences edited while a failing pin was in flight; only pin state rolls back", async () => {
-    installFetch(pinnedRoutes("fail"));
-    const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions[0]?.pinned).toBe(false));
-
-    const pin = store.setSessionPinned("s7", true);
-    store.setTheme("dark"); // lands while the pin request is in flight
-    await pin;
-
-    expect(store.getState().error).toBe("pin rejected");
-    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-    expect(store.getState().sessions[0]?.pinned).toBe(false);
-    expect(store.getState().prefs.theme).toBe("dark");
-  });
-
-  it("ignores a duplicate pin mutation while one is in flight", async () => {
-    let pinCalls = 0;
+  it("keeps a newer local change when an older write is refused", async () => {
+    let failNext = true;
     installFetch((url, init) => {
-      if (url.startsWith("/api/sessions/pin")) {
-        pinCalls += 1;
-        return pinnedRoutes("ok")(url, init);
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        if (failNext) {
+          failNext = false;
+          return { status: 500, body: { error: "preference write rejected" } };
+        }
+        return { body: { ...bootstrapPayload().preferences, ...jsonBody(init) } };
       }
-      return pinnedRoutes("ok")(url, init);
+      return curationRoutes("ok")(url, init);
     });
     const { store } = await initStore();
-    await Promise.all([store.setSessionPinned("s7", true), store.setSessionPinned("s7", true)]);
-    expect(pinCalls).toBe(1);
+
+    store.setTheme("dark"); // this write fails
+    store.setTheme("light"); // …but a newer local change already owns the field
+    await vi.waitFor(() => expect(store.getState().error).toBe("preference write rejected"));
+    expect(store.getState().prefs.theme).toBe("light");
   });
 
-  it("fetches pinned sessions missing from the first page", async () => {
+  it("fetches pinned and hidden sessions missing from the first page", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot(),
-            preferences: { ...bootstrapPayload().preferences, pinnedSessionIds: ["s-pinned"] },
+            preferences: {
+              ...bootstrapPayload().preferences,
+              pinnedSessionIds: ["s-pinned"],
+              hiddenSessionIds: ["s-hidden"],
+            },
           }),
         };
       }
       if (url.startsWith("/api/sessions/by-id")) {
         const body = jsonBody(init) as { ids: string[] };
-        expect(body.ids).toEqual(["s-pinned"]);
+        // Hidden sessions hydrate too: the Hidden group is what makes hiding
+        // reversible, so its rows cannot depend on the first catalog page.
+        expect(body.ids).toEqual(["s-pinned", "s-hidden"]);
         return {
           body: {
-            sessions: [
-              {
-                id: "s-pinned",
-                cwd: "/elsewhere",
-                project: "elsewhere",
-                title: "Off-page pinned",
-                created: "2026-07-19T10:00:00Z",
-                modified: "2026-07-19T11:00:00Z",
-                messageCount: 5,
-              },
-            ],
+            sessions: body.ids.map((id) => ({
+              id,
+              cwd: "/elsewhere",
+              project: "elsewhere",
+              title: `Off-page ${id}`,
+              created: "2026-07-19T10:00:00Z",
+              modified: "2026-07-19T11:00:00Z",
+              messageCount: 5,
+            })),
           },
         };
       }
@@ -634,10 +630,70 @@ describe("session pinning", () => {
     });
     const { store } = await initStore();
     await vi.waitFor(() => {
-      const pinned = store.getState().sessions.find((session) => session.id === "s-pinned");
-      expect(pinned?.pinned).toBe(true);
-      expect(pinned?.title).toBe("Off-page pinned");
+      expect(store.getState().sessions.map((session) => session.id)).toEqual(["s-pinned", "s-hidden"]);
     });
+  });
+
+  it("fetches a pinned folder whose sessions all fall outside the first page", async () => {
+    let byCwdRequests = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot(),
+            preferences: { ...bootstrapPayload().preferences, pinnedProjectCwds: ["/work/pinned-folder"] },
+          }),
+        };
+      }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        byCwdRequests += 1;
+        expect(jsonBody(init)).toEqual({ cwds: ["/work/pinned-folder"] });
+        // A folder pin claims the whole folder, so its rows arrive by cwd
+        // rather than depending on which of them are recent enough to page in.
+        return {
+          body: {
+            sessions: ["old-a", "old-b"].map((id) => ({
+              id,
+              cwd: "/work/pinned-folder",
+              project: "pinned-folder",
+              title: `Archived ${id}`,
+              created: "2026-01-02T10:00:00Z",
+              modified: "2026-01-02T11:00:00Z",
+              messageCount: 3,
+            })),
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions")) {
+        // The newest page holds nothing from that folder at all.
+        return { body: { sessions: [sessionSummary({ id: "recent", cwd: "/work/other" })], total: 1, offset: 0, limit: 40 } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => {
+      expect(store.getState().sessions.map((session) => session.id)).toEqual(["recent", "old-a", "old-b"]);
+    });
+    expect(byCwdRequests).toBe(1);
+  });
+
+  it("restores the last confirmed value when two writes fail in a row", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        return { status: 500, body: { error: "preference write rejected" } };
+      }
+      return curationRoutes("ok")(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().prefs.theme).toBe("system");
+
+    store.setTheme("dark");
+    store.setTheme("light");
+
+    // Neither write reached disk, so the surviving value has to be the one the
+    // host still holds — not "dark", which was only ever a local optimism.
+    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("system"));
+    expect(store.getState().error).toBe("preference write rejected");
   });
 });
 
@@ -895,6 +951,57 @@ describe("resource previews", () => {
       status: "error",
       message: "The referenced file was not found",
     });
+    // The list stops presenting an unverified mention as an ordinary file…
+    expect(store.getState().unavailableReferences).toEqual(["missing/file.md"]);
+
+    // …but a reference that resolved and then failed to transfer keeps its
+    // standing: the file exists, the bytes did not arrive.
+    await store.openResource("notes/result.md");
+    expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
+    expect(store.getState().unavailableReferences).toEqual(["missing/file.md"]);
+
+    // A reference that resolves after all clears its mark.
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        return {
+          body: {
+            id: "r2",
+            sessionId: "s1",
+            reference: "missing/file.md",
+            name: "file.md",
+            mimeType: "text/markdown",
+            size: 12,
+            kind: "markdown",
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    stubContent("# Notes body");
+    await store.openResource("missing/file.md");
+    expect(store.getState().unavailableReferences).toEqual([]);
+  });
+
+  it("offers the host's candidates instead of guessing an ambiguous bare name", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        return {
+          status: 409,
+          body: { error: '"notes.md" names 2 files in this workspace', matches: ["a/notes.md", "b/notes.md"] },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    await store.openResource("notes.md");
+    expect(store.getState().resourcePreview).toMatchObject({
+      status: "ambiguous",
+      reference: "notes.md",
+      matches: ["a/notes.md", "b/notes.md"],
+    });
+    // An unanswered choice is not a missing file: nothing is marked away.
+    expect(store.getState().unavailableReferences).toEqual([]);
   });
 
   it("clears the selection and revokes the object URL when the session changes", async () => {

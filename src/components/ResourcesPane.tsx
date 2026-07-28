@@ -10,7 +10,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import type { ResourceKind } from "../../shared/contracts";
 import { formatBytes } from "../format";
-import { collectResources, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
+import { collectResources, MAX_RESOURCE_ROWS, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
 import {
   MAX_MEDIA_PREVIEW_BYTES,
   store,
@@ -38,19 +38,26 @@ function languageFor(name: string, kind: ResourceKind): string {
 
 function ResourceListRow({ row }: { row: ResourceRow }) {
   const state = useAppState();
-  const selected = state.selectedResourceReference === row.reference;
+  const reference = row.reference ?? row.label;
+  const selected = state.selectedResourceReference === reference;
+  // A mention is unverified path-shaped text: once the host has answered that
+  // it names nothing previewable, the row says so instead of reading like an
+  // ordinary file.
+  const unavailable = state.unavailableReferences.includes(reference);
   const Icon = ICONS[resourceIcon(row)];
   return (
     <button
       type="button"
-      className={`res__row ${selected ? "res__row--active" : ""}`}
+      className={`res__row ${selected ? "res__row--active" : ""} ${unavailable ? "res__row--unavailable" : ""}`}
       aria-current={selected || undefined}
-      title={row.reference}
-      onClick={() => void store.openResource(row.reference ?? row.label)}
+      title={unavailable ? `${reference} — not found in this workspace` : row.reference}
+      onClick={() => void store.openResource(reference)}
     >
       <Icon size={13} aria-hidden />
       <span className="res__row-name">{row.name}</span>
-      <span className="res__row-source">{row.source === "tool" ? (row.toolName ?? "tool") : row.source}</span>
+      <span className="res__row-source">
+        {unavailable ? "unavailable" : row.source === "tool" ? (row.toolName ?? "tool") : row.source}
+      </span>
     </button>
   );
 }
@@ -184,6 +191,28 @@ function PreviewRegion() {
       </div>
     );
   }
+  if (preview.status === "ambiguous") {
+    return (
+      <div className="res__state" role="alert">
+        <FileSearch size={16} aria-hidden />
+        <p className="res__state-title">Several files carry that name</p>
+        <p className="res__state-hint">{preview.message}</p>
+        <div className="res__choices">
+          {preview.matches.map((path) => (
+            <button
+              key={path}
+              type="button"
+              className="button res__choice"
+              title={path}
+              onClick={() => void store.openResource(path)}
+            >
+              {path}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (preview.status === "error") {
     return (
       <div className="res__state" role="alert">
@@ -211,8 +240,9 @@ export function ResourcesPane() {
   const state = useAppState();
   const paneRef = useRef<HTMLElement>(null);
   // Extraction is a pure pass over the visible messages; recompute only when
-  // the message list itself changes.
-  const resources = useMemo(() => collectResources(state.messages), [state.messages]);
+  // the message list itself changes. The pane presents the most recent
+  // references, never an unbounded list.
+  const resources = useMemo(() => collectResources(state.messages, MAX_RESOURCE_ROWS), [state.messages]);
   const openNestedReference = (event: React.MouseEvent) => {
     const origin = event.target instanceof Element ? event.target.closest("[data-file-path]") : null;
     const reference = origin?.getAttribute("data-file-path");
@@ -240,6 +270,11 @@ export function ResourcesPane() {
           {resources.map((row) => (
             <ResourceListRow key={row.key} row={row} />
           ))}
+          {resources.length === MAX_RESOURCE_ROWS ? (
+            <p className="res__list-note">
+              Most recent {MAX_RESOURCE_ROWS}. Earlier files stay in the transcript and the workspace explorer.
+            </p>
+          ) : null}
         </div>
       )}
       <PreviewRegion />
