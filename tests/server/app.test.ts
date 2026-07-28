@@ -156,6 +156,8 @@ describe("local host API", () => {
       toolVisibility: "hidden",
       projectDisplay: "folder",
       pinnedSessionIds: [],
+      pinnedProjectCwds: [],
+      hiddenSessionIds: [],
       navCollapsedGroups: ["/home/demo/older"],
     });
   });
@@ -201,6 +203,8 @@ describe("local host API", () => {
       ...legacy,
       projectDisplay: "folder",
       pinnedSessionIds: [],
+      pinnedProjectCwds: [],
+      hiddenSessionIds: [],
       navCollapsedGroups: [],
     });
   });
@@ -249,13 +253,23 @@ describe("local host API", () => {
       .expect(404);
   });
 
-  it("persists session pins outside Pi history and returns pinned summaries by id", async () => {
-    const pinned = await request(application.server)
-      .post("/api/sessions/pin")
+  it("stores curated navigation identities as preferences and returns their summaries by id", async () => {
+    // Pins, folder pins, and hidden sessions are navigation metadata: one
+    // field-scoped patch, no Pi history touched.
+    const curated = await request(application.server)
+      .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active", pinned: true })
+      .send({
+        pinnedSessionIds: ["mock-active"],
+        pinnedProjectCwds: ["/home/demo/project"],
+        hiddenSessionIds: ["mock-older"],
+      })
       .expect(200);
-    expect(pinned.body.pinnedSessionIds).toEqual(["mock-active"]);
+    expect(curated.body).toMatchObject({
+      pinnedSessionIds: ["mock-active"],
+      pinnedProjectCwds: ["/home/demo/project"],
+      hiddenSessionIds: ["mock-older"],
+    });
 
     const summaries = await request(application.server)
       .post("/api/sessions/by-id")
@@ -265,12 +279,30 @@ describe("local host API", () => {
     expect(summaries.body.sessions).toHaveLength(1);
     expect(summaries.body.sessions[0].id).toBe("mock-active");
 
-    await request(application.server)
-      .post("/api/sessions/pin")
+    // A pinned folder is claimed whole, so it hydrates by working directory
+    // instead of depending on which of its sessions paged in.
+    const folder = await request(application.server)
+      .post("/api/sessions/by-cwd")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active", pinned: false })
+      .send({ cwds: ["/home/demo/research", "/nowhere"] })
+      .expect(200);
+    expect(folder.body.sessions.map((session: { cwd: string }) => session.cwd)).toEqual(["/home/demo/research"]);
+    await request(application.server)
+      .post("/api/sessions/by-cwd")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwds: "/home/demo/research" })
+      .expect(400);
+
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pinnedSessionIds: [] })
       .expect(200)
-      .expect((response) => expect(response.body.pinnedSessionIds).toEqual([]));
+      .expect((response) => {
+        expect(response.body.pinnedSessionIds).toEqual([]);
+        // A field-scoped patch leaves the other curated lists alone.
+        expect(response.body.hiddenSessionIds).toEqual(["mock-older"]);
+      });
   });
 
   it("delivers the snapshot before any live event on a new socket", async () => {

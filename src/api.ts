@@ -44,6 +44,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Candidate paths a refusal offered instead of guessing between them. */
+    public matches?: string[],
   ) {
     super(message);
     this.name = "ApiError";
@@ -53,13 +55,15 @@ export class ApiError extends Error {
 async function ensureOk(response: Response): Promise<void> {
   if (response.ok) return;
   let message = `Request failed (${response.status})`;
+  let matches: string[] | undefined;
   try {
-    const body = (await response.json()) as { error?: string };
+    const body = (await response.json()) as { error?: string; matches?: unknown };
     if (body.error) message = body.error;
+    if (Array.isArray(body.matches)) matches = body.matches.map(String);
   } catch {
     // keep status-based message
   }
-  throw new ApiError(response.status, message);
+  throw new ApiError(response.status, message, matches);
 }
 
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
@@ -125,7 +129,8 @@ export function createApi(token: string) {
       ),
     refreshSessions: () => post<{ ok: boolean }>(token, "/api/sessions/refresh"),
     sessionsByIds: (ids: string[]) => post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-id", { ids }),
-    setSessionPinned: (id: string, pinned: boolean) => post<InspirePreferences>(token, "/api/sessions/pin", { id, pinned }),
+    sessionsByCwds: (cwds: string[]) =>
+      post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-cwd", { cwds }),
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
     newSession: (cwd: string, name?: string) => post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, name }),
     renameSession: (sessionId: string, name: string) =>

@@ -12,5 +12,6 @@
 /output/
 /.playwright-cli/
 /.playwright-mcp/
+/.playwright/
 /docdoki/stages/archive/
 /docs/redesign/

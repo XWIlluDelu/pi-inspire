@@ -321,10 +321,7 @@ warning capsule surface.
 
 ### Navigation
 
-- Folder-first hierarchy: group headers at `{typography.size-base}`/600
-  `muted` (chevron, folder icon, name, count) sit above session rows at
-  `{typography.size-sm}`/400 `ink` indented one step, with a
-  `{typography.size-xs}` `muted` meta line.
+- Folder-first hierarchy: group headers are a lighter tier than their rows — `{typography.size-xs}`/600 `muted` with `0.04em` tracking (chevron, folder icon, name, pin) on a 24px line — above single-line session rows at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
 - Groups collapse freely — including the active session's group; a collapsed
   folder that hides the active session takes the `accent-tint` highlight and
   2px `accent` left edge itself. Active search overrides collapse.
@@ -333,8 +330,7 @@ warning capsule surface.
   highlight points back at the edge. Running/attention dots use `accent`,
   `success`, `error`; the running dot breathes (`{motion.breathe}`) while
   settled attention dots rest under a soft 3px ring of their hue.
-- The pin action floats at the row's right edge and appears on hover/focus
-  (always on touch); pinned sessions live in one global Pinned section.
+- Curation actions (pin, hide) are 22px `faint` icon buttons occupying exactly the 46px age column, which fades as they appear on hover or focus, so no text moves; under `hover: none` they leave the overlay and take their own space beside the age instead of replacing it. A folder pin is state rather than an action, so once set it stays visible in `accent` beside the folder name. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden — separate by a spacing step, never by a rule.
 - The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
   single header bar (folder icon + project name + chevron); expanded it takes
   up to half the column with a lazily loaded tree derived from the host's

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { listProjectDirectory } from "../../server/project-files.js";
 import { ResourceStore, referencePath } from "../../server/resources.js";
 
 const temporaryDirectories: string[] = [];
@@ -148,5 +149,72 @@ describe("ResourceStore", () => {
     await promisify(execFile)("git", ["-C", project, "init", "-q"]);
 
     await expect(resources.resolve({ sessionId: "s1", cwd: project, messages: [] }, "linked.txt")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("recovers a bare mention when exactly one indexed file carries that name", async () => {
+    const { project } = await workspace();
+    await mkdir(join(project, "src"));
+    await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "the loop lives in `kernel.py`" }] }];
+
+    const descriptor = await resources.resolve({ sessionId: "s1", cwd: project, messages }, "kernel.py");
+    // The descriptor reports where it actually resolved, never the shorthand.
+    expect(descriptor).toMatchObject({ name: "kernel.py", reference: join("src", "kernel.py") });
+    expect(resources.get(descriptor.id, "s1").path).toBe(join(project, "src", "kernel.py"));
+  });
+
+  it("refuses to guess between duplicate basenames and offers the candidates", async () => {
+    const { project } = await workspace();
+    await mkdir(join(project, "a"));
+    await mkdir(join(project, "b"));
+    await writeFile(join(project, "a", "notes.md"), "a\n");
+    await writeFile(join(project, "b", "notes.md"), "b\n");
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "compare `notes.md`" }] }];
+
+    await expect(
+      resources.resolve({ sessionId: "s1", cwd: project, messages }, "notes.md"),
+    ).rejects.toMatchObject({
+      status: 409,
+      matches: expect.arrayContaining([join("a", "notes.md"), join("b", "notes.md")]),
+    });
+  });
+
+  it("never recovers a reference that makes its own location claim", async () => {
+    const { project } = await workspace();
+    await mkdir(join(project, "src"));
+    await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
+    const messages = [
+      { role: "assistant", content: [{ type: "text", text: "see `docs/kernel.py` and `absent.py`" }] },
+    ];
+    const context = { sessionId: "s1", cwd: project, messages };
+
+    // A located path names one file and no other; a bare name with no match
+    // stays unavailable rather than being resolved to something nearby.
+    await expect(resources.resolve(context, "docs/kernel.py")).rejects.toMatchObject({ status: 404 });
+    await expect(resources.resolve(context, "absent.py")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("stops offering a tracked path whose file is gone, rescanning after the failed preview", async () => {
+    const { project } = await workspace();
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const git = (...args: string[]) => promisify(execFile)("git", ["-C", project, ...args]);
+    await git("init", "-q");
+    await writeFile(join(project, "kept.txt"), "kept\n");
+    await writeFile(join(project, "gone.txt"), "gone\n");
+    await git("add", "-A");
+    // Warm the index while both files exist.
+    expect((await listProjectDirectory(project)).map((entry) => entry.name)).toEqual(["gone.txt", "kept.txt"]);
+
+    const { rm } = await import("node:fs/promises");
+    await rm(join(project, "gone.txt"));
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "wrote `gone.txt`" }] }];
+    await expect(
+      resources.resolve({ sessionId: "s1", cwd: project, messages }, "gone.txt"),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // The failed preview invalidated the cached index; the rescan subtracts
+    // the tracked-but-deleted path instead of offering it again.
+    expect((await listProjectDirectory(project)).map((entry) => entry.name)).toEqual(["kept.txt"]);
   });
 });
