@@ -13,7 +13,8 @@ import {
   writeInstanceState,
   type InstanceState,
 } from "./instance-state.mjs";
-import { MockCatalog, MockRuntime } from "./mock.js";
+import { GitInspectionService } from "./git-inspection.js";
+import { MockCatalog, MockGitInspection, MockRuntime } from "./mock.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
@@ -47,6 +48,7 @@ const preferences = new PreferencesStore(
   process.env.INSPIRE_PREFERENCES_PATH || undefined,
 );
 const resources = new ResourceStore();
+const git = mock ? new MockGitInspection() : new GitInspectionService();
 const application = createInspireServer({
   token,
   runtime,
@@ -54,6 +56,7 @@ const application = createInspireServer({
   attachments,
   preferences,
   resources,
+  git,
   mock,
   version: packageJson.version,
   piVersion: piPackage.version,

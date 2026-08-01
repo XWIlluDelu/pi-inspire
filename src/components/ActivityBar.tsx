@@ -11,7 +11,7 @@ export function ActivityBar() {
   const tools = Object.values(state.tools);
   const running = tools.filter((tool) => tool.phase === "running");
   const failed = tools.filter((tool) => tool.phase === "error");
-  const queued = state.queue.steering + state.queue.followUp;
+  const queued = state.queue.steering.length + state.queue.followUp.length;
 
   if (running.length === 0 && failed.length === 0 && !state.retry && queued === 0) return null;
 

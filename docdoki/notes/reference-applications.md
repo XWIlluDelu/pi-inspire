@@ -1,5 +1,5 @@
 ---
-purpose: Fixed-source findings from Claude Science/cscience and OpenAI4S identify the visual, workbench, streaming, rendering, and state patterns worth carrying into inspire without copying their implementations.
+purpose: Product references identify the visual, workbench, state, and inspection patterns worth carrying into inspire without copying their implementations.
 ---
 
 # Reference applications
@@ -34,9 +34,9 @@ Sources:
 
 ## Pi web concurrency references
 
-After the concurrent-session requirement was clarified, three additional Pi web clients were inspected at fixed commits. `pi-web` keeps active runtimes and activity state in maps keyed by session identity, then derives separate unread completion state from active-to-idle transitions. `pi-dashboard` likewise owns a map of independently started slots, while Piface owns a dictionary of live sessions and groups its dashboard by working directory and recency.
+Three Pi web clients demonstrate the same useful boundary. `pi-web` keeps active runtimes and activity state in maps keyed by session identity, then derives separate unread completion state from active-to-idle transitions. `pi-dashboard` likewise owns a map of independently started slots, while Piface owns a dictionary of live sessions and groups its dashboard by working directory and recency.
 
-insπre adopts the common product boundary rather than any implementation: one long-lived worker per opened session, browser selection as a view operation, per-session live/completion/error projection, and exact-working-directory navigation groups. The first correction keeps this state in the running host only; it does not import peer-specific persistence, health sweeps, terminal surfaces, or broad compatibility layers.
+insπre adopts the common product boundary rather than any implementation: one long-lived worker per opened session, browser selection as a view operation, per-session live/completion/error projection, and exact-working-directory navigation groups. This boundary keeps state in the running host without importing peer-specific persistence, health sweeps, terminal surfaces, or broad compatibility layers.
 
 Sources:
 
@@ -46,6 +46,18 @@ Sources:
 - [`pi-dashboard` independent slot map and lazy runtime creation](https://github.com/samfoy/pi-dashboard/blob/d8be67d4eadc8bc10a309513b59a0485373ef833/backend/pi-manager.ts#L1039-L1073)
 - [Piface live-session ownership](https://github.com/jbn/piface/blob/6172144f221b5f6e2240d9ca1bb7cc522607ef62/piface/session_manager.py#L51-L65)
 - [Piface working-directory grouping and session status](https://github.com/jbn/piface/blob/6172144f221b5f6e2240d9ca1bb7cc522607ef62/README.md#L91-L96)
+
+## Git-aware file inspection
+
+VS Code and Zed both connect a changed-file index to a file diff and project-tree status decorations; Zed also distinguishes opening the current file from opening its diff and reflects command-line changes immediately. GitHub Desktop makes the changed-file list and diff one review flow, with unified or split layouts and expandable context.
+
+The common fit for insπre is an informational layer over its existing Files and preview surfaces: a Changes index, compact status decorations, and one shared `File` / `Diff` detail region. The contextual pane favors a bounded unified diff; repository mutations, split layout, history, and blame are separate product choices rather than implied parts of inspection.
+
+Sources:
+
+- [VS Code source control](https://code.visualstudio.com/docs/sourcecontrol/overview)
+- [GitHub Desktop change review](https://docs.github.com/en/desktop/making-changes-in-a-branch/committing-and-reviewing-changes-to-your-project-in-github-desktop)
+- [Zed Git](https://zed.dev/docs/git)
 
 ## Visual direction
 

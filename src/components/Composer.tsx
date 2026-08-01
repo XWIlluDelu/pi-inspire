@@ -8,28 +8,40 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { INSPIRE_COMMANDS } from "../../shared/commands";
 import type { ProjectFileResult } from "../api";
+import {
+  parseCaretCompletion,
+  rankCommands,
+  rankProjectFiles,
+  replaceCompletionToken,
+  type CaretCompletion,
+} from "../composer-completion";
 import { formatBytes } from "../format";
-import { isBusyRunState, store, THINKING_LEVELS, useAppState, type PendingAttachment } from "../store";
+import { sessionDraft, setSessionDraft } from "../session-drafts";
+import {
+  isBusyRunState,
+  store,
+  THINKING_LEVELS,
+  useAppState,
+  type PendingAttachment,
+  type PiCommand,
+} from "../store";
 import { Dropdown } from "./Dropdown";
+import { ModelSelector } from "./ModelSelector";
 
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-/** Context-window occupancy: a small ring plus percent, colored by how full
- * the window is. Hidden while Pi has no fresh usage data (no stats yet, or
- * immediately after a compaction). */
 function ContextMeter() {
-  const state = useAppState();
-  const usage = state.contextUsage;
+  const usage = useAppState().contextUsage;
   if (!usage || usage.percent === null) return null;
   const percent = Math.max(0, Math.min(100, usage.percent));
   const tone = percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
-  const tokens =
-    usage.tokens !== null
-      ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
-      : `${usage.contextWindow.toLocaleString()}-token window`;
+  const tokens = usage.tokens !== null
+    ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
+    : `${usage.contextWindow.toLocaleString()}-token window`;
   return (
     <div
       className={`meter ${tone}`}
@@ -57,20 +69,14 @@ function ContextMeter() {
 }
 
 function AttachmentChip({ item }: { item: PendingAttachment }) {
-  // Withdrawal freezes while a prompt is delivering; the host may be
-  // resolving this file into the outgoing message.
   const sending = useAppState().sending;
   return (
     <li className={`attachment attachment--${item.status}`} title={item.error ?? item.fileName}>
       {item.kind === "image" && item.previewUrl ? (
         <img className="attachment__thumb" src={item.previewUrl} alt={`Preview of ${item.fileName}`} />
-      ) : (
-        <FileText size={13} aria-hidden />
-      )}
+      ) : <FileText size={13} aria-hidden />}
       <span className="attachment__name">{item.fileName}</span>
-      <span className="attachment__meta">
-        {item.mimeType} · {formatBytes(item.size)}
-      </span>
+      <span className="attachment__meta">{item.mimeType} · {formatBytes(item.size)}</span>
       {item.status === "uploading" ? <Loader2 size={12} className="spin" aria-label="Uploading" /> : null}
       {item.status === "error" ? <AlertTriangle size={12} className="status-error" aria-label="Upload failed" /> : null}
       <button
@@ -89,39 +95,35 @@ function AttachmentChip({ item }: { item: PendingAttachment }) {
 function ProjectFilePicker({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ProjectFileResult[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const state = useAppState();
 
   useEffect(() => {
     let cancelled = false;
-    setSearching(true);
+    setStatus("loading");
     const timer = setTimeout(() => {
-      store
-        .searchProjectFiles(query)
-        .then((files) => {
-          if (!cancelled) setResults(files);
-        })
-        .catch(() => {
-          if (!cancelled) setResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
+      store.searchProjectFiles(query).then(
+        (files) => {
+          if (!cancelled) {
+            setResults(rankProjectFiles(files, query));
+            setStatus("ready");
+          }
+        },
+        () => {
+          if (!cancelled) {
+            setResults([]);
+            setStatus("error");
+          }
+        },
+      );
     }, 200);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-    // Re-scoped to the visible session: switching cancels the in-flight search
-    // (its results would be another session's paths) and re-queries the new
-    // workspace.
   }, [query, state.sessionId]);
 
-  // A session switch invalidates the currently listed paths immediately, so
-  // none of session A's files can be picked while session B is visible.
-  useEffect(() => {
-    setResults([]);
-  }, [state.sessionId]);
+  useEffect(() => setResults([]), [state.sessionId]);
 
   return (
     <div className="picker" role="dialog" aria-label="Add project files">
@@ -132,7 +134,8 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
-            event.preventDefault(); // closing the picker must not trigger the global Escape abort
+            event.preventDefault();
+            event.stopPropagation();
             onClose();
           }
         }}
@@ -140,7 +143,7 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
         aria-label="Search project files"
         autoFocus
       />
-      <div className="picker__list" role="listbox" aria-label="Project files">
+      <div className="picker__list" role="listbox" aria-label="Project files" aria-busy={status === "loading"}>
         {results.map((file) => {
           const added = state.projectFiles.includes(file.path);
           return (
@@ -148,6 +151,7 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
               type="button"
               role="option"
               aria-selected={added}
+              disabled={state.sending}
               key={file.path}
               className={`picker__row ${added ? "picker__row--added" : ""}`}
               onClick={() => store.addProjectFile(file.path)}
@@ -158,51 +162,113 @@ function ProjectFilePicker({ onClose }: { onClose: () => void }) {
           );
         })}
         {results.length === 0 ? (
-          <div className="picker__empty">{searching ? "Searching…" : "No matching files"}</div>
+          <div className="picker__empty" role="status">
+            {status === "loading" ? "Searching…" : status === "error" ? "Project file search failed" : "No matching files"}
+          </div>
         ) : null}
       </div>
     </div>
   );
 }
 
-/** Unsent composer text, per session. In-memory only: a draft survives
- * switching between concurrent sessions, not a page reload. */
-const sessionDrafts = new Map<string, string>();
+interface CompletionItem {
+  key: string;
+  title: string;
+  hint?: string;
+  group: string;
+  file?: ProjectFileResult;
+  command?: PiCommand;
+}
+
+function CompletionMenu({
+  id,
+  token,
+  items,
+  active,
+  status,
+  onActive,
+  onPick,
+}: {
+  id: string;
+  token: CaretCompletion;
+  items: CompletionItem[];
+  active: number;
+  status: "loading" | "ready" | "error";
+  onActive: (index: number) => void;
+  onPick: (item: CompletionItem) => void;
+}) {
+  const refs = useRef<Array<HTMLDivElement | null>>([]);
+  useEffect(() => refs.current[active]?.scrollIntoView?.({ block: "nearest" }), [active]);
+  let previousGroup = "";
+  return (
+    <div className="completion" id={id} role="listbox" aria-label={token.kind === "file" ? "Project file completions" : "Slash command completions"} aria-busy={status === "loading"}>
+      {items.map((item, index) => {
+        const heading = item.group !== previousGroup;
+        previousGroup = item.group;
+        return (
+          <div key={item.key}>
+            {heading ? <div className="completion__heading" aria-hidden>{item.group}</div> : null}
+            <div
+              ref={(element) => { refs.current[index] = element; }}
+              id={`${id}-option-${index}`}
+              role="option"
+              aria-selected={index === active}
+              className={`completion__option ${index === active ? "completion__option--active" : ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => onActive(index)}
+              onClick={() => onPick(item)}
+            >
+              <span className="completion__title">{item.title}</span>
+              {item.hint ? <span className="completion__hint">{item.hint}</span> : null}
+            </div>
+          </div>
+        );
+      })}
+      {items.length === 0 ? (
+        <div className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`} role="status">
+          {status === "loading" ? "Searching project files…" : status === "error" ? "Project file search failed" : token.kind === "file" ? "No matching project files" : "No matching commands"}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function Composer() {
   const state = useAppState();
   const sessionId = state.sessionId;
-  const [draft, setDraft] = useState(() => (sessionId ? (sessionDrafts.get(sessionId) ?? "") : ""));
+  const completionId = useId();
+  const [draft, setDraft] = useState(() => (sessionId ? sessionDraft(sessionId) : ""));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [completion, setCompletion] = useState<CaretCompletion | null>(null);
+  const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>([]);
+  const [completionStatus, setCompletionStatus] = useState<"loading" | "ready" | "error">("ready");
+  const [completionActive, setCompletionActive] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
   const busy = isBusyRunState(state.runState);
 
-  // Write-through: the map always mirrors the textarea, so a session switch
-  // only needs to load the destination's draft.
   const updateDraft = (text: string) => {
     setDraft(text);
-    if (!sessionId) return;
-    if (text) sessionDrafts.set(sessionId, text);
-    else sessionDrafts.delete(sessionId);
+    if (sessionId) setSessionDraft(sessionId, text);
+  };
+
+  const updateCompletion = (value: string, caret: number | null) => {
+    if (composingRef.current || state.sending || caret === null) {
+      setCompletion(null);
+      return;
+    }
+    setCompletion(parseCaretCompletion(value, caret));
   };
 
   const previousSessionRef = useRef(sessionId);
   useEffect(() => {
     if (previousSessionRef.current === sessionId) return;
     previousSessionRef.current = sessionId;
-    setDraft(sessionId ? (sessionDrafts.get(sessionId) ?? "") : "");
+    setDraft(sessionId ? sessionDraft(sessionId) : "");
+    setCompletion(null);
   }, [sessionId]);
-
-  // Display names drop the provider prefix; it returns only when two
-  // providers offer the same model id.
-  const modelIdCounts = new Map<string, number>();
-  for (const model of state.availableModels) {
-    modelIdCounts.set(model.id, (modelIdCounts.get(model.id) ?? 0) + 1);
-  }
-  const modelLabel = (model: { provider: string; id: string; name?: string }) =>
-    (modelIdCounts.get(model.id) ?? 0) > 1 ? `${model.name ?? model.id} (${model.provider})` : (model.name ?? model.id);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -211,36 +277,142 @@ export function Composer() {
     element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
   }, [draft]);
 
-  // Extensions can place text into the composer (set_editor_text).
   const editorNonce = state.editorText?.nonce;
   useEffect(() => {
-    if (state.editorText) updateDraft(state.editorText.text);
+    if (state.editorText) {
+      updateDraft(state.editorText.text);
+      setCompletion(null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorNonce]);
 
-  const canSend = Boolean(
-    state.sessionId && (draft.trim() || state.attachments.length > 0 || state.projectFiles.length > 0),
-  );
+  const commands = useMemo<PiCommand[]>(() => {
+    const byName = new Map<string, PiCommand>();
+    // Pi dispatches the first matching extension command before prompt/skill
+    // resources, so preserve first wire occurrence for every authoritative
+    // collision rather than letting a later source rewrite execution truth.
+    for (const command of state.commands) {
+      if (!byName.has(command.name)) byName.set(command.name, command);
+    }
+    // Host behavior explicitly overrides Pi for `/compact`, which inspire
+    // intercepts at the prompt boundary before Pi dispatch.
+    for (const command of INSPIRE_COMMANDS) byName.set(command.name, command);
+    return [...byName.values()];
+  }, [state.commands]);
 
+  useEffect(() => {
+    if (completion?.kind !== "file") {
+      setCompletionFiles([]);
+      setCompletionStatus("ready");
+      return;
+    }
+    let cancelled = false;
+    setCompletionFiles([]);
+    setCompletionStatus("loading");
+    const timer = setTimeout(() => {
+      store.searchProjectFiles(completion.query).then(
+        (files) => {
+          if (!cancelled) {
+            setCompletionFiles(rankProjectFiles(files, completion.query));
+            setCompletionStatus("ready");
+          }
+        },
+        () => {
+          if (!cancelled) setCompletionStatus("error");
+        },
+      );
+    }, 140);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [completion, sessionId]);
+
+  const completionItems = useMemo<CompletionItem[]>(() => {
+    if (!completion) return [];
+    if (completion.kind === "file") {
+      return completionFiles.map((file) => ({
+        key: file.path,
+        title: file.name,
+        hint: file.path,
+        group: "Project files",
+        file,
+      }));
+    }
+    const sourceOrder = new Map(["inspire", "extension", "prompt", "skill"].map((source, index) => [source, index]));
+    return rankCommands(commands, completion.query)
+      .map((command) => ({
+        key: `${command.source ?? "command"}:${command.name}`,
+        title: `/${command.name}`,
+        hint: command.description,
+        group: command.source ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}` : "Command",
+        command,
+      }))
+      .sort((left, right) =>
+        (sourceOrder.get(left.command?.source ?? "") ?? 99) - (sourceOrder.get(right.command?.source ?? "") ?? 99),
+      );
+  }, [completion, completionFiles, commands]);
+
+  useEffect(() => setCompletionActive(0), [completion?.kind, completion?.query]);
+  const activeIndex = Math.min(completionActive, Math.max(0, completionItems.length - 1));
+
+  const pickCompletion = (item: CompletionItem | undefined) => {
+    if (!item || !completion || state.sending) return;
+    if (item.file) store.addProjectFile(item.file.path);
+    const existingDelimiter = draft[completion.end];
+    const reusesInlineDelimiter = Boolean(item.command && existingDelimiter && /[ \t]/.test(existingDelimiter));
+    const replacement = item.command
+      ? `/${item.command.name}${reusesInlineDelimiter ? "" : " "}`
+      : "";
+    const inserted = replaceCompletionToken(draft, completion, replacement);
+    const next = reusesInlineDelimiter ? { ...inserted, caret: inserted.caret + 1 } : inserted;
+    updateDraft(next.value);
+    setCompletion(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const canSend = Boolean(sessionId && (draft.trim() || state.attachments.length > 0 || state.projectFiles.length > 0));
   const submit = async (behavior?: "steer" | "followUp") => {
     const message = draft;
     if (!canSend || state.sending) return;
+    setCompletion(null);
     const owner = sessionId;
     const sent = await store.sendPrompt(message, behavior);
-    if (!sent || !owner) return; // failed sends keep the draft and attachments intact
-    // Clear the sent text only if nothing new was typed while the send was in
-    // flight — the textarea stays editable during delivery, and a changed
-    // draft belongs to the next message.
-    if ((sessionDrafts.get(owner) ?? "") !== message) return;
-    sessionDrafts.delete(owner);
-    // A slow send may settle after a session switch; only the owner's visible
-    // textarea clears, never the session the user is typing in now.
+    if (!sent || !owner) return;
+    if (sessionDraft(owner) !== message) return;
+    setSessionDraft(owner, "");
     if (store.getState().sessionId === owner) setDraft("");
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter") return;
-    if (event.shiftKey) return; // newline
+    if (event.nativeEvent.isComposing || composingRef.current) return;
+    if (completion) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setCompletion(null);
+        return;
+      }
+      if (event.key === "ArrowDown" && completionItems.length > 0) {
+        event.preventDefault();
+        setCompletionActive((index) => Math.min(index + 1, completionItems.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp" && completionItems.length > 0) {
+        event.preventDefault();
+        setCompletionActive((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) && completionItems[activeIndex]) {
+        event.preventDefault();
+        pickCompletion(completionItems[activeIndex]);
+        return;
+      }
+    }
+    if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     if (busy && (event.ctrlKey || event.metaKey)) void submit("followUp");
     else void submit(busy ? "steer" : undefined);
@@ -253,7 +425,10 @@ export function Composer() {
     void store.addFiles(files);
   };
 
-  const modelValue = state.model ? `${state.model.provider}:${state.model.id}` : "";
+  const activeModel = state.model
+    ? state.availableModels.find((model) => model.provider === state.model?.provider && model.id === state.model?.id) ?? state.model
+    : null;
+  const thinkingSupported = activeModel?.reasoning !== false;
 
   return (
     <form
@@ -263,10 +438,7 @@ export function Composer() {
         event.preventDefault();
         void submit(busy ? "steer" : undefined);
       }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDropActive(true);
-      }}
+      onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
       onDragLeave={() => setDropActive(false)}
       onDrop={(event) => {
         event.preventDefault();
@@ -288,9 +460,7 @@ export function Composer() {
       />
       {state.attachments.length > 0 ? (
         <ul className="composer__attachments" aria-label="Attachments">
-          {state.attachments.map((item) => (
-            <AttachmentChip key={item.localId} item={item} />
-          ))}
+          {state.attachments.map((item) => <AttachmentChip key={item.localId} item={item} />)}
         </ul>
       ) : null}
       {state.projectFiles.length > 0 ? (
@@ -303,6 +473,7 @@ export function Composer() {
               <button
                 type="button"
                 className="attachment__remove"
+                disabled={state.sending}
                 onClick={() => store.removeProjectFile(path)}
                 aria-label={`Remove ${path}`}
               >
@@ -312,25 +483,45 @@ export function Composer() {
           ))}
         </ul>
       ) : null}
-      <textarea
-        ref={textareaRef}
-        className="composer__input"
-        rows={1}
-        value={draft}
-        placeholder={busy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
-        onChange={(event) => updateDraft(event.target.value)}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-        aria-label="Message"
-      />
+      <div
+        className="composer__input-wrap"
+        role="combobox"
+        aria-label="Message completion"
+        aria-haspopup="listbox"
+        aria-expanded={Boolean(completion)}
+        aria-owns={completion ? completionId : undefined}
+      >
+        <textarea
+          ref={textareaRef}
+          className="composer__input"
+          aria-autocomplete="list"
+          aria-controls={completion ? completionId : undefined}
+          aria-activedescendant={completion && completionItems[activeIndex] ? `${completionId}-option-${activeIndex}` : undefined}
+          rows={1}
+          value={draft}
+          placeholder={busy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
+          onChange={(event) => {
+            updateDraft(event.target.value);
+            updateCompletion(event.target.value, event.target.selectionStart);
+          }}
+          onSelect={(event) => updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onKeyUp={(event) => {
+            if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+              updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart);
+            }
+          }}
+          onCompositionStart={() => { composingRef.current = true; setCompletion(null); }}
+          onCompositionEnd={(event) => {
+            composingRef.current = false;
+            updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart);
+          }}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          aria-label="Message"
+        />
+      </div>
       <div className="composer__meta">
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Attach files"
-          title="Attach files (or paste / drop them)"
-        >
+        <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Attach files" title="Attach files (or paste / drop them)">
           <Paperclip size={14} aria-hidden />
         </button>
         <button
@@ -343,54 +534,45 @@ export function Composer() {
         >
           <FolderSearch size={14} aria-hidden />
         </button>
-        <Dropdown
-          label="Model"
-          title="Model"
-          direction="up"
-          value={modelValue}
-          display={state.model ? modelLabel(state.model) : "No session model"}
-          disabled={state.availableModels.length === 0}
-          options={state.availableModels.map((model) => ({
-            value: `${model.provider}:${model.id}`,
-            label: modelLabel(model),
-          }))}
-          onChange={(value) => {
-            const [provider, ...rest] = value.split(":");
-            if (provider && rest.length) void store.setModel(provider, rest.join(":"));
-          }}
+        <ModelSelector
+          value={activeModel}
+          models={state.availableModels}
+          recent={state.prefs.recentModelIds}
+          onChange={(provider, id) => void store.setModel(provider, id)}
         />
         <Dropdown
           label="Thinking level"
-          title="Thinking level"
+          title={thinkingSupported ? "Thinking level" : "The active model does not support thinking"}
           direction="up"
           value={state.thinkingLevel}
+          display={thinkingSupported ? state.thinkingLevel : "thinking unavailable"}
+          disabled={!thinkingSupported}
           options={THINKING_LEVELS.map((level) => ({ value: level, label: level }))}
           onChange={(value) => void store.setThinkingLevel(value)}
         />
         <span className="composer__spacer" />
         <ContextMeter />
         {busy ? (
-          <button
-            type="button"
-            className="composer__send composer__send--abort"
-            onClick={() => void store.abort()}
-            aria-label="Abort running task"
-            title="Abort"
-          >
+          <button type="button" className="composer__send composer__send--abort" onClick={() => void store.abort()} aria-label="Abort running task" title="Abort">
             <Square size={14} aria-hidden />
           </button>
         ) : (
-          <button
-            type="submit"
-            className="composer__send"
-            disabled={!canSend || state.sending}
-            aria-label="Send message"
-            title="Send"
-          >
+          <button type="submit" className="composer__send" disabled={!canSend || state.sending} aria-label="Send message" title="Send">
             <Send size={14} aria-hidden />
           </button>
         )}
       </div>
+      {completion ? (
+        <CompletionMenu
+          id={completionId}
+          token={completion}
+          items={completionItems}
+          active={activeIndex}
+          status={completion.kind === "file" ? completionStatus : "ready"}
+          onActive={setCompletionActive}
+          onPick={pickCompletion}
+        />
+      ) : null}
       {pickerOpen ? <ProjectFilePicker onClose={() => setPickerOpen(false)} /> : null}
     </form>
   );

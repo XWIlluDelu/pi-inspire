@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_RPC_LINE_BYTES, PiRpcProcess } from "../../server/pi-rpc.js";
+import { MAX_RPC_LINE_BYTES, PiRpcOutcomeUnknownError, PiRpcProcess } from "../../server/pi-rpc.js";
 
 const processes: PiRpcProcess[] = [];
 const directories: string[] = [];
@@ -93,6 +93,39 @@ process.stdin.on("data", chunk => {
     expect(exits[0]?.message ?? "").not.toContain("super-secret-credential");
   });
 
+  it("marks a written timeout acceptance-unknown, hard-stops, and preserves late disk evidence", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-unknown-"));
+    directories.push(directory);
+    const marker = join(directory, "persisted.txt");
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(cliPath, `import { writeFileSync } from "node:fs";
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    if (command.type === "late") {
+      setTimeout(() => writeFileSync(${JSON.stringify(marker)}, "committed"), 10);
+    } else {
+      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+    }
+  }
+});`, "utf8");
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const exited = new Promise<Error>((resolveExit) => rpc.once("exit", resolveExit));
+    const failure = await rpc.request({ type: "late" }, 80).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
+    await (failure as PiRpcOutcomeUnknownError).stopped;
+    expect(await exited).toBe(failure);
+    expect(await import("node:fs/promises").then(({ readFile }) => readFile(marker, "utf8"))).toBe("committed");
+    await expect(rpc.request({ type: "second" })).rejects.toThrow(/not available/);
+  });
+
   it("terminates a child that emits an oversized unterminated JSONL line", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-line-limit-"));
     directories.push(directory);
@@ -124,10 +157,9 @@ process.stdin.on("data", chunk => {
     rpc.on("exit", (error: Error) => exits.push(error));
     await rpc.start();
 
-    await expect(rpc.request({ type: "overflow" }, 10_000)).rejects.toThrow(
-      `Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`,
-    );
+    await expect(rpc.request({ type: "overflow" }, 10_000)).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
     expect(exits).toHaveLength(1);
+    expect(exits[0]?.message).toContain(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`);
   });
 
   it("starts the installed Pi RPC runtime without invoking a model", async () => {

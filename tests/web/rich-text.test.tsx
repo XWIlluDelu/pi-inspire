@@ -1,9 +1,48 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { RichText } from "../../src/components/RichText";
+import { RichText, projectKatexSelection, scanBackslashMath } from "../../src/components/RichText";
+import { Transcript } from "../../src/components/Transcript";
+
+class ClipboardDataTransfer {
+  private readonly values = new Map<string, string>();
+  get types(): string[] { return [...this.values.keys()]; }
+  setData(type: string, value: string): void { this.values.set(type, value); }
+  getData(type: string): string { return this.values.get(type) ?? ""; }
+}
+
+function textNode(root: Element): Text {
+  const node = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+  if (!(node instanceof Text)) throw new Error("Expected rendered text node");
+  return node;
+}
+
+function dispatchSelectionCopy(origin: Element, range: Range): { event: Event; data: ClipboardDataTransfer } {
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const data = new ClipboardDataTransfer();
+  const event = new Event("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: data });
+  origin.dispatchEvent(event);
+  selection.removeAllRanges();
+  return { event, data };
+}
 
 describe("formula rendering", () => {
+  it("scans adversarial backslash math in deterministic linear work", () => {
+    for (const size of [64, 4_096, 500_000]) {
+      const input = `${"\\".repeat(size)}\\(unclosed`;
+      const result = scanBackslashMath(input);
+      expect(result.operations).toBe(input.length);
+      expect(result.operations).toBeLessThanOrEqual(size + 10);
+    }
+    expect(scanBackslashMath("\\\\\\(x\\)").firstUnclosed).toBe(-1);
+    expect(scanBackslashMath("\\\\(escaped").firstUnclosed).toBe(-1);
+    expect(scanBackslashMath("\\[x\\]").hasOpeningDisplayClose).toBe(true);
+    expect(scanBackslashMath("\\[x").firstUnclosed).toBe(0);
+  });
+
   it("renders inline mathematics through KaTeX", () => {
     const { container } = render(<RichText text="The energy is $E=mc^2$ here." />);
     expect(container.querySelector(".katex")).toBeTruthy();
@@ -22,10 +61,168 @@ describe("formula rendering", () => {
     expect(container.textContent).toContain("re");
   });
 
+  it("supports TeX inline and display delimiters at tokenization level", () => {
+    const { container } = render(<RichText text={String.raw`Inline \(x+1\)
+
+\[y^2\]`} />);
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    expect(container.querySelector(".katex-display")).toBeTruthy();
+  });
+
+  it("does not reinterpret inline or fenced code as math", () => {
+    const text = String.raw`Code: \`$x$ \(y\)\`
+
+\`\`\`tex
+$$z$$
+\[w\]
+\`\`\``.replaceAll("\\`", "`");
+    const { container } = render(<RichText text={text} />);
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.textContent).toContain("$x$ \\(y\\)");
+    expect(container.textContent).toContain("$$z$$");
+  });
+
+  it.each([
+    ["bare single dollar", "$"],
+    ["single dollar", "$x"],
+    ["bare double dollar", "$$"],
+    ["leading double dollar", "$$x"],
+    ["multiline double dollar", "$$\nx"],
+    ["bare parenthesis", String.raw`\(`],
+    ["parenthesis", String.raw`\(x`],
+    ["bare bracket", String.raw`\[`],
+    ["bracket", String.raw`\[x`],
+    ["multiline bracket", String.raw`\[\nx`],
+  ])("keeps incomplete %s source exact and non-math", (_label, source) => {
+    const { container } = render(<RichText text={source} />);
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.querySelector(".rich-text")?.textContent).toBe(source);
+  });
+
+  it("preserves Markdown escapes and code without treating their delimiters as math", () => {
+    const source = String.raw`Escaped \$x and \\(x; code \`$$x\``.replaceAll("\\`", "`");
+    const { container } = render(<RichText text={source} />);
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.textContent).toContain("Escaped $x and \\(x; code $$x");
+  });
+
+  it("keeps valid same-line and multiline display forms rendered", () => {
+    const source = String.raw`$$x$$
+
+$$
+y
+$$
+
+\[z\]
+
+\[
+w
+\]`;
+    const { container } = render(<RichText text={source} />);
+    expect(container.querySelectorAll(".katex-display")).toHaveLength(4);
+  });
+
   it("keeps a KaTeX failure contained and the source readable", () => {
     const { container } = render(<RichText text={"$\\def\\bad{策划}$"} />);
     // throwOnError is false: the raw source stays visible inside the error span
     expect(container.textContent).toContain("\\def\\bad");
+  });
+});
+
+describe("selection copy", () => {
+  it("projects source TeX with canonical delimiters while preserving selected HTML", () => {
+    const { container } = render(<RichText text={String.raw`Before $E=mc^2$
+
+\[x^2\]
+
+After.`} />);
+    const root = container.querySelector(".rich-text") as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    const projected = projectKatexSelection(range, root);
+    expect(projected?.plain).toContain("Before $E=mc^2$");
+    expect(projected?.plain).toContain("$$x^2$$");
+    expect(projected?.plain).toContain("After.");
+    expect(projected?.html).toContain("katex-html");
+    expect(projected?.html).toContain("annotation");
+  });
+
+  it("copies partial inline and display selections with their original delimiter identity", () => {
+    const { container } = render(
+      <Transcript
+        messages={[{ role: "assistant", content: [{ type: "text", text: String.raw`Inline $i+1$
+
+\[d+2\]` }], timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const inlineHtml = container.querySelector(".rich-text p .katex-html")!;
+    const inlineRange = document.createRange();
+    inlineRange.setStart(textNode(inlineHtml), 0);
+    inlineRange.setEnd(textNode(inlineHtml), 1);
+    const inline = dispatchSelectionCopy(inlineHtml, inlineRange);
+    expect(inline.event.defaultPrevented).toBe(true);
+    expect(inline.data.getData("text/plain")).toBe("$i+1$");
+    expect(inline.data.getData("text/html")).toContain("katex-html");
+    expect(inline.data.getData("text/html")).not.toContain("katex-display");
+
+    const displayHtml = container.querySelector(".katex-display .katex-html")!;
+    const displayRange = document.createRange();
+    displayRange.setStart(textNode(displayHtml), 0);
+    displayRange.setEnd(textNode(displayHtml), 1);
+    const display = dispatchSelectionCopy(displayHtml, displayRange);
+    expect(display.event.defaultPrevented).toBe(true);
+    expect(display.data.getData("text/plain")).toBe("$$d+2$$");
+    expect(display.data.getData("text/html")).toContain("katex-display");
+  });
+
+  it("copies multiple formulas with surrounding text and selected HTML", () => {
+    const { container } = render(
+      <Transcript
+        messages={[{ role: "assistant", content: [{ type: "text", text: String.raw`Before $x$ middle \(y\) after` }], timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const paragraph = container.querySelector(".rich-text p")!;
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const copied = dispatchSelectionCopy(paragraph, range);
+    expect(copied.data.getData("text/plain")).toBe("Before $x$ middle $y$ after");
+    expect(copied.data.getData("text/html").match(/class=\"katex\"/g)).toHaveLength(2);
+    expect(copied.data.getData("text/html")).toContain("Before ");
+    expect(copied.data.getData("text/html")).toContain(" after");
+  });
+
+  it("handles a real DOM selection and writes both ClipboardEvent formats", () => {
+    const { container } = render(
+      <Transcript
+        messages={[{ role: "assistant", content: [{ type: "text", text: "Before $x+1$ after" }], timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const paragraph = container.querySelector(".rich-text p")!;
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const clipboardData = new ClipboardDataTransfer();
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copy, "clipboardData", { value: clipboardData });
+
+    paragraph.dispatchEvent(copy);
+
+    expect(copy.defaultPrevented).toBe(true);
+    expect(clipboardData.getData("text/plain")).toBe("Before $x+1$ after");
+    expect(clipboardData.getData("text/html")).toContain("katex");
+    expect(clipboardData.types).toEqual(expect.arrayContaining(["text/plain", "text/html"]));
+    selection.removeAllRanges();
   });
 });
 

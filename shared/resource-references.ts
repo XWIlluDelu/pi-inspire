@@ -117,6 +117,9 @@ export function collectSessionResourceReferences(
     const raw = messages[messageIndex];
     if (!raw || typeof raw !== "object") continue;
     const message = raw as Record<string, unknown>;
+    const persistedIndex = Number.isSafeInteger(message.__inspireMessageIndex)
+      ? Number(message.__inspireMessageIndex)
+      : messageIndex;
     // Content Pi marked as non-display is not a visible reference source.
     if (message.display === false) continue;
     const parts = contentParts(message);
@@ -124,7 +127,7 @@ export function collectSessionResourceReferences(
       const part = parts[partIndex]!;
       if (part.type === "image" && typeof part.data === "string") {
         const mimeType = typeof part.mimeType === "string" ? part.mimeType : "image/unknown";
-        const reference = `pi-embedded://${messageIndex}/${partIndex}`;
+        const reference = `pi-embedded://${persistedIndex}/${partIndex}`;
         add({
           key: reference,
           reference,

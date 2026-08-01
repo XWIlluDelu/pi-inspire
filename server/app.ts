@@ -8,11 +8,16 @@ import { z, ZodError } from "zod";
 import {
   MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
+  MAX_SESSION_CWD_HYDRATION_CWDS,
+  MAX_SESSION_ID_HYDRATION_IDS,
+  MAX_SESSION_LIST_PAGE_SIZE,
   THINKING_LEVELS,
   type BootstrapResponse,
+  type GitDiffSide,
 } from "../shared/contracts.js";
 import type { AttachmentStore } from "./attachments.js";
 import { listHostDirectories } from "./host-dirs.js";
+import type { GitInspectionLike } from "./git-inspection.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
@@ -20,6 +25,7 @@ import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 
 const openSchema = z.object({ id: z.string().min(1).max(128) });
+const deleteSessionParamsSchema = z.object({ sessionId: z.string().min(1).max(128) });
 const newSchema = z.object({ cwd: z.string().min(1).max(4_096), name: z.string().max(160).optional() });
 const sessionIdField = z.string().min(1).max(200);
 const promptSchema = z.object({
@@ -43,8 +49,8 @@ const extensionSchema = z.object({
 }).passthrough();
 const sessionQuerySchema = z.object({
   q: z.string().max(200).default(""),
-  offset: z.coerce.number().int().min(0).default(0),
-  limit: z.coerce.number().int().min(1).max(100).default(40),
+  offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  limit: z.coerce.number().int().min(1).max(MAX_SESSION_LIST_PAGE_SIZE).default(40),
 });
 const fileQuerySchema = z.object({
   sessionId: sessionIdField,
@@ -62,17 +68,46 @@ const fileListSchema = z.object({
 const hostDirsSchema = z.object({
   path: z.string().min(1).max(4_096).refine(isAbsolute, "path must be absolute").optional(),
 });
-// Wide enough for the navigation to hydrate every curated identity at once:
-// the preference file caps pins at 100 and hidden sessions at 500.
-const sessionIdsSchema = z.object({ ids: z.array(z.string().min(1).max(128)).max(600) });
-// Folder pins carry the same 100-entry cap as session pins.
-const sessionCwdsSchema = z.object({ cwds: z.array(z.string().min(1).max(4_096)).max(100) });
+// Hydration unions can also contain selected/live identities, so the browser
+// chunks the deduplicated union to this explicit per-request contract.
+const sessionIdsSchema = z.object({
+  ids: z.array(z.string().min(1).max(128)).max(MAX_SESSION_ID_HYDRATION_IDS),
+});
+const sessionCwdsSchema = z.object({
+  cwds: z.array(z.string().min(1).max(4_096)).max(MAX_SESSION_CWD_HYDRATION_CWDS),
+});
 const attachmentIdSchema = z.string().uuid();
 const resourceResolveSchema = z.object({
   sessionId: sessionIdField,
   reference: z.string().min(1).max(8_192),
 });
+const resourceProbeSchema = z.object({
+  sessionId: sessionIdField,
+  references: z.array(z.string().min(1).max(8_192)).max(16),
+});
 const resourceContentSchema = z.object({ sessionId: sessionIdField });
+const transcriptPageSchema = z.object({
+  sessionId: sessionIdField,
+  cursor: z.string().min(1).max(2_048),
+});
+const branchTreeSchema = z.object({ sessionId: sessionIdField });
+const branchNavigateSchema = z.object({
+  sessionId: sessionIdField,
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  targetId: z.string().min(1).max(200),
+  mode: z.enum(["switch", "edit"]),
+}).strict();
+const branchForkSchema = z.object({
+  sessionId: sessionIdField,
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  targetId: z.string().min(1).max(200),
+}).strict();
+const gitStatusSchema = z.object({ sessionId: sessionIdField });
+const gitDiffSchema = z.object({
+  sessionId: sessionIdField,
+  pathId: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9_-]+$/),
+  side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
+});
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
@@ -84,6 +119,7 @@ export interface AppDependencies {
   attachments: AttachmentStore;
   preferences: PreferencesStore;
   resources: ResourceStore;
+  git: GitInspectionLike;
   mock: boolean;
   version: string;
   piVersion: string;
@@ -117,6 +153,26 @@ function resourceByteRange(request: Request, size: number): { start: number; end
     throw Object.assign(new Error("The requested byte range cannot be served"), { status: 416 });
   }
   return ranges[0]!;
+}
+
+async function withRequestSignal<T>(
+  request: Request,
+  response: Response,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortIfUnfinished = () => {
+    if (!response.writableEnded) abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortIfUnfinished);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortIfUnfinished);
+  }
 }
 
 function apiError(error: unknown, request: Request, response: Response, _next: NextFunction): void {
@@ -217,6 +273,20 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     await deps.runtime.rename(sessionId, name);
     response.json({ ok: true });
   });
+  app.delete("/api/sessions/:sessionId", async (request, response) => {
+    const { sessionId } = deleteSessionParamsSchema.parse(request.params);
+    const result = await deps.runtime.deleteSession(sessionId);
+    deps.resources.forgetSession(sessionId);
+    try {
+      const preferences = await deps.preferences.removeSession(sessionId);
+      response.json({ ...result, preferences });
+    } catch (error) {
+      // The destructive result is already known. Never turn a metadata-write
+      // failure into a retryable DELETE whose second execution is ambiguous.
+      console.error(`[session ${sessionId}] navigation metadata cleanup failed`, error);
+      response.json({ ...result, preferenceCleanupFailed: true });
+    }
+  });
 
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -269,6 +339,19 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
   // Session-independent: the picker browses the host filesystem before any
   // session exists. The bearer token is the guard, as everywhere else.
+  app.get("/api/git/status", async (request, response) => {
+    const { sessionId } = gitStatusSchema.parse(request.query);
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    response.json(await withRequestSignal(request, response, (signal) => deps.git.status(cwd, signal)));
+  });
+  app.post("/api/git/diff", async (request, response) => {
+    const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    response.json(await withRequestSignal(request, response, (signal) => deps.git.diff(cwd, pathId, side, signal)));
+  });
+
   app.get("/api/host/dirs", async (request, response) => {
     const { path } = hostDirsSchema.parse(request.query);
     try {
@@ -283,6 +366,15 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     }
   });
 
+  app.post("/api/resources/probe", async (request, response) => {
+    const { sessionId, references } = resourceProbeSchema.parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    response.json({
+      sessionId,
+      viewId: context.viewId ?? `legacy-view:${sessionId}`,
+      results: await deps.resources.probe(context, references),
+    });
+  });
   app.post("/api/resources/resolve", async (request, response) => {
     const { sessionId, reference } = resourceResolveSchema.parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);
@@ -294,20 +386,18 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       closed = true;
     });
     const { sessionId } = resourceContentSchema.parse(request.query);
-    // Handles are bound to the session they were resolved in AND to that
-    // session still being the visible one — a handle from session A must not
-    // keep serving content after the user switches to session B.
-    if (deps.runtime.activeSessionId !== sessionId) {
-      throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
-    }
-    const resource = deps.resources.get(String(request.params.id), sessionId);
+    // Handles are bound to the opaque branch view that authorized them. The
+    // current authority is rechecked before any headers or bytes are sent.
+    const context = await deps.runtime.resourceContext(sessionId);
+    if (!context.viewId) throw Object.assign(new Error("The runtime did not provide a branch view identity"), { status: 409 });
+    const resource = deps.resources.get(String(request.params.id), sessionId, context.viewId);
+    await deps.resources.revalidate(resource, context);
+    if (closed || response.destroyed) return;
     response.set({
       "Content-Type": resource.descriptor.mimeType,
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
     });
     if (resource.embedded) {
-      const context = await deps.runtime.resourceContext(sessionId);
-      if (closed || response.destroyed) return;
       const data = await deps.resources.embeddedData(resource, context);
       if (closed || response.destroyed) return;
       const range = resourceByteRange(request, data.length);
@@ -361,6 +451,20 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json(await deps.preferences.patch(request.body));
   });
   app.get("/api/snapshot", async (_request, response) => response.json(await deps.runtime.snapshot()));
+  app.get("/api/transcript/older", async (request, response) => {
+    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
+    response.json(await deps.runtime.transcriptPage(sessionId, cursor));
+  });
+  app.get("/api/branches/tree", async (request, response) => {
+    const { sessionId } = branchTreeSchema.parse(request.query);
+    response.json(await deps.runtime.branchTree(sessionId));
+  });
+  app.post("/api/branches/navigate", async (request, response) => {
+    response.json(await deps.runtime.navigateBranch(branchNavigateSchema.parse(request.body)));
+  });
+  app.post("/api/branches/fork", async (request, response) => {
+    response.json(await deps.runtime.forkBranch(branchForkSchema.parse(request.body)));
+  });
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
@@ -465,14 +569,20 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     app,
     server,
     close: async () => {
+      // Stop accepting HTTP/upgrades first, but do not await the drain before
+      // runtime teardown: an active request may itself be waiting on runtime.
+      const drained = server.listening
+        ? new Promise<void>((resolveClose, reject) => {
+            server.close((error) => (error ? reject(error) : resolveClose()));
+          })
+        : Promise.resolve();
       for (const socket of sockets) socket.close(1001, "Server shutting down");
       await deps.runtime.close();
       await deps.attachments.close();
-      if (server.listening) {
-        await new Promise<void>((resolveClose, reject) =>
-          server.close((error) => (error ? reject(error) : resolveClose())),
-        );
-      }
+      server.closeIdleConnections?.();
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      server.closeAllConnections?.();
+      await drained;
     },
   };
 }

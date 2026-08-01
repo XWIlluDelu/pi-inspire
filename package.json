@@ -19,12 +19,13 @@
     "check": "tsc -b && vitest run"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.83.0",
     "@tanstack/react-virtual": "^3.14.7",
     "express": "^5.2.1",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.47",
     "lucide-react": "^1.25.0",
+    "micromark-util-decode-string": "2.0.1",
     "multer": "^2.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -32,7 +33,7 @@
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
+    "remark-math-extended": "6.1.1",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },

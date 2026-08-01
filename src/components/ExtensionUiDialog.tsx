@@ -6,18 +6,38 @@ function cancel(request: ExtensionUiRequest): void {
   void store.respondExtensionUi({ id: request.id, cancelled: true });
 }
 
-function DialogBody({ request }: { request: ExtensionUiRequest }) {
-  const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
+function DialogBody({ request, responding }: { request: ExtensionUiRequest; responding: boolean }) {
+  const [value, setValue] = useState(request.method === "editor" && "prefill" in request ? (request.prefill ?? "") : "");
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancel(request);
+      if (event.key === "Escape" && !responding) cancel(request);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [request]);
+  }, [request, responding]);
 
-  const title = request.title || "Pi extension request";
+  const title = request.title || (request.unsupported ? "Unsupported extension request" : "Pi extension request");
+
+  if (request.unsupported) {
+    return (
+      <>
+        <h2 className="dialog__title">{title}</h2>
+        <p className="dialog__message">
+          This extension requested the unsupported interactive method <code>{request.method}</code>. It cannot be completed in insπre.
+        </p>
+        <details className="dialog__details">
+          <summary>Inspect request</summary>
+          <pre className="card__mono">{JSON.stringify(request.payload, null, 2)}</pre>
+        </details>
+        <div className="dialog__actions">
+          <button type="button" className="button button--primary" autoFocus disabled={responding} onClick={() => cancel(request)}>
+            Close and cancel request
+          </button>
+        </div>
+      </>
+    );
+  }
 
   if (request.method === "select") {
     return (
@@ -31,6 +51,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
               aria-selected={false}
               key={option}
               className="picker__row"
+              disabled={responding}
               onClick={() => void store.respondExtensionUi({ id: request.id, value: option })}
             >
               {option}
@@ -38,7 +59,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
           ))}
         </div>
         <div className="dialog__actions">
-          <button type="button" className="button" onClick={() => cancel(request)}>
+          <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
             Cancel
           </button>
         </div>
@@ -52,12 +73,13 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
         <h2 className="dialog__title">{title}</h2>
         {request.message ? <p className="dialog__message">{request.message}</p> : null}
         <div className="dialog__actions">
-          <button type="button" className="button" onClick={() => cancel(request)}>
+          <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
             Cancel
           </button>
           <button
             type="button"
             className="button"
+            disabled={responding}
             onClick={() => void store.respondExtensionUi({ id: request.id, confirmed: false })}
           >
             No
@@ -66,6 +88,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
             type="button"
             className="button button--primary"
             autoFocus
+            disabled={responding}
             onClick={() => void store.respondExtensionUi({ id: request.id, confirmed: true })}
           >
             Yes
@@ -80,7 +103,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void store.respondExtensionUi({ id: request.id, value });
+        if (!responding) void store.respondExtensionUi({ id: request.id, value });
       }}
     >
       <h2 className="dialog__title">{title}</h2>
@@ -88,6 +111,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
         <textarea
           className="dialog__editor"
           value={value}
+          disabled={responding}
           onChange={(event) => setValue(event.target.value)}
           aria-label={title}
           autoFocus
@@ -97,6 +121,7 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
         <input
           className="dialog__input"
           value={value}
+          disabled={responding}
           onChange={(event) => setValue(event.target.value)}
           placeholder={request.placeholder}
           aria-label={title}
@@ -104,10 +129,10 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
         />
       )}
       <div className="dialog__actions">
-        <button type="button" className="button" onClick={() => cancel(request)}>
+        <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
           Cancel
         </button>
-        <button type="submit" className="button button--primary">
+        <button type="submit" className="button button--primary" disabled={responding}>
           {isEditor ? "Save" : "Submit"}
         </button>
       </div>
@@ -118,7 +143,8 @@ function DialogBody({ request }: { request: ExtensionUiRequest }) {
 /** Web-native presentation of Pi extension_ui_request dialogs. */
 export function ExtensionUiDialog() {
   const state = useAppState();
-  const request = state.extensionUi;
+  const request = state.extensionUiRequests[0] ?? null;
+  const responding = Boolean(state.extensionUiRespondingId);
   const dialogRef = useModalFocus<HTMLDivElement>(
     Boolean(request),
     request ? `${request.sessionId}:${request.id}` : null,
@@ -132,10 +158,11 @@ export function ExtensionUiDialog() {
         role="dialog"
         aria-modal="true"
         aria-label={request.title || "Pi extension request"}
+        aria-busy={responding}
         tabIndex={-1}
       >
         {/* key remounts the form state per request */}
-        <DialogBody key={`${request.sessionId}:${request.id}`} request={request} />
+        <DialogBody key={`${request.sessionId}:${request.id}`} request={request} responding={responding} />
       </div>
     </div>
   );

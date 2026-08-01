@@ -12,8 +12,7 @@ scope:
 
 Closed 2026-07-25 in one round: an external code review's findings were
 verified against the code and repaired where real. Its four priority items
-matched the recorded correctness backlog in
-`notes/follow-up-code-review-2026-07-22.md` plus one new finding.
+matched the then-recorded correctness backlog plus one new finding.
 
 ## Outcome
 
@@ -36,11 +35,12 @@ matched the recorded correctness backlog in
   conversation text and Pi may read them for the rest of the session, so only
   images are reclaimed on consumption and files persist until host exit.
 - Deferred with the review's agreement: selector-based store subscriptions
-  and the other efficiency items stay in the follow-up note until measured.
+  and the other efficiency items require measurement and now live in
+  [[groom-evidence-gated-maintenance-2026-08-01]].
 - Docs reconciled: preference, resource-handle, dialog-rebinding, and
   attachment-lifetime contracts added to the workbench, resource-preview,
   session-continuity, and composer specs; the navigation stage archived; the
-  follow-up note rewritten to its open remainder.
+  deferred remainder later consolidated into the product roadmap.
 
 Verified by `npm run check` (152 tests green) with new regressions for each
 fix: racing field patches, old-handle 409 after a switch, a dialog raised

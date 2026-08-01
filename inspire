@@ -57,9 +57,14 @@ source_hash() {
 ensure_deps() {
   local want stamp="node_modules/.inspire-deps"
   want="$(deps_hash)"
-  if [[ ! -d node_modules || "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]]; then
+  # The production launcher still builds TypeScript/Vite and starts the host
+  # through tsx. NODE_ENV=production makes npm omit devDependencies by default,
+  # so request the build/runtime toolchain explicitly and treat missing bins as
+  # an incomplete installation even when the lockfile stamp already matches.
+  if [[ ! -d node_modules || "$(cat "$stamp" 2>/dev/null || true)" != "$want" ||
+        ! -x node_modules/.bin/tsc || ! -x node_modules/.bin/vite || ! -x node_modules/.bin/tsx ]]; then
     echo "Installing dependencies…"
-    npm install
+    npm install --include=dev
     printf '%s\n' "$want" > "$stamp"
   fi
 }

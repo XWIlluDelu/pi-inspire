@@ -112,13 +112,11 @@ mathematics, highlighted code — carries the character; chrome stays quiet.
 
 The two themes share one component architecture, one information hierarchy,
 and one accent hue: **teal `{colors-light.accent}` in light**, the same hue
-raised to a **luminous teal `{colors-dark.accent}` in dark**. (The earlier
-dark chartreuse was reviewed on 2026-07-23 and replaced: high-chroma lime
-against muted green-grays read harsh and murky; the brighter teal keeps the
-brand hue and calms the theme.) Beyond the accent, a small **annotation
-palette** color-codes conversation block types in both themes. Light is the
-primary tuning target; dark follows it and is verified, not separately
-designed.
+raised to a **luminous teal `{colors-dark.accent}` in dark**. High-chroma lime
+against muted green-grays reads harsh and murky; the brighter teal keeps the
+brand hue and calms the theme. Beyond the accent, a small **annotation palette**
+color-codes conversation block types in both themes. Light is the primary
+tuning target; dark follows it and is verified, not separately designed.
 
 Key characteristics:
 
@@ -193,11 +191,10 @@ never fills):
 
 - **Sans — Noto Sans SC** (weights 400/500/600, self-hosted, one Latin and
   one CJK subset per weight): interface, transcript body, Chinese and Latin
-  alike. The 2026-07-22 decision picked IBM Plex Sans SC, but IBM does not
-  publish it to npm and no vendorable woff2 subset exists; Noto Sans SC is
-  the same grotesque voice with first-class CJK, keeps the single-family,
-  no-fallback-seam property, and ships from `@fontsource/noto-sans-sc`.
-  Generic `sans-serif` closes the stack.
+  alike. IBM does not publish IBM Plex Sans SC to npm and no vendorable woff2
+  subset exists; Noto Sans SC supplies the same grotesque voice with first-class
+  CJK, keeps the single-family, no-fallback-seam property, and ships from
+  `@fontsource/noto-sans-sc`. Generic `sans-serif` closes the stack.
 - **Serif — IBM Plex Serif**: the `insπre` wordmark only. No reading mode,
   no serif body text; the wordmark is Latin + π so no CJK serif is needed.
 - **Mono — IBM Plex Mono** with the sans CJK face as its CJK fallback: code
@@ -305,15 +302,27 @@ warning capsule surface.
   in the center, the scroll-under fade. The nav header holds the italic
   serif wordmark (π in KaTeX math italic) and the mock badge; the rail shows
   the math-italic π alone.
-- **Topbar identity** — the session title (600) is the rename affordance
-  (click to edit in place); beside it the project location renders in mono
-  `{typography.size-xs}` `faint` — folder name or full path per the
-  `projectDisplay` preference — and clicking it copies the absolute path.
-  The model is never shown here.
+- **Topbar identity** — the session heading (600) is the rename affordance. An
+  explicit Pi session name wins; otherwise the same normalized first-prompt
+  projection used by navigation is shown, while a conversation with no prompt
+  reads `New session`. This fallback is presentation only: rename still opens
+  with an empty value, and prompt text never enters the browser/OS title or a
+  desktop notification. The heading flexes and ellipsizes at its actual width;
+  its full bounded value remains in the hover title. Beside it the project
+  location renders in mono `{typography.size-xs}` `faint` — folder name or full
+  path per the `projectDisplay` preference — and clicking it copies the absolute
+  path. The model is never shown here.
 - **Topbar actions** — nav toggle at the left; command palette, settings
   (opens the settings overlay), and context-pane toggle at the right. There
   is no compact button: users type `/compact [instructions]`, which the
   host routes to Pi's RPC compact command.
+- **Context modes** — the right pane keeps Files, Changes, and Branches in one
+  compact mode switch rather than adding another workbench column. Branches
+  uses a bounded, vertically scrollable entry tree: role chips and one-line
+  snippets form the main row, active ancestry uses the accent rail, and the
+  effective leaf is the only `aria-current` row. Switch uses the row itself;
+  edit-from-here and fork are quiet trailing icon actions with confirmation.
+  Host truncation and stale/error state remain visible above or below the tree.
 - **Start surface** — the welcome canvas carries the one piece of brand
   ornament: a huge KaTeX math-italic π watermark at 4% ink (5% in dark)
   receding into the lower-right corner, clipped by its own layer so it
@@ -321,7 +330,7 @@ warning capsule surface.
 
 ### Navigation
 
-- Folder-first hierarchy: group headers are a lighter tier than their rows — `{typography.size-xs}`/600 `muted` with `0.04em` tracking (chevron, folder icon, name, pin) on a 24px line — above single-line session rows at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
+- Folder-first hierarchy: group headers are a quiet semibold tier above their rows — `{typography.size-sm}`/600 `muted` with `0.04em` tracking on a 28px line. The chevron is 13px, folder and pin glyphs are 14px, and the folder-pin target is 24px (36px where hover is unavailable), so folder identity and curation state remain legible without competing with the transcript. Session rows remain single-line at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column at `{typography.size-xs}`, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
 - Groups collapse freely — including the active session's group; a collapsed
   folder that hides the active session takes the `accent-tint` highlight and
   2px `accent` left edge itself. Active search overrides collapse.
@@ -330,7 +339,8 @@ warning capsule surface.
   highlight points back at the edge. Running/attention dots use `accent`,
   `success`, `error`; the running dot breathes (`{motion.breathe}`) while
   settled attention dots rest under a soft 3px ring of their hue.
-- Curation actions (pin, hide) are 22px `faint` icon buttons occupying exactly the 46px age column, which fades as they appear on hover or focus, so no text moves; under `hover: none` they leave the overlay and take their own space beside the age instead of replacing it. A folder pin is state rather than an action, so once set it stays visible in `accent` beside the folder name. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden — separate by a spacing step, never by a rule.
+- Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age column, which fades as they appear on hover or focus, so no text moves: ordinary rows expose Pin + Hide, while Hidden rows expose Restore + Delete. Delete uses `error` only on hover/focus and never adds a third slot; under `hover: none` the pair leaves the overlay and takes its own space beside the age instead of replacing it. A folder pin is state rather than an action, so once set it stays visible in `accent` beside the folder name. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden — separate by a spacing step, never by a rule.
+- Session pagination is a compact bordered text control below the chronological groups, paired with a centered `{typography.size-xs}` `faint` live count (`Showing N of total`). Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and completion replaces it with the end message. The touch layout raises the target to 40px; no viewport uses infinite scroll.
 - The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
   single header bar (folder icon + project name + chevron); expanded it takes
   up to half the column with a lazily loaded tree derived from the host's
@@ -342,6 +352,7 @@ warning capsule surface.
 
 ### Transcript
 
+- **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. Its empty, unfocused idle state rests at 62% opacity without a shadow; hover, focus-within (including the scope menu), or a nonempty query restores full opacity and the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
 - **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra
@@ -381,11 +392,17 @@ hugs its value when closed. The menu is the themed replacement for the
 OS-drawn native option popup — a Level-2 anchored listbox (raised surface,
 hairline border, `{rounded.md}`, float-in) that opens upward from the
 bottom-docked composer; the selected option reads `accent-deep` with a
-check glyph, the pointed row rests on the inset background. The control
-follows the select-only combobox pattern: focus stays on the trigger,
+check glyph, the pointed row rests on the inset background. Quiet finite
+controls follow the select-only combobox pattern: focus stays on the trigger,
 arrows/Home/End move, Enter picks, Escape closes without reaching the
-global abort. Model options drop the provider prefix unless two providers
-share an id; thinking levels read lowercase (`medium`, `xhigh`). At the right, the **context gauge** — a
+global abort. The model control expands this anatomy with a focused local
+search field, non-selectable canonical-provider headings, and compact Active,
+Recent, and No thinking labels; its active descendant indexes options rather
+than headings. Thinking levels read lowercase (`medium`, `xhigh`) and the
+control states when the active model cannot use them. The caret completion
+surface uses the same Level-2 grammar above the writing area, with source
+headings, a mono path/description column, and an accent edge on the active
+option. At the right, the **context gauge** — a
 14px ring plus percent in `{typography.size-xs}` — reports context-window
 occupancy from Pi's session stats: calm `muted`/`accent` below 60%,
 `warning` from 60%, `error` from 85%, with exact token counts and a
@@ -410,7 +427,10 @@ render as the composer's dropdown in a bordered field variant — hairline
 border on the canvas background, opening downward, focused/open state
 following the text-field grammar (accent border + tint halo). Extension
 dialogs share the same surface with title at `{typography.size-lg}`
-semibold and right-aligned action row.
+semibold and right-aligned action row. Destructive confirmation uses the same
+focus-trapped surface, names the exact target, explains Trash-versus-permanent
+fallback and unaffected data, warns about external Pi processes, and reserves
+solid `error` fill for the final action only.
 
 ### Scroll rails
 
@@ -489,16 +509,3 @@ marks arrival. `prefers-reduced-motion` reduces everything to opacity.
 - No shadows on resting surfaces; no borderless floating cards.
 - No per-component palette values, and no theme-specific component
   structure.
-
-## Known gaps
-
-None standing. The 2026-07-22 adoption installed this token layer in
-`src/styles.css`, vendored the fonts under `src/assets/fonts` (SIL OFL
-license texts beside them in `src/assets/licenses`), mapped highlight.js
-token colors onto the palette roles, and removed the `readingSerif`
-reading-mode preference end to end; Noto Sans SC replaced IBM Plex Sans SC
-along the way (see Families). The 2026-07-23 redesign round replaced the
-dark chartreuse with the luminous teal family, added the annotation
-palette and workbench chrome contracts above, and set the wordmark in
-italic serif with a KaTeX math π. Process history and decisions live in
-the adoption stage.

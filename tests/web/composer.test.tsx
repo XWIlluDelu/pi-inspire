@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Composer } from "../../src/components/Composer";
@@ -15,10 +15,14 @@ import {
 
 let promptBodies: Record<string, unknown>[];
 let promptFails: boolean;
+let fileSearchFails: boolean;
+let slowSearchGate: Promise<void> | null;
 
 beforeAll(async () => {
   promptBodies = [];
   promptFails = false;
+  fileSearchFails = false;
+  slowSearchGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
@@ -34,6 +38,10 @@ beforeAll(async () => {
       };
     }
     if (url.startsWith("/api/files")) {
+      if (fileSearchFails) return { status: 500, body: { error: "index unavailable" } };
+      if (url.includes("q=slow") && slowSearchGate) {
+        return slowSearchGate.then(() => ({ body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] } }));
+      }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
     if (url.startsWith("/api/prompt")) {
@@ -118,6 +126,193 @@ describe("composer meta row", () => {
     const listbox = screen.getByRole("listbox", { name: "Thinking level" });
     expect(within(listbox).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
     expect(within(listbox).queryByRole("option", { name: /thinking:/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("caret completion", () => {
+  it("selects an @ file at the caret, preserves surrounding text, and deduplicates the canonical chip", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    textarea.focus();
+    typeDraft("before @ind after");
+    textarea.setSelectionRange(11, 11);
+    fireEvent.select(textarea);
+
+    const fileOption = await screen.findByRole("option", { name: /index\.ts.*src\/index\.ts/ });
+    const fileList = screen.getByRole("listbox", { name: "Project file completions" });
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea).toHaveAttribute("aria-autocomplete", "list");
+    expect(textarea).toHaveAttribute("aria-controls", fileList.id);
+    const fileComposite = textarea.closest("[role='combobox']");
+    expect(fileComposite).toHaveAttribute("aria-expanded", "true");
+    expect(fileComposite).toHaveAttribute("aria-owns", fileList.id);
+    expect(textarea).toHaveAttribute("aria-activedescendant", fileOption.id);
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(textarea).toHaveValue("before @ind after");
+    expect(screen.getByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea).toHaveValue("before  after");
+    await waitFor(() => expect(textarea.selectionStart).toBe(7));
+    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+
+    typeDraft("@ind");
+    textarea.setSelectionRange(4, 4);
+    fireEvent.select(textarea);
+    const duplicateOption = await screen.findByRole("option", { name: /index\.ts/ });
+    fireEvent.click(duplicateOption);
+    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+    clearLeftovers();
+  });
+
+  it("inserts a slash command with a trailing space without executing it", async () => {
+    clearLeftovers();
+    const before = promptBodies.length;
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    textarea.focus();
+    typeDraft("/com");
+    textarea.setSelectionRange(4, 4);
+    fireEvent.select(textarea);
+    const commandOption = await screen.findByRole("option", { name: /\/compact.*Compact the current context/ });
+    const commandList = screen.getByRole("listbox", { name: "Slash command completions" });
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea).toHaveAttribute("aria-controls", commandList.id);
+    const commandComposite = textarea.closest("[role='combobox']");
+    expect(commandComposite).toHaveAttribute("aria-expanded", "true");
+    expect(commandComposite).toHaveAttribute("aria-owns", commandList.id);
+    expect(textarea).toHaveAttribute("aria-activedescendant", commandOption.id);
+    expect(commandList).toHaveTextContent("Inspire");
+    fireEvent.keyDown(textarea, { key: "Tab" });
+    expect(textarea).toHaveValue("/compact ");
+
+    typeDraft("/com existing arguments");
+    textarea.setSelectionRange(3, 3);
+    fireEvent.select(textarea);
+    await screen.findByRole("option", { name: /\/compact/ });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea).toHaveValue("/compact existing arguments");
+    await waitFor(() => expect(textarea.selectionStart).toBe(9));
+    expect(promptBodies).toHaveLength(before);
+  });
+
+  it("groups authoritative Pi command sources, preserves unknown sources, and supports click selection", async () => {
+    clearLeftovers();
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({ commands: [
+          { name: "deploy", description: "Ship extension output", source: "extension" },
+          { name: "review", description: "Run review prompt", source: "prompt" },
+          { name: "skill:docs", description: "Open docs skill", source: "skill" },
+          { name: "future", description: "Future command", source: "custom-source" },
+        ] }),
+      });
+    });
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("/");
+    textarea.setSelectionRange(1, 1);
+    fireEvent.select(textarea);
+    const list = await screen.findByRole("listbox", { name: "Slash command completions" });
+    expect(list).toHaveTextContent("Extension");
+    expect(list).toHaveTextContent("Prompt");
+    expect(list).toHaveTextContent("Skill");
+    expect(list).toHaveTextContent("Custom-source");
+    fireEvent.click(within(list).getByRole("option", { name: /\/deploy/ }));
+    expect(textarea).toHaveValue("/deploy ");
+  });
+
+  it("uses Pi first-dispatch precedence for collisions and then overrides compact locally", async () => {
+    clearLeftovers();
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({ commands: [
+          { name: "shared", description: "Extension owner", source: "extension" },
+          { name: "shared", description: "Prompt collision", source: "prompt" },
+          { name: "shared", description: "Skill collision", source: "skill" },
+          { name: "compact", description: "Extension compact collision", source: "extension" },
+          { name: "compact", description: "Prompt compact collision", source: "prompt" },
+        ] }),
+      });
+    });
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    textarea.focus();
+    typeDraft("/");
+    textarea.setSelectionRange(1, 1);
+    fireEvent.select(textarea);
+    const list = await screen.findByRole("listbox", { name: "Slash command completions" });
+    expect(within(list).getAllByRole("option").filter((option) => option.textContent?.startsWith("/shared"))).toHaveLength(1);
+    expect(within(list).getByRole("option", { name: /\/shared.*Extension owner/ })).toBeInTheDocument();
+    expect(within(list).queryByText(/Prompt collision|Skill collision/)).not.toBeInTheDocument();
+    expect(within(list).getAllByRole("option").filter((option) => option.textContent?.startsWith("/compact"))).toHaveLength(1);
+    expect(within(list).getByRole("option", { name: /\/compact.*Compact the current context/ })).toBeInTheDocument();
+    expect(within(list).queryByText(/compact collision/)).not.toBeInTheDocument();
+  });
+
+  it("defers completion until IME composition commits", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    fireEvent.compositionStart(textarea);
+    fireEvent.change(textarea, { target: { value: "@ind", selectionStart: 4 } });
+    expect(screen.queryByRole("listbox", { name: "Project file completions" })).not.toBeInTheDocument();
+    textarea.setSelectionRange(4, 4);
+    fireEvent.compositionEnd(textarea);
+    expect(await screen.findByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+  });
+
+  it("suppresses an obsolete file-search response after the caret query changes", async () => {
+    clearLeftovers();
+    let releaseSlow!: () => void;
+    slowSearchGate = new Promise<void>((resolve) => { releaseSlow = resolve; });
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("@slow");
+    textarea.setSelectionRange(5, 5);
+    fireEvent.select(textarea);
+    await new Promise((resolve) => setTimeout(resolve, 170));
+
+    typeDraft("@ind");
+    textarea.setSelectionRange(4, 4);
+    fireEvent.select(textarea);
+    expect(await screen.findByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+    releaseSlow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("option", { name: /slow\.ts/ })).not.toBeInTheDocument();
+    slowSearchGate = null;
+  });
+
+  it("renders loading, empty, and error states for session-addressed file search", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("@missing");
+    textarea.setSelectionRange(8, 8);
+    fireEvent.select(textarea);
+    expect(screen.getByText("Searching project files…")).toBeInTheDocument();
+    expect(await screen.findByText("No matching project files")).toBeInTheDocument();
+
+    fileSearchFails = true;
+    typeDraft("@fail");
+    textarea.setSelectionRange(5, 5);
+    fireEvent.select(textarea);
+    expect(await screen.findByText("Project file search failed")).toBeInTheDocument();
+    fileSearchFails = false;
+  });
+
+  it("closes completion on Escape without reaching the global shortcut", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("/com");
+    textarea.setSelectionRange(4, 4);
+    fireEvent.select(textarea);
+    await screen.findByRole("listbox", { name: "Slash command completions" });
+    expect(fireEvent.keyDown(textarea, { key: "Escape" })).toBe(false);
+    expect(screen.queryByRole("listbox", { name: "Slash command completions" })).not.toBeInTheDocument();
   });
 });
 

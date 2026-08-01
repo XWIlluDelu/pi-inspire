@@ -47,12 +47,29 @@ export function PaneResizeHandle({ cssVar, storageKey, paneSelector, edge, min, 
   };
 
   useEffect(() => {
-    const stored = Number(storage?.getItem(storageKey));
-    if (Number.isFinite(stored) && stored > 0) {
-      document.documentElement.style.setProperty(cssVar, `${clamp(stored)}px`);
-    }
-    setCurrent(Math.round(document.querySelector(paneSelector)?.getBoundingClientRect().width ?? min));
-    // Applying the persisted width happens once per handle instance.
+    const root = document.documentElement;
+    const applyResponsiveWidth = () => {
+      const pane = document.querySelector(paneSelector);
+      if (!pane) return;
+      const stored = Number(storage?.getItem(storageKey));
+      if (Number.isFinite(stored) && stored > 0) {
+        // Keep the user's desired width in storage. Only the live CSS value is
+        // clamped while the window is narrow, so expanding restores it.
+        root.style.setProperty(cssVar, `${clamp(stored)}px`);
+      } else {
+        // Re-evaluate the stylesheet default against the current viewport.
+        root.style.removeProperty(cssVar);
+        const natural = Math.round(pane.getBoundingClientRect().width);
+        const bounded = clamp(natural);
+        if (bounded !== natural) root.style.setProperty(cssVar, `${bounded}px`);
+      }
+      setCurrent(Math.round(pane.getBoundingClientRect().width));
+    };
+    applyResponsiveWidth();
+    window.addEventListener("resize", applyResponsiveWidth);
+    return () => window.removeEventListener("resize", applyResponsiveWidth);
+    // Width ownership belongs to this handle instance; prop identities are
+    // stable for its lifetime and changing them would mean mounting a new pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -54,6 +54,25 @@ describe("message reconciliation", () => {
     expect(duplicate.changed).toBe(false);
   });
 
+  it("keeps same-role same-timestamp ordinary lifecycles distinct by host live identity", () => {
+    let slice = emptyEventSlice();
+    const settled = new Set<string>();
+    for (const [id, content] of [["live-1", "first"], ["live-2", "second"]] as const) {
+      const start = reduce(slice, settled, {
+        type: "message_start",
+        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+      });
+      const end = reduce(start.slice, settled, {
+        type: "message_end",
+        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+      });
+      for (const key of end.settle) settled.add(key);
+      slice = end.slice;
+    }
+    expect(slice.messages.map((message) => message.content)).toEqual(["first", "second"]);
+    expect(settled).toEqual(new Set(["live:live-1", "live:live-2"]));
+  });
+
   it("appends genuinely new messages in source order", () => {
     const slice = emptyEventSlice();
     const first = reduce(slice, new Set(), { type: "message_start", message: { role: "user", content: "a", timestamp: 1 } });
@@ -84,13 +103,13 @@ describe("message reconciliation", () => {
     const slice = emptyEventSlice();
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
     slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
-    slice.queue = { steering: 1, followUp: 2 };
+    slice.queue = { steering: ["steer"], followUp: ["later one", "later two"] };
     const { slice: next, resync } = reduce(slice, new Set(), { type: "agent_settled" });
     expect(resync).toBe(true);
     expect(next.streaming).toBe(false);
     expect(next.tools).toEqual({});
     expect(next.retry).toBeNull();
-    expect(next.queue).toEqual({ steering: 0, followUp: 0 });
+    expect(next.queue).toEqual({ steering: [], followUp: [] });
   });
 });
 
@@ -151,13 +170,13 @@ describe("transient tool/retry/queue activity", () => {
     expect(failed.slice.notices.at(-1)).toMatchObject({ kind: "error", text: "Retry failed: overloaded" });
   });
 
-  it("counts queued steering and follow-up input", () => {
+  it("preserves queued steering and follow-up input in separate source order", () => {
     const { slice } = reduce(emptyEventSlice(), new Set(), {
       type: "queue_update",
       steering: ["a"],
       followUp: ["b", "c"],
     });
-    expect(slice.queue).toEqual({ steering: 1, followUp: 2 });
+    expect(slice.queue).toEqual({ steering: ["a"], followUp: ["b", "c"] });
   });
 
   it("surfaces extension errors as error notices without touching messages", () => {
@@ -184,7 +203,7 @@ describe("extension_ui_request mapping", () => {
       title: "Pick one",
       options: ["a", "b"],
     });
-    expect(slice.extensionUi).toEqual({
+    expect(slice.extensionUiRequests).toEqual([{
       sessionId: "s1",
       id: "r1",
       method: "select",
@@ -193,7 +212,23 @@ describe("extension_ui_request mapping", () => {
       options: ["a", "b"],
       placeholder: undefined,
       prefill: undefined,
-    });
+    }]);
+  });
+
+  it("queues concurrent dialogs in arrival order and removes only the addressed request", () => {
+    let slice = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request", sessionId: "s1", id: "first", method: "confirm", timeout: 1_000, expiresAt: 2_000,
+    }).slice;
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_request", sessionId: "s1", id: "second", method: "input",
+    }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual(["first", "second"]);
+    expect(slice.extensionUiRequests[0]).toMatchObject({ timeout: 1_000, expiresAt: 2_000 });
+
+    slice = reduce(slice, new Set(), { type: "extension_ui_remove", sessionId: "s1", id: "first", reason: "responded" }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual(["second"]);
+    slice = reduce(slice, new Set(), { type: "agent_settled" }).slice;
+    expect(slice.extensionUiRequests).toEqual([]);
   });
 
   it("dismisses a pending dialog when its runtime stops", () => {
@@ -204,7 +239,7 @@ describe("extension_ui_request mapping", () => {
       method: "confirm",
     }).slice;
     const failed = reduce(pending, new Set(), { type: "runtime_error", error: "crashed" }).slice;
-    expect(failed.extensionUi).toBeNull();
+    expect(failed.extensionUiRequests).toEqual([]);
     expect(failed.runState).toBe("failed");
   });
 
@@ -216,7 +251,7 @@ describe("extension_ui_request mapping", () => {
       message: "Indexed 12 files",
       notifyType: "warning",
     });
-    expect(slice.extensionUi).toBeNull();
+    expect(slice.extensionUiRequests).toEqual([]);
     expect(slice.notices.at(-1)).toMatchObject({ kind: "warning", text: "Indexed 12 files" });
   });
 
@@ -269,6 +304,13 @@ describe("extension_ui_request mapping", () => {
 });
 
 describe("truthful change reporting", () => {
+  it("creates fresh pending queue arrays for every slice", () => {
+    const first = emptyEventSlice();
+    const second = emptyEventSlice();
+    first.queue.steering.push("one");
+    expect(second.queue).toEqual({ steering: [], followUp: [] });
+  });
+
   it("returns the same slice reference and changed=false for unknown events", () => {
     const slice = emptyEventSlice();
     const result = reduce(slice, new Set(), { type: "future_wire_event", data: 1 });
@@ -277,15 +319,86 @@ describe("truthful change reporting", () => {
     expect(result.slice).toBe(slice);
   });
 
-  it("treats a setWidget request (no truthful web surface) as a no-op", () => {
+  it("projects setWidget into the bounded generic extension surface and clears by key", () => {
     const slice = emptyEventSlice();
-    const result = reduce(slice, new Set(), {
+    const shown = reduce(slice, new Set(), {
       type: "extension_ui_request",
       id: "w1",
       method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["one", "two"],
+      extensionPath: "extensions/plan.ts",
+      extensionDisplays: [{
+        id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan", payload: { widgetLines: ["one", "two"] },
+      }],
     });
-    expect(result.changed).toBe(false);
-    expect(result.slice).toBe(slice);
+    expect(shown.changed).toBe(true);
+    expect(shown.slice.extensionDisplays).toEqual([
+      expect.objectContaining({ id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan" }),
+    ]);
+    expect(shown.slice.extensionUiRequests).toEqual([]);
+
+    const bounded = reduce(shown.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "w1",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["unbounded wire value"],
+      extensionDisplays: [{
+        id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan",
+        payload: { truncated: true, preview: "bounded" },
+      }],
+    });
+    expect(bounded.slice.extensionDisplays[0]?.payload).toEqual({ truncated: true, preview: "bounded" });
+
+    const cleared = reduce(bounded.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "w2",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: undefined,
+      extensionDisplays: [],
+    });
+    expect(cleared.slice.extensionDisplays).toEqual([]);
+  });
+
+  it("shows unknown response-bearing methods as unsupported dialogs", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "future-1",
+      method: "chooseFiles",
+      title: "Choose files",
+      paths: ["a", "b"],
+    });
+    expect(result.slice.extensionUiRequests).toEqual([
+      expect.objectContaining({
+        sessionId: "s1",
+        id: "future-1",
+        method: "chooseFiles",
+        unsupported: true,
+      }),
+    ]);
+  });
+
+  it("uses the generic surface for explicitly one-way future display methods", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "display-1",
+      method: "showPanel",
+      responseRequired: false,
+      content: { title: "Build", lines: ["passing"] },
+      extensionDisplays: [{ id: "showPanel:display-1", method: "showPanel", attribution: "Pi extension · display-1", payload: { title: "Build" } }],
+    });
+    expect(result.slice.extensionUiRequests).toEqual([]);
+    expect(result.slice.extensionDisplays[0]).toMatchObject({ method: "showPanel" });
+  });
+
+  it("never reconstructs a generic display from an unprojected raw event", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request", id: "raw", method: "setWidget", widgetKey: "raw", widgetLines: ["secret"],
+    });
+    expect(result.slice.extensionDisplays).toEqual([]);
   });
 
   it("reports changed=true and a fresh slice for state-bearing events", () => {

@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { App } from "../../src/App";
+import { App, composeDocumentTitle, sessionHeading } from "../../src/App";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -16,10 +16,12 @@ import {
 
 let renamedTo: string | null = null;
 let abortCalls = 0;
+let modelFailureGate: Promise<void> | null = null;
 
 beforeAll(async () => {
   renamedTo = null;
   abortCalls = 0;
+  modelFailureGate = null;
   const summary = sessionSummary();
   const older = sessionSummary({ id: "s0", title: "Older work" });
   installFakeWebSocket();
@@ -57,6 +59,12 @@ beforeAll(async () => {
     if (url.startsWith("/api/control/abort")) {
       abortCalls += 1;
       return { body: { ok: true } };
+    }
+    if (url.startsWith("/api/control/model")) {
+      return (modelFailureGate ?? Promise.resolve()).then(() => ({
+        status: 500,
+        body: { error: "model unavailable after selection" },
+      }));
     }
     if (url.startsWith("/api/files/list")) {
       const dir = new URL(url, "http://localhost").searchParams.get("dir") ?? "";
@@ -101,6 +109,17 @@ beforeAll(async () => {
 });
 
 describe("welcome flow", () => {
+  it("presents an unnamed session by its first prompt without turning that prompt into an OS title", () => {
+    expect(sessionHeading("", "The first prompt", [], false)).toBe("The first prompt");
+    expect(sessionHeading("Named by Pi", "The first prompt", [], false)).toBe("Named by Pi");
+    expect(sessionHeading("", "Untitled session", [
+      { role: "assistant", content: "not this" },
+      { role: "user", content: [{ type: "text", text: "  A live\n\nfirst prompt  " }] },
+    ], true)).toBe("A live first prompt");
+    expect(sessionHeading("", undefined, [{ role: "user", content: "later page" }], false)).toBe("New session");
+    expect(composeDocumentTitle(null, "", 0)).toBe("insπre");
+  });
+
   it("lists recent sessions in a collapsible list and opens one into the transcript", async () => {
     render(<App />);
     // welcome page with the real routes
@@ -131,6 +150,42 @@ describe("welcome flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
     expect(await screen.findByRole("heading", { name: "Spectral analysis" })).toBeInTheDocument();
     expect(renamedTo).toBe("Spectral analysis");
+  });
+
+  it("keeps the model trigger focused when a later setModel rejection rerenders the error banner", async () => {
+    let releaseFailure!: () => void;
+    modelFailureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          sessionId: store.getState().sessionId ?? "s1",
+          sessionName: store.getState().sessionName,
+          cwd: store.getState().cwd ?? "/demo",
+          messages: store.getState().messages,
+          model: { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
+          availableModels: [
+            { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet", reasoning: true },
+            { provider: "openai", id: "gpt-5", name: "GPT 5", reasoning: true },
+          ],
+        }),
+      });
+    });
+    render(<App />);
+    const trigger = screen.getByRole("button", { name: "Model" });
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Search models" }));
+    fireEvent.click(screen.getByRole("option", { name: /GPT 5/ }));
+    expect(screen.queryByRole("listbox", { name: "Available models" })).not.toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    releaseFailure();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("model unavailable after selection");
+    expect(document.activeElement).toBe(trigger);
+    modelFailureGate = null;
+    store.dismissError();
   });
 
   it("shows the project location and copies the absolute path on click", async () => {
@@ -212,7 +267,7 @@ describe("welcome flow", () => {
     act(() =>
       ws.emit({ type: "extension_ui_request", sessionId: "s1", id: "e1", method: "select", title: "Pick one", options: ["a", "b"] }),
     );
-    expect(store.getState().extensionUi).not.toBeNull();
+    expect(store.getState().extensionUiRequests).toHaveLength(1);
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(abortCalls).toBe(0);
@@ -221,12 +276,88 @@ describe("welcome flow", () => {
     await act(async () => {
       await store.respondExtensionUi({ id: "e1", value: "a" });
     });
-    expect(store.getState().extensionUi).toBeNull();
+    expect(store.getState().extensionUiRequests).toEqual([]);
     act(() => ws.emit({ type: "agent_settled" }));
     await waitFor(() => expect(store.getState().runState).toBe("idle"));
     act(() => ws.emit({ type: "snapshot", data: { active: null, runState: "idle", sessionStatuses: {} } }));
     fireEvent.click(sessionRowButton(screen.getByRole("navigation", { name: "Sessions" }), "Previous work"));
     await screen.findByText("hello world");
+  });
+
+  it("shows and generically cancels an unsupported response-bearing extension request", async () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    act(() => ws.emit({
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "future-ui",
+      method: "chooseFiles",
+      title: "Choose files",
+      paths: ["a", "b"],
+    }));
+    const dialog = await screen.findByRole("dialog", { name: "Choose files" });
+    expect(within(dialog).getByText(/unsupported interactive method/)).toBeInTheDocument();
+    expect(within(dialog).getByText("chooseFiles")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close and cancel request" }));
+    await waitFor(() => expect(store.getState().extensionUiRequests).toEqual([]));
+  });
+
+  it("deduplicates delayed dialog actions and reveals the next queued request", async () => {
+    const originalFetch = globalThis.fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    let responseCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/extension-ui")) {
+        responseCalls += 1;
+        await gate;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return originalFetch(input, init);
+    }));
+
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    act(() => {
+      ws.emit({ type: "extension_ui_request", sessionId: "s1", id: "first", method: "confirm", title: "First" });
+      ws.emit({ type: "extension_ui_request", sessionId: "s1", id: "second", method: "confirm", title: "Second" });
+    });
+    const first = await screen.findByRole("dialog", { name: "First" });
+    const yes = within(first).getByRole("button", { name: "Yes" });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(responseCalls).toBe(1);
+    expect(yes).toBeDisabled();
+
+    release();
+    expect(await screen.findByRole("dialog", { name: "Second" })).toBeInTheDocument();
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().extensionUiRequests.map((request) => request.id)).toEqual(["second"]);
+    act(() => ws.emit({ type: "agent_settled" }));
+    expect(store.getState().extensionUiRequests).toEqual([]);
+    vi.stubGlobal("fetch", originalFetch);
+  });
+
+  it("keeps conflict recovery abortable on Escape even with a pending extension dialog", async () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    act(() => ws.emit({
+      type: "extension_ui_request", sessionId: "s1", id: "blocked", method: "confirm", title: "Blocked",
+    }));
+    expect(store.getState().extensionUiRequests[0]?.id).toBe("blocked");
+    act(() => ws.emit({
+      type: "session_projection_conflict", sessionId: "s1",
+      conflict: { message: "external writer conflict", revision: 2 },
+      sessionStatus: { runState: "conflict" },
+    }));
+    expect(await screen.findByText("external writer conflict")).toBeInTheDocument();
+    expect(screen.getByText("Conflict")).toBeInTheDocument();
+    const before = abortCalls;
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(abortCalls).toBe(before + 1));
+    expect(store.getState().runState).toBe("conflict");
+    act(() => ws.emit({ type: "snapshot", data: { active: null, runState: "idle", sessionStatuses: {} } }));
   });
 
   it("aborts a busy run on Escape when no overlay owns the key", async () => {
@@ -367,6 +498,8 @@ describe("folder grouping and settings page", () => {
     expect(within(dialog).getByLabelText("Thinking cards")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Tool cards")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "Completion attention" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/permission is requested only when you choose it/i)).toBeInTheDocument();
     // the overlay floats above the conversation instead of replacing it
     expect(screen.getByText("hello world")).toBeInTheDocument();
 

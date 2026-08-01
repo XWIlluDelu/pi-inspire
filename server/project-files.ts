@@ -1,11 +1,8 @@
-import { execFile } from "node:child_process";
 import { opendir } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
-import { promisify } from "node:util";
 import type { ProjectDirEntry } from "../shared/contracts.js";
+import { GIT_CONFIG_ARGS, GitInspectionError, spawnGit } from "./git-runner.js";
 import { escapesBase } from "./paths.js";
-
-const execFileAsync = promisify(execFile);
 const ignored = new Set([".git", "node_modules", "dist", "coverage", ".cache", ".pi-subagents"]);
 const CACHE_MS = 5_000;
 let cache: { cwd: string; expiresAt: number; paths: Promise<string[]> } | null = null;
@@ -16,12 +13,9 @@ export interface ProjectFileResult {
 }
 
 async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: 4_000,
-  });
-  return stdout.split("\0").filter(Boolean);
+  const { stdout } = await spawnGit([...GIT_CONFIG_ARGS, "-C", cwd, ...args], { stdoutLimit: 4 * 1024 * 1024 });
+  // The runner preserves raw NUL-delimited bytes until the indexing boundary.
+  return stdout.toString("utf8").split("\0").filter(Boolean);
 }
 
 async function fromGit(cwd: string): Promise<string[]> {
@@ -43,21 +37,15 @@ async function fromGit(cwd: string): Promise<string[]> {
  * closed instead of widening what the explorer and preview authority see. */
 async function isNonGitDirectory(cwd: string): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024,
-      timeout: 4_000,
-    });
-    return stdout.trim() !== "true";
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { stderr?: unknown };
-    if (failure.code === "ENOENT") return true; // no git binary on this host
-    // "Not a repository" and "directory does not exist" are definite
-    // negatives; a missing directory has nothing to leak either way.
-    return (
-      typeof failure.stderr === "string" &&
-      /not a git repository|cannot change to|no such file or directory/i.test(failure.stderr)
+    const result = await spawnGit(
+      [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--is-inside-work-tree"],
+      { stdoutLimit: 64 * 1024, acceptedExitCodes: [0, 128] },
     );
+    if (result.code === 0) return result.stdout.toString("utf8").trim() !== "true";
+    return /not a git repository|cannot change to|no such file or directory/i.test(result.stderr.toString("utf8"));
+  } catch (error) {
+    if (error instanceof GitInspectionError && error.message === "Git is not available on this host") return true;
+    return false;
   }
 }
 
