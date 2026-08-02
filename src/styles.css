@@ -3910,6 +3910,35 @@ body.pane-resizing .nav {
   overflow-wrap: anywhere;
 }
 
+.dirpicker__roots {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding-block: 1px;
+}
+
+.dirpicker__root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding-inline: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.dirpicker__root:hover {
+  border-color: var(--hairline-strong);
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
 .dirpicker__list {
   display: flex;
   flex-direction: column;

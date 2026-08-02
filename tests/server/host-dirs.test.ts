@@ -1,8 +1,31 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile, realpath } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listHostDirectories } from "../../server/host-dirs.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { listHostDirectories, listHostRoots } from "../../server/host-dirs.js";
+
+describe("listHostRoots", () => {
+  it("returns the single POSIX root without probing drive letters", async () => {
+    const inspect = vi.fn();
+    await expect(listHostRoots("linux", inspect)).resolves.toEqual({ roots: [{ name: "/", path: "/" }] });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("discovers readable Windows drive roots in drive-letter order", async () => {
+    const inspect = vi.fn(async (path: string) => {
+      if (path === "C:\\" || path === "D:\\") return { isDirectory: () => true };
+      throw Object.assign(new Error("unavailable drive"), { code: "ENOENT" });
+    });
+
+    await expect(listHostRoots("win32", inspect)).resolves.toEqual({
+      roots: [
+        { name: "C:", path: "C:\\" },
+        { name: "D:", path: "D:\\" },
+      ],
+    });
+    expect(inspect).toHaveBeenCalledTimes(26);
+  });
+});
 
 describe("listHostDirectories", () => {
   let root: string;

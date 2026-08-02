@@ -17,6 +17,7 @@ import {
   type GitFileChange,
   type GitStatusResponse,
   type HostDirListing,
+  type HostRootsResponse,
   type InspirePreferences,
   type LaunchPreference,
   type ModelIdentity,
@@ -1938,6 +1939,12 @@ export class AppStore {
     } catch {
       return [];
     }
+  };
+
+  /** Filesystem roots for cross-volume navigation in the host picker. */
+  browseHostRoots = async (): Promise<HostRootsResponse> => {
+    if (!this.api) throw new Error("Not connected to the insπre host");
+    return this.api.browseHostRoots();
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
