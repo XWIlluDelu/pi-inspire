@@ -353,6 +353,7 @@ warning capsule surface.
 ### Transcript
 
 - **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. Its empty, unfocused idle state rests at 62% opacity without a shadow; hover, focus-within (including the scope menu), or a nonempty query restores full opacity and the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
+- **Earlier history** — approaching the transcript top loads the next page without a normal-state control. A quiet centered status appears only while loading; failure replaces it with a compact retry action and pauses automatic loading until the user retries. Prepending history preserves the visible reading position.
 - **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra

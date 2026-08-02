@@ -575,6 +575,41 @@ describe("transcript paging", () => {
     expect(store.getState().messages.map((message) => message.timestamp)).toEqual([1, 2]);
     expect(store.getState().hasOlderMessages).toBe(false);
     expect(store.getState().olderMessagesCursor).toBeNull();
+    expect(store.getState().olderMessagesError).toBeNull();
+  });
+
+  it("keeps a failed automatic page local to the transcript and clears it on retry", async () => {
+    let attempts = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ snapshot: activeSnapshot({
+          transcriptPage: {
+            sessionId: "s1", revision: 4,
+            messages: [{ role: "user", content: "new", timestamp: 2 }],
+            hasOlder: true, olderCursor: "cursor-1",
+          },
+        }) }) };
+      }
+      if (url.startsWith("/api/transcript/older")) {
+        attempts += 1;
+        if (attempts === 1) return { status: 503, body: { error: "temporarily unavailable" } };
+        return { body: {
+          sessionId: "s1", revision: 4,
+          messages: [{ role: "user", content: "old", timestamp: 1 }],
+          hasOlder: false, olderCursor: null,
+        } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    expect(await store.loadOlderMessages()).toBe(false);
+    expect(store.getState().olderMessagesError).toBe("temporarily unavailable");
+    expect(store.getState().error).toBeNull();
+
+    expect(await store.loadOlderMessages()).toBe(true);
+    expect(store.getState().olderMessagesError).toBeNull();
+    expect(store.getState().messages.map((message) => message.timestamp)).toEqual([1, 2]);
   });
 
   it("discards a delayed older page from branch A after same-session switch to branch B", async () => {
@@ -648,6 +683,17 @@ describe("transcript paging", () => {
     });
     const { store, socket } = await initStore();
     await store.loadOlderMessages();
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new"]);
+
+    // Worker warm-up can publish the same authoritative latest page after an
+    // older page lands. It must not discard history from the identical view.
+    socket.emit({ type: "snapshot", data: activeSnapshot({
+      transcriptPage: {
+        sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+        messages: [{ role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" }],
+        hasOlder: true, olderCursor: "cursor-1",
+      },
+    }) });
     expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new"]);
 
     socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 5, sessionStatus: { runState: "idle" } });

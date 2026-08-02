@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 
@@ -28,13 +28,29 @@ describe("Transcript older-page anchor", () => {
     expect(transcript.scrollTop).toBe(200);
   });
 
-  it("preserves the visible scroll anchor when older rows are prepended", async () => {
+  it("loads near the top without a button and preserves the visible anchor", async () => {
     let release!: () => void;
     const loading = new Promise<void>((resolve) => { release = resolve; });
+    let observed: Element | null = null;
+    let intersectionCallback: IntersectionObserverCallback | null = null;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(callback: IntersectionObserverCallback) { intersectionCallback = callback; }
+      observe(target: Element) { observed = target; }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() { return []; }
+      readonly root = null;
+      readonly rootMargin = "320px 0px 0px";
+      readonly thresholds = [0];
+    });
     let height = 200;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
+    });
+    const onLoadOlder = vi.fn(async () => {
+      await loading;
+      return true;
     });
     const { container } = render(
       <Transcript
@@ -43,17 +59,42 @@ describe("Transcript older-page anchor", () => {
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
         hasOlder
-        onLoadOlder={() => loading}
+        onLoadOlder={onLoadOlder}
       />,
     );
     const transcript = container.querySelector(".transcript") as HTMLDivElement;
     Object.defineProperty(transcript, "scrollHeight", { configurable: true, get: () => height });
     transcript.scrollTop = 40;
 
-    fireEvent.click(screen.getByRole("button", { name: "Load older messages" }));
+    expect(screen.queryByRole("button", { name: "Load older messages" })).not.toBeInTheDocument();
+    expect(observed).not.toBeNull();
+    act(() => {
+      const entries = [{ target: observed!, isIntersecting: true } as IntersectionObserverEntry];
+      intersectionCallback?.(entries, {} as IntersectionObserver);
+      intersectionCallback?.(entries, {} as IntersectionObserver);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
     height = 500;
     release();
     await waitFor(() => expect(transcript.scrollTop).toBe(340));
     vi.unstubAllGlobals();
+  });
+
+  it("shows an explicit retry only after automatic loading fails", () => {
+    const onLoadOlder = vi.fn(async () => false);
+    render(
+      <Transcript
+        messages={[{ role: "user", content: "newest", timestamp: 2 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        hasOlder
+        olderError="network unavailable"
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading earlier messages" }));
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
   });
 });
