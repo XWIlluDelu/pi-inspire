@@ -315,7 +315,10 @@ warning capsule surface.
 - **Topbar actions** — nav toggle at the left; command palette, settings
   (opens the settings overlay), and context-pane toggle at the right. There
   is no compact button: users type `/compact [instructions]`, which the
-  host routes to Pi's RPC compact command.
+  host routes to Pi's RPC compact command. Below 900px, the open navigation
+  drawer begins beneath the 48px center topbar, so this one toggle remains
+  above it and hit-testable by pointer, touch, and keyboard; no second close
+  control or navigation state is introduced.
 - **Context modes** — the right pane keeps Files, Changes, and Branches in one
   compact mode switch rather than adding another workbench column. Branches
   uses a bounded, vertically scrollable entry tree: role chips and one-line

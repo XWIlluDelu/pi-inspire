@@ -96,12 +96,29 @@ interface ResourceContentOptions {
   signal?: AbortSignal;
 }
 
+export interface ResourceContentResponse {
+  blob: Blob;
+  /** Current total bytes reported by this transfer, not resolve metadata. */
+  totalSize: number;
+}
+
+function contentTotalSize(response: Response, blob: Blob): number {
+  const contentRange = response.headers.get("Content-Range");
+  if (!contentRange) return blob.size;
+  const match = /^bytes\s+\d+-\d+\/(\d+)$/.exec(contentRange);
+  const total = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new ApiError(502, "The resource response has an invalid total size");
+  }
+  return total;
+}
+
 async function fetchResourceContent(
   token: string,
   id: string,
   sessionId: string,
   options: ResourceContentOptions = {},
-): Promise<Blob> {
+): Promise<ResourceContentResponse> {
   const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
     signal: options.signal,
     headers: {
@@ -110,7 +127,8 @@ async function fetchResourceContent(
     },
   });
   await ensureOk(response);
-  return response.blob();
+  const blob = await response.blob();
+  return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
 async function uploadFiles(token: string, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {

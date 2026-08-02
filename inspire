@@ -19,6 +19,8 @@ instance_port=""
 state_path=""
 lock_path=""
 stop_request_path=""
+launcher_lock_fd=""
+launcher_lock_owned=0
 
 need_node() {
   if ! command -v node >/dev/null 2>&1; then
@@ -144,27 +146,57 @@ show_existing() {
   esac
 }
 
-acquire_instance_lock() {
+open_instance_lock() {
   if ! command -v flock >/dev/null 2>&1; then
     echo "flock is required for safe single-instance startup." >&2
     return 1
   fi
-  local old_umask url
+  if [[ -n "$launcher_lock_fd" ]]; then return 0; fi
+  local old_umask fd
   old_umask="$(umask)"
   umask 077
-  exec 9>>"$lock_path"
+  exec {fd}>>"$lock_path"
   umask "$old_umask"
+  launcher_lock_fd="$fd"
+}
+
+release_instance_lock() {
+  if [[ -z "$launcher_lock_fd" ]]; then return 0; fi
+  local fd="$launcher_lock_fd"
+  if [[ "$launcher_lock_owned" == "1" ]]; then
+    flock -u "$fd" || true
+  fi
+  exec {launcher_lock_fd}>&-
+  launcher_lock_fd=""
+  launcher_lock_owned=0
+}
+
+try_acquire_instance_lock() {
+  open_instance_lock || return 1
+  if [[ "$launcher_lock_owned" == "1" ]]; then return 0; fi
+  if flock -n "$launcher_lock_fd"; then
+    launcher_lock_owned=1
+    return 0
+  fi
+  return 1
+}
+
+acquire_instance_lock() {
+  local mock="$1" detect_existing="${2:-1}" url
+  try_acquire_instance_lock && return 0
   for _ in {1..75}; do
-    if flock -n 9; then return 0; fi
-    if url="$(inspect_instance "$1" 2>/dev/null)"; then
+    if try_acquire_instance_lock; then return 0; fi
+    if [[ "$detect_existing" == "1" ]] && url="$(inspect_instance "$mock" 2>/dev/null)"; then
       echo "insπre is already running."
       echo "$url"
       if [[ "${INSPIRE_OPEN:-1}" == "1" ]]; then open_url "$url"; fi
+      release_instance_lock
       return 2
     fi
     sleep 0.2
   done
   echo "Another insπre launcher is still starting or stopping this instance." >&2
+  release_instance_lock
   return 1
 }
 
@@ -185,8 +217,11 @@ run_host() {
   export INSPIRE_OPEN="${INSPIRE_OPEN:-1}"
   init_instance
 
-  if show_existing "$mock"; then return 0; else
-    [[ "$?" == "3" ]] || return 1
+  if show_existing "$mock"; then
+    release_instance_lock
+    return 0
+  else
+    [[ "$?" == "3" ]] || { release_instance_lock; return 1; }
   fi
 
   if acquire_instance_lock "$mock"; then
@@ -199,15 +234,28 @@ run_host() {
 
   # Recheck after taking the startup lock: another launcher may have completed
   # between the first inspection and lock acquisition.
-  if show_existing "$mock"; then return 0; else
-    [[ "$?" == "3" ]] || return 1
+  if show_existing "$mock"; then
+    release_instance_lock
+    return 0
+  else
+    [[ "$?" == "3" ]] || { release_instance_lock; return 1; }
   fi
-  require_free_port
-  ensure_deps
-  ensure_build
+  if ! require_free_port; then
+    release_instance_lock
+    return 1
+  fi
+  if ! ensure_deps; then
+    release_instance_lock
+    return 1
+  fi
+  if ! ensure_build; then
+    release_instance_lock
+    return 1
+  fi
   if [[ -e "$stop_request_path" ]]; then
     rm -f "$stop_request_path"
     echo "insπre startup was cancelled by a concurrent stop request."
+    release_instance_lock
     return 0
   fi
 
@@ -219,38 +267,63 @@ run_host() {
   exec npx --no-install tsx server/index.ts
 }
 
+finish_stop() {
+  local code="$1" retain_lock="${2:-0}"
+  # A standalone stop must not leave an unneeded lifetime lock open. A
+  # restart keeps a successfully acquired lock so its start uses the same
+  # ownership scope; failures release it before returning as well.
+  if [[ "$retain_lock" != "1" || "$code" != "0" ]]; then
+    release_instance_lock
+  fi
+  return "$code"
+}
+
 stop_host() {
+  local retain_lock="${1:-0}" code
   need_node
   if ! command -v flock >/dev/null 2>&1; then
     echo "flock is required for safe instance shutdown." >&2
     return 1
   fi
   init_instance
-  local code old_umask
   if node "$root/server/instance-state.mjs" stop \
     "$state_path" "$root" "$instance_host" "$instance_port"; then
-    return 0
+    if [[ "$retain_lock" == "1" ]] && ! acquire_instance_lock 0 0; then
+      echo "Unable to retain the insπre launcher lock for restart." >&2
+      return 1
+    fi
+    finish_stop 0 "$retain_lock"
+    return $?
   else
     code=$?
   fi
   case "$code" in
-    4) echo "The managed process could not be stopped." >&2; return 1 ;;
-    6) echo "Timed out waiting for insπre to stop; it was not force-killed." >&2; return 1 ;;
+    4)
+      echo "The managed process could not be stopped." >&2
+      finish_stop 1 "$retain_lock"
+      return $?
+      ;;
+    6)
+      echo "Timed out waiting for insπre to stop; it was not force-killed." >&2
+      finish_stop 1 "$retain_lock"
+      return $?
+      ;;
     3) ;;
-    *) echo "Unable to stop the managed insπre instance." >&2; return 1 ;;
+    *)
+      echo "Unable to stop the managed insπre instance." >&2
+      finish_stop 1 "$retain_lock"
+      return $?
+      ;;
   esac
 
   # No state may simply mean a launcher is still installing or building. If
   # its lifetime lock is held, publish a private cancellation request and
   # wait until that launcher either exits or publishes a stoppable process.
-  old_umask="$(umask)"
-  umask 077
-  exec 8>>"$lock_path"
-  umask "$old_umask"
-  if flock -n 8; then
+  if try_acquire_instance_lock; then
     rm -f "$stop_request_path"
     echo "No managed insπre instance is running."
-    return 0
+    finish_stop 0 "$retain_lock"
+    return $?
   fi
   printf '%s\n' "stop requested at $(date -u +%FT%TZ)" > "$stop_request_path"
   for _ in {1..300}; do
@@ -258,25 +331,34 @@ stop_host() {
       "$state_path" "$root" "$instance_host" "$instance_port" >/dev/null 2>&1; then
       rm -f "$stop_request_path"
       echo "Stopped the insπre instance that was starting."
-      return 0
+      if [[ "$retain_lock" == "1" ]] && ! acquire_instance_lock 0 0; then
+        echo "Unable to retain the insπre launcher lock for restart." >&2
+        finish_stop 1 "$retain_lock"
+        return $?
+      fi
+      finish_stop 0 "$retain_lock"
+      return $?
     else
       code=$?
     fi
     if [[ "$code" != "3" ]]; then
       rm -f "$stop_request_path"
       echo "Unable to stop the insπre instance that was starting." >&2
-      return 1
+      finish_stop 1 "$retain_lock"
+      return $?
     fi
-    if flock -n 8; then
+    if try_acquire_instance_lock; then
       rm -f "$stop_request_path"
       echo "Cancelled the pending insπre startup."
-      return 0
+      finish_stop 0 "$retain_lock"
+      return $?
     fi
     sleep 0.1
   done
   rm -f "$stop_request_path"
   echo "Timed out waiting for the pending insπre startup; it was not force-killed." >&2
-  return 1
+  finish_stop 1 "$retain_lock"
+  return $?
 }
 
 status_host() {
@@ -312,7 +394,7 @@ case "$mode" in
     run_host 0
     ;;
   restart)
-    stop_host
+    stop_host 1
     run_host 0
     ;;
   stop)

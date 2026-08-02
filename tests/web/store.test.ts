@@ -863,7 +863,7 @@ describe("thinking level control", () => {
 describe("session switching guard", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("ignores duplicate selections while a switch is pending and no-ops on the active session", async () => {
+  it("allows a newer selection to supersede a pending switch without stale cleanup", async () => {
     installFetch(baseRoutes);
     const store = new AppStore();
     await store.init("token");
@@ -871,18 +871,20 @@ describe("session switching guard", () => {
     expect(store.getState().sessionId).toBe("s1");
 
     let openCalls = 0;
-    let releaseOpen!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releaseOpen = resolve;
-    });
+    const releases: Record<string, () => void> = {};
+    const gates: Record<string, Promise<void>> = {};
+    for (const id of ["s2", "s3"]) {
+      gates[id] = new Promise<void>((resolve) => { releases[id] = resolve; });
+    }
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: unknown) => {
+      vi.fn(async (input: unknown, init?: RequestInit) => {
         const url = String(input);
         if (url.startsWith("/api/sessions/open")) {
           openCalls += 1;
-          await gate;
-          return new Response(JSON.stringify(activeSnapshot({ sessionId: "s2", cwd: "/other" })), {
+          const id = (JSON.parse(String(init?.body ?? "{}")) as { id: string }).id;
+          await gates[id]!;
+          return new Response(JSON.stringify(activeSnapshot({ sessionId: id, cwd: `/${id}` })), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
@@ -892,20 +894,25 @@ describe("session switching guard", () => {
     );
 
     const first = store.openSession("s2");
-    // the pending switch is visible synchronously so rows can show it
     expect(store.getState().openingSessionId).toBe("s2");
-    await store.openSession("s3"); // conflicting selection ignored
-    await store.openSession("s2"); // duplicate of the pending target ignored
-    expect(openCalls).toBe(1);
+    const second = store.openSession("s3");
+    expect(store.getState().openingSessionId).toBe("s3");
+    expect(openCalls).toBe(2);
 
-    releaseOpen();
+    releases.s2!();
     await first;
+    // The stale first finally cannot clear the newer opener.
+    expect(store.getState().openingSessionId).toBe("s3");
+    expect(store.getState().sessionId).toBe("s1");
+
+    releases.s3!();
+    await second;
     expect(store.getState().openingSessionId).toBeNull();
-    expect(store.getState().sessionId).toBe("s2");
+    expect(store.getState().sessionId).toBe("s3");
     expect(store.getState().error).toBeNull();
 
-    await store.openSession("s2"); // already active: no-op
-    expect(openCalls).toBe(1);
+    await store.openSession("s3"); // already active: no-op
+    expect(openCalls).toBe(2);
   });
 
   it("clears the pending state and surfaces the error when the open fails", async () => {
@@ -1244,14 +1251,17 @@ describe("resource previews", () => {
     };
   }
 
-  function stubContent(text: string): void {
+  function stubContent(text: string, headers: Record<string, string> = {}): void {
     const inner = globalThis.fetch;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown, init?: RequestInit) => {
         const url = String(input);
         if (url.includes("/api/resources/") && url.includes("/content")) {
-          return new Response(text, { status: 200, headers: { "Content-Type": "text/markdown" } });
+          return new Response(text, {
+            status: 200,
+            headers: { "Content-Type": "text/markdown", ...headers },
+          });
         }
         return (inner as typeof fetch)(input as RequestInfo | URL, init);
       }),
@@ -1310,11 +1320,67 @@ describe("resource previews", () => {
 
   it("marks the preview truncated only when the body is shorter than the file", async () => {
     installFetch(resourceRoutes());
-    stubContent("# Notes bo"); // 10 of the descriptor's 12 bytes arrived
+    stubContent("# Notes bo", { "Content-Range": "bytes 0-9/12" }); // 10 of the current 12 bytes arrived
     const { store } = await initStore();
 
     await store.openResource("notes/result.md");
     expect(store.getState().resourcePreview).toMatchObject({ status: "ready", truncated: true });
+  });
+
+  it("uses the transfer total for grown and shrunk files instead of resolve metadata", async () => {
+    const resolveRoutes = resourceRoutes();
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        const body = jsonBody(init) as { reference: string };
+        return {
+          body: {
+            id: body.reference,
+            sessionId: "s1",
+            reference: body.reference,
+            name: body.reference,
+            mimeType: "text/markdown",
+            size: 12,
+            kind: "markdown",
+          },
+        };
+      }
+      return resolveRoutes(url, init);
+    });
+    const inner = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/resources/grown.md/content")) {
+          return new Response("grown", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-4/20", "Content-Type": "text/markdown" },
+          });
+        }
+        if (url.includes("/api/resources/shrunk.md/content")) {
+          return new Response("tiny", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-3/4", "Content-Type": "text/markdown" },
+          });
+        }
+        return (inner as typeof fetch)(input as RequestInfo | URL, init);
+      }),
+    );
+    const { store } = await initStore();
+
+    await store.openResource("grown.md");
+    expect(store.getState().resourcePreview).toMatchObject({
+      status: "ready",
+      truncated: true,
+      descriptor: { size: 20 },
+    });
+
+    await store.openResource("shrunk.md");
+    expect(store.getState().resourcePreview).toMatchObject({
+      status: "ready",
+      truncated: false,
+      descriptor: { size: 4 },
+    });
   });
 
   it("withholds oversized media without starting a content transfer", async () => {
@@ -1746,6 +1812,64 @@ describe("composer session partitions", () => {
   });
 });
 
+describe("prompt result ownership", () => {
+  beforeEach(() => installFakeWebSocket());
+
+  it("does not clear another session's visible error after a delayed success", async () => {
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/prompt")) {
+        await promptGate;
+        return { status: 202, body: { accepted: true } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+
+    const sending = store.sendPrompt("from A");
+    socket.emit({ type: "snapshot", data: activeSnapshot({ sessionId: "s2", sessionName: "B" }) });
+    socket.emit({
+      type: "session_projection_conflict",
+      sessionId: "s2",
+      conflict: { message: "B's visible error", revision: 2 },
+      sessionStatus: { runState: "conflict" },
+    });
+    releasePrompt();
+
+    await expect(sending).resolves.toBe(true);
+    expect(store.getState().sessionId).toBe("s2");
+    expect(store.getState().error).toBe("B's visible error");
+  });
+
+  it("does not replace another session's visible error after a delayed failure", async () => {
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/prompt")) {
+        await promptGate;
+        return { status: 500, body: { error: "A failed" } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+
+    const sending = store.sendPrompt("from A");
+    socket.emit({ type: "snapshot", data: activeSnapshot({ sessionId: "s2", sessionName: "B" }) });
+    socket.emit({
+      type: "session_projection_conflict",
+      sessionId: "s2",
+      conflict: { message: "B's visible error", revision: 2 },
+      sessionStatus: { runState: "conflict" },
+    });
+    releasePrompt();
+
+    await expect(sending).resolves.toBe(false);
+    expect(store.getState().sessionId).toBe("s2");
+    expect(store.getState().error).toBe("B's visible error");
+  });
+});
+
 describe("async completion ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
@@ -1785,8 +1909,10 @@ describe("async completion ownership", () => {
   it("a delayed rename response cannot retitle a different session", async () => {
     let releaseRename!: () => void;
     const renameGate = new Promise<void>((resolve) => (releaseRename = resolve));
+    let renameBody: Record<string, unknown> | null = null;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/sessions/rename")) {
+        renameBody = jsonBody(init);
         await renameGate;
         return { body: { ok: true } };
       }
@@ -1794,10 +1920,11 @@ describe("async completion ownership", () => {
     });
     const { store, socket } = await initStore();
 
-    const renaming = store.renameSession("Renamed A");
+    const renaming = store.renameSession("s1", "Renamed A");
     socket.emit({ type: "snapshot", data: activeSnapshot({ sessionId: "s2", sessionName: "Session B" }) });
     releaseRename();
     await expect(renaming).resolves.toBe(true);
+    expect(renameBody).toEqual({ sessionId: "s1", name: "Renamed A" });
     // The rename belonged to s1; the visible title of s2 stays truthful.
     expect(store.getState().sessionName).toBe("Session B");
   });
@@ -1829,6 +1956,33 @@ describe("selection race ownership", () => {
     await opening;
     // The stale open response is discarded; the newer selection stands.
     expect(store.getState().sessionId).toBe("s-B");
+  });
+
+  it("a successful new session clears the superseded opener", async () => {
+    let releaseOpen!: () => void;
+    const openGate = new Promise<void>((resolveGate) => { releaseOpen = resolveGate; });
+    installFetch(async (url) => {
+      if (url.startsWith("/api/sessions/open")) {
+        await openGate;
+        return { body: activeSnapshot({ sessionId: "s-A", sessionName: "A" }) };
+      }
+      if (url.startsWith("/api/sessions/new")) {
+        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
+      }
+      return baseRoutes(url, {});
+    });
+    const { store } = await initStore();
+
+    const opening = store.openSession("s-A");
+    expect(store.getState().openingSessionId).toBe("s-A");
+    await store.newSession("/proj", "B");
+    expect(store.getState().sessionId).toBe("s-B");
+    expect(store.getState().openingSessionId).toBeNull();
+
+    releaseOpen();
+    await opening;
+    expect(store.getState().sessionId).toBe("s-B");
+    expect(store.getState().openingSessionId).toBeNull();
   });
 
   it("an authoritative push invalidates an in-flight open response", async () => {

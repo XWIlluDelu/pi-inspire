@@ -21,6 +21,7 @@ import {
 import { formatBytes } from "../format";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import {
+  isAbortableRunState,
   isBusyRunState,
   store,
   THINKING_LEVELS,
@@ -250,6 +251,10 @@ export function Composer() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const busy = isBusyRunState(state.runState);
+  // Conflict recovery keeps the existing steer-shaped keyboard path, but it
+  // is not part of the host's active/queued busy ownership set.
+  const composerBusy = busy || state.runState === "conflict";
+  const abortable = isAbortableRunState(state.runState);
 
   const updateDraft = (text: string) => {
     setDraft(text);
@@ -418,8 +423,8 @@ export function Composer() {
     }
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    if (busy && (event.ctrlKey || event.metaKey)) void submit("followUp");
-    else void submit(busy ? "steer" : undefined);
+    if (composerBusy && (event.ctrlKey || event.metaKey)) void submit("followUp");
+    else void submit(composerBusy ? "steer" : undefined);
   };
 
   const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -440,7 +445,7 @@ export function Composer() {
       aria-label="Message composer"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(busy ? "steer" : undefined);
+        void submit(composerBusy ? "steer" : undefined);
       }}
       onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
       onDragLeave={() => setDropActive(false)}
@@ -503,7 +508,7 @@ export function Composer() {
           aria-activedescendant={completion && completionItems[activeIndex] ? `${completionId}-option-${activeIndex}` : undefined}
           rows={1}
           value={draft}
-          placeholder={busy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
+          placeholder={composerBusy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
           onChange={(event) => {
             updateDraft(event.target.value);
             updateCompletion(event.target.value, event.target.selectionStart);
@@ -556,7 +561,7 @@ export function Composer() {
         />
         <span className="composer__spacer" />
         <ContextMeter />
-        {busy ? (
+        {abortable ? (
           <button type="button" className="composer__send composer__send--abort" onClick={() => void store.abort()} aria-label="Abort running task" title="Abort">
             <Square size={14} aria-hidden />
           </button>

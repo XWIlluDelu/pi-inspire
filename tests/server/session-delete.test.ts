@@ -94,40 +94,45 @@ describe("session file deletion", () => {
     });
   });
 
-  it("refuses to unlink the session after a concurrent append on the same inode", async () => {
+  it("refuses to unlink the session after a concurrent append on the quarantined inode", async () => {
     const { path, session } = await fixture();
+    let quarantine: string | undefined;
 
-    await expect(deleteSessionFile(session, async () => {
-      await appendFile(path, `${JSON.stringify({ type: "message", id: "late-write" })}\n`);
+    await expect(deleteSessionFile(session, async (candidate) => {
+      quarantine = candidate;
+      await appendFile(candidate, `${JSON.stringify({ type: "message", id: "late-write" })}\n`);
       throw new Error("trash failed");
     })).rejects.toMatchObject({
       message: "The session file changed before permanent deletion",
       status: 409,
     });
-    expect(await readFile(path, "utf8")).toContain("late-write");
+    expect(quarantine).toBeDefined();
+    expect(await readFile(quarantine!, "utf8")).toContain("late-write");
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("refuses to unlink a replacement inode after Trash fails", async () => {
+  it("keeps a public replacement when Trash moves the original and reports failure", async () => {
     const { dir, path, session } = await fixture();
 
-    await expect(deleteSessionFile(session, async () => {
-      await unlink(path);
+    await expect(deleteSessionFile(session, async (candidate) => {
+      await unlink(candidate);
       await writeFile(path, `${JSON.stringify({ type: "session", version: 3, id: session.id, cwd: dir })}\nreplacement\n`);
       throw new Error("trash failed");
-    })).rejects.toMatchObject({
-      message: "The session file changed before permanent deletion",
-      status: 409,
-    });
+    })).resolves.toBe("trashed");
     expect(await readFile(path, "utf8")).toContain("replacement");
   });
 
-  it("rejects a successful Trash command that leaves the source in place", async () => {
+  it("rejects a successful Trash command that leaves the quarantine in place", async () => {
     const { path, session } = await fixture();
+    let quarantine: string | undefined;
 
-    await expect(deleteSessionFile(session, async () => undefined)).rejects.toMatchObject({
+    await expect(deleteSessionFile(session, async (candidate) => {
+      quarantine = candidate;
+    })).rejects.toMatchObject({
       message: "The Trash command did not remove the session file",
       status: 502,
     });
-    expect(await readFile(path, "utf8")).toContain('"id":"session-a"');
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(quarantine!, "utf8")).toContain('"id":"session-a"');
   });
 });

@@ -702,6 +702,48 @@ describe("local host API", () => {
       .expect(409);
   });
 
+  it("uses the current resource size after resolve when a file grows or shrinks", async () => {
+    const resourcePath = join(temporary, "changing.md");
+    await writeFile(resourcePath, "old\n");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, message: "Open [changing](changing.md)." })
+      .expect(202);
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "changing.md" })
+      .expect(200);
+    expect(resolved.body.size).toBe(4);
+
+    const grown = "grown-content\n";
+    await writeFile(resourcePath, grown);
+    const grownResponse = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("Range", "bytes=0-262143")
+      .expect(206);
+    expect(grownResponse.headers["content-range"]).toBe(`bytes 0-${grown.length - 1}/${grown.length}`);
+    expect(grownResponse.text).toBe(grown);
+
+    const shrunk = "new\n";
+    await writeFile(resourcePath, shrunk);
+    const shrunkResponse = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("Range", "bytes=0-262143")
+      .expect(206);
+    expect(shrunkResponse.headers["content-range"]).toBe(`bytes 0-${shrunk.length - 1}/${shrunk.length}`);
+    expect(shrunkResponse.text).toBe(shrunk);
+  });
+
   it("closes an opened file when the client aborts during authorization", async () => {
     await writeFile(join(temporary, "slow.md"), "slow preview\n");
     const openedSession = await request(application.server)

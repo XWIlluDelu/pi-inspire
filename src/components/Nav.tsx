@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
+  isBusyRunState,
   projectNameFromCwd,
   type InspirePreferences,
   type ProjectDirEntry,
@@ -255,9 +256,7 @@ function SessionRow({
   const runtimeStatus = state.sessionStatuses[session.id];
   const indicator = runtimeStatus?.indicator;
   const conflicted = runtimeStatus?.runState === "conflict";
-  const busy = runtimeStatus
-    ? ["running", "retrying", "compacting", "queued"].includes(runtimeStatus.runState)
-    : false;
+  const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
   const deleteDisabled = active || opening || busy || conflicted || state.deletingSessionId !== null;
   const deleteTitle = active
     ? "Switch to another session before deleting"
@@ -279,7 +278,7 @@ function SessionRow({
         type="button"
         className="nav__row-main"
         onClick={() => onSelect(session.id)}
-        disabled={state.openingSessionId !== null}
+        disabled={opening}
         aria-busy={opening}
         title={`${title} · ${session.messageCount} messages`}
       >

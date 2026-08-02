@@ -4180,13 +4180,14 @@ body.srail-dragging {
   .nav {
     position: absolute;
     left: 0;
-    top: 0;
+    top: var(--topbar-h);
     bottom: 0;
     z-index: 30;
     box-shadow: var(--shadow-2);
   }
 
-  /* The nav floats as an overlay here; edge-resize no longer applies. */
+  /* Keep the center topbar (including its sole navigation toggle) above the
+     drawer so the same control remains reachable to pointer and keyboard. */
   .pane-resize--nav {
     display: none;
   }

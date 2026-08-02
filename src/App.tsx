@@ -27,7 +27,7 @@ import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { Wordmark } from "./components/Wordmark";
-import { isBusyRunState, messageText, store, type ChatMessage, useAppState } from "./store";
+import { isAbortableRunState, messageText, store, type ChatMessage, useAppState } from "./store";
 import { useCopied } from "./use-copied";
 
 // Vite replaces MODE at build time. The production false branches are folded
@@ -124,9 +124,19 @@ function StateChip({ runState }: { runState: RunState }) {
 
 function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boolean }) {
   const state = useAppState();
-  const [editing, setEditing] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const { copied, copy } = useCopied();
+  const editing = editingSessionId !== null && editingSessionId === state.sessionId;
+
+  useEffect(() => {
+    // The editor belongs to the session whose heading opened it. Switching
+    // sessions cancels that local editor before a submit can retarget it.
+    if (editingSessionId !== null && editingSessionId !== state.sessionId) {
+      setEditingSessionId(null);
+      setValue("");
+    }
+  }, [editingSessionId, state.sessionId]);
 
   if (editing) {
     return (
@@ -134,8 +144,15 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
         className="topbar__rename"
         onSubmit={(event) => {
           event.preventDefault();
-          void store.renameSession(value).then((ok) => {
-            if (ok) setEditing(false);
+          const owner = editingSessionId;
+          if (!owner || store.getState().sessionId !== owner) {
+            setEditingSessionId(null);
+            return;
+          }
+          void store.renameSession(owner, value).then((ok) => {
+            if (ok && editingSessionId === owner && store.getState().sessionId === owner) {
+              setEditingSessionId(null);
+            }
           });
         }}
       >
@@ -147,7 +164,7 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault(); // leaving rename must not trigger the global Escape abort
-              setEditing(false);
+              setEditingSessionId(null);
             }
           }}
         />
@@ -186,7 +203,7 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
             // The first-prompt heading is presentation only; rename starts
             // empty unless Pi already owns an explicit session name.
             setValue(state.sessionName);
-            setEditing(true);
+            setEditingSessionId(state.sessionId);
           }}
         >
           {heading}
@@ -345,7 +362,7 @@ export function App() {
         !event.defaultPrevented &&
         !paletteOpen &&
         (state.extensionUiRequests.length === 0 || state.runState === "conflict") &&
-        isBusyRunState(state.runState)
+        isAbortableRunState(state.runState)
       ) {
         void store.abort();
       }
