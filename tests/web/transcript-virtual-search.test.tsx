@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -48,10 +48,15 @@ describe("virtualized transcript search navigation", () => {
         content: index === 55 ? "anchored target" : `settled row ${index}`,
         timestamp: index + 10,
       })));
-      const [hasOlder, setHasOlder] = useState(true);
       const [streaming, setStreaming] = useState(false);
       return (
         <>
+          <button type="button" onClick={() => {
+            setMessages((current) => [
+              ...Array.from({ length: 5 }, (_, index) => ({ role: "user", content: `older ${index}`, timestamp: index })),
+              ...current,
+            ]);
+          }}>Prepend older</button>
           <button type="button" onClick={() => {
             setMessages((current) => [...current, {
               role: "assistant",
@@ -68,22 +73,13 @@ describe("virtualized transcript search navigation", () => {
             streaming={streaming}
             thinkingVisibility="collapsed"
             toolVisibility="collapsed"
-            hasOlder={hasOlder}
-            onLoadOlder={async () => {
-              setMessages((current) => [
-                ...Array.from({ length: 5 }, (_, index) => ({ role: "user", content: `older ${index}`, timestamp: index })),
-                ...current,
-              ]);
-              setHasOlder(false);
-            }}
           />
         </>
       );
     }
 
     render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: "Load older messages" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Load older messages" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Prepend older" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search conversation" }), { target: { value: "anchored" } });
     fireEvent.click(screen.getByRole("button", { name: "Next transcript match" }));
     expect(virtual.scrollToIndex).toHaveBeenLastCalledWith(60, { align: "center" });
