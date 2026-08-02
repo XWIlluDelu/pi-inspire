@@ -9,7 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GenericExtensionDisplay, PendingQueues, VisibilityPreference } from "../../shared/contracts";
 import { isLocalResourceReference, isToolResourceArgumentKey } from "../../shared/resource-references";
 import {
@@ -454,6 +454,31 @@ export function findLiteralMatches(text: string, query: string, rowIndex: number
 // tests and screen-reader browsing straightforward).
 const VIRTUALIZE_AT = 60;
 
+interface TranscriptScrollAnchor {
+  key: string;
+  offset: number;
+}
+
+function captureScrollAnchor(root: HTMLElement): TranscriptScrollAnchor | null {
+  const rootBounds = root.getBoundingClientRect();
+  if (rootBounds.height <= 0) return null;
+  const rootTop = rootBounds.top;
+  const visible = [...root.querySelectorAll<HTMLElement>("[data-transcript-key]")]
+    .map((element) => ({ element, bounds: element.getBoundingClientRect() }))
+    .filter(({ bounds }) => bounds.bottom > rootTop)
+    .sort((left, right) => left.bounds.top - right.bounds.top)[0];
+  const key = visible?.element.dataset.transcriptKey;
+  return key ? { key, offset: visible.bounds.top - rootTop } : null;
+}
+
+function restoreScrollAnchor(root: HTMLElement, anchor: TranscriptScrollAnchor): boolean {
+  const element = [...root.querySelectorAll<HTMLElement>("[data-transcript-key]")]
+    .find((candidate) => candidate.dataset.transcriptKey === anchor.key);
+  if (!element) return false;
+  root.scrollTop += element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
+  return true;
+}
+
 export function Transcript({
   messages,
   streaming,
@@ -461,6 +486,7 @@ export function Transcript({
   toolVisibility,
   hasOlder = false,
   loadingOlder = false,
+  olderError = null,
   onLoadOlder = store.loadOlderMessages,
   sessionId = "",
   queue = { steering: [], followUp: [] },
@@ -472,12 +498,19 @@ export function Transcript({
   toolVisibility: VisibilityPreference;
   hasOlder?: boolean;
   loadingOlder?: boolean;
-  onLoadOlder?: () => Promise<void>;
+  olderError?: string | null;
+  onLoadOlder?: () => Promise<boolean>;
   sessionId?: string;
   queue?: PendingQueues;
   extensionDisplays?: GenericExtensionDisplay[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const olderSentinelRef = useRef<HTMLDivElement>(null);
+  const olderLoadInFlightRef = useRef(false);
+  const onLoadOlderRef = useRef(onLoadOlder);
+  const sessionIdRef = useRef(sessionId);
+  onLoadOlderRef.current = onLoadOlder;
+  sessionIdRef.current = sessionId;
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -488,6 +521,7 @@ export function Transcript({
     setSearchQuery("");
     setCurrentMatch(-1);
     pinnedRef.current = true;
+    olderLoadInFlightRef.current = false;
     setPinned(true);
   }, [sessionId]);
 
@@ -535,21 +569,6 @@ export function Transcript({
     const nextPinned = searchQuery.length > 0 && currentMatch >= 0 ? false : isPinned;
     pinnedRef.current = nextPinned;
     setPinned(nextPinned);
-  };
-
-  const loadOlder = async () => {
-    const element = scrollRef.current;
-    if (!element || loadingOlder) return;
-    const oldHeight = element.scrollHeight;
-    const oldTop = element.scrollTop;
-    pinnedRef.current = false;
-    setPinned(false);
-    await onLoadOlder();
-    requestAnimationFrame(() => {
-      const current = scrollRef.current;
-      if (!current) return;
-      current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
-    });
   };
 
   const restoreGeometricFollow = () => {
@@ -632,12 +651,72 @@ export function Transcript({
   }, [messages, activeStreamingIndex, thinkingVisibility, toolVisibility, toolResults, toolCallIds]);
 
   const virtualize = rows.length >= VIRTUALIZE_AT;
+  const getRowKey = useCallback((index: number) => rows[index]?.key ?? index, [rows]);
   const virtualizer = useVirtualizer({
     count: virtualize ? rows.length : 0,
     getScrollElement: () => scrollRef.current,
+    getItemKey: getRowKey,
     estimateSize: () => 180,
     overscan: 6,
   });
+  const rowsRef = useRef(rows);
+  const virtualizeRef = useRef(virtualize);
+  const virtualizerRef = useRef(virtualizer);
+  rowsRef.current = rows;
+  virtualizeRef.current = virtualize;
+  virtualizerRef.current = virtualizer;
+
+  const loadOlder = useCallback(async () => {
+    const element = scrollRef.current;
+    if (!element || olderLoadInFlightRef.current) return;
+    olderLoadInFlightRef.current = true;
+    const loadingSessionId = sessionIdRef.current;
+    const oldHeight = element.scrollHeight;
+    const oldTop = element.scrollTop;
+    const anchor = captureScrollAnchor(element);
+    pinnedRef.current = false;
+    setPinned(false);
+    const prepended = await onLoadOlderRef.current();
+    if (sessionIdRef.current !== loadingSessionId) return;
+    if (!prepended) {
+      olderLoadInFlightRef.current = false;
+      return;
+    }
+
+    const restore = () => {
+      const current = scrollRef.current;
+      if (current && (!anchor || !restoreScrollAnchor(current, anchor))) {
+        current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
+      }
+      olderLoadInFlightRef.current = false;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const anchorIndex = anchor ? rowsRef.current.findIndex((row) => row.key === anchor.key) : -1;
+      if (anchorIndex >= 0 && virtualizeRef.current) {
+        virtualizerRef.current.scrollToIndex(anchorIndex, { align: "start" });
+        requestAnimationFrame(() => requestAnimationFrame(restore));
+      } else {
+        restore();
+      }
+    }));
+  }, []);
+
+  // Loading-state changes re-arm an intersecting sentinel after a stale page is
+  // discarded. The component-local lock stays held through scroll restoration,
+  // so a successful prepend cannot race into a duplicate request.
+  useEffect(() => {
+    const root = scrollRef.current;
+    const sentinel = olderSentinelRef.current;
+    if (!root || !sentinel || !hasOlder || olderError) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.target === sentinel && entry.isIntersecting)) void loadOlder();
+    }, {
+      root,
+      rootMargin: "320px 0px 0px",
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasOlder, loadingOlder, olderError, sessionId, loadOlder]);
 
   const searchMatches = useMemo(
     () => rows.flatMap((row, rowIndex) => (
@@ -738,10 +817,22 @@ export function Transcript({
       </div>
       <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick} onCopy={handleRichTextCopy}>
         {hasOlder ? (
-          <div className="transcript__column">
-            <button type="button" className="transcript__load-older" disabled={loadingOlder} onClick={() => void loadOlder()}>
-              {loadingOlder ? "Loading…" : "Load older messages"}
-            </button>
+          <div className="transcript__older-sentinel" ref={olderSentinelRef}>
+            {loadingOlder ? (
+              <span className="transcript__older-status" role="status">
+                <Loader2 size={13} className="spin" aria-hidden />
+                Loading earlier messages…
+              </span>
+            ) : olderError ? (
+              <button
+                type="button"
+                className="transcript__older-retry"
+                title={olderError}
+                onClick={() => void loadOlder()}
+              >
+                Retry loading earlier messages
+              </button>
+            ) : null}
           </div>
         ) : null}
         {rows.length === 0 ? (
@@ -761,6 +852,7 @@ export function Transcript({
                 key={rows[item.index]!.key}
                 data-index={item.index}
                 data-transcript-row={item.index}
+                data-transcript-key={rows[item.index]!.key}
                 ref={virtualizer.measureElement}
                 className="transcript__virtual-row"
                 style={{ transform: `translateY(${item.start}px)` }}
@@ -772,7 +864,7 @@ export function Transcript({
         ) : (
           <div className="transcript__column">
             {rows.map((row, index) => (
-              <div key={row.key} data-transcript-row={index}>{row.node}</div>
+              <div key={row.key} data-transcript-row={index} data-transcript-key={row.key}>{row.node}</div>
             ))}
           </div>
         )}

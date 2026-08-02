@@ -369,6 +369,7 @@ export function App() {
       toolVisibility={state.prefs.toolVisibility}
       hasOlder={state.hasOlderMessages}
       loadingOlder={state.loadingOlderMessages}
+      olderError={state.olderMessagesError}
     />
   ) : null;
   const composerContent = state.sessionId && !draftingNew ? (

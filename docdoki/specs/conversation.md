@@ -2,6 +2,7 @@
 purpose: Pi’s typed messages, thinking, tools, and lifecycle events form one recoverable streaming conversation with independently controllable detail.
 covers:
   - src/ansi.ts
+  - src/App.tsx
   - src/events.ts
   - src/store.ts
   - shared/contracts.ts
@@ -14,6 +15,7 @@ covers:
   - tests/web/ansi.test.tsx
   - tests/web/events.test.ts
   - tests/web/store.test.ts
+  - tests/web/transcript-paging.test.tsx
 ---
 
 # Conversation experience
@@ -40,6 +42,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 - Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry timers; expiry, settle, abort, worker replacement/exit, and close remove stale requests, and snapshots restore only live requests.
 - The user can abort active work, send steering input during work, and queue follow-up input for after completion. Exact ordered steering and follow-up arrays remain separate in live events and reconnect snapshots, render as labelled pending rows outside persisted messages, and clear on settle or worker replacement without inventing cross-queue chronology or cancellation controls.
 - Running, retrying, compacting, queued, aborted, failed, and settled states remain distinguishable.
+- When earlier history exists, approaching the transcript top automatically requests the next cursor-bound page. Coalesce an in-flight request, prepend only when the session generation, revision, view, and effective leaf still match, then restore the same visible message at the same viewport offset through virtualization. Same-view snapshots preserve pages already loaded behind a changed older cursor, while a rewrite or view change replaces them. Ordinary failure pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the authoritative snapshot. The host's existing page and cursor bounds remain unchanged.
 - Refreshing the browser reconstructs settled conversation state from Pi and then resumes live updates.
 
 ## Non-goals

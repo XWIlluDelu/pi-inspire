@@ -227,6 +227,7 @@ export interface AppState extends EventSlice {
   hasOlderMessages: boolean;
   olderMessagesCursor: string | null;
   loadingOlderMessages: boolean;
+  olderMessagesError: string | null;
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
@@ -312,6 +313,7 @@ const initialState: AppState = {
   hasOlderMessages: false,
   olderMessagesCursor: null,
   loadingOlderMessages: false,
+  olderMessagesError: null,
   projectionHealth: { status: "ok" },
   projectionConflict: null,
   projectionError: null,
@@ -594,7 +596,7 @@ export class AppStore {
 
   // --- Snapshot & event reconciliation ---
 
-  private applySnapshot(snapshot: ActiveSnapshot, mode: "replace" | "resync" = "replace"): void {
+  private applySnapshot(snapshot: ActiveSnapshot, mode: "replace" | "preserve" = "preserve"): void {
     const active = snapshot.active;
     const nextSessionId = active?.sessionId ?? null;
     const sessionChanged = nextSessionId !== this.state.sessionId;
@@ -621,18 +623,30 @@ export class AppStore {
       if (sessionChanged) this.cancelGitRequests();
     }
     const newestMessages = (page?.messages ?? active?.messages ?? []).map(asMessage);
-    const appendCompatible = Boolean(
-      mode === "resync" &&
+    const historyCompatible = Boolean(
+      mode === "preserve" &&
       !sessionChanged &&
+      !viewChanged &&
       page &&
       nextViewId === this.state.transcriptViewId &&
       page.incarnation &&
       page.incarnation === this.state.transcriptIncarnation &&
-      page.revision > this.state.transcriptRevision &&
-      (page.appendFromRevision ?? page.revision) <= this.state.transcriptRevision,
+      (
+        (
+          page.revision === this.state.transcriptRevision &&
+          (
+            this.state.hasOlderMessages !== Boolean(page.hasOlder) ||
+            this.state.olderMessagesCursor !== (page.olderCursor ?? null)
+          )
+        ) ||
+        (
+          page.revision > this.state.transcriptRevision &&
+          (page.appendFromRevision ?? page.revision) <= this.state.transcriptRevision
+        )
+      ),
     );
     let messages = newestMessages;
-    if (appendCompatible) {
+    if (historyCompatible) {
       const newestKeys = new Set(newestMessages.map((message) => messageKey(message) ?? JSON.stringify(message)));
       const persistedCorrelations = new Map<string, number>();
       for (const message of newestMessages) {
@@ -681,9 +695,10 @@ export class AppStore {
       transcriptIncarnation: page?.incarnation ?? null,
       transcriptViewId: nextViewId,
       transcriptEffectiveLeafId: nextEffectiveLeafId,
-      hasOlderMessages: appendCompatible ? this.state.hasOlderMessages : Boolean(page?.hasOlder),
-      olderMessagesCursor: appendCompatible ? this.state.olderMessagesCursor : (page?.olderCursor ?? null),
+      hasOlderMessages: historyCompatible ? this.state.hasOlderMessages : Boolean(page?.hasOlder),
+      olderMessagesCursor: historyCompatible ? this.state.olderMessagesCursor : (page?.olderCursor ?? null),
       loadingOlderMessages: false,
+      olderMessagesError: historyCompatible ? this.state.olderMessagesError : null,
       projectionHealth,
       projectionConflict,
       projectionError,
@@ -938,7 +953,7 @@ export class AppStore {
           page.revision < this.state.transcriptRevision
         )
       ) return;
-      this.applySnapshot(snapshot, preserveAppendHistory ? "resync" : "replace");
+      this.applySnapshot(snapshot, preserveAppendHistory ? "preserve" : "replace");
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
@@ -951,17 +966,17 @@ export class AppStore {
     }
   }
 
-  loadOlderMessages = async (): Promise<void> => {
+  loadOlderMessages = async (): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const cursor = this.state.olderMessagesCursor;
     const revision = this.state.transcriptRevision;
     const viewId = this.state.transcriptViewId;
     const effectiveLeafId = this.state.transcriptEffectiveLeafId;
     const generation = this.selectionGeneration;
-    if (!this.api || !sessionId || !cursor || !viewId || this.state.loadingOlderMessages) return;
+    if (!this.api || !sessionId || !cursor || !viewId || this.state.loadingOlderMessages) return false;
     const request = new AbortController();
     this.olderTranscriptRequest = request;
-    this.set({ loadingOlderMessages: true });
+    this.set({ loadingOlderMessages: true, olderMessagesError: null });
     try {
       const page = await this.api.olderTranscript(sessionId, cursor, request.signal);
       if (
@@ -974,7 +989,7 @@ export class AppStore {
         page.revision !== revision ||
         (page.viewId ?? viewId) !== viewId ||
         (page.effectiveLeafId ?? effectiveLeafId) !== effectiveLeafId
-      ) return;
+      ) return false;
       const existing = new Set(this.state.messages.map((message) => messageKey(message) ?? JSON.stringify(message)));
       const older = page.messages.map(asMessage).filter((message) => {
         const key = messageKey(message) ?? JSON.stringify(message);
@@ -990,19 +1005,25 @@ export class AppStore {
         messages: [...older, ...this.state.messages],
         hasOlderMessages: page.hasOlder,
         olderMessagesCursor: page.olderCursor,
+        olderMessagesError: null,
         error: this.state.projectionError,
       });
+      return true;
     } catch (error) {
-      if (request.signal.aborted || this.selectionGeneration !== generation || this.state.transcriptViewId !== viewId) return;
+      if (request.signal.aborted || this.selectionGeneration !== generation || this.state.transcriptViewId !== viewId) {
+        return false;
+      }
       if (error instanceof ApiError && error.status === 409) {
         await this.resync(sessionId, generation, undefined, false);
       } else if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
-      } else if (this.state.projectionError) {
-        this.set({ error: this.state.projectionError });
       } else {
-        this.fail(error instanceof Error ? error.message : "Failed to load older messages");
+        this.set({
+          olderMessagesError: error instanceof Error ? error.message : "Failed to load earlier messages",
+          ...(this.state.projectionError ? { error: this.state.projectionError } : {}),
+        });
       }
+      return false;
     } finally {
       if (this.olderTranscriptRequest === request) this.olderTranscriptRequest = null;
       if (
