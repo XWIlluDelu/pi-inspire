@@ -1,6 +1,6 @@
-import { CornerLeftUp, Folder, Loader2 } from "lucide-react";
+import { CornerLeftUp, Folder, HardDrive, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { HostDirListing } from "../../shared/contracts";
+import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
@@ -21,6 +21,7 @@ export function DirectoryPicker({
   onPick: (path: string) => void;
 }) {
   const [listing, setListing] = useState<HostDirListing | null>(null);
+  const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const dialogRef = useModalFocus<HTMLDivElement>();
@@ -28,18 +29,23 @@ export function DirectoryPicker({
   // let a slow earlier level overwrite a later one.
   const ticket = useRef(0);
 
-  const load = (path?: string, fallbackHome = false) => {
+  const load = (
+    path?: string,
+    { fallbackHome = false, discoverRoots = false }: { fallbackHome?: boolean; discoverRoots?: boolean } = {},
+  ) => {
     const mine = ++ticket.current;
     setLoading(true);
     setError(null);
-    void store
-      .browseHostDirs(path)
-      .catch((cause: unknown) => {
-        if (fallbackHome && path) return store.browseHostDirs();
-        throw cause;
-      })
-      .then((result) => {
-        if (ticket.current === mine) setListing(result);
+    const listing = store.browseHostDirs(path).catch((cause: unknown) => {
+      if (fallbackHome && path) return store.browseHostDirs();
+      throw cause;
+    });
+    const availableRoots = discoverRoots ? store.browseHostRoots() : Promise.resolve(null);
+    void Promise.all([listing, availableRoots])
+      .then(([result, rootResult]) => {
+        if (ticket.current !== mine) return;
+        setListing(result);
+        if (rootResult) setRoots(rootResult.roots);
       })
       .catch((cause: unknown) => {
         if (ticket.current === mine) setError(cause instanceof Error ? cause.message : "Cannot open that directory");
@@ -50,7 +56,7 @@ export function DirectoryPicker({
   };
 
   useEffect(() => {
-    load(initial?.trim() || undefined, true);
+    load(initial?.trim() || undefined, { fallbackHome: true, discoverRoots: true });
     // mount only: the picker owns navigation after the first level
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -80,6 +86,22 @@ export function DirectoryPicker({
       >
         <h2 className="dialog__title">Choose project directory</h2>
         <div className="dirpicker__path">{listing?.path ?? "…"}</div>
+        {roots.length > 1 ? (
+          <div className="dirpicker__roots" role="group" aria-label="Filesystem roots">
+            {roots.map((root) => (
+              <button
+                key={root.path}
+                type="button"
+                className="dirpicker__root"
+                title={`Browse ${root.path}`}
+                onClick={() => load(root.path)}
+              >
+                <HardDrive size={13} aria-hidden />
+                <span>{root.name}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="dirpicker__list">
           {listing?.parent ? (
             <button type="button" className="dirpicker__row" onClick={() => load(listing.parent ?? undefined)}>

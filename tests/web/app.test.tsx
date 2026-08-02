@@ -80,9 +80,14 @@ beforeAll(async () => {
         },
       };
     }
+    if (url.startsWith("/api/host/roots")) {
+      return { body: { roots: [{ name: "C:", path: "C:\\" }, { name: "D:", path: "D:\\" }] } };
+    }
     if (url.startsWith("/api/host/dirs")) {
       const path = new URL(url, "http://localhost").searchParams.get("path");
       if (path === "/home/demo/research") return { body: { path, parent: "/home/demo", dirs: [] } };
+      if (path === "D:\\") return { body: { path, parent: null, dirs: [{ name: "projects", path: "D:\\projects" }] } };
+      if (path === "D:\\projects") return { body: { path, parent: "D:\\", dirs: [] } };
       return {
         body: { path: "/home/demo", parent: "/home", dirs: [{ name: "research", path: "/home/demo/research" }] },
       };
@@ -220,6 +225,22 @@ describe("welcome flow", () => {
 
     expect(screen.queryByRole("dialog", { name: "Choose project directory" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Project directory")).toHaveValue("/home/demo/research");
+  });
+
+  it("switches between Windows drive roots in the project directory picker", async () => {
+    render(<App />);
+    const nav = screen.getByRole("navigation", { name: "Sessions" });
+    fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Browse host directories" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose project directory" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "D:" }));
+    await within(dialog).findByText("D:\\");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "projects" }));
+    await within(dialog).findByText("No subdirectories");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Use this directory" }));
+
+    expect(screen.getByLabelText("Project directory")).toHaveValue("D:\\projects");
   });
 
   it("attributes an assistant turn exactly once, in its head line", async () => {

@@ -394,7 +394,16 @@ describe("local host API", () => {
     }
   });
 
-  it("browses host directories without a session and rejects relative paths", async () => {
+  it("browses host roots and directories without a session and rejects relative paths", async () => {
+    const roots = await request(application.server)
+      .get("/api/host/roots")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(roots.body.roots)).toBe(true);
+    for (const root of roots.body.roots) {
+      expect(root).toEqual({ name: expect.any(String), path: expect.any(String) });
+    }
+
     await mkdir(join(temporary, "projects"));
     const listing = await request(application.server)
       .get(`/api/host/dirs?path=${encodeURIComponent(temporary)}`)
