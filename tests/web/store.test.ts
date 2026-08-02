@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { AppStore, injectHtmlPreviewCsp, MAX_MEDIA_PREVIEW_BYTES } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  DEFAULT_PREFS,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -57,6 +59,18 @@ describe("websocket lifecycle", () => {
 describe("multi-session event routing", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("surfaces projection health and conflict state from authoritative snapshots", async () => {
+    installFetch(baseRoutes);
+    const { store, socket } = await initStore();
+    socket.emit({ type: "snapshot", data: activeSnapshot({
+      projectionHealth: { status: "error", message: "wrong session header" },
+      projectionConflict: { message: "external writer conflict", revision: 3 },
+    }) });
+    expect(store.getState().projectionHealth).toMatchObject({ status: "error" });
+    expect(store.getState().projectionConflict).toMatchObject({ revision: 3 });
+    expect(store.getState().error).toBe("external writer conflict");
+  });
+
   it("applies snapshot sessionStatuses wholesale into state", async () => {
     installFetch(baseRoutes);
     const { store, socket } = await initStore();
@@ -66,17 +80,28 @@ describe("multi-session event routing", () => {
       s1: { runState: "idle" },
       s2: { runState: "idle", indicator: "completed" },
     };
-    snapshot.pendingExtensionUi = { sessionId: "s1", id: "question-1", method: "confirm", title: "Proceed?" };
+    snapshot.pendingExtensionUiRequests = [{ sessionId: "s1", id: "question-1", method: "confirm", title: "Proceed?" }];
+    snapshot.pendingQueues = { steering: ["correct the current answer"], followUp: ["then add tests", "then summarize"] };
+    snapshot.extensionDisplays = [{ id: "setWidget:plan", method: "setWidget", attribution: "plan.ts · plan", payload: { widgetLines: ["step"] } }];
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().sessionStatuses).toEqual({
       s1: { runState: "idle" },
       s2: { runState: "idle", indicator: "completed" },
     });
-    expect(store.getState().extensionUi).toEqual({ sessionId: "s1", id: "question-1", method: "confirm", title: "Proceed?" });
+    expect(store.getState().extensionUiRequests).toEqual([{ sessionId: "s1", id: "question-1", method: "confirm", title: "Proceed?" }]);
+    expect(store.getState().queue).toEqual({
+      steering: ["correct the current answer"],
+      followUp: ["then add tests", "then summarize"],
+    });
+    expect(store.getState().extensionDisplays).toHaveLength(1);
 
-    snapshot.pendingExtensionUi = null;
+    snapshot.pendingExtensionUiRequests = [];
+    snapshot.pendingQueues = { steering: [], followUp: [] };
+    snapshot.extensionDisplays = [];
     socket.emit({ type: "snapshot", data: snapshot });
-    expect(store.getState().extensionUi).toBeNull();
+    expect(store.getState().extensionUiRequests).toEqual([]);
+    expect(store.getState().queue).toEqual({ steering: [], followUp: [] });
+    expect(store.getState().extensionDisplays).toEqual([]);
   });
 
   it("clears selected-only extension presentation when switching sessions", async () => {
@@ -114,12 +139,28 @@ describe("multi-session event routing", () => {
     expect(store.getState()).toMatchObject({ statuses: {}, windowTitle: null, editorText: null });
   });
 
+  it("keeps equal-timestamp ordinary live messages distinct when host lifecycle IDs differ", async () => {
+    installFetch(baseRoutes);
+    const { store, socket } = await initStore();
+    for (const [id, content] of [["live-1", "first"], ["live-2", "second"]] as const) {
+      socket.emit({
+        type: "message_start", sessionId: "s1",
+        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+      });
+      socket.emit({
+        type: "message_end", sessionId: "s1",
+        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+      });
+    }
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["first", "second"]);
+  });
+
   it("routes background deltas only to the status map, never the visible transcript", async () => {
     let snapshotCalls = 0;
     let sessionListCalls = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/snapshot")) snapshotCalls += 1;
-      if (url.startsWith("/api/sessions")) sessionListCalls += 1;
+      if (url.startsWith("/api/sessions?")) sessionListCalls += 1;
       return baseRoutes(url, init);
     });
     const { store, socket } = await initStore();
@@ -167,6 +208,165 @@ describe("multi-session event routing", () => {
     expect(snapshotCalls).toBe(0);
     expect(store.getState().sessionStatuses.bg).toEqual({ runState: "idle", indicator: "completed" });
     expect(store.getState().messages).toEqual([]);
+  });
+
+  it("resyncs an addressed selected projection change but isolates a background projection", async () => {
+    let snapshotCalls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/snapshot")) {
+        snapshotCalls += 1;
+        return { body: activeSnapshot({
+          messages: [{ role: "assistant", content: "projected", timestamp: 8 }],
+          transcriptPage: {
+            sessionId: "s1", revision: 2, incarnation: "projection-1", appendFromRevision: 1,
+            messages: [{ role: "assistant", content: "projected", timestamp: 8 }],
+            hasOlder: false, olderCursor: null,
+          },
+        }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({ type: "session_projection_changed", sessionId: "background", revision: 2, sessionStatus: { runState: "idle" } });
+    expect(snapshotCalls).toBe(0);
+    expect(store.getState().messages).toEqual([]);
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 2, sessionStatus: { runState: "idle" } });
+    await vi.waitFor(() => expect(snapshotCalls).toBe(1));
+    await vi.waitFor(() => expect(store.getState().messages).toEqual([{ role: "assistant", content: "projected", timestamp: 8 }]));
+  });
+
+  it("applies only the newest reordered same-session resync response", async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const second = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    let calls = 0;
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/snapshot")) {
+        calls += 1;
+        const call = calls;
+        await (call === 1 ? first : second);
+        return { body: activeSnapshot({
+          transcriptPage: {
+            sessionId: "s1", revision: call === 1 ? 2 : 3, incarnation: "projection-1", appendFromRevision: 1,
+            messages: [{ role: "assistant", content: call === 1 ? "revision 2" : "revision 3", timestamp: call }],
+            hasOlder: false, olderCursor: null,
+          },
+        }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 2, sessionStatus: { runState: "idle" } });
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 3, sessionStatus: { runState: "idle" } });
+    await vi.waitFor(() => expect(calls).toBe(2));
+    releaseSecond();
+    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(3));
+    releaseFirst();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(store.getState().transcriptRevision).toBe(3);
+    expect(store.getState().messages.at(-1)?.content).toBe("revision 3");
+  });
+
+  it("surfaces projection health immediately and retains it when non-auth resync fails", async () => {
+    let snapshots = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/snapshot")) { snapshots += 1; return { status: 503, body: { error: "snapshot unavailable" } }; }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({
+      type: "session_projection_changed", sessionId: "s1", revision: 2,
+      health: { status: "error", message: "malformed persisted line" }, conflict: null,
+      sessionStatus: { runState: "idle" },
+    });
+    expect(store.getState().projectionHealth).toEqual({ status: "error", message: "malformed persisted line" });
+    expect(store.getState().projectionError).toBe("malformed persisted line");
+    expect(store.getState().error).toBe("malformed persisted line");
+    await vi.waitFor(() => expect(snapshots).toBe(1));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(store.getState().error).toBe("malformed persisted line");
+  });
+
+  it("clears only the projection-owned alert when projection health recovers", async () => {
+    let releaseSnapshots!: () => void;
+    const snapshots = new Promise<void>((resolve) => { releaseSnapshots = resolve; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/snapshot")) {
+        await snapshots;
+        return { body: activeSnapshot({
+          projectionHealth: { status: "ok" },
+          projectionConflict: null,
+          transcriptPage: {
+            sessionId: "s1", revision: 3, incarnation: "projection-1", appendFromRevision: 2,
+            messages: [], hasOlder: false, olderCursor: null,
+          },
+        }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({
+      type: "session_projection_changed", sessionId: "s1", revision: 2,
+      health: { status: "error", message: "malformed persisted line" }, conflict: null,
+      sessionStatus: { runState: "idle" },
+    });
+    expect(store.getState().error).toBe("malformed persisted line");
+
+    socket.emit({
+      type: "session_projection_changed", sessionId: "s1", revision: 3,
+      health: { status: "ok" }, conflict: null, sessionStatus: { runState: "idle" },
+    });
+    expect(store.getState().projectionError).toBeNull();
+    expect(store.getState().error).toBeNull();
+
+    releaseSnapshots();
+    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(3));
+    expect(store.getState().projectionError).toBeNull();
+    expect(store.getState().error).toBeNull();
+  });
+
+  it("preserves conflict and projection-health visibility through event-driven resync", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/snapshot")) return { body: activeSnapshot({
+        projectionHealth: { status: "error", message: "malformed replacement" },
+        projectionConflict: { message: "ownership conflict", revision: 2 },
+        transcriptPage: {
+          sessionId: "s1", revision: 2, incarnation: "projection-1", appendFromRevision: 2,
+          messages: [], hasOlder: false, olderCursor: null,
+        },
+      }) };
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({
+      type: "session_projection_conflict", sessionId: "s1",
+      conflict: { message: "ownership conflict", revision: 2 },
+      sessionStatus: { runState: "conflict" },
+    });
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 2, sessionStatus: { runState: "conflict" } });
+    await vi.waitFor(() => expect(store.getState().projectionHealth.status).toBe("error"));
+    expect(store.getState().projectionConflict?.message).toBe("ownership conflict");
+    expect(store.getState().runState).toBe("conflict");
+    expect(store.getState().error).toBe("ownership conflict");
+  });
+
+  it("keeps conflict abortable while an extension dialog is pending", async () => {
+    let aborts = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/control/abort")) { aborts += 1; return { body: { ok: true } }; }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({ type: "extension_ui_request", sessionId: "s1", id: "blocked", method: "confirm", title: "Blocked" });
+    socket.emit({
+      type: "session_projection_conflict", sessionId: "s1",
+      conflict: { message: "conflict", revision: 2 }, sessionStatus: { runState: "conflict" },
+    });
+    expect(store.getState().extensionUiRequests[0]?.id).toBe("blocked");
+    expect(store.getState().runState).toBe("conflict");
+    await store.abort();
+    expect(aborts).toBe(1);
   });
 
   it("reconciles a selected preview when its runtime becomes ready", async () => {
@@ -311,18 +511,20 @@ describe("multi-session event routing", () => {
     const responding = store.respondExtensionUi({ id: "question-a", confirmed: true });
     await vi.waitFor(() => expect(responseBody).toMatchObject({ sessionId: "s1", id: "question-a" }));
     const sessionB = activeSnapshot({ sessionId: "s2", sessionName: "Session B" });
-    sessionB.pendingExtensionUi = {
+    sessionB.pendingExtensionUiRequests = [{
       sessionId: "s2",
       id: "question-b",
       method: "confirm",
       title: "Question B",
-    };
+    }];
     socket.emit({ type: "snapshot", data: sessionB });
     releaseResponse();
     await responding;
 
     expect(store.getState().sessionId).toBe("s2");
-    expect(store.getState().extensionUi).toMatchObject({ sessionId: "s2", id: "question-b" });
+    expect(store.getState().extensionUiRequests).toEqual([
+      expect.objectContaining({ sessionId: "s2", id: "question-b" }),
+    ]);
   });
 
   it("keeps selected-session events flowing through the transcript reducer", async () => {
@@ -338,6 +540,203 @@ describe("multi-session event routing", () => {
     expect(store.getState().streaming).toBe(true);
     // the selected session's own status merges into the map as well
     expect(store.getState().sessionStatuses.s1).toEqual({ runState: "running", indicator: "running" });
+  });
+});
+
+describe("transcript paging", () => {
+  beforeEach(() => installFakeWebSocket());
+
+  it("prepends addressed older messages with dedupe and advances the cursor", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ snapshot: activeSnapshot({
+          messages: [{ role: "user", content: "new", timestamp: 2 }],
+          transcriptPage: {
+            sessionId: "s1", revision: 4,
+            messages: [{ role: "user", content: "new", timestamp: 2 }],
+            hasOlder: true, olderCursor: "cursor-1",
+          },
+        }) }) };
+      }
+      if (url.startsWith("/api/transcript/older")) {
+        return { body: {
+          sessionId: "s1", revision: 4,
+          messages: [
+            { role: "user", content: "old", timestamp: 1 },
+            { role: "user", content: "new duplicate", timestamp: 2 },
+          ],
+          hasOlder: false, olderCursor: null,
+        } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.loadOlderMessages();
+    expect(store.getState().messages.map((message) => message.timestamp)).toEqual([1, 2]);
+    expect(store.getState().hasOlderMessages).toBe(false);
+    expect(store.getState().olderMessagesCursor).toBeNull();
+  });
+
+  it("discards a delayed older page from branch A after same-session switch to branch B", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { started = resolve; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot({
+        transcriptPage: {
+          sessionId: "s1", revision: 4, viewId: "view-a", effectiveLeafId: "leaf-a",
+          messages: [{ role: "user", content: "new A", timestamp: 2 }], hasOlder: true, olderCursor: "cursor-a",
+        },
+        effectiveLeafId: "leaf-a",
+      }) }) };
+      if (url.startsWith("/api/transcript/older")) {
+        started();
+        await gate;
+        return { body: {
+          sessionId: "s1", revision: 4, viewId: "view-a", effectiveLeafId: "leaf-a",
+          messages: [{ role: "user", content: "old A", timestamp: 1 }], hasOlder: false, olderCursor: null,
+        } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const loading = store.loadOlderMessages();
+    await requested;
+    socket.emit({ type: "snapshot", data: activeSnapshot({
+      transcriptPage: {
+        sessionId: "s1", revision: 4, viewId: "view-b", effectiveLeafId: "leaf-b",
+        messages: [{ role: "assistant", content: "branch B", timestamp: 3 }], hasOlder: false, olderCursor: null,
+      },
+      effectiveLeafId: "leaf-b",
+    }) });
+    release();
+    await loading;
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["branch B"]);
+    expect(store.getState().transcriptViewId).toBe("view-b");
+  });
+
+  it("retains loaded older pages across append-lineage resync but replaces them on rewrite", async () => {
+    let snapshotRevision = 5;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot({
+        transcriptPage: {
+          sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+          messages: [{ role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" }],
+          hasOlder: true, olderCursor: "cursor-1",
+        },
+      }) }) };
+      if (url.startsWith("/api/transcript/older")) return { body: {
+        sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+        messages: [{ role: "user", content: "old", timestamp: 1, __inspireMessageId: "m1:0" }],
+        hasOlder: false, olderCursor: null,
+      } };
+      if (url.startsWith("/api/snapshot")) return { body: activeSnapshot({
+        transcriptPage: {
+          sessionId: "s1", revision: snapshotRevision, incarnation: "incarnation",
+          appendFromRevision: snapshotRevision === 5 ? 1 : 6,
+          messages: snapshotRevision === 5
+            ? [
+                { role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" },
+                { role: "assistant", content: "append", timestamp: 3, __inspireMessageId: "m3:0" },
+              ]
+            : [{ role: "user", content: "rewrite", timestamp: 9, __inspireMessageId: "rewrite:0" }],
+          hasOlder: false, olderCursor: null,
+        },
+      }) };
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    await store.loadOlderMessages();
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new"]);
+
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 5, sessionStatus: { runState: "idle" } });
+    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(5));
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new", "append"]);
+    expect(store.getState().hasOlderMessages).toBe(false);
+
+    snapshotRevision = 6;
+    socket.emit({ type: "session_projection_changed", sessionId: "s1", revision: 6, sessionStatus: { runState: "idle" } });
+    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(6));
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["rewrite"]);
+  });
+
+  it("does not clear a projection-owned alert when an older page loads successfully", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot({
+        projectionHealth: { status: "error", message: "projection damaged" },
+        projectionConflict: { message: "projection conflict", revision: 4 },
+        transcriptPage: {
+          sessionId: "s1", revision: 4, incarnation: "inc", appendFromRevision: 4,
+          messages: [{ role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" }],
+          hasOlder: true, olderCursor: "older",
+        },
+      }) }) };
+      if (url.startsWith("/api/transcript/older")) return { body: {
+        sessionId: "s1", revision: 4, incarnation: "inc", appendFromRevision: 4,
+        messages: [{ role: "user", content: "old", timestamp: 1, __inspireMessageId: "m1:0" }],
+        hasOlder: false, olderCursor: null,
+      } };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().error).toBe("projection conflict");
+    await store.loadOlderMessages();
+    expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new"]);
+    expect(store.getState().projectionError).toBe("projection conflict");
+    expect(store.getState().error).toBe("projection conflict");
+  });
+
+  it("rejects a stale returned revision without mixing pages", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ snapshot: activeSnapshot({
+          messages: [{ role: "user", content: "new", timestamp: 2 }],
+          transcriptPage: {
+            sessionId: "s1", revision: 4,
+            messages: [{ role: "user", content: "new", timestamp: 2 }],
+            hasOlder: true, olderCursor: "cursor-1",
+          },
+        }) }) };
+      }
+      if (url.startsWith("/api/transcript/older")) {
+        return { body: {
+          sessionId: "s1", revision: 3,
+          messages: [{ role: "user", content: "stale", timestamp: 1 }],
+          hasOlder: false, olderCursor: null,
+        } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.loadOlderMessages();
+    expect(store.getState().messages).toEqual([{ role: "user", content: "new", timestamp: 2 }]);
+    expect(store.getState().transcriptRevision).toBe(4);
+    expect(store.getState().loadingOlderMessages).toBe(false);
+  });
+
+  it("resyncs rather than accepting a server-rejected stale cursor", async () => {
+    let snapshotCalls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ snapshot: activeSnapshot({
+          transcriptPage: { sessionId: "s1", revision: 4, messages: [], hasOlder: true, olderCursor: "old" },
+        }) }) };
+      }
+      if (url.startsWith("/api/transcript/older")) return { status: 409, body: { error: "stale" } };
+      if (url.startsWith("/api/snapshot")) {
+        snapshotCalls += 1;
+        return { body: activeSnapshot({
+          transcriptPage: { sessionId: "s1", revision: 5, messages: [{ role: "assistant", content: "fresh", timestamp: 5 }], hasOlder: false, olderCursor: null },
+        }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.loadOlderMessages();
+    expect(snapshotCalls).toBe(1);
+    expect(store.getState().transcriptRevision).toBe(5);
+    expect(store.getState().messages[0]).toMatchObject({ content: "fresh" });
   });
 });
 
@@ -608,7 +1007,7 @@ describe("navigation curation", () => {
         const body = jsonBody(init) as { ids: string[] };
         // Hidden sessions hydrate too: the Hidden group is what makes hiding
         // reversible, so its rows cannot depend on the first catalog page.
-        expect(body.ids).toEqual(["s-pinned", "s-hidden"]);
+        expect(body.ids).toEqual(["s-pinned", "s-hidden", "s1"]);
         return {
           body: {
             sessions: body.ids.map((id) => ({
@@ -630,7 +1029,7 @@ describe("navigation curation", () => {
     });
     const { store } = await initStore();
     await vi.waitFor(() => {
-      expect(store.getState().sessions.map((session) => session.id)).toEqual(["s-pinned", "s-hidden"]);
+      expect(store.getState().sessions.map((session) => session.id)).toEqual(["s-pinned", "s-hidden", "s1"]);
     });
   });
 
@@ -725,6 +1124,20 @@ describe("resource previews", () => {
 
   function resourceRoutes(): RouteHandler {
     return (url, init) => {
+      if (url.startsWith("/api/resources/probe")) {
+        const body = jsonBody(init) as { references: string[] };
+        return {
+          body: {
+            sessionId: "s1",
+            viewId: "view-s1",
+            results: body.references.map((reference) => reference.includes("missing")
+              ? { reference, availability: "missing", message: "The referenced file was not found" }
+              : reference.includes("outside")
+                ? { reference, availability: "unavailable", message: "The file is outside this session" }
+                : { reference, availability: "available" }),
+          },
+        };
+      }
       if (url.startsWith("/api/resources/resolve")) {
         const body = jsonBody(init) as { reference: string };
         if (body.reference.includes("missing")) {
@@ -760,6 +1173,20 @@ describe("resource previews", () => {
     );
   }
 
+  it("preflights a bounded reference set without selecting or loading content", async () => {
+    installFetch(resourceRoutes());
+    const { store } = await initStore();
+
+    await store.probeResources(["notes/result.md", "missing/file.md", "outside/file.md"]);
+    expect(store.getState().selectedResourceReference).toBeNull();
+    expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().resourceAvailability).toMatchObject({
+      "missing/file.md": { availability: "missing" },
+      "outside/file.md": { availability: "unavailable" },
+    });
+    expect(store.getState().resourceAvailability["notes/result.md"]).toBeUndefined();
+  });
+
   it("opens the pane, resolves the reference, and loads the text preview", async () => {
     installFetch(resourceRoutes());
     stubContent("# Notes body");
@@ -771,6 +1198,29 @@ describe("resource previews", () => {
     expect(state.selectedResourceReference).toBe("notes/result.md");
     expect(state.resourcePreview).toMatchObject({ status: "ready", truncated: false });
     expect((state.resourcePreview as { text?: string }).text).toContain("Notes body");
+  });
+
+  it("clears conversation-derived resource selection on a same-session branch-view boundary", async () => {
+    installFetch(resourceRoutes());
+    stubContent("# Notes body");
+    const { store, socket } = await initStore();
+    await store.openResource("notes/result.md");
+    expect(store.getState().resourcePreview).toMatchObject({ status: "ready" });
+
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        transcriptPage: {
+          sessionId: "s1", revision: 1, viewId: "view-branch-b", effectiveLeafId: "branch-b",
+          messages: [], hasOlder: false, olderCursor: null,
+        },
+        effectiveLeafId: "branch-b",
+      }),
+    });
+
+    expect(store.getState().sessionId).toBe("s1");
+    expect(store.getState().selectedResourceReference).toBeNull();
+    expect(store.getState().resourcePreview).toBeNull();
   });
 
   it("marks the preview truncated only when the body is shorter than the file", async () => {
@@ -952,13 +1402,16 @@ describe("resource previews", () => {
       message: "The referenced file was not found",
     });
     // The list stops presenting an unverified mention as an ordinary file…
-    expect(store.getState().unavailableReferences).toEqual(["missing/file.md"]);
+    expect(store.getState().resourceAvailability["missing/file.md"]).toMatchObject({
+      reference: "missing/file.md",
+      availability: "missing",
+    });
 
     // …but a reference that resolved and then failed to transfer keeps its
     // standing: the file exists, the bytes did not arrive.
     await store.openResource("notes/result.md");
     expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
-    expect(store.getState().unavailableReferences).toEqual(["missing/file.md"]);
+    expect(store.getState().resourceAvailability["missing/file.md"]).toMatchObject({ availability: "missing" });
 
     // A reference that resolves after all clears its mark.
     installFetch((url, init) => {
@@ -979,7 +1432,7 @@ describe("resource previews", () => {
     });
     stubContent("# Notes body");
     await store.openResource("missing/file.md");
-    expect(store.getState().unavailableReferences).toEqual([]);
+    expect(store.getState().resourceAvailability).toEqual({});
   });
 
   it("offers the host's candidates instead of guessing an ambiguous bare name", async () => {
@@ -1000,8 +1453,12 @@ describe("resource previews", () => {
       reference: "notes.md",
       matches: ["a/notes.md", "b/notes.md"],
     });
-    // An unanswered choice is not a missing file: nothing is marked away.
-    expect(store.getState().unavailableReferences).toEqual([]);
+    // An unanswered choice is not missing, but the row can advertise that it
+    // needs a location choice before previewing.
+    expect(store.getState().resourceAvailability["notes.md"]).toMatchObject({
+      availability: "ambiguous",
+      matches: ["a/notes.md", "b/notes.md"],
+    });
   });
 
   it("clears the selection and revokes the object URL when the session changes", async () => {
@@ -1332,5 +1789,114 @@ describe("selection race ownership", () => {
     await changing;
     // The rollback belonged to s1; s2's visible level stays truthful.
     expect(store.getState().thinkingLevel).toBe("low");
+  });
+});
+
+describe("session deletion ownership", () => {
+  beforeEach(() => installFakeWebSocket());
+
+  it("removes a deleted hidden session from curation, pagination, status, and its draft", async () => {
+    const active = activeSnapshot({ sessionId: "s1", sessionName: "Active" });
+    active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
+    const rows = [
+      sessionSummary({ id: "s1", title: "Active" }),
+      sessionSummary({ id: "s2", title: "Archived" }),
+    ];
+    let deleted = false;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({
+        snapshot: active,
+        preferences: { ...DEFAULT_PREFS, pinnedSessionIds: ["s2"], hiddenSessionIds: ["s2"] },
+      }) };
+      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
+        deleted = true;
+        return { body: {
+          sessionId: "s2",
+          disposition: "trashed",
+          preferences: { ...DEFAULT_PREFS, pinnedSessionIds: [], hiddenSessionIds: [] },
+        } };
+      }
+      if (url.startsWith("/api/sessions/by-id")) return { body: { sessions: deleted ? [] : [rows[1]] } };
+      if (url.startsWith("/api/sessions")) {
+        const sessions = deleted ? rows.slice(0, 1) : rows;
+        return { body: { sessions, total: sessions.length, offset: 0, limit: 40 } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions.map((session) => session.id)).toEqual(["s1", "s2"]));
+    setSessionDraft("s2", "not for another session");
+
+    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
+    expect(store.getState().sessions.map((session) => session.id)).toEqual(["s1"]);
+    expect(store.getState().sessionStatuses).not.toHaveProperty("s2");
+    expect(store.getState().prefs).toMatchObject({ pinnedSessionIds: [], hiddenSessionIds: [] });
+    expect(sessionDraft("s2")).toBe("");
+    expect(store.getState().notices.at(-1)?.text).toBe("Session moved to Trash");
+  });
+
+  it("fences an optimistic Hide write before sending the destructive request", async () => {
+    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
+    let releasePatch!: () => void;
+    const patchGate = new Promise<void>((resolvePatch) => { releasePatch = resolvePatch; });
+    let deleteCalled = false;
+    let deleted = false;
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        await patchGate;
+        return { body: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] } };
+      }
+      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
+        deleteCalled = true;
+        deleted = true;
+        return { body: {
+          sessionId: "s2",
+          disposition: "trashed",
+          preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
+        } };
+      }
+      if (url.startsWith("/api/sessions")) {
+        const sessions = deleted ? rows.slice(0, 1) : rows;
+        return { body: { sessions, total: sessions.length, offset: 0, limit: 40 } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+
+    store.toggleSessionHidden("s2");
+    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
+    const deleting = store.deleteSession("s2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(deleteCalled).toBe(false);
+    releasePatch();
+    await expect(deleting).resolves.toBe("trashed");
+    expect(deleteCalled).toBe(true);
+  });
+
+  it("keeps local session state intact when deletion is refused", async () => {
+    const row = sessionSummary({ id: "s2", title: "Archived" });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({
+        snapshot: activeSnapshot(),
+        preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
+      }) };
+      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
+        return { status: 409, body: { error: "Session is still running" } };
+      }
+      if (url.startsWith("/api/sessions/by-id")) return { body: { sessions: [row] } };
+      if (url.startsWith("/api/sessions")) return { body: { sessions: [row], total: 1, offset: 0, limit: 40 } };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(1));
+    setSessionDraft("s2", "keep me");
+
+    await expect(store.deleteSession("s2")).resolves.toBeNull();
+    expect(store.getState().sessions).toHaveLength(1);
+    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
+    expect(sessionDraft("s2")).toBe("keep me");
+    expect(store.getState().error).toBe("Session is still running");
   });
 });

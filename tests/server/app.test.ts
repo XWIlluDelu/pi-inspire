@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { AttachmentStore } from "../../server/attachments.js";
 import { createInspireServer, MAX_JOINING_EVENT_BYTES } from "../../server/app.js";
+import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
@@ -17,18 +18,31 @@ describe("local host API", () => {
   let temporary: string;
   let application: ReturnType<typeof createInspireServer>;
   let resources: ResourceStore;
+  let runtime: MockRuntime;
+  let git: GitInspectionLike;
   let baseUrl: string;
 
   beforeEach(async () => {
     temporary = await mkdtemp(join(tmpdir(), "inspire-test-"));
     resources = new ResourceStore();
+    runtime = new MockRuntime();
+    git = {
+      status: vi.fn(async () => ({ kind: "not-repository" as const })),
+      diff: vi.fn(async (_cwd, pathId, side) => ({
+        kind: "empty" as const,
+        path: { id: pathId, display: "file.txt", utf8Path: "file.txt", workspacePath: "file.txt" },
+        side,
+        reason: "no-changes" as const,
+      })),
+    };
     application = createInspireServer({
       token,
-      runtime: new MockRuntime(),
+      runtime,
       catalog: new MockCatalog(),
       attachments: new AttachmentStore(join(temporary, "uploads")),
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
       resources,
+      git,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -45,6 +59,33 @@ describe("local host API", () => {
   });
 
   const api = () => request(application.server).get("/api/bootstrap").set("Authorization", `Bearer ${token}`);
+
+  it("stops accepting work before runtime teardown and drains an active request without deadlock", async () => {
+    const originalSnapshot = runtime.snapshot.bind(runtime);
+    const originalClose = runtime.close.bind(runtime);
+    let snapshotStarted!: () => void;
+    let releaseSnapshot!: () => void;
+    const started = new Promise<void>((resolveStarted) => { snapshotStarted = resolveStarted; });
+    const gate = new Promise<void>((resolveSnapshot) => { releaseSnapshot = resolveSnapshot; });
+    vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
+      snapshotStarted();
+      await gate;
+      return originalSnapshot();
+    });
+    vi.spyOn(runtime, "close").mockImplementation(async () => {
+      releaseSnapshot();
+      await originalClose();
+    });
+    const active = request(application.server).get("/api/snapshot").set("Authorization", `Bearer ${token}`);
+    const activeResult = active.then((response) => response.status);
+    await started;
+    const closing = application.close();
+    await vi.waitFor(() => expect(runtime.close).toHaveBeenCalledOnce());
+    expect(application.server.listening).toBe(false);
+    await expect(fetch(`${baseUrl}/api/health`, { headers: { Authorization: `Bearer ${token}` } })).rejects.toThrow();
+    await expect(activeResult).resolves.toBe(200);
+    await expect(closing).resolves.toBeUndefined();
+  });
 
   it("requires the launch token and rejects foreign origins", async () => {
     await request(application.server).get("/api/bootstrap").expect(401);
@@ -77,6 +118,7 @@ describe("local host API", () => {
       attachments: new AttachmentStore(join(dist, "uploads")),
       preferences: new PreferencesStore(join(dist, "preferences.json")),
       resources: new ResourceStore(),
+      git,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -107,10 +149,18 @@ describe("local host API", () => {
       .expect(200);
     expect(sessions.body.total).toBe(1);
     expect(sessions.body.sessions[0]).toMatchObject({ id: "mock-active", project: "research" });
-    await request(application.server)
-      .get("/api/sessions?limit=not-a-number")
+    const page = await request(application.server)
+      .get("/api/sessions?offset=1&limit=1")
       .set("Authorization", `Bearer ${token}`)
-      .expect(400);
+      .expect(200);
+    expect(page.body).toMatchObject({ offset: 1, limit: 1, total: 2 });
+    expect(page.body.sessions).toHaveLength(1);
+    for (const invalid of ["limit=not-a-number", "limit=101", "offset=-1", "offset=1.5", "offset=9007199254740992"]) {
+      await request(application.server)
+        .get(`/api/sessions?${invalid}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(400);
+    }
 
     const opened = await request(application.server)
       .post("/api/sessions/open")
@@ -119,6 +169,64 @@ describe("local host API", () => {
       .expect(200);
     expect(opened.body.active.messages).toHaveLength(5);
     expect(opened.body.active.model.id).toBe("kimi-k3");
+  });
+
+  it("serves authenticated session-addressed older transcript pages", async () => {
+    const page = {
+      sessionId: "mock-active",
+      revision: 7,
+      viewId: "mock-view-mock-active",
+      messages: [{ role: "user", content: "older", timestamp: 1 }],
+      hasOlder: false,
+      olderCursor: null,
+    };
+    const paging = vi.spyOn(runtime, "transcriptPage").mockResolvedValue(page);
+    await request(application.server)
+      .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
+      .expect(401);
+    const response = await request(application.server)
+      .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(response.body).toEqual(page);
+    expect(paging).toHaveBeenCalledWith("mock-active", "opaque-cursor");
+  });
+
+  it("serves authenticated, bounded, session-addressed branch operations", async () => {
+    const branchTree = {
+      sessionId: "mock-active", revision: 3, incarnation: "inc", durableLeafId: "a1", effectiveLeafId: "a1",
+      activePath: ["u1", "a1"], nodes: [], truncated: false, health: { status: "ok" as const },
+    };
+    const tree = vi.spyOn(runtime, "branchTree").mockResolvedValue(branchTree);
+    const navigate = vi.spyOn(runtime, "navigateBranch").mockResolvedValue({ snapshot: await runtime.openSession("mock-active"), editorText: "original" });
+    const fork = vi.spyOn(runtime, "forkBranch").mockResolvedValue({ sessionId: "forked", snapshot: await runtime.openSession("mock-active"), editorText: "original" });
+
+    await request(application.server).get("/api/branches/tree?sessionId=mock-active").expect(401);
+    await request(application.server)
+      .get("/api/branches/tree?sessionId=mock-active")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((response) => expect(response.body.revision).toBe(3));
+    expect(tree).toHaveBeenCalledWith("mock-active");
+
+    await request(application.server)
+      .post("/api/branches/navigate")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, targetId: "u1", mode: "edit", rawPath: "/forged" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/branches/navigate")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, targetId: "u1", mode: "edit" })
+      .expect(200);
+    expect(navigate).toHaveBeenCalledWith({ sessionId: "mock-active", revision: 3, targetId: "u1", mode: "edit" });
+
+    await request(application.server)
+      .post("/api/branches/fork")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, targetId: "u1" })
+      .expect(200);
+    expect(fork).toHaveBeenCalledWith({ sessionId: "mock-active", revision: 3, targetId: "u1" });
   });
 
   it("persists field-scoped preference patches without losing concurrent fields", async () => {
@@ -145,6 +253,11 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ theme: "sepia" })
       .expect(400);
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ recentModelIds: Array.from({ length: 9 }, (_, index) => ({ provider: "p", id: `m${index}` })) })
+      .expect(400);
     const stored = await request(application.server)
       .get("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
@@ -155,6 +268,8 @@ describe("local host API", () => {
       thinkingVisibility: "collapsed",
       toolVisibility: "hidden",
       projectDisplay: "folder",
+      completionAttention: "off",
+      recentModelIds: [],
       pinnedSessionIds: [],
       pinnedProjectCwds: [],
       hiddenSessionIds: [],
@@ -202,6 +317,8 @@ describe("local host API", () => {
     expect(response.body).toEqual({
       ...legacy,
       projectDisplay: "folder",
+      completionAttention: "off",
+      recentModelIds: [],
       pinnedSessionIds: [],
       pinnedProjectCwds: [],
       hiddenSessionIds: [],
@@ -230,6 +347,51 @@ describe("local host API", () => {
       .get("/api/files/list?sessionId=not-open")
       .set("Authorization", `Bearer ${token}`)
       .expect(409);
+  });
+
+  it("serves only authenticated session-addressed Git status and diff inspection", async () => {
+    await request(application.server).get("/api/git/status?sessionId=mock-active").expect(401);
+    await request(application.server)
+      .get("/api/git/status?sessionId=not-open")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
+    await request(application.server)
+      .post("/api/sessions/open")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active" })
+      .expect(200);
+    const status = await request(application.server)
+      .get("/api/git/status?sessionId=mock-active")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(status.body).toEqual({ kind: "not-repository" });
+    expect(git.status).toHaveBeenCalledWith("/home/demo/research", expect.any(AbortSignal));
+
+    await request(application.server)
+      .post("/api/git/diff")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", pathId: "not base64!", side: "unstaged" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/git/diff")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", pathId: "ZmlsZS50eHQ", side: "working" })
+      .expect(400);
+    const diff = await request(application.server)
+      .post("/api/git/diff")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", pathId: "ZmlsZS50eHQ", side: "unstaged" })
+      .expect(200);
+    expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
+    expect(git.diff).toHaveBeenCalledWith("/home/demo/research", "ZmlsZS50eHQ", "unstaged", expect.any(AbortSignal));
+
+    for (const route of ["add", "commit", "restore", "checkout", "history", "blame", "push"]) {
+      await request(application.server)
+        .post(`/api/git/${route}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ sessionId: "mock-active" })
+        .expect(404);
+    }
   });
 
   it("browses host directories without a session and rejects relative paths", async () => {
@@ -324,6 +486,7 @@ describe("local host API", () => {
       attachments: new AttachmentStore(join(temporary, "uploads-gated")),
       preferences: new PreferencesStore(join(temporary, "preferences-gated.json")),
       resources: new ResourceStore(),
+      git,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -384,6 +547,7 @@ describe("local host API", () => {
       attachments: new AttachmentStore(join(temporary, "uploads-backlog")),
       preferences: new PreferencesStore(join(temporary, "preferences-backlog.json")),
       resources: new ResourceStore(),
+      git,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -445,8 +609,22 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, message: "Open [the preview](preview.md) and [the vendored note](node_modules/mentioned.txt)." })
+      .send({ sessionId, message: "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`." })
       .expect(202);
+
+    const probed = await request(application.server)
+      .post("/api/resources/probe")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, references: ["preview.md", "missing.md", "node_modules/hidden.txt"] })
+      .expect(200);
+    expect(probed.body).toMatchObject({
+      sessionId,
+      results: [
+        { reference: "preview.md", availability: "available" },
+        { reference: "missing.md", availability: "missing" },
+        { reference: "node_modules/hidden.txt", availability: "unavailable" },
+      ],
+    });
 
     const resolved = await request(application.server)
       .post("/api/resources/resolve")
@@ -575,6 +753,7 @@ describe("local host API", () => {
         if (requestedSessionId !== sessionId) throw Object.assign(new Error("Wrong session"), { status: 409 });
         return {
           sessionId,
+          viewId: "embedded-view",
           cwd: temporary,
           messages: [
             {
@@ -592,6 +771,7 @@ describe("local host API", () => {
       attachments: new AttachmentStore(join(temporary, "embedded-uploads")),
       preferences: new PreferencesStore(join(temporary, "embedded-preferences.json")),
       resources: new ResourceStore(),
+      git,
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
@@ -678,5 +858,36 @@ describe("local host API", () => {
     });
     expect(events.some((event) => event.type === "message_update")).toBe(true);
     socket.close();
+  });
+
+  it("deletes an unselected session and atomically removes its navigation identities", async () => {
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pinnedSessionIds: ["mock-history"], hiddenSessionIds: ["mock-history"] })
+      .expect(200);
+    const forget = vi.spyOn(resources, "forgetSession");
+
+    await request(application.server).delete("/api/sessions/mock-history").expect(401);
+    const deleted = await request(application.server)
+      .delete("/api/sessions/mock-history")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(deleted.body).toMatchObject({
+      sessionId: "mock-history",
+      disposition: "trashed",
+      preferences: { pinnedSessionIds: [], hiddenSessionIds: [] },
+    });
+    expect(forget).toHaveBeenCalledWith("mock-history");
+
+    const sessions = await request(application.server)
+      .get("/api/sessions")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(sessions.body.sessions).not.toContainEqual(expect.objectContaining({ id: "mock-history" }));
+    await request(application.server)
+      .delete("/api/sessions/mock-history")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
   });
 });

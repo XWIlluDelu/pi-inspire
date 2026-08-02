@@ -27,16 +27,54 @@ const groupNames = () =>
  * session's folder too. */
 const list = () => within(document.querySelector(".nav__list") as HTMLElement);
 
+let deletedSessions: Set<string>;
+
 describe("session navigation controls", () => {
   beforeEach(async () => {
+    deletedSessions = new Set();
     installFakeWebSocket();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         return { body: bootstrapPayload({ snapshot: activeSnapshot({ sessionId: "alpha", cwd: "/work/alpha" }) }) };
       }
+      if (url.startsWith("/api/git/status")) return { body: {
+        kind: "repository",
+        head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
+        files: [{
+          path: { id: "b3RoZXIvY2hhbmdlZC50cw", display: "other/changed.ts", utf8Path: "other/changed.ts", workspacePath: "other/changed.ts" },
+          unstaged: { kind: "modified" }, untracked: false,
+        }],
+        total: 1,
+        truncated: false,
+        groups: { conflicted: [], staged: [], unstaged: ["b3RoZXIvY2hhbmdlZC50cw"], untracked: [] },
+      } };
+      if (url.startsWith("/api/files/list")) {
+        const dir = new URL(url, "http://local").searchParams.get("dir") ?? "";
+        return { body: { entries: dir === "other"
+          ? [{ name: "changed.ts", type: "file" }]
+          : [{ name: "other", type: "dir" }, { name: "changed.ts", type: "file" }] } };
+      }
       if (url.startsWith("/api/sessions/by-id")) return { body: { sessions: [] } };
+      if (url.startsWith("/api/sessions/") && init.method === "DELETE") {
+        const sessionId = decodeURIComponent(url.split("/").at(-1)!);
+        deletedSessions.add(sessionId);
+        const prefs = store.getState().prefs;
+        return { body: {
+          sessionId,
+          disposition: "trashed",
+          preferences: {
+            ...prefs,
+            pinnedSessionIds: prefs.pinnedSessionIds.filter((id) => id !== sessionId),
+            hiddenSessionIds: prefs.hiddenSessionIds.filter((id) => id !== sessionId),
+          },
+        } };
+      }
       if (url.startsWith("/api/sessions")) {
-        return { body: { sessions: [alpha, beta], total: 2, offset: 0, limit: 40 } };
+        const query = new URL(url, "http://local").searchParams.get("q")?.toLowerCase() ?? "";
+        const sessions = [alpha, beta].filter((session) =>
+          !deletedSessions.has(session.id) && session.title.toLowerCase().includes(query),
+        );
+        return { body: { sessions, total: sessions.length, offset: 0, limit: 40 } };
       }
       if (url.startsWith("/api/preferences") && init.method === "PATCH") return { body: jsonBody(init) };
       return undefined;
@@ -56,13 +94,15 @@ describe("session navigation controls", () => {
     expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "alpha" } });
-    expect(alphaGroup).toHaveAttribute("aria-expanded", "true");
-    expect(alphaGroup).toBeDisabled();
+    const searchAlphaGroup = await list().findByRole("button", { name: "alpha" });
+    expect(searchAlphaGroup).toHaveAttribute("aria-expanded", "true");
+    expect(searchAlphaGroup).toBeDisabled();
     expect(screen.getByText("Alpha session")).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "" } });
-    expect(alphaGroup).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(alphaGroup);
+    const restoredAlphaGroup = await list().findByRole("button", { name: "alpha" });
+    expect(restoredAlphaGroup).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(restoredAlphaGroup);
     fireEvent.click(screen.getByRole("button", { name: 'Pin "Alpha session"' }));
 
     await screen.findByRole("heading", { name: "Pinned" });
@@ -82,28 +122,63 @@ describe("session navigation controls", () => {
 
     // Search reveals the match without reclassifying it out of Hidden.
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "alpha" } });
+    await screen.findByRole("heading", { name: "Hidden" });
     const hiddenSection = document.querySelector(".nav__group--hidden") as HTMLElement;
-    expect(within(hiddenSection).getByText("Alpha session")).toBeInTheDocument();
+    expect(await within(hiddenSection).findByText("Alpha session")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Hidden" })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    fireEvent.click(screen.getByRole("button", { name: 'Unhide "Alpha session"' }));
+    fireEvent.click(screen.getByRole("button", { name: 'Restore "Alpha session"' }));
     await waitFor(() => expect(groupNames()).toEqual(["beta", "alpha"]));
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
-  it("pins a session out of Hidden, and pins a folder above the ordinary ones", async () => {
+  it("deletes only through Hidden after an explicit confirmation", async () => {
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
 
-    // Newest folder first by default.
+    fireEvent.click(screen.getByRole("button", { name: 'Hide "Beta session"' }));
+    await screen.findByRole("heading", { name: "Hidden" });
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    expect(screen.queryByRole("button", { name: 'Pin "Beta session"' })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: 'Hide "Beta session"' })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: 'Restore "Beta session"' })).toBeEnabled();
+
+    const deleteButton = screen.getByRole("button", { name: 'Delete "Beta session"' });
+    fireEvent.click(deleteButton);
+    const dialog = screen.getByRole("alertdialog", { name: "Delete session?" });
+    expect(within(dialog).getByText("Beta session")).toBeInTheDocument();
+    expect(within(dialog).getByText(/another Pi process/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog", { name: "Delete session?" })).not.toBeInTheDocument();
+    expect(screen.getByText("Beta session")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: 'Delete "Beta session"' }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete session" }));
+    await waitFor(() => expect(screen.queryByText("Beta session")).not.toBeInTheDocument());
+    expect(deletedSessions).toEqual(new Set(["beta"]));
+    expect(store.getState().notices.at(-1)?.text).toBe("Session moved to Trash");
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+  });
+
+  it("restores then pins a session, and pins a folder above the ordinary ones", async () => {
+    render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
+
+    // Newest folder first by default. Folder controls use the larger header
+    // icon tier rather than the denser session-row action size.
     expect(groupNames()).toEqual(["beta", "alpha"]);
-    fireEvent.click(screen.getByRole("button", { name: "Pin folder alpha" }));
+    const folderPin = screen.getByRole("button", { name: "Pin folder alpha" });
+    expect(folderPin.querySelector("svg")).toHaveAttribute("width", "14");
+    fireEvent.click(folderPin);
     await waitFor(() => expect(groupNames()).toEqual(["alpha", "beta"]));
 
     fireEvent.click(screen.getByRole("button", { name: 'Hide "Beta session"' }));
     await screen.findByRole("heading", { name: "Hidden" });
     fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    // Pinning a hidden session lifts it out of Hidden in one action.
+    // Hidden rows reserve their two action slots for Restore and Delete.
+    expect(screen.queryByRole("button", { name: 'Pin "Beta session"' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: 'Restore "Beta session"' }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Hidden" })).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: 'Pin "Beta session"' }));
     await screen.findByRole("heading", { name: "Pinned" });
     expect(screen.queryByRole("heading", { name: "Hidden" })).not.toBeInTheDocument();
@@ -125,6 +200,18 @@ describe("session navigation controls", () => {
     expect(document.activeElement).toHaveAttribute("aria-label", 'Hide "Beta session"');
   });
 
+  it("decorates workspace rows by exact path without basename guessing", async () => {
+    render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
+    fireEvent.click(document.querySelector(".explorer__header") as HTMLButtonElement);
+    const rootFile = await screen.findByRole("button", { name: "changed.ts" });
+    expect(within(rootFile).queryByLabelText(/unstaged/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "other" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /changed\.ts/ })).toHaveLength(2));
+    const files = screen.getAllByRole("button", { name: /changed\.ts/ });
+    const nested = files.find((button) => button !== rootFile)!;
+    expect(within(nested).getByLabelText("unstaged modified")).toHaveTextContent("M");
+  });
+
   it("curates the visible session without changing what is selected", async () => {
     const onSelect = vi.fn();
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={onSelect} />);
@@ -138,6 +225,7 @@ describe("session navigation controls", () => {
     const row = screen.getByText("Alpha session").closest(".nav__row");
     expect(row).toHaveClass("nav__row--active");
     expect(document.querySelector(".nav__group--hidden")).toContainElement(row as HTMLElement);
+    expect(screen.getByRole("button", { name: 'Delete "Alpha session"' })).toBeDisabled();
     expect(store.getState().sessionId).toBe("alpha");
     expect(onSelect).not.toHaveBeenCalled();
   });

@@ -11,11 +11,10 @@ scope:
 Closed 2026-07-25. The 2026-07-22 checkpoint — durable session navigation
 (global pinned section, per-project groups with persistent collapse) and a
 session-bound right-pane resource preview — shipped and has been stable since.
-Its deferred review findings moved to
-`notes/follow-up-code-review-2026-07-22.md`; the correctness portion closed in
-the 2026-07-25 external-review round, the efficiency portion remains tracked
-there. Standing contracts live in the workbench, session-continuity, and
-resource-preview specs (the earlier "active group stays forced open" state was
+Its deferred correctness findings closed in the 2026-07-25 external-review
+round; the still-unmeasured efficiency remainder was later consolidated into
+[[groom-evidence-gated-maintenance-2026-08-01]]. Standing contracts live in the
+workbench, session-continuity, and resource-preview specs (the earlier "active group stays forced open" state was
 later replaced by honoring saved collapse with the active highlight on the
 group header, as specced).
 

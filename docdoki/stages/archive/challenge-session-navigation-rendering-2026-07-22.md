@@ -55,4 +55,4 @@ Correct three observed daily-use problems without adopting unrelated enhancement
 
 ## Handoff
 
-The three corrective objectives are complete. A final Kimi K3 frontend review verified the concurrent-status, grouping, settings, and ANSI behaviors and identified one blocker: selecting a session while Settings remained visible cleared its attention without showing the transcript. Session and new-session navigation now leave Settings before opening the conversation, with a regression test. Preserve unrelated working-tree changes, especially the existing Escape-key fixes and `docdoki/notes/enhancement-proposals-2026-07-22.md`.
+The three corrective objectives are complete. A final Kimi K3 frontend review verified the concurrent-status, grouping, settings, and ANSI behaviors and identified one blocker: selecting a session while Settings remained visible cleared its attention without showing the transcript. Session and new-session navigation now leave Settings before opening the conversation, with a regression test. At closure, unrelated Escape-key and backlog edits were preserved.

@@ -1,6 +1,7 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { useEffect } from "react";
 import type {
+  CompletionAttentionPreference,
   LaunchPreference,
   ProjectDisplayPreference,
   ThemePreference,
@@ -25,6 +26,12 @@ const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> = [
 const PROJECT_DISPLAYS: Array<{ value: ProjectDisplayPreference; label: string }> = [
   { value: "folder", label: "Folder name" },
   { value: "path", label: "Full path" },
+];
+
+const COMPLETION_ATTENTION: Array<{ value: CompletionAttentionPreference; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "title", label: "Mark browser title" },
+  { value: "desktop", label: "Desktop notification" },
 ];
 
 /** Settings overlay: persistent preferences only. Per-session model and
@@ -121,6 +128,26 @@ export function Settings({ onClose }: { onClose: () => void }) {
               value={state.prefs.toolVisibility}
               options={VISIBILITIES}
               onChange={(value) => store.setToolVisibility(value as VisibilityPreference)}
+            />
+          </div>
+        </section>
+
+        <section className="settings__section" aria-label="Completion attention">
+          <h3 className="settings__section-title">Completion attention</h3>
+          <div className="settings__field settings__field--stacked">
+            <div>
+              <span className="settings__field-label">When unseen work ends</span>
+              <p className="settings__field-help">
+                Off does nothing. Title marks the tab until you view the session. Desktop sends one privacy-safe
+                notification for background or hidden-tab completion; permission is requested only when you choose it.
+              </p>
+            </div>
+            <Dropdown
+              label="Completion attention"
+              className="dropdown--field"
+              value={state.prefs.completionAttention}
+              options={COMPLETION_ATTENTION}
+              onChange={(value) => void store.setCompletionAttention(value as CompletionAttentionPreference)}
             />
           </div>
         </section>

@@ -138,10 +138,10 @@ export function Welcome() {
                   <button
                     type="button"
                     className="welcome__row"
-                    title={session.title || "Untitled session"}
+                    title={session.title || "New session"}
                     onClick={() => void store.openSession(session.id)}
                   >
-                    <span className="welcome__row-title">{session.title || "Untitled session"}</span>
+                    <span className="welcome__row-title">{session.title || "New session"}</span>
                     <span className="welcome__row-project">{session.project}</span>
                     <span className="welcome__row-time">{relativeTime(session.modified)}</span>
                   </button>

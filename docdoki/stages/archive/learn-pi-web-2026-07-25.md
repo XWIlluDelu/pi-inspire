@@ -23,7 +23,8 @@ Electron, inline-style, or monolithic-component architecture.
 - The comparison also clarified later possibilities around file and command
   completion, transcript navigation, forks, streaming resilience, and contextual
   workspace tabs. Those are optional proposals, not active implementation work,
-  and now live in [[enhancement-proposals-2026-07-22]].
+  and were later routed through [[groom-product-roadmap-2026-08-01]] into
+  focused stages.
 - The current navigation and resource work has its own active stage,
   [[follow-navigation-resource-polish-2026-07-27]]. Git tabs remain deferred
   until their product purpose and mutation boundary are settled.
@@ -37,5 +38,5 @@ Electron, inline-style, or monolithic-component architecture.
   support two useful code columns without excessive wrapping.
 - Resize and scroll affordances share a pane edge by z-order: the scroll thumb
   wins on its own hit area and resizing owns the remainder.
-- Optional future work belongs in the reusable enhancement backlog until a
-  human selects it into a distinct, scoped active stage.
+- Optional future work belongs in the current product roadmap until a human
+  selects its distinct, scoped active stage.

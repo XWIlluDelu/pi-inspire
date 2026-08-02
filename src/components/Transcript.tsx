@@ -4,12 +4,13 @@ import {
   ChevronRight,
   Loader2,
   Package,
+  Search,
   Wrench,
   XCircle,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
-import type { VisibilityPreference } from "../../shared/contracts";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { GenericExtensionDisplay, PendingQueues, VisibilityPreference } from "../../shared/contracts";
 import { isLocalResourceReference, isToolResourceArgumentKey } from "../../shared/resource-references";
 import {
   asMessage,
@@ -22,7 +23,8 @@ import {
   type ChatMessage,
   type ToolCallContent,
 } from "../store";
-import { RichText } from "./RichText";
+import { Dropdown } from "./Dropdown";
+import { handleRichTextCopy, RichText } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff, type DiffLine } from "../diff";
@@ -372,6 +374,79 @@ const UnknownRoleRow = memo(function UnknownRoleRow({
   );
 });
 
+function PendingQueueGroups({ queue }: { queue: PendingQueues }) {
+  const groups = [
+    { key: "steering", label: "Pending steering", items: queue.steering },
+    { key: "follow-up", label: "Pending follow-up", items: queue.followUp },
+  ];
+  return (
+    <div className="pending-groups" aria-label="Pending input queues">
+      {groups.filter((group) => group.items.length > 0).map((group) => (
+        <section key={group.key} className="pending-group" aria-label={group.label}>
+          <div className="pending-group__head">
+            <span>{group.label}</span>
+            <span aria-label={`${group.items.length} items`}>{group.items.length}</span>
+          </div>
+          <ol className="pending-group__list">
+            {group.items.map((text, index) => (
+              <li key={index} className="pending-group__item"><pre>{text}</pre></li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function ExtensionDisplaySurface({ displays }: { displays: GenericExtensionDisplay[] }) {
+  if (displays.length === 0) return null;
+  return (
+    <section className="extension-surface" aria-label="Extension display content">
+      <div className="extension-surface__head"><Package size={14} aria-hidden /> Extension display</div>
+      {displays.map((display) => (
+        <details key={display.id} className="extension-surface__item">
+          <summary>
+            <code>{display.method}</code>
+            <span>{display.attribution}</span>
+          </summary>
+          <pre className="card__mono">{JSON.stringify(display.payload, null, 2)}</pre>
+        </details>
+      ))}
+    </section>
+  );
+}
+
+export interface TranscriptSearchMatch {
+  rowIndex: number;
+  offset: number;
+}
+
+export type TranscriptSearchScope = "all" | "user" | "model";
+
+const TRANSCRIPT_SEARCH_SCOPES = [
+  { value: "all", label: "All" },
+  { value: "user", label: "User" },
+  { value: "model", label: "Model" },
+];
+
+/** Case-insensitive literal, non-overlapping matches over already-selected
+ * transcript text. This is intentionally not a Markdown/DOM search index. */
+export function findLiteralMatches(text: string, query: string, rowIndex: number): TranscriptSearchMatch[] {
+  if (!query) return [];
+  const haystack = text.toLocaleLowerCase();
+  const needle = query.toLocaleLowerCase();
+  if (!needle) return [];
+  const matches: TranscriptSearchMatch[] = [];
+  let from = 0;
+  while (from <= haystack.length - needle.length) {
+    const offset = haystack.indexOf(needle, from);
+    if (offset < 0) break;
+    matches.push({ rowIndex, offset });
+    from = offset + needle.length;
+  }
+  return matches;
+}
+
 // --- Transcript with pinned auto-scroll ---
 
 // Above this many turns the transcript mounts only the visible window via
@@ -384,15 +459,37 @@ export function Transcript({
   streaming,
   thinkingVisibility,
   toolVisibility,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder = store.loadOlderMessages,
+  sessionId = "",
+  queue = { steering: [], followUp: [] },
+  extensionDisplays = [],
 }: {
   messages: ChatMessage[];
   streaming: boolean;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: VisibilityPreference;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void>;
+  sessionId?: string;
+  queue?: PendingQueues;
+  extensionDisplays?: GenericExtensionDisplay[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<TranscriptSearchScope>("all");
+  const [currentMatch, setCurrentMatch] = useState(-1);
+
+  useEffect(() => {
+    setSearchQuery("");
+    setCurrentMatch(-1);
+    pinnedRef.current = true;
+    setPinned(true);
+  }, [sessionId]);
 
   // Tool-call pairing is derived data: recompute only when the message list changes.
   const { toolResults, toolCallIds } = useMemo(() => {
@@ -413,18 +510,65 @@ export function Transcript({
 
   const lastMessage = messages[messages.length - 1];
   const lastText = lastMessage ? messageText(lastMessage) : "";
+  let activeStreamingIndex = -1;
+  if (streaming) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index] as ChatMessage & { __inspireLiveId?: unknown; __inspireSettled?: unknown };
+      if (candidate.role === "assistant" && typeof candidate.__inspireLiveId === "string" && candidate.__inspireSettled !== true) {
+        activeStreamingIndex = index;
+        break;
+      }
+    }
+    // Preview/mock projections may not carry host lifecycle metadata. Only the
+    // literal tail is a safe fallback; never hide an earlier settled answer
+    // merely because a newer user turn has started.
+    if (activeStreamingIndex < 0 && messages.at(-1)?.role === "assistant") activeStreamingIndex = messages.length - 1;
+  }
 
   const onScroll = () => {
     const element = scrollRef.current;
     if (!element) return;
     const isPinned = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    // A search jump owns the viewport until the user explicitly clears it or
+    // chooses latest. Virtualizer geometry near the bottom must not silently
+    // reinstate live-follow and pull the selected match away on append.
+    const nextPinned = searchQuery.length > 0 && currentMatch >= 0 ? false : isPinned;
+    pinnedRef.current = nextPinned;
+    setPinned(nextPinned);
+  };
+
+  const loadOlder = async () => {
+    const element = scrollRef.current;
+    if (!element || loadingOlder) return;
+    const oldHeight = element.scrollHeight;
+    const oldTop = element.scrollTop;
+    pinnedRef.current = false;
+    setPinned(false);
+    await onLoadOlder();
+    requestAnimationFrame(() => {
+      const current = scrollRef.current;
+      if (!current) return;
+      current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
+    });
+  };
+
+  const restoreGeometricFollow = () => {
+    const element = scrollRef.current;
+    const isPinned = element ? element.scrollHeight - element.scrollTop - element.clientHeight < 80 : true;
     pinnedRef.current = isPinned;
     setPinned(isPinned);
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setCurrentMatch(-1);
+    restoreGeometricFollow();
   };
 
   const jumpToLatest = () => {
     const element = scrollRef.current;
     if (element) element.scrollTop = element.scrollHeight;
+    setCurrentMatch(-1);
     pinnedRef.current = true;
     setPinned(true);
   };
@@ -432,12 +576,24 @@ export function Transcript({
   // Row descriptors rebuild only when a dependency changes; memoized row
   // components keep settled turns from re-rendering on stream deltas.
   const rows = useMemo(() => {
-    const built: Array<{ key: string; node: React.ReactNode }> = [];
+    const built: Array<{
+      key: string;
+      node: React.ReactNode;
+      searchText: string;
+      searchScope: Exclude<TranscriptSearchScope, "all"> | null;
+    }> = [];
     messages.forEach((raw, index) => {
       const message = asMessage(raw);
       const key = messageKey(message) ?? `${message.role}:${index}`;
+      const projection = message as ChatMessage & { __inspireLiveId?: unknown; __inspireSettled?: unknown };
+      const settled = typeof projection.__inspireLiveId !== "string" || projection.__inspireSettled === true;
       if (message.role === "user") {
-        built.push({ key, node: <UserBubble message={message} /> });
+        built.push({
+          key,
+          node: <UserBubble message={message} />,
+          searchText: settled ? messageText(message) : "",
+          searchScope: "user",
+        });
       } else if (message.role === "assistant") {
         built.push({
           key,
@@ -445,11 +601,13 @@ export function Transcript({
             <AssistantTurn
               message={message}
               toolResults={toolResults}
-              streaming={streaming && index === messages.length - 1}
+              streaming={index === activeStreamingIndex}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
             />
           ),
+          searchText: settled && index !== activeStreamingIndex ? messageText(message) : "",
+          searchScope: "model",
         });
       } else if (message.role === "toolResult") {
         const paired = typeof message.toolCallId === "string" && toolCallIds.has(message.toolCallId);
@@ -457,14 +615,21 @@ export function Transcript({
           built.push({
             key,
             node: <UnpairedToolResultRow toolName={message.toolName} visibility={toolVisibility} />,
+            searchText: "",
+            searchScope: null,
           });
         }
       } else {
-        built.push({ key, node: <UnknownRoleRow message={message} visibility={toolVisibility} /> });
+        built.push({
+          key,
+          node: <UnknownRoleRow message={message} visibility={toolVisibility} />,
+          searchText: "",
+          searchScope: null,
+        });
       }
     });
     return built;
-  }, [messages, streaming, thinkingVisibility, toolVisibility, toolResults, toolCallIds]);
+  }, [messages, activeStreamingIndex, thinkingVisibility, toolVisibility, toolResults, toolCallIds]);
 
   const virtualize = rows.length >= VIRTUALIZE_AT;
   const virtualizer = useVirtualizer({
@@ -473,6 +638,38 @@ export function Transcript({
     estimateSize: () => 180,
     overscan: 6,
   });
+
+  const searchMatches = useMemo(
+    () => rows.flatMap((row, rowIndex) => (
+      searchScope === "all" || row.searchScope === searchScope
+        ? findLiteralMatches(row.searchText, searchQuery, rowIndex)
+        : []
+    )),
+    [rows, searchQuery, searchScope],
+  );
+
+  useEffect(() => {
+    setCurrentMatch((current) => searchMatches.length === 0 ? -1 : Math.min(current, searchMatches.length - 1));
+  }, [searchMatches.length]);
+
+  const navigateSearch = (direction: -1 | 1) => {
+    if (searchMatches.length === 0) return;
+    const next = currentMatch < 0
+      ? (direction === 1 ? 0 : searchMatches.length - 1)
+      : (currentMatch + direction + searchMatches.length) % searchMatches.length;
+    const rowIndex = searchMatches[next]!.rowIndex;
+    setCurrentMatch(next);
+    pinnedRef.current = false;
+    setPinned(false);
+    if (virtualize) {
+      virtualizer.scrollToIndex(rowIndex, { align: "center" });
+    } else {
+      requestAnimationFrame(() => {
+        const row = scrollRef.current?.querySelector<HTMLElement>(`[data-transcript-row="${rowIndex}"]`);
+        row?.scrollIntoView?.({ block: "center" });
+      });
+    }
+  };
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -495,7 +692,58 @@ export function Transcript({
 
   return (
     <div className="transcript-wrap">
-      <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick}>
+      <div
+        className={`transcript-search ${searchQuery ? "transcript-search--active" : ""}`}
+        role="search"
+        aria-label="Search settled transcript"
+      >
+        <Search size={14} aria-hidden />
+        <Dropdown
+          label="Search scope"
+          value={searchScope}
+          options={TRANSCRIPT_SEARCH_SCOPES}
+          onChange={(value) => {
+            setSearchScope(value as TranscriptSearchScope);
+            setCurrentMatch(-1);
+          }}
+          className="transcript-search__scope"
+        />
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => {
+            if (!event.target.value) clearSearch();
+            else { setSearchQuery(event.target.value); setCurrentMatch(-1); }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              navigateSearch(event.shiftKey ? -1 : 1);
+            } else if (event.key === "Escape") {
+              clearSearch();
+            }
+          }}
+          placeholder="Search conversation"
+          aria-label="Search conversation"
+        />
+        <output aria-live="polite" aria-label="Transcript search matches">
+          {searchQuery ? (searchMatches.length > 0
+            ? (currentMatch >= 0
+              ? `${currentMatch + 1} of ${searchMatches.length}`
+              : `${searchMatches.length} ${searchMatches.length === 1 ? "match" : "matches"}`)
+            : "No matches") : ""}
+        </output>
+        <button type="button" aria-label="Previous transcript match" disabled={searchMatches.length === 0} onClick={() => navigateSearch(-1)}>↑</button>
+        <button type="button" aria-label="Next transcript match" disabled={searchMatches.length === 0} onClick={() => navigateSearch(1)}>↓</button>
+      </div>
+      <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick} onCopy={handleRichTextCopy}>
+        {hasOlder ? (
+          <div className="transcript__column">
+            <button type="button" className="transcript__load-older" disabled={loadingOlder} onClick={() => void loadOlder()}>
+              {loadingOlder ? "Loading…" : "Load older messages"}
+            </button>
+          </div>
+        ) : null}
         {rows.length === 0 ? (
           <div className="transcript__column">
             <div className="empty-state">
@@ -512,6 +760,7 @@ export function Transcript({
               <div
                 key={rows[item.index]!.key}
                 data-index={item.index}
+                data-transcript-row={item.index}
                 ref={virtualizer.measureElement}
                 className="transcript__virtual-row"
                 style={{ transform: `translateY(${item.start}px)` }}
@@ -522,11 +771,17 @@ export function Transcript({
           </div>
         ) : (
           <div className="transcript__column">
-            {rows.map((row) => (
-              <Fragment key={row.key}>{row.node}</Fragment>
+            {rows.map((row, index) => (
+              <div key={row.key} data-transcript-row={index}>{row.node}</div>
             ))}
           </div>
         )}
+        {queue.steering.length > 0 || queue.followUp.length > 0 || extensionDisplays.length > 0 ? (
+          <div className="transcript__column transcript__pending">
+            <PendingQueueGroups queue={queue} />
+            <ExtensionDisplaySurface displays={extensionDisplays} />
+          </div>
+        ) : null}
       </div>
       <ScrollRail container={scrollRef} variant="reading" />
       {!pinned ? (

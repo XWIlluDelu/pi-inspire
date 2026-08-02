@@ -1,6 +1,24 @@
 import { EventEmitter } from "node:events";
-import type { ActiveSnapshot, PromptRequest, SessionListResponse, SessionSummary } from "../shared/contracts.js";
-import { parseCompactCommand, type RuntimeLike } from "./runtime.js";
+import { parseCompactCommand } from "../shared/commands.js";
+import type {
+  ActiveSnapshot,
+  BranchForkRequest,
+  BranchForkResponse,
+  BranchNavigateRequest,
+  BranchNavigateResponse,
+  BranchTreeResponse,
+  GitDiffResponse,
+  GitDiffSide,
+  GitStatusResponse,
+  PromptRequest,
+  SessionDeleteResponse,
+  SessionListResponse,
+  SessionSummary,
+  TranscriptPage,
+} from "../shared/contracts.js";
+import type { GitInspectionLike } from "./git-inspection.js";
+import type { ResourceContext } from "./resources.js";
+import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
@@ -113,6 +131,46 @@ const initialMessages = [
   },
 ];
 
+const mockGitPath = {
+  id: Buffer.from("analysis/spectrum.py").toString("base64url"),
+  display: "analysis/spectrum.py",
+  utf8Path: "analysis/spectrum.py",
+  workspacePath: "analysis/spectrum.py",
+};
+
+export class MockGitInspection implements GitInspectionLike {
+  async status(): Promise<GitStatusResponse> {
+    return {
+      kind: "repository",
+      head: { kind: "branch", name: "mock/analysis", oid: "0123456789abcdef0123456789abcdef01234567" },
+      files: [{ path: mockGitPath, unstaged: { kind: "modified" }, untracked: false }],
+      total: 1,
+      truncated: false,
+      groups: { conflicted: [], staged: [], unstaged: [mockGitPath.id], untracked: [] },
+    };
+  }
+
+  async diff(_cwd: string, pathId: string, side: GitDiffSide): Promise<GitDiffResponse> {
+    if (pathId !== mockGitPath.id || side !== "unstaged") {
+      throw Object.assign(new Error("That path and diff side are not present in fresh status"), { status: 409 });
+    }
+    return {
+      kind: "text",
+      path: mockGitPath,
+      side,
+      truncated: false,
+      encodingLossy: false,
+      lines: [
+        { kind: "meta", text: "--- a/analysis/spectrum.py", oldLine: null, newLine: null },
+        { kind: "meta", text: "+++ b/analysis/spectrum.py", oldLine: null, newLine: null },
+        { kind: "hunk", text: "@@ -12 +12 @@", oldLine: null, newLine: null },
+        { kind: "delete", text: "-scale = 1.0 / len(samples)", oldLine: 12, newLine: null },
+        { kind: "add", text: "+scale = 1.0 / max(1, len(samples))", oldLine: null, newLine: 12 },
+      ],
+    };
+  }
+}
+
 export class MockCatalog implements SessionCatalogLike {
   async refresh(): Promise<readonly SessionRecord[]> {
     return [];
@@ -124,7 +182,7 @@ export class MockCatalog implements SessionCatalogLike {
       path: `/mock/${id}.jsonl`,
       id,
       cwd: summary.cwd,
-      name: summary.title,
+      name: undefined,
       created: new Date(summary.created),
       modified: new Date(summary.modified),
       messageCount: summary.messageCount,
@@ -177,13 +235,25 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       active = {
         sessionId: id,
         sessionFile: `/mock/${id}.jsonl`,
-        sessionName: summary?.title ?? "New session",
+        // Catalog titles model first-prompt presentation; they are not an
+        // explicit Pi session name.
+        sessionName: undefined,
         cwd,
         model: { provider: "kimi-coding", id: "kimi-k3", name: "Kimi K3" },
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,
         messages: summary ? structuredClone(initialMessages) : [],
+        transcriptPage: {
+          sessionId: id,
+          revision: 1,
+          viewId: `mock-view-${id}`,
+          messages: summary ? structuredClone(initialMessages) : [],
+          hasOlder: false,
+          olderCursor: null,
+        },
+        projectionHealth: { status: "ok" },
+        projectionConflict: null,
         stats: { contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 } },
         availableModels: [
           { provider: "kimi-coding", id: "kimi-k3", contextWindow: 131_072, reasoning: true },
@@ -196,6 +266,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       };
       this.sessions.set(id, active);
     }
+    if (!active) throw new Error("Mock session activation failed");
 
     const currentStatus = this.state.sessionStatuses[id] ?? { runState: "idle" as const };
     const viewedStatus =
@@ -213,8 +284,24 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot> {
     const id = `mock-new-${++this.nextSession}`;
     const snapshot = this.activate(id, cwdInput);
-    if (snapshot.active) snapshot.active.sessionName = name || "New session";
+    if (snapshot.active) snapshot.active.sessionName = name?.trim() || undefined;
     return snapshot;
+  }
+
+  async deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
+    if (this.activeSessionId === sessionId) {
+      throw Object.assign(new Error("Switch to another session before deleting this one"), { status: 409 });
+    }
+    const status = this.state.sessionStatuses[sessionId];
+    if (status && ["running", "retrying", "compacting", "queued", "conflict"].includes(status.runState)) {
+      throw Object.assign(new Error("Wait for the session's active work to finish before deleting it"), { status: 409 });
+    }
+    const index = summaries.findIndex((session) => session.id === sessionId);
+    if (index < 0) throw Object.assign(new Error("Session not found"), { status: 404 });
+    summaries.splice(index, 1);
+    this.sessions.delete(sessionId);
+    delete this.state.sessionStatuses[sessionId];
+    return { sessionId, disposition: "trashed" };
   }
 
   private emitSession(id: string, event: Record<string, unknown>): void {
@@ -313,14 +400,41 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
   async extensionUiResponse(): Promise<void> {}
   async snapshot(): Promise<ActiveSnapshot> {
+    if (this.state.active) {
+      this.state.active.transcriptPage.messages = this.state.active.messages;
+    }
     return structuredClone(this.state);
   }
-  async resourceContext(sessionId: string) {
+  async transcriptPage(sessionId: string, _cursor: string): Promise<TranscriptPage> {
+    const active = this.requireSession(sessionId);
+    return { sessionId, revision: active.transcriptPage.revision, viewId: active.transcriptPage.viewId, messages: [], hasOlder: false, olderCursor: null };
+  }
+  async branchTree(sessionId: string): Promise<BranchTreeResponse> {
+    const active = this.requireSession(sessionId);
+    return {
+      sessionId,
+      revision: active.transcriptPage.revision,
+      incarnation: "mock",
+      durableLeafId: null,
+      effectiveLeafId: null,
+      activePath: [],
+      nodes: [],
+      truncated: false,
+      health: { status: "ok" },
+    };
+  }
+  async navigateBranch(_request: BranchNavigateRequest): Promise<BranchNavigateResponse> {
+    throw Object.assign(new Error("Mock branch navigation is unavailable"), { status: 409 });
+  }
+  async forkBranch(_request: BranchForkRequest): Promise<BranchForkResponse> {
+    throw Object.assign(new Error("Mock session forking is unavailable"), { status: 409 });
+  }
+  async resourceContext(sessionId: string): Promise<ResourceContext> {
     const active = this.state.active;
     if (!active || active.sessionId !== sessionId) {
       throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
     }
-    return { sessionId, cwd: active.cwd, messages: active.messages };
+    return { sessionId, viewId: active.transcriptPage.viewId, cwd: active.cwd, messages: active.messages };
   }
   async close(): Promise<void> {
     for (const timer of this.timers.values()) clearInterval(timer);

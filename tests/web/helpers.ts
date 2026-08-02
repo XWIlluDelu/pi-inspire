@@ -65,7 +65,7 @@ export function installFakeWebSocket(): void {
 export const DEFAULT_PREFS = defaultPreferences;
 
 export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveSnapshot {
-  const active = {
+  const active: NonNullable<ActiveSnapshot["active"]> = {
     sessionId: "s1",
     sessionName: "Test session",
     cwd: "/proj",
@@ -74,11 +74,29 @@ export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveS
     isStreaming: false,
     isCompacting: false,
     messages: [],
+    transcriptPage: {
+      sessionId: "s1", revision: 1, viewId: "view-s1", incarnation: "projection-1", appendFromRevision: 1,
+      messages: [], hasOlder: false, olderCursor: null,
+    },
+    projectionHealth: { status: "ok" as const },
+    projectionConflict: null,
     stats: { contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 } },
     availableModels: [],
     commands: [],
     ...overrides,
   };
+  if (!("transcriptPage" in overrides)) {
+    active.transcriptPage = {
+      sessionId: String(active.sessionId),
+      revision: 1,
+      viewId: `view-${String(active.sessionId)}`,
+      incarnation: "projection-1",
+      appendFromRevision: 1,
+      messages: active.messages as unknown[],
+      hasOlder: false,
+      olderCursor: null,
+    };
+  }
   return {
     active,
     runState: "idle",

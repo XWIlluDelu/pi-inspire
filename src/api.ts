@@ -1,12 +1,23 @@
 import type {
   ActiveSnapshot,
+  BranchForkRequest,
+  BranchForkResponse,
+  BranchNavigateRequest,
+  BranchNavigateResponse,
+  BranchTreeResponse,
   BootstrapResponse,
+  GitDiffResponse,
+  GitDiffSide,
+  GitStatusResponse,
   HostDirListing,
   InspirePreferences,
   ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
+  ResourceProbeResponse,
+  SessionDeleteResponse,
   SessionListResponse,
+  TranscriptPage,
   UploadedAttachment,
 } from "../shared/contracts";
 
@@ -122,6 +133,18 @@ export function createApi(token: string) {
   return {
     bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
+    olderTranscript: (sessionId: string, cursor: string, signal?: AbortSignal) =>
+      request<TranscriptPage>(
+        token,
+        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
+        { signal },
+      ),
+    branchTree: (sessionId: string) => request<BranchTreeResponse>(
+      token,
+      `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
+    ),
+    navigateBranch: (body: BranchNavigateRequest) => post<BranchNavigateResponse>(token, "/api/branches/navigate", body),
+    forkBranch: (body: BranchForkRequest) => post<BranchForkResponse>(token, "/api/branches/fork", body),
     sessions: (query: string, offset = 0, limit = 40) =>
       request<SessionListResponse>(
         token,
@@ -135,6 +158,8 @@ export function createApi(token: string) {
     newSession: (cwd: string, name?: string) => post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, name }),
     renameSession: (sessionId: string, name: string) =>
       post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
+    deleteSession: (sessionId: string) =>
+      request<SessionDeleteResponse>(token, `/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
     prompt: (body: PromptRequest) => post<{ accepted: boolean }>(token, "/api/prompt", body),
     abort: (sessionId: string) => post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
@@ -154,8 +179,18 @@ export function createApi(token: string) {
         token,
         `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}`,
       ),
+    gitStatus: (sessionId: string, signal?: AbortSignal) =>
+      request<GitStatusResponse>(
+        token,
+        `/api/git/status?sessionId=${encodeURIComponent(sessionId)}`,
+        { signal },
+      ),
+    gitDiff: (sessionId: string, pathId: string, side: GitDiffSide, signal?: AbortSignal) =>
+      post<GitDiffResponse>(token, "/api/git/diff", { sessionId, pathId, side }, { signal }),
     browseHostDirs: (path?: string) =>
       request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
+    probeResources: (sessionId: string, references: string[], signal?: AbortSignal) =>
+      post<ResourceProbeResponse>(token, "/api/resources/probe", { sessionId, references }, { signal }),
     resolveResource: (sessionId: string, reference: string, signal?: AbortSignal) =>
       post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }, { signal }),
     resourceContent: (id: string, sessionId: string, options?: ResourceContentOptions) =>

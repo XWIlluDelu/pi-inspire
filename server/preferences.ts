@@ -13,6 +13,11 @@ const preferenceFields = {
   thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
   projectDisplay: z.enum(["folder", "path"]),
+  completionAttention: z.enum(["off", "title", "desktop"]),
+  recentModelIds: z.array(z.object({
+    provider: z.string().min(1).max(120),
+    id: z.string().min(1).max(240),
+  }).strict()).max(8),
   pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100),
   pinnedProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
   hiddenSessionIds: z.array(z.string().min(1).max(128)).max(500),
@@ -24,6 +29,8 @@ const preferenceFields = {
 const preferencesSchema = z.object({
   ...preferenceFields,
   projectDisplay: preferenceFields.projectDisplay.default("folder"),
+  completionAttention: preferenceFields.completionAttention.default("off"),
+  recentModelIds: preferenceFields.recentModelIds.default([]),
   pinnedSessionIds: preferenceFields.pinnedSessionIds.default([]),
   pinnedProjectCwds: preferenceFields.pinnedProjectCwds.default([]),
   hiddenSessionIds: preferenceFields.hiddenSessionIds.default([]),
@@ -77,6 +84,22 @@ export class PreferencesStore {
     const patch = preferencesPatchSchema.parse(value);
     return this.enqueue(async () => {
       const preferences = preferencesSchema.parse({ ...(await this.readDisk()), ...patch });
+      await this.persist(preferences);
+      return preferences;
+    });
+  }
+
+  /** Remove navigation identities after their authoritative session file has
+   * gone. The read/transform/write stays in the same serialized preference
+   * operation, so a concurrent pin or hide patch cannot be overwritten. */
+  async removeSession(sessionId: string): Promise<InspirePreferences> {
+    return this.enqueue(async () => {
+      const current = await this.readDisk();
+      const preferences = preferencesSchema.parse({
+        ...current,
+        pinnedSessionIds: current.pinnedSessionIds.filter((id) => id !== sessionId),
+        hiddenSessionIds: current.hiddenSessionIds.filter((id) => id !== sessionId),
+      });
       await this.persist(preferences);
       return preferences;
     });

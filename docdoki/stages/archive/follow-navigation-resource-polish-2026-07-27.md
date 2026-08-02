@@ -92,9 +92,10 @@ ambiguous references became recoverable instead of silently wrong.
   floor. Shrinking the relative time was rejected; a scroll-height cap alone was
   rejected because it still builds an unbounded list; treating every path-shaped
   word as an existing file was rejected because prose mentions are provisional.
-- Git status, diff, staging, and commit surfaces stayed out of scope; the
-  deferred Changes surface and the deferred proactive mention check live in
-  `notes/enhancement-proposals-2026-07-22.md`.
+- Git status, diff, staging, and commit surfaces stayed out of scope. The
+  retained read-only Changes work now lives in
+  [[groom-git-inspection-2026-08-01]], while the evidence-gated proactive
+  mention check lives in [[groom-evidence-gated-maintenance-2026-08-01]].
 
 ## Verified
 

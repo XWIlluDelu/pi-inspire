@@ -96,6 +96,27 @@ describe("composer drafts across sessions", () => {
   });
 });
 
+describe("project-file send ownership", () => {
+  it("freezes chips during delivery and clears only the delivered canonical paths", async () => {
+    render(<Composer />);
+    store.addProjectFile("src/owned.ts");
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "send with file" } });
+    let release!: () => void;
+    promptGate = new Promise<void>((resolve) => { release = resolve; });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(store.getState().sending).toBe(true);
+    expect(screen.getByRole("button", { name: "Remove src/owned.ts" })).toBeDisabled();
+
+    store.removeProjectFile("src/owned.ts");
+    store.addProjectFile("src/racing.ts");
+    expect(store.getState().projectFiles).toEqual(["src/owned.ts"]);
+
+    release();
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    expect(store.getState().projectFiles).toEqual([]);
+  });
+});
+
 describe("project file picker scoping", () => {
   it("clears and re-scopes results when the session changes", async () => {
     act(() => {
