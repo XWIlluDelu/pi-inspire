@@ -14,12 +14,14 @@ import {
 } from "./helpers";
 
 let promptBodies: Record<string, unknown>[];
+let abortBodies: Record<string, unknown>[];
 let promptFails: boolean;
 let fileSearchFails: boolean;
 let slowSearchGate: Promise<void> | null;
 
 beforeAll(async () => {
   promptBodies = [];
+  abortBodies = [];
   promptFails = false;
   fileSearchFails = false;
   slowSearchGate = null;
@@ -43,6 +45,10 @@ beforeAll(async () => {
         return slowSearchGate.then(() => ({ body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] } }));
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
+    }
+    if (url.startsWith("/api/control/abort")) {
+      abortBodies.push(jsonBody(init));
+      return { body: { ok: true } };
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);
@@ -106,6 +112,39 @@ describe("composer attachments", () => {
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
     promptFails = false;
     clearLeftovers();
+  });
+});
+
+describe("queued composer controls", () => {
+  it("treats queued work as busy for steer, follow-up, and abort", async () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const queued = activeSnapshot();
+    queued.runState = "queued";
+    queued.sessionStatuses = { s1: { runState: "queued" } };
+    act(() => socket.emit({ type: "snapshot", data: queued }));
+
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message");
+    expect(textarea).toHaveAttribute("placeholder", "Steer the running task — Ctrl+Enter queues a follow-up");
+    expect(screen.getByRole("button", { name: "Abort running task" })).toBeInTheDocument();
+
+    typeDraft("steer queued work");
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => expect(promptBodies.at(-1)).toMatchObject({
+      sessionId: "s1", message: "steer queued work", behavior: "steer",
+    }));
+
+    typeDraft("follow up queued work");
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(promptBodies.at(-1)).toMatchObject({
+      sessionId: "s1", message: "follow up queued work", behavior: "followUp",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Abort running task" }));
+    await waitFor(() => expect(abortBodies.at(-1)).toEqual({ sessionId: "s1" }));
+
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
 });
 

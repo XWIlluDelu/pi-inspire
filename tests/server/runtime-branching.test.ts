@@ -33,10 +33,17 @@ class BranchRpc extends EventEmitter {
   forkGate: Promise<void> | null = null;
   forkStarted: (() => void) | null = null;
   forkEventCount = 0;
+  lateForkEventCount = 0;
   treeDialog = false;
   forkDialog = false;
   extensionResponses: Array<Record<string, unknown>> = [];
   private readonly dialogResolvers = new Map<string, () => void>();
+
+  emitLateForkEvents(): void {
+    for (let index = 0; index < this.lateForkEventCount; index += 1) {
+      this.emit("event", { type: "message_update", late: true, index });
+    }
+  }
 
   constructor(readonly options: PiRpcOptions) {
     super();
@@ -452,6 +459,39 @@ describe("stock RPC branch bridge", () => {
       expect(worker.stops).toBe(1);
       expect((await runtime.snapshot()).runState).toBe("conflict");
     } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps late fork overflow terminal while destination projection is opening", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const opening = new Promise<void>((resolve) => { started = resolve; });
+    const fixture = await setup(15_000, async (record) => {
+      started();
+      await gate;
+      return SessionProjection.open(record);
+    });
+    const { runtime, worker, directory, records } = fixture;
+    worker.forkPath = join(directory, "forked-late-overflow.jsonl");
+    worker.lateForkEventCount = 1_001;
+    records.set(worker.forkSessionId, {
+      id: worker.forkSessionId, cwd: directory, path: worker.forkPath, created: new Date(), modified: new Date(),
+      messageCount: 3, firstMessage: "root", searchText: "root",
+    });
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      const forking = runtime.forkBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "u2" });
+      await opening;
+      worker.emitLateForkEvents();
+      await vi.waitFor(() => expect(worker.stops).toBe(1));
+      release();
+      await expect(forking).rejects.toMatchObject({ status: 504 });
+      expect(runtime.activeSessionId).toBe(SESSION_ID);
+      expect((runtime as unknown as { slots: Map<string, unknown> }).slots.has(worker.forkSessionId)).toBe(false);
+    } finally {
+      release?.();
       await runtime.close();
     }
   });

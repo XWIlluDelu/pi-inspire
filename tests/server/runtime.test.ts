@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
-import { access } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcOutcomeUnknownError, type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
-import { MAX_IDLE_WORKERS, RuntimeController, safeProjection } from "../../server/runtime.js";
+import { MAX_IDLE_WORKERS, PI_STARTUP_RESPONSE_UI_ERROR, RuntimeController, safeProjection } from "../../server/runtime.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import type { SessionCatalogLike, SessionRecord } from "../../server/session-catalog.js";
 
@@ -15,6 +16,7 @@ class FakeRpc extends EventEmitter {
   starts = 0;
   stops = 0;
   failPrompts = false;
+  startupEvent: Record<string, unknown> | null = null;
   startGate: Promise<void> | null = null;
   sessionPath: string | null;
   sessionId: string;
@@ -28,6 +30,7 @@ class FakeRpc extends EventEmitter {
 
   async start(): Promise<void> {
     this.starts += 1;
+    if (this.startupEvent) this.emit("event", this.startupEvent);
     if (this.startGate) await this.startGate;
   }
 
@@ -127,6 +130,7 @@ function catalog(records: SessionRecord[]): SessionCatalogLike {
 }
 
 const attachments: AttachmentStore[] = [];
+const workspaceDirectories: string[] = [];
 
 function upload(name: string, type: string): Express.Multer.File {
   const buffer = Buffer.from("payload");
@@ -135,9 +139,57 @@ function upload(name: string, type: string): Express.Multer.File {
 
 afterEach(async () => {
   await Promise.all(attachments.splice(0).map((store) => store.close()));
+  await Promise.all(workspaceDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("browser-safe runtime projection", () => {
+  it("freezes one physical workspace root before starting slot-owned operations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-runtime-workspace-"));
+    workspaceDirectories.push(root);
+    const physicalOne = join(root, "one");
+    const physicalTwo = join(root, "two");
+    const alias = join(root, "selected");
+    await mkdir(physicalOne);
+    await mkdir(physicalTwo);
+    await writeFile(join(physicalOne, "marker.txt"), "one");
+    await writeFile(join(physicalTwo, "marker.txt"), "two");
+    await symlink(physicalOne, alias, "dir");
+    const sessionPath = join(root, "a.jsonl");
+    const session = record("a", alias);
+    session.path = sessionPath;
+    await writeFile(sessionPath, `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: alias })}\n${JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: "hello", timestamp: 1 } })}\n`);
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([session]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+    );
+    try {
+      const initial = await runtime.openSession("a");
+      const physical = await realpath(alias);
+      await vi.waitFor(() => expect(worker?.starts).toBe(1));
+      expect(physical).toBe(physicalOne);
+      expect(worker?.options.cwd).toBe(physicalOne);
+      expect(initial.active?.cwd).toBe(physicalOne);
+      expect(runtime.sessionCwd("a")).toBe(physicalOne);
+
+      await rm(alias);
+      await symlink(physicalTwo, alias, "dir");
+      await runtime.prompt({ sessionId: "a", message: "use marker", projectFiles: ["marker.txt"] });
+      const prompt = worker?.commands.find((command) => command.type === "prompt");
+      expect(prompt?.message).toContain(join(physicalOne, "marker.txt"));
+      expect(prompt?.message).not.toContain(join(physicalTwo, "marker.txt"));
+      expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("redacts credential-shaped fields and bounds oversized values", () => {
     const projected = safeProjection({
       authorization: "Bearer secret",
@@ -611,8 +663,7 @@ describe("RuntimeController concurrent sessions", () => {
 
     const first = runtime.openSession("a");
     const second = runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    expect(previewCalls).toBe(1);
+    await vi.waitFor(() => expect(previewCalls).toBe(1));
     releasePreview();
     await Promise.all([first, second]);
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
@@ -809,6 +860,88 @@ describe("RuntimeController concurrent sessions", () => {
       expect(a.conflict).toBeNull();
       await runtime.prompt({ sessionId: "a", message: "after recovery" });
       await vi.waitFor(() => expect(workers.filter((worker) => worker.sessionId === "a")).toHaveLength(2));
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps a reconciliation conflict sticky across agent settlement", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    type InternalSlot = { conflict: { message: string; revision: number } | null; runState: string; ready: boolean };
+    const slots = (runtime as unknown as { slots: Map<string, InternalSlot> }).slots;
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(worker?.starts).toBe(1));
+      const slot = slots.get("a")!;
+      slot.conflict = { message: "Session changed on disk", revision: 2 };
+      slot.runState = "conflict";
+      worker!.emit("event", { type: "agent_settled" });
+      await vi.waitFor(() => expect(worker?.stops).toBe(1));
+      expect(slot.conflict).toEqual({ message: "Session changed on disk", revision: 2 });
+      expect(slot.runState).toBe("conflict");
+      await expect(runtime.prompt({ sessionId: "a", message: "must not restart" })).rejects.toThrow("Session changed on disk");
+      expect(worker?.starts).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fails promptly and attributes a response-bearing startup UI request", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.startupEvent = { type: "extension_ui_request", id: "startup-confirm", method: "confirm", title: "startup" };
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      const started = Date.now();
+      await expect(runtime.newSession("/tmp")).rejects.toThrow(PI_STARTUP_RESPONSE_UI_ERROR);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(worker?.stops).toBeGreaterThan(0);
+      const internal = runtime as unknown as { slots: Map<string, unknown>; provisionalSlots: Map<string, unknown> };
+      expect(internal.slots.size).toBe(0);
+      expect(internal.provisionalSlots.size).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("allows fire-and-forget startup UI while rejecting no startup response", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.startupEvent = { type: "extension_ui_request", id: "startup-notify", method: "notify", message: "ready" };
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      const snapshot = await runtime.newSession("/tmp");
+      expect(snapshot.active?.sessionId).toBe("new-id");
+      expect(worker?.stops).toBe(0);
     } finally {
       await runtime.close();
     }
@@ -1085,6 +1218,9 @@ describe("RuntimeController concurrent sessions", () => {
 
     await runtime.openSession("a");
     await runtime.openSession("b");
+    const slots = (runtime as unknown as { slots: Map<string, { ready: boolean }> }).slots;
+    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
+    await vi.waitFor(() => expect(slots.get("b")?.ready).toBe(true));
     workers[0]!.emit("event", {
       type: "extension_ui_request",
       id: "question-1",
@@ -1194,11 +1330,15 @@ describe("RuntimeController concurrent sessions", () => {
       store,
       (options) => {
         worker = new FakeRpc(options);
-        const start = worker.start.bind(worker);
-        worker.start = async () => {
-          await start();
-          // Arrives while the slot still carries its provisional identity.
-          worker.emit("event", { type: "extension_ui_request", id: "trust-1", method: "confirm", title: "Trust?" });
+        const request = worker.request.bind(worker);
+        worker.request = async <T,>(command: Record<string, unknown>): Promise<T> => {
+          const result = await request<T>(command);
+          if (command.type === "get_state") {
+            // Arrives after RPC startup while the slot still carries its
+            // provisional identity.
+            worker.emit("event", { type: "extension_ui_request", id: "trust-1", method: "confirm", title: "Trust?" });
+          }
+          return result;
         };
         return worker as unknown as PiRpcProcess;
       },

@@ -157,6 +157,38 @@ describe("welcome flow", () => {
     expect(renamedTo).toBe("Spectral analysis");
   });
 
+  it("cancels a topbar rename editor when the visible session changes", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
+    expect(screen.getByLabelText("Session name")).toBeInTheDocument();
+
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
+      });
+    });
+    await waitFor(() => expect(screen.queryByLabelText("Session name")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Session B" })).toBeInTheDocument();
+
+    // Keep the shared test store at the session expected by the following
+    // app-flow cases.
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          sessionId: "s1",
+          sessionName: "Previous work",
+          cwd: "/demo",
+          messages: [
+            { role: "user", content: "hello world", timestamp: 1 },
+            { role: "assistant", content: [{ type: "text", text: "answer text" }], model: "kimi-k3", stopReason: "stop", timestamp: 2 },
+          ],
+        }),
+      });
+    });
+  });
+
   it("keeps the model trigger focused when a later setModel rejection rerenders the error banner", async () => {
     let releaseFailure!: () => void;
     modelFailureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });

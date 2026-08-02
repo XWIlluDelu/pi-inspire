@@ -56,6 +56,7 @@ import {
 export {
   asMessage,
   contentItems,
+  isAbortableRunState,
   isBusyRunState,
   messageKey,
   messageText,
@@ -249,7 +250,7 @@ export interface AppState extends EventSlice {
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
-  /** Session switch currently in flight; duplicate selections are ignored until it settles. */
+  /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
   /** The Hidden-row destructive action currently awaiting its host result. */
   deletingSessionId: string | null;
@@ -384,8 +385,11 @@ export class AppStore {
    * authoritative WebSocket snapshot bump it, so a slower open/new HTTP
    * response cannot overwrite a newer selection the client already applied. */
   private selectionRequest = 0;
+  /** The request that owns the visible opening marker. Stale completions may
+   * never clear a newer owner. */
+  private openingOwner: number | null = null;
   private resyncRequest = 0;
-  private readyWhileOpening = new Set<string>();
+  private readyWhileOpening = new Map<string, number>();
   private previewObjectUrl: string | null = null;
   private resourceRequest: AbortController | null = null;
   private resourceProbeRequest: AbortController | null = null;
@@ -554,6 +558,19 @@ export class AppStore {
       branchActionId: null,
       branchTreeError: this.state.branchTree ? "Branch history is stale — reload after the session selection settles" : null,
     });
+  }
+
+  private claimOpening(owner: number, sessionId: string | null): void {
+    this.readyWhileOpening.clear();
+    this.openingOwner = owner;
+    this.set({ openingSessionId: sessionId });
+  }
+
+  private releaseOpening(owner?: number): void {
+    if (owner !== undefined && this.openingOwner !== owner) return;
+    this.readyWhileOpening.clear();
+    this.openingOwner = null;
+    if (this.state.openingSessionId !== null) this.set({ openingSessionId: null });
   }
 
   async init(token: string | null): Promise<void> {
@@ -793,8 +810,11 @@ export class AppStore {
     if (event.type === "snapshot") {
       if (event.data) {
         // An authoritative push is the newest selection truth: invalidate any
-        // open/new response still in flight so it cannot overwrite this.
+        // open/new response still in flight so it cannot overwrite this. The
+        // push also immediately releases the old opening marker; stale
+        // finally blocks are fenced by their operation owner.
         this.selectionRequest += 1;
+        this.releaseOpening();
         const snapshot = event.data as ActiveSnapshot;
         this.applySnapshot(snapshot);
         if (snapshot.active?.sessionId) this.ensureSessionVisible(snapshot.active.sessionId);
@@ -838,8 +858,8 @@ export class AppStore {
       // changes; a settle refreshes the list so folder/time ordering catches
       // up. Unchanged statuses (token-level chatter) publish nothing.
       if (sessionStatuses) this.set({ sessionStatuses });
-      if (event.type === "runtime_ready" && eventSessionId === this.state.openingSessionId) {
-        this.readyWhileOpening.add(eventSessionId);
+      if (event.type === "runtime_ready" && eventSessionId === this.state.openingSessionId && this.openingOwner !== null) {
+        this.readyWhileOpening.set(eventSessionId, this.openingOwner);
       }
       if (event.type === "runtime_error") this.readyWhileOpening.delete(eventSessionId);
       if (event.type === "agent_settled") void this.refreshLoadedSessions();
@@ -1551,27 +1571,33 @@ export class AppStore {
 
   openSession = async (id: string): Promise<void> => {
     if (!this.api) return;
-    if (this.state.openingSessionId) return; // one switch at a time
-    if (id === this.state.sessionId) return; // already active: no-op
+    // Re-selecting the already visible session is a no-op only when there is no
+    // older operation to supersede. A newer intent must be able to invalidate
+    // an in-flight open even when it points at the current session.
+    if (id === this.state.sessionId && this.openingOwner === null) return;
+    if (id === this.state.openingSessionId) return; // duplicate pending target
     this.invalidateBranchForSelectionIntent();
     const ticket = ++this.selectionRequest;
-    this.set({ openingSessionId: id });
+    this.claimOpening(ticket, id);
     try {
       const snapshot = await this.api.openSession(id);
       // A newer selection (another open/new, or an authoritative push) won the
       // race; this stale response must not reinstate its session.
-      if (ticket !== this.selectionRequest) return;
+      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return;
       this.applySnapshot(snapshot);
       this.ensureSessionVisible(id);
       this.set({ error: null });
-      if (this.readyWhileOpening.delete(id)) {
+      if (this.readyWhileOpening.get(id) === ticket) {
+        this.readyWhileOpening.delete(id);
         void this.resync(id, this.selectionGeneration);
       }
     } catch (error) {
-      if (ticket === this.selectionRequest) this.fail(error instanceof Error ? error.message : "Failed to open session");
+      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
+        this.fail(error instanceof Error ? error.message : "Failed to open session");
+      }
     } finally {
-      this.readyWhileOpening.delete(id);
-      this.set({ openingSessionId: null });
+      if (this.readyWhileOpening.get(id) === ticket) this.readyWhileOpening.delete(id);
+      this.releaseOpening(ticket);
     }
   };
 
@@ -1586,30 +1612,42 @@ export class AppStore {
     }
     this.invalidateBranchForSelectionIntent();
     const ticket = ++this.selectionRequest;
+    // A new-session intent supersedes any opener immediately. There is no
+    // destination id to show until the host returns the new session identity,
+    // but the old opening owner must not remain visible during that handoff.
+    this.claimOpening(ticket, null);
     try {
       const snapshot = await this.api.newSession(target, name);
-      if (ticket !== this.selectionRequest) return; // superseded by a newer selection
+      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return; // superseded by a newer selection
       this.applySnapshot(snapshot);
       if (snapshot.active?.sessionId) this.ensureSessionVisible(snapshot.active.sessionId);
       this.set({ error: null });
       void this.refreshLoadedSessions();
     } catch (error) {
-      if (ticket === this.selectionRequest) this.fail(error instanceof Error ? error.message : "Failed to create session");
+      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
+        this.fail(error instanceof Error ? error.message : "Failed to create session");
+      }
+    } finally {
+      this.releaseOpening(ticket);
     }
   };
 
-  renameSession = async (name: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
+  renameSession = async (sessionId: string, name: string): Promise<boolean> => {
     if (!this.api || !sessionId || !name.trim()) return false;
+    const trimmedName = name.trim();
     try {
-      await this.api.renameSession(sessionId, name.trim());
+      await this.api.renameSession(sessionId, trimmedName);
       // The response may return after a session switch; only the owning
-      // session's visible title updates.
-      if (this.state.sessionId === sessionId) this.set({ sessionName: name.trim(), error: null });
+      // session's visible title updates or clears its visible error.
+      if (this.state.sessionId === sessionId) this.set({ sessionName: trimmedName, error: null });
       void this.refreshLoadedSessions();
       return true;
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to rename session");
+      // A background rename must not surface its failure over another visible
+      // session. The caller still receives false for its owning editor.
+      if (this.state.sessionId === sessionId) {
+        this.fail(error instanceof Error ? error.message : "Failed to rename session");
+      }
       return false;
     }
   };
@@ -1711,10 +1749,17 @@ export class AppStore {
       }
       composer.attachments = composer.attachments.filter((item) => !sentIds.has(item.localId));
       composer.projectFiles = composer.projectFiles.filter((path) => !sentPaths.has(path));
-      this.set({ error: null });
+      // A background completion may clear only an error owned by its visible
+      // session; another session's alert is an independent surface.
+      if (this.state.sessionId === sessionId) this.set({ error: null });
       return true;
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to send");
+      // Keep failures attached to the session that sent the prompt. A switch
+      // before the HTTP result arrives must not overwrite the new session's
+      // visible error.
+      if (this.state.sessionId === sessionId) {
+        this.fail(error instanceof Error ? error.message : "Failed to send");
+      }
       return false;
     } finally {
       composer.sending = false;
@@ -2558,11 +2603,18 @@ export class AppStore {
         this.set({ resourcePreview: { status: "ready", reference, descriptor, contentUnavailable: "too-large" } });
         return;
       }
-      const blob = await this.api.resourceContent(descriptor.id, sessionId, {
+      const content = await this.api.resourceContent(descriptor.id, sessionId, {
         byteLimit: textLike ? TEXT_PREVIEW_BYTES : MAX_MEDIA_PREVIEW_BYTES + 1,
         signal: request.signal,
       });
       if (stale()) return;
+      const blob = content.blob;
+      // Resolve metadata authorizes discovery only. Once bytes arrive, the
+      // content response's current total is the sole size authority for both
+      // the descriptor shown to the user and truncation decisions.
+      const currentDescriptor = content.totalSize === descriptor.size
+        ? descriptor
+        : { ...descriptor, size: content.totalSize };
       if (textLike) {
         const text = await blob.text();
         if (stale()) return;
@@ -2575,18 +2627,18 @@ export class AppStore {
           resourcePreview: {
             status: "ready",
             reference,
-            descriptor,
+            descriptor: currentDescriptor,
             text,
             // A 206 also answers full-coverage ranges, so judge truncation
-            // by what actually arrived against the file's stat size.
-            truncated: blob.size < descriptor.size,
+            // by what actually arrived against the transfer's current total.
+            truncated: blob.size < content.totalSize,
             ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
           },
         });
         return;
       }
-      if (blob.size > MAX_MEDIA_PREVIEW_BYTES) {
-        this.set({ resourcePreview: { status: "ready", reference, descriptor, contentUnavailable: "too-large" } });
+      if (content.totalSize > MAX_MEDIA_PREVIEW_BYTES || blob.size > MAX_MEDIA_PREVIEW_BYTES) {
+        this.set({ resourcePreview: { status: "ready", reference, descriptor: currentDescriptor, contentUnavailable: "too-large" } });
         return;
       }
       if (typeof URL.createObjectURL === "function") {
@@ -2596,7 +2648,7 @@ export class AppStore {
         resourcePreview: {
           status: "ready",
           reference,
-          descriptor,
+          descriptor: currentDescriptor,
           ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
         },
       });

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -17,6 +17,7 @@ import {
 } from "../shared/branch-bridge-protocol.js";
 import {
   emptyPendingQueues,
+  isBusyRunState,
   parsePendingExtensionUiRequest,
   type ActiveSnapshot,
   type BranchForkRequest,
@@ -52,7 +53,6 @@ import type { ResourceContext } from "./resources.js";
 import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
 
-const BUSY_STATES = new Set<RunState>(["running", "retrying", "compacting", "queued"]);
 const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
 const BRANCH_BRIDGE_TIMEOUT_MS = 15_000;
@@ -61,6 +61,9 @@ const MAX_PROMPT_CHARS = 500_000;
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
+const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
+const FORK_BUFFER_OVERFLOW_ERROR = "Fork event buffer exceeded its bound; the worker was stopped";
+export const PI_STARTUP_RESPONSE_UI_ERROR = "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 /** Keep a small warm cache, but never stop selected, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
@@ -384,6 +387,9 @@ interface RuntimeSlot {
   cwd: string;
   sessionPath: string | null;
   process: PiRpcProcess | null;
+  startupPhase: "idle" | "starting" | "complete";
+  startupError: Error | null;
+  startupStop: Promise<void> | null;
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
   stopping: Promise<void> | null;
@@ -426,6 +432,8 @@ interface RuntimeSlot {
   rebinding: boolean;
   bufferedEvents: unknown[];
   bufferedEventBytes: number;
+  forkBufferOverflow: boolean;
+  forkOverflowCleanup: Promise<void> | null;
   branchRevision: number;
   viewId: string;
 }
@@ -804,7 +812,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private writerOwnershipActive(slot: RuntimeSlot): boolean {
-    return BUSY_STATES.has(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
+    return isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
       slot.persistenceExpectations.length > 0 || Boolean(slot.pendingPartialPersistence) ||
       Boolean(slot.navigationLease) || Boolean(slot.pendingBranchBridge);
   }
@@ -878,7 +886,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     };
 
     if (slot.process && result.uncommittedBytes > 0) {
-      const initiallyOwned = priorPartial !== null || BUSY_STATES.has(slot.runState) || slot.persistenceExpectations.length > 0;
+      const initiallyOwned = priorPartial !== null || isBusyRunState(slot.runState) || slot.persistenceExpectations.length > 0;
       const exactPrior = !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
       if (!initiallyOwned || !exactPrior || !(await acceptOwnedAppend())) {
         await this.failPartialPersistence(slot, "Session changed with an unowned or overwritten incomplete JSONL entry; the worker was stopped", false);
@@ -952,6 +960,37 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.conflict?.message ?? slot.projection?.health.message ?? "Session projection is unavailable",
       ), { status: 409 });
     }
+  }
+
+  private async cleanupForkBufferOverflow(slot: RuntimeSlot): Promise<void> {
+    // Clear the handoff buffer before awaiting child cleanup. While the stop is
+    // in flight, later child events must not become a second source of truth.
+    slot.bufferedEvents = [];
+    slot.bufferedEventBytes = 0;
+    await this.stopWriter(slot);
+    await this.reconcileSlot(slot, true).catch(() => undefined);
+  }
+
+  private markForkBufferOverflow(slot: RuntimeSlot): void {
+    if (slot.forkBufferOverflow) return;
+    slot.forkBufferOverflow = true;
+    if (!slot.conflict) {
+      slot.conflict = { message: FORK_BUFFER_OVERFLOW_MESSAGE, revision: slot.projection?.revision ?? 0 };
+    }
+    slot.runState = "conflict";
+    slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+    slot.forkOverflowCleanup = this.cleanupForkBufferOverflow(slot);
+    void slot.forkOverflowCleanup.catch((error) => logRuntimeError(slot.id, error));
+  }
+
+  private async failForkBufferOverflow(slot: RuntimeSlot): Promise<never> {
+    if (slot.forkOverflowCleanup) await slot.forkOverflowCleanup.catch(() => undefined);
+    throw Object.assign(new Error(FORK_BUFFER_OVERFLOW_ERROR), { status: 504 });
+  }
+
+  private async assertForkBufferHealthy(slot: RuntimeSlot): Promise<void> {
+    if (slot.forkBufferOverflow) await this.failForkBufferOverflow(slot);
   }
 
   private async stopWriter(slot: RuntimeSlot): Promise<void> {
@@ -1169,7 +1208,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private canPruneDormant(slot: RuntimeSlot): boolean {
     return slot.id !== this.selectedSessionId &&
-      !slot.process && !slot.stopping && !slot.attention && !BUSY_STATES.has(slot.runState) &&
+      !slot.process && !slot.stopping && !slot.attention && !isBusyRunState(slot.runState) &&
       slot.runState !== "failed" && slot.runState !== "conflict" &&
       slot.pendingExtensionUiRequests.size === 0 && slot.pendingQueues.steering.length === 0 && slot.pendingQueues.followUp.length === 0 &&
       !slot.conflict && !slot.navigationLease && !slot.pendingBranchBridge && !slot.rebinding &&
@@ -1199,7 +1238,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.process &&
       slot.ready &&
       slot.id !== this.selectedSessionId &&
-      !BUSY_STATES.has(slot.runState) &&
+      !isBusyRunState(slot.runState) &&
       slot.pendingExtensionUiRequests.size === 0 &&
       !slot.conflict &&
       !slot.navigationLease &&
@@ -1229,7 +1268,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private statusFor(slot: RuntimeSlot): SessionRuntimeStatus {
-    const indicator = BUSY_STATES.has(slot.runState) ? "running" : (slot.attention ?? undefined);
+    const indicator = isBusyRunState(slot.runState) ? "running" : (slot.attention ?? undefined);
     return { runState: slot.runState, ...(indicator ? { indicator } : {}) };
   }
 
@@ -1418,12 +1457,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
+  private rejectUnsupportedStartupUi(slot: RuntimeSlot, rpc: PiRpcProcess, record: Record<string, unknown>): boolean {
+    if (slot.ready || slot.startupPhase !== "starting" || record.type !== "extension_ui_request") return false;
+    if (!parsePendingExtensionUiRequest({ ...record, sessionId: slot.id })) return false;
+    if (!slot.startupError) {
+      slot.startupError = Object.assign(new Error(PI_STARTUP_RESPONSE_UI_ERROR), {
+        status: 503,
+        code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
+      });
+    }
+    if (!slot.startupStop) {
+      slot.startupStop = rpc.stop().catch((error) => {
+        logRuntimeError(slot.id, error);
+      });
+    }
+    return true;
+  }
+
   private dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void {
     const slot = this.processOwners.get(rpc);
     if (!slot || slot.process !== rpc) return;
     const record = event && typeof event === "object" ? event as Record<string, unknown> : {};
     if (this.interceptBranchStatus(slot, rpc, record)) return;
+    if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     if (slot.rebinding) {
+      if (slot.forkBufferOverflow) return;
       // Fork hooks may block Pi's replacement command on a dialog. Such
       // requests keep their source address and bypass the general event
       // buffer so the browser can answer while the mutation FIFO is occupied.
@@ -1434,13 +1492,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           return;
         }
       }
-      if (slot.conflict?.message === "Fork event buffer exceeded its bound") return;
       let eventBytes = 0;
       try { eventBytes = Buffer.byteLength(JSON.stringify(event)); } catch { eventBytes = 2 * 1024 * 1024 + 1; }
       if (slot.bufferedEvents.length >= 1_000 || slot.bufferedEventBytes + eventBytes > 2 * 1024 * 1024) {
-        slot.conflict = { message: "Fork event buffer exceeded its bound", revision: slot.projection?.revision ?? 0 };
-        slot.runState = "conflict";
-        slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+        this.markForkBufferOverflow(slot);
         return;
       }
       slot.bufferedEvents.push(event);
@@ -1453,19 +1508,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (slot.process !== rpc) return;
         await this.reconcileSlot(slot, true);
         this.handleEvent(slot, event, rpc);
-        if (record.type === "agent_settled" && slot.conflict) {
-          await this.stopWriter(slot);
-          if (slot.projection?.health.status === "ok") {
-            slot.conflict = null;
-            slot.runState = "idle";
-            this.emitSlotEvent(slot, {
-              type: "session_projection_changed",
-              revision: slot.projection.revision,
-              health: slot.projection.health,
-              conflict: null,
-            });
-          }
-        }
+        // A terminal lifecycle event may settle the agent, but it cannot
+        // repair a reconciliation conflict. Keep the worker stopped and leave
+        // the explicit abort/recovery boundary as the sole conflict clearer.
+        if (record.type === "agent_settled" && slot.conflict) await this.stopWriter(slot);
       }).catch((error) => {
         logRuntimeError(slot.id, error);
         this.handleEvent(slot, event, rpc);
@@ -1533,7 +1579,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         projectionConflict: slot.conflict,
         effectiveLeafId,
         navigationLeased: Boolean(slot.navigationLease),
-        isStreaming: BUSY_STATES.has(slot.runState),
+        isStreaming: isBusyRunState(slot.runState),
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
@@ -1544,10 +1590,28 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }) as ActiveSnapshot;
   }
 
-  private async openProjection(session: SessionRecord): Promise<{ projection: SessionProjectionView; preview: ActiveSessionSnapshot }> {
+  private async resolveWorkspaceRoot(cwd: string): Promise<string> {
+    const resolved = resolve(cwd || process.cwd());
+    try {
+      return await realpath(resolved);
+    } catch (error) {
+      // Test-only preview adapters intentionally use virtual paths. Real
+      // workspaces still require a canonical physical identity.
+      if (this.loadPreview !== loadSessionPreview && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        return resolved;
+      }
+      throw error;
+    }
+  }
+
+  private async openProjection(
+    session: SessionRecord,
+    workspaceRoot: string,
+  ): Promise<{ projection: SessionProjectionView; preview: ActiveSessionSnapshot }> {
     if (this.loadPreview !== loadSessionPreview) {
       const preview = await this.loadPreview(session);
-      return { projection: new PreviewProjection(session.id, preview), preview };
+      const canonicalPreview = { ...preview, cwd: workspaceRoot };
+      return { projection: new PreviewProjection(session.id, canonicalPreview), preview: canonicalPreview };
     }
     const projection = await SessionProjection.open(session);
     const page = projection.latestPage();
@@ -1557,7 +1621,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         sessionId: session.id,
         sessionFile: projection.path,
         sessionName: session.name,
-        cwd: resolve(session.cwd || process.cwd()),
+        cwd: workspaceRoot,
         model: projection.model,
         thinkingLevel: projection.thinkingLevel,
         isStreaming: false,
@@ -1587,7 +1651,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (this.deleting.has(session.id)) {
       throw Object.assign(new Error("That session is being deleted"), { status: 409 });
     }
-    await this.waitForForkReservation(session);
+    const reservation = this.forkReservationsById.get(session.id) ?? this.forkReservationsByPath.get(resolve(session.path));
+    if (reservation) await this.waitForForkReservation(session);
     if (this.deleting.has(session.id)) {
       throw Object.assign(new Error("That session is being deleted"), { status: 409 });
     }
@@ -1606,7 +1671,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
 
     const loading = (async () => {
-      const { projection, preview } = await this.openProjection(session);
+      const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd || process.cwd());
+      const { projection, preview } = await this.openProjection(session, workspaceRoot);
       const current = this.slots.get(session.id);
       if (current && (current.process || this.opening.has(session.id))) {
         await projection.close();
@@ -1619,7 +1685,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.projection = projection;
         this.attachProjection(current, projection);
         current.preview = preview;
-        current.cwd = preview.cwd;
+        current.cwd = workspaceRoot;
         current.sessionPath = preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path);
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         this.clearPendingExtensionUi(current, "replaced");
@@ -1637,9 +1703,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
       const slot: RuntimeSlot = {
         id: session.id,
-        cwd: preview.cwd,
+        cwd: workspaceRoot,
         sessionPath: preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path),
         process: null,
+        startupPhase: "idle",
+        startupError: null,
+        startupStop: null,
         stopping: null,
         ready: false,
         preview,
@@ -1680,6 +1749,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         rebinding: false,
         bufferedEvents: [],
         bufferedEventBytes: 0,
+        forkBufferOverflow: false,
+        forkOverflowCleanup: null,
         branchRevision: projection.revision,
         viewId: bridgeToken("view"),
       };
@@ -1852,6 +1923,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       throw error;
     }
     slot.process = rpc;
+    slot.startupPhase = "idle";
+    slot.startupError = null;
+    slot.startupStop = null;
     slot.bridge = bridge;
     slot.ready = false;
     this.clearPendingExtensionUi(slot, "replaced");
@@ -1862,25 +1936,29 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       this.attachProcess(slot, rpc);
       await this.requireUnchangedPreStartBaseline(slot, baseline);
+      slot.startupPhase = "starting";
       await rpc.start();
+      if (slot.startupError) throw slot.startupError;
       await this.attestStartup(slot, rpc, baseline);
       slot.ready = true;
+      slot.startupPhase = "complete";
       if (slot.runState === "failed" || slot.runState === "aborted") slot.runState = "idle";
       this.captureWriterProjectionBaseline(slot);
       this.emitSlotEvent(slot, { type: "runtime_ready" });
       this.scheduleIdleWorkerEviction();
       return slot;
     } catch (error) {
+      const failure = slot.startupError ?? error;
       if (slot.process === rpc) {
-        logRuntimeError(slot.id, error);
+        logRuntimeError(slot.id, failure);
         await this.stopWriter(slot);
         slot.runState = "failed";
         slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-        this.emitSlotEvent(slot, { type: "runtime_error", error: error instanceof Error ? error.message : String(error) });
+        this.emitSlotEvent(slot, { type: "runtime_error", error: failure instanceof Error ? failure.message : String(failure) });
       } else {
         await rpc.stop();
       }
-      throw error;
+      throw failure;
     } finally {
       projection.resumeReconciliation();
     }
@@ -1966,7 +2044,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (slot.stopping) await slot.stopping;
       if (
         slot.activeOperations > 0 || slot.mutationPending > 0 || slot.extensionResponsePending > 0 ||
-        BUSY_STATES.has(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
+        isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
         slot.pendingQueues.steering.length > 0 || slot.pendingQueues.followUp.length > 0 ||
         slot.persistenceExpectations.length > 0 || slot.pendingPartialPersistence ||
         slot.pendingBranchBridge || slot.rebinding || slot.conflict || slot.navigationLease
@@ -1978,7 +2056,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           throw Object.assign(new Error("The session changed while deletion was being prepared"), { status: 409 });
         }
         if (
-          BUSY_STATES.has(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
+          isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
           slot.pendingQueues.steering.length > 0 || slot.pendingQueues.followUp.length > 0 ||
           slot.extensionResponsePending > 0 || slot.persistenceExpectations.length > 0 ||
           slot.pendingPartialPersistence || slot.pendingBranchBridge || slot.rebinding ||
@@ -2028,7 +2106,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
-    const cwd = resolve(cwdInput);
+    const cwd = await this.resolveWorkspaceRoot(cwdInput);
     let details;
     try {
       details = await stat(cwd);
@@ -2046,6 +2124,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       cwd,
       sessionPath: null,
       process: rpc,
+      startupPhase: "idle",
+      startupError: null,
+      startupStop: null,
       stopping: null,
       ready: false,
       preview: null,
@@ -2086,6 +2167,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       rebinding: false,
       bufferedEvents: [],
       bufferedEventBytes: 0,
+      forkBufferOverflow: false,
+      forkOverflowCleanup: null,
       branchRevision: 1,
       viewId: bridgeToken("view"),
     };
@@ -2095,9 +2178,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.provisionalSlots.set(provisionalId, { slot, completion });
     this.attachProcess(slot, rpc);
     try {
+      slot.startupPhase = "starting";
       await rpc.start();
+      if (slot.startupError) throw slot.startupError;
       this.assertNotClosing();
       slot.ready = true;
+      slot.startupPhase = "complete";
       const state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
       this.assertNotClosing();
       const sessionId = String(state.sessionId ?? "");
@@ -2187,6 +2273,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.emitSlotEvent(slot, { type: "runtime_ready" });
       return this.snapshotSlot(slot);
     } catch (error) {
+      const failure = slot.startupError ?? error;
       this.provisionalSlots.delete(provisionalId);
       const stillOwned = slot.process === rpc;
       slot.process = null;
@@ -2194,7 +2281,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (stillOwned) await rpc.stop();
       await slot.projection?.close().catch(() => undefined);
       slot.projection = null;
-      throw error;
+      throw failure;
     } finally {
       finishProvisional();
     }
@@ -2490,7 +2577,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       let forkResult: { text?: unknown; cancelled?: unknown };
       try {
         forkResult = await rpc.request({ type: "fork", entryId: request.targetId });
+        await this.assertForkBufferHealthy(source);
       } catch (error) {
+        if (source.forkBufferOverflow) return this.failForkBufferOverflow(source);
         const buffered = source.bufferedEvents.slice();
         source.rebinding = false;
         source.bufferedEvents = [];
@@ -2504,21 +2593,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.replayBufferedEvents(source, rpc, buffered);
         throw error;
       }
-      if (source.conflict?.message === "Fork event buffer exceeded its bound") {
-        source.rebinding = false;
-        source.bufferedEvents = [];
-        source.bufferedEventBytes = 0;
-        await this.stopWriter(source);
-        await this.reconcileSlot(source, true).catch(() => undefined);
-        throw Object.assign(new Error("Fork event buffer exceeded its bound; the worker was stopped"), { status: 504 });
-      }
+
       if (forkResult.cancelled === true) {
         const buffered = source.bufferedEvents.slice();
         this.replayBufferedEvents(source, rpc, buffered);
         await this.reconcileSlot(source, true);
+        await this.assertForkBufferHealthy(source);
         throw Object.assign(new Error("Fork was cancelled by an extension"), { status: 409 });
       }
       await this.reconcileSlot(source, true);
+      await this.assertForkBufferHealthy(source);
       if (source.conflict || source.projection?.health.status === "error") {
         await this.stopWriter(source);
         throw Object.assign(new Error("Fork source changed while the operation was in flight; the destination worker was stopped"), { status: 409 });
@@ -2527,7 +2611,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       let state: Record<string, unknown>;
       try {
         state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
-      } catch {
+        await this.assertForkBufferHealthy(source);
+      } catch (error) {
+        if (source.forkBufferOverflow) return this.failForkBufferOverflow(source);
         return this.failUnknownBranchOutcome(source, "Fork identity outcome is unknown; the worker was stopped and disk state reconciled");
       }
       const destinationId = typeof state.sessionId === "string" ? state.sessionId : "";
@@ -2564,8 +2650,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           firstMessage: "",
           searchText: "",
         });
-        // Recheck and attach without yielding. JavaScript's run-to-completion
-        // semantics make this the atomic reservation-to-owner transition.
+        // Recheck and attach without yielding afterward. JavaScript's
+        // run-to-completion semantics make this the atomic
+        // reservation-to-owner transition.
+        await this.assertForkBufferHealthy(source);
         const attachPathCollision = [...this.slots.values()].some((slot) =>
           slot !== source && slot.sessionPath !== null && resolve(slot.sessionPath) === destinationPath,
         );
@@ -2584,6 +2672,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           cwd: source.cwd,
           sessionPath: destinationPath,
           process: rpc,
+          startupPhase: "complete",
+          startupError: null,
+          startupStop: null,
           stopping: null,
           ready: true,
           preview: {
@@ -2637,6 +2728,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           rebinding: true,
           bufferedEvents: source.bufferedEvents.slice(),
           bufferedEventBytes: source.bufferedEventBytes,
+          forkBufferOverflow: false,
+          forkOverflowCleanup: null,
           branchRevision: destinationProjection.revision,
           viewId: destinationViewId,
         };
@@ -2710,7 +2803,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           for (const expectation of slot.persistenceExpectations) expectation.settle(null);
           slot.persistenceExpectations = [];
           await this.reconcileSlot(slot, true);
-          if (slot.projection?.health.status === "ok") slot.conflict = null;
+          if (slot.projection?.health.status === "ok") {
+            slot.conflict = null;
+            slot.forkBufferOverflow = false;
+            slot.forkOverflowCleanup = null;
+          }
           slot.runState = "aborted";
           this.emitSlotEvent(slot, {
             type: "session_projection_changed",

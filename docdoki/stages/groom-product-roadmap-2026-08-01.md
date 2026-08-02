@@ -11,7 +11,7 @@ Keep one ordered selection surface for product work that is not yet true of the 
 
 ## Current state
 
-- Working: the selected local product round is implemented and independently reviewed: session continuity, Git inspection, conversation inspection, daily-use accelerators, session branching, session-list pagination, and evidence-gated maintenance.
+- Working: the selected local product round is implemented: session continuity, Git inspection, conversation inspection, daily-use accelerators, session branching, session-list pagination, evidence-gated maintenance, and the completed correctness-boundary follow-up.
 - Deferred by the human on 2026-08-01: [[groom-personal-remote-relay-2026-08-01]]. Remote access is not part of the current implementation goal and no incomplete relay code or cryptographic scaffold remains.
 
 ## Completed order
@@ -22,6 +22,7 @@ Keep one ordered selection surface for product work that is not yet true of the 
 - [x] [[groom-session-branching-2026-08-01]].
 - [x] [[groom-session-list-pagination-2026-08-01]].
 - [x] [[groom-evidence-gated-maintenance-2026-08-01]] after its compatibility/evaluator gates were selected.
+- [x] [[follow-correctness-boundaries-2026-08-02]].
 - [ ] [[groom-personal-remote-relay-2026-08-01]] — explicitly deferred, not selected.
 
 ## Decisions
