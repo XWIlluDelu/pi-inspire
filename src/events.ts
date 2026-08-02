@@ -7,6 +7,7 @@ import {
   type GenericExtensionDisplay,
   type RunState,
 } from "../shared/contracts";
+export { isAbortableRunState, isBusyRunState } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
 export type { ExtensionUiRequest } from "../shared/contracts";
 
@@ -67,12 +68,6 @@ export function toolResultText(message: ChatMessage): string {
 
 export function messageKey(message: ChatMessage): string | null {
   return structuralMessageIdentity(message);
-}
-
-/** States where mutation is blocked and the composer exposes Abort. A
- * conflict is abortable recovery, not a steerable owned run. */
-export function isBusyRunState(runState: RunState): boolean {
-  return runState === "running" || runState === "retrying" || runState === "compacting" || runState === "conflict";
 }
 
 // --- Wire events and transient presentation state ---

@@ -1,7 +1,7 @@
 import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VISIBILITY_PREFERENCES, type ThemePreference } from "../../shared/contracts";
-import { isBusyRunState, store, useAppState } from "../store";
+import { isAbortableRunState, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { relativeTime } from "./Transcript";
 
@@ -38,14 +38,23 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [renaming, setRenaming] = useState(false);
+  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const dialogRef = useModalFocus<HTMLDivElement>();
-  const busy = isBusyRunState(state.runState);
+  const abortable = isAbortableRunState(state.runState);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, [renaming]);
+
+  useEffect(() => {
+    if (renaming && renameSessionId !== state.sessionId) {
+      setRenaming(false);
+      setRenameSessionId(null);
+      setQuery("");
+    }
+  }, [renameSessionId, renaming, state.sessionId]);
 
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
@@ -60,10 +69,13 @@ export function CommandPalette({
         group: "Actions",
         title: "Rename session…",
         keepOpen: true,
-        run: () => setRenaming(true),
+        run: () => {
+          setRenameSessionId(state.sessionId);
+          setRenaming(true);
+        },
       });
     }
-    if (busy) {
+    if (abortable) {
       actions.push({ id: "abort", group: "Actions", title: "Abort running task", hint: "Esc", run: () => void store.abort() });
     }
     for (const theme of Object.keys(THEME_LABELS) as ThemePreference[]) {
@@ -129,7 +141,7 @@ export function CommandPalette({
       : [];
 
     return [...actions, ...sessions, ...commands];
-  }, [state, busy, onToggleNav, onToggleCtx, onNewSession, onOpenSession]);
+  }, [state, abortable, onToggleNav, onToggleCtx, onNewSession, onOpenSession]);
 
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));
@@ -150,7 +162,9 @@ export function CommandPalette({
 
   const submitRename = async () => {
     const name = query.trim();
-    if (name && (await store.renameSession(name))) onClose();
+    const owner = renameSessionId;
+    if (!name || !owner || store.getState().sessionId !== owner) return;
+    if (await store.renameSession(owner, name)) onClose();
   };
 
   return (
@@ -177,8 +191,10 @@ export function CommandPalette({
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
-              if (renaming) setRenaming(false);
-              else onClose();
+              if (renaming) {
+                setRenaming(false);
+                setRenameSessionId(null);
+              } else onClose();
             } else if (renaming) {
               if (event.key === "Enter") {
                 event.preventDefault();

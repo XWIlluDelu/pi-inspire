@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +35,60 @@ afterEach(async () => {
 });
 
 describe("installed Pi branch extension bridge", () => {
+  it("fails a response-bearing session_start UI request before Pi RPC is ready", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-real-startup-ui-"));
+    directories.push(directory);
+    const sessionDir = join(directory, "sessions");
+    const configDir = join(directory, "config");
+    const startupExtension = join(directory, "startup-dialog.ts");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(startupExtension, `
+export default function (pi) {
+  pi.on("session_start", async (_event, ctx) => {
+    await ctx.ui.confirm("Startup dialog", "This cannot be answered before RPC startup");
+  });
+}
+`);
+    const catalog: SessionCatalogLike = {
+      refresh: async () => [], get: async () => undefined,
+      list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
+      listByIds: async () => [], listByCwds: async () => [], invalidate() {},
+    };
+    const attachments = new AttachmentStore(join(directory, "uploads"));
+    const workers: PiRpcProcess[] = [];
+    const runtime = new RuntimeController(catalog, attachments, (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions", "--session-dir", sessionDir, "--extension", startupExtension,
+          ...(options.args ?? []),
+        ],
+        env: {
+          ...options.env,
+          PI_CODING_AGENT_DIR: configDir,
+          PI_CODING_AGENT_SESSION_DIR: sessionDir,
+          PI_OFFLINE: "1",
+        },
+      });
+      workers.push(worker);
+      return worker;
+    });
+    try {
+      const started = Date.now();
+      await expect(runtime.newSession(directory)).rejects.toMatchObject({
+        code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
+        status: 503,
+        message: expect.stringContaining("response-bearing extension UI request"),
+      });
+      expect(Date.now() - started).toBeLessThan(4_000);
+      expect(workers).toHaveLength(1);
+      expect(runtime.activeSessionId).toBeNull();
+    } finally {
+      await runtime.close();
+      await attachments.close();
+    }
+  }, 15_000);
+
   it("runs real no-model tree/fork hook dialogs through RuntimeController's response lane with one writer", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-real-runtime-branch-"));
     directories.push(directory);

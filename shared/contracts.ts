@@ -24,6 +24,20 @@ export function modelIdentityKey(model: Pick<ModelIdentity, "provider" | "id">):
   return JSON.stringify([model.provider, model.id]);
 }
 export type RunState = "idle" | "running" | "retrying" | "compacting" | "queued" | "aborted" | "failed" | "conflict";
+/** Run states in which Pi owns an active or queued mutation. Browser controls
+ * and host lifecycle/reclamation rules must use this one authority. */
+export const BUSY_RUN_STATES = ["running", "retrying", "compacting", "queued"] as const;
+
+export function isBusyRunState(runState: RunState): boolean {
+  return (BUSY_RUN_STATES as readonly RunState[]).includes(runState);
+}
+
+/** Conflicts are not steerable busy work, but the recovery surface remains
+ * abortable without widening the host's worker-busy ownership set. */
+export function isAbortableRunState(runState: RunState): boolean {
+  return isBusyRunState(runState) || runState === "conflict";
+}
+
 export type SessionIndicator = "running" | "completed" | "failed";
 
 export interface SessionRuntimeStatus {
