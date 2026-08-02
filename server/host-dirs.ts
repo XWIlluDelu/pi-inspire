@@ -1,7 +1,32 @@
+import type { Stats } from "node:fs";
 import { opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { HostDirListing } from "../shared/contracts.js";
+import type { HostDirListing, HostRootsResponse } from "../shared/contracts.js";
+
+const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+type RootInspector = (path: string) => Promise<Pick<Stats, "isDirectory">>;
+
+/** Discover the host's navigable filesystem roots. Windows has no parent
+ * directory above a drive root, so drive enumeration is the only path from
+ * `C:\\` to `D:\\` inside a hierarchical picker. */
+export async function listHostRoots(
+  hostPlatform: NodeJS.Platform = process.platform,
+  inspect: RootInspector = stat,
+): Promise<HostRootsResponse> {
+  if (hostPlatform !== "win32") return { roots: [{ name: "/", path: "/" }] };
+
+  const roots = await Promise.all([...WINDOWS_DRIVE_LETTERS].map(async (letter) => {
+    const path = `${letter}:\\`;
+    try {
+      return (await inspect(path)).isDirectory() ? { name: `${letter}:`, path } : null;
+    } catch {
+      // An absent, empty, or unreadable drive is not a navigable location.
+      return null;
+    }
+  }));
+  return { roots: roots.filter((root): root is NonNullable<typeof root> => root !== null) };
+}
 
 /** List the immediate subdirectories of one host directory for the
  * session-start picker. The host filesystem is the authority — the bearer

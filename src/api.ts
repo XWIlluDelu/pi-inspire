@@ -10,6 +10,7 @@ import type {
   GitDiffSide,
   GitStatusResponse,
   HostDirListing,
+  HostRootsResponse,
   InspirePreferences,
   ProjectDirEntry,
   PromptRequest,
@@ -187,6 +188,7 @@ export function createApi(token: string) {
       ),
     gitDiff: (sessionId: string, pathId: string, side: GitDiffSide, signal?: AbortSignal) =>
       post<GitDiffResponse>(token, "/api/git/diff", { sessionId, pathId, side }, { signal }),
+    browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
     browseHostDirs: (path?: string) =>
       request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
     probeResources: (sessionId: string, references: string[], signal?: AbortSignal) =>

@@ -202,6 +202,12 @@ export interface HostDirEntry {
   path: string;
 }
 
+/** Filesystem roots exposed by the host directory picker. POSIX hosts have
+ * one `/` root; Windows hosts expose each currently readable drive root. */
+export interface HostRootsResponse {
+  roots: HostDirEntry[];
+}
+
 /** One level of the host filesystem, listed by the host process itself —
  * over SSH forwards or remote deployments this is always the machine
  * sessions actually run on. */

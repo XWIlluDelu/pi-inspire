@@ -1,6 +1,10 @@
 ---
 purpose: The product opens as a conversation-centered, collapsible workbench whose surrounding regions can grow without replacing the initial interface.
 covers:
+  - shared/contracts.ts
+  - server/app.ts
+  - src/api.ts
+  - src/store.ts
   - src/App.tsx
   - src/components/Nav.tsx
   - src/components/Welcome.tsx
@@ -13,6 +17,8 @@ covers:
   - src/use-modal-focus.ts
   - server/host-dirs.ts
   - src/styles.css
+  - tests/server/app.test.ts
+  - tests/server/host-dirs.test.ts
   - tests/web/app.test.tsx
   - tests/web/modal-focus.test.tsx
   - tests/web/nav.test.ts
@@ -41,7 +47,7 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
 - The contextual region primarily hosts files and artifacts referenced by the conversation, while retaining the structure needed for later changes, session trees, subagents, and timelines. Files, Changes, and Branches use equal-width mode controls wide enough to preserve every label at the pane's minimum width. The region remains in the three-column layout while that layout can preserve a usable conversation; below that floor it becomes a drawer starting under the center topbar, so it never covers its own open/close control.
 - Opening the product follows a remembered user choice: resume the previous session or show a welcome page.
 - The welcome page starts a session from a first message with an optional project directory and offers a collapsible recent-sessions list as the route back to previous work.
-- The project directory can be typed or chosen through a host-side directory picker: the host process lists its own filesystem (`GET /api/host/dirs`, bearer-token guarded, session-independent), so over SSH forwards or remote deployments the browsed tree is always the machine sessions run on, and entry paths arrive joined with the host's own separators. A missing or relative starting point falls back to the host home.
+- The project directory can be typed or chosen through a host-side directory picker: the host process lists its own filesystem (`GET /api/host/dirs`, bearer-token guarded, session-independent), so over SSH forwards or remote deployments the browsed tree is always the machine sessions run on, and entry paths arrive joined with the host's own separators. Root discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent. A missing or relative starting point falls back to the host home.
 - Persistent interface preferences live in a floating settings overlay opened from the topbar rather than consuming the session-navigation column. Settings fields remain inside their section at every supported width; explanatory copy yields space to its control and stacks above it on a narrow phone. Every modal overlay owns keyboard focus while open, cycles Tab within its surface, composes correctly when a newer modal appears above it, and restores the exact opener on close even when nested modals close out of order.
 - Preference persistence is field-scoped and ordered: each change patches only its own fields through a serialized write path, so rapid or concurrent changes — including pin, folder-pin, and hide updates — can never overwrite one another with stale full snapshots. A refused write reports the failure and rolls its own fields back to the last value the host confirmed rather than to whatever was on screen when it started, so a run of refusals cannot leave a control showing a value nothing persisted; any field a newer local change has since claimed belongs to that change.
 - Tool-card and thinking-card visibility preferences are independent and each supports hidden, collapsed, and expanded defaults.

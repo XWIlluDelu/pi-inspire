@@ -16,7 +16,7 @@ import {
   type GitDiffSide,
 } from "../shared/contracts.js";
 import type { AttachmentStore } from "./attachments.js";
-import { listHostDirectories } from "./host-dirs.js";
+import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
@@ -337,8 +337,6 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
     response.json({ entries: await listProjectDirectory(cwd, dir) });
   });
-  // Session-independent: the picker browses the host filesystem before any
-  // session exists. The bearer token is the guard, as everywhere else.
   app.get("/api/git/status", async (request, response) => {
     const { sessionId } = gitStatusSchema.parse(request.query);
     const cwd = deps.runtime.sessionCwd(sessionId);
@@ -350,6 +348,12 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     const cwd = deps.runtime.sessionCwd(sessionId);
     if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
     response.json(await withRequestSignal(request, response, (signal) => deps.git.diff(cwd, pathId, side, signal)));
+  });
+
+  // Session-independent: the picker browses the host filesystem before any
+  // session exists. The bearer token is the guard, as everywhere else.
+  app.get("/api/host/roots", async (_request, response) => {
+    response.json(await listHostRoots());
   });
 
   app.get("/api/host/dirs", async (request, response) => {
