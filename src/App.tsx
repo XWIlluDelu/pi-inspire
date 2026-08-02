@@ -12,9 +12,10 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { RunState, ThemePreference } from "../shared/contracts";
+import { Profiler, useEffect, useState } from "react";
+import { MAX_SESSION_DISPLAY_TITLE_CHARS, type RunState, type ThemePreference } from "../shared/contracts";
 import { setToken } from "./api";
+import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
@@ -26,11 +27,44 @@ import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { Wordmark } from "./components/Wordmark";
-import { isBusyRunState, store, useAppState } from "./store";
+import { isBusyRunState, messageText, store, type ChatMessage, useAppState } from "./store";
 import { useCopied } from "./use-copied";
+
+// Vite replaces MODE at build time. The production false branches are folded
+// before Rollup, leaving the ordinary elements directly in the component tree.
+const MAINTENANCE_BENCHMARK = import.meta.env.MODE === "maintenance-benchmark";
 
 export function resolveTheme(pref: ThemePreference, systemDark: boolean): "light" | "dark" {
   return pref === "system" ? (systemDark ? "dark" : "light") : pref;
+}
+
+export function composeDocumentTitle(windowTitle: string | null, sessionName: string, attentionCount: number): string {
+  const base = windowTitle ?? (sessionName ? `${sessionName} · insπre` : "insπre");
+  return attentionCount > 0 ? `● ${base}` : base;
+}
+
+const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
+
+/** Keep Pi's explicit session name distinct from its visual fallback. The
+ * catalog normally owns the first-prompt projection; a complete short
+ * transcript covers the brief interval before that catalog row refreshes. */
+export function sessionHeading(
+  sessionName: string,
+  catalogTitle: string | undefined,
+  messages: readonly ChatMessage[],
+  transcriptStartsAtRoot: boolean,
+): string {
+  const explicit = sessionName.trim();
+  if (explicit) return explicit;
+  const catalog = catalogTitle?.trim() ?? "";
+  if (catalog && !GENERIC_SESSION_HEADINGS.has(catalog)) return catalog;
+  if (transcriptStartsAtRoot) {
+    const firstPrompt = messages.find((message) => message.role === "user" && messageText(message).trim());
+    if (firstPrompt) {
+      return messageText(firstPrompt).replace(/\s+/g, " ").trim().slice(0, MAX_SESSION_DISPLAY_TITLE_CHARS);
+    }
+  }
+  return "New session";
 }
 
 function StateChip({ runState }: { runState: RunState }) {
@@ -73,8 +107,18 @@ function StateChip({ runState }: { runState: RunState }) {
           <XCircle size={12} aria-hidden /> Failed
         </span>
       );
-    default:
+    case "conflict":
+      return (
+        <span key="conflict" className="chip chip--error">
+          <AlertTriangle size={12} aria-hidden /> Conflict
+        </span>
+      );
+    case "idle":
       return null;
+    default: {
+      const exhaustive: never = runState;
+      return exhaustive;
+    }
   }
 }
 
@@ -124,9 +168,12 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
     ) : null;
   }
 
-  // The title itself is the rename affordance: click to edit in place. The
-  // project location sits beside it — folder name or full path per the
-  // preference — and clicking it copies the absolute path.
+  const catalogTitle = state.sessions.find((session) => session.id === state.sessionId)?.title;
+  const heading = sessionHeading(state.sessionName, catalogTitle, state.messages, !state.hasOlderMessages);
+
+  // The heading itself is the rename affordance: an absent Pi name is
+  // presented as the first prompt without turning that prompt into a name.
+  // The project location sits beside it and copies the absolute path.
   return (
     <div className="topbar__ident">
       <h1 className="topbar__title">
@@ -134,13 +181,15 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
           type="button"
           className="topbar__title-button"
           aria-label="Rename session"
-          title="Rename session"
+          title={`${heading} — click to rename`}
           onClick={() => {
+            // The first-prompt heading is presentation only; rename starts
+            // empty unless Pi already owns an explicit session name.
             setValue(state.sessionName);
             setEditing(true);
           }}
         >
-          {state.sessionName || "Untitled session"}
+          {heading}
         </button>
       </h1>
       {state.cwd ? (
@@ -263,9 +312,21 @@ export function App() {
   }, [state.prefs.theme]);
 
   useEffect(() => {
-    // Pi-driven titles win; otherwise the session name identifies the tab.
-    document.title = state.windowTitle ?? (state.sessionName ? `${state.sessionName} · insπre` : "insπre");
-  }, [state.windowTitle, state.sessionName]);
+    // Attention composes with Pi's extension-set title instead of replacing
+    // it; the marker clears only when its owning session is viewed/focused.
+    document.title = composeDocumentTitle(state.windowTitle, state.sessionName, state.attentionSessionIds.length);
+  }, [state.windowTitle, state.sessionName, state.attentionSessionIds.length]);
+
+  useEffect(() => {
+    const acknowledge = () => store.acknowledgeVisibleSession();
+    window.addEventListener("focus", acknowledge);
+    document.addEventListener("visibilitychange", acknowledge);
+    acknowledge();
+    return () => {
+      window.removeEventListener("focus", acknowledge);
+      document.removeEventListener("visibilitychange", acknowledge);
+    };
+  }, [state.sessionId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -283,7 +344,7 @@ export function App() {
         event.key === "Escape" &&
         !event.defaultPrevented &&
         !paletteOpen &&
-        !state.extensionUi &&
+        (state.extensionUiRequests.length === 0 || state.runState === "conflict") &&
         isBusyRunState(state.runState)
       ) {
         void store.abort();
@@ -291,15 +352,38 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.runState, state.extensionUi, paletteOpen]);
+  }, [state.runState, state.extensionUiRequests.length, paletteOpen]);
 
   if (state.needsToken) return <TokenGate />;
 
   const statuses = Object.entries(state.statuses);
+  const navigationContent = <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />;
+  const transcriptContent = state.sessionId && !draftingNew ? (
+    <Transcript
+      messages={state.messages}
+      streaming={state.streaming}
+      sessionId={state.sessionId}
+      queue={state.queue}
+      extensionDisplays={state.extensionDisplays}
+      thinkingVisibility={state.prefs.thinkingVisibility}
+      toolVisibility={state.prefs.toolVisibility}
+      hasOlder={state.hasOlderMessages}
+      loadingOlder={state.loadingOlderMessages}
+    />
+  ) : null;
+  const composerContent = state.sessionId && !draftingNew ? (
+    <div className="composer-dock">
+      <ActivityBar />
+      <Composer />
+    </div>
+  ) : null;
+  const resourcesContent = state.resourcesOpen ? <ResourcesPane /> : null;
 
   return (
     <div className="app">
-      <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />
+      {MAINTENANCE_BENCHMARK ? (
+        <Profiler id="navigation" onRender={recordBenchmarkCommit}>{navigationContent}</Profiler>
+      ) : navigationContent}
       {!navCollapsed ? (
         <PaneResizeHandle
           cssVar="--nav-w"
@@ -381,16 +465,12 @@ export function App() {
         {settingsOpen ? <Settings onClose={() => setSettingsOpen(false)} /> : null}
         {state.sessionId && !draftingNew ? (
           <>
-            <Transcript
-              messages={state.messages}
-              streaming={state.streaming}
-              thinkingVisibility={state.prefs.thinkingVisibility}
-              toolVisibility={state.prefs.toolVisibility}
-            />
-            <div className="composer-dock">
-              <ActivityBar />
-              <Composer />
-            </div>
+            {MAINTENANCE_BENCHMARK ? (
+              <Profiler id="transcript" onRender={recordBenchmarkCommit}>{transcriptContent}</Profiler>
+            ) : transcriptContent}
+            {MAINTENANCE_BENCHMARK ? (
+              <Profiler id="composer" onRender={recordBenchmarkCommit}>{composerContent}</Profiler>
+            ) : composerContent}
           </>
         ) : (
           <Welcome />
@@ -408,7 +488,9 @@ export function App() {
             label="Resize files panel"
             variant="ctx"
           />
-          <ResourcesPane />
+          {MAINTENANCE_BENCHMARK ? (
+            <Profiler id="resources" onRender={recordBenchmarkCommit}>{resourcesContent}</Profiler>
+          ) : resourcesContent}
         </>
       ) : null}
       {paletteOpen ? (

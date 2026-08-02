@@ -1,4 +1,13 @@
-import { parseExtensionUiRequest, type ExtensionUiRequest, type RunState } from "../shared/contracts";
+import {
+  EXTENSION_ONE_WAY_METHODS,
+  emptyPendingQueues,
+  parseExtensionUiRequest,
+  parsePendingExtensionUiRequest,
+  type ExtensionUiRequest,
+  type GenericExtensionDisplay,
+  type RunState,
+} from "../shared/contracts";
+import { structuralMessageIdentity } from "../shared/message-identity";
 export type { ExtensionUiRequest } from "../shared/contracts";
 
 // --- Chat message model (structural typing over Pi session messages) ---
@@ -57,12 +66,13 @@ export function toolResultText(message: ChatMessage): string {
 }
 
 export function messageKey(message: ChatMessage): string | null {
-  return message.timestamp != null ? `${message.role}:${message.timestamp}` : null;
+  return structuralMessageIdentity(message);
 }
 
-/** Run states where a task is live: steering applies and Escape aborts. */
+/** States where mutation is blocked and the composer exposes Abort. A
+ * conflict is abortable recovery, not a steerable owned run. */
 export function isBusyRunState(runState: RunState): boolean {
-  return runState === "running" || runState === "retrying" || runState === "compacting";
+  return runState === "running" || runState === "retrying" || runState === "compacting" || runState === "conflict";
 }
 
 // --- Wire events and transient presentation state ---
@@ -88,11 +98,11 @@ export interface RetryInfo {
 }
 
 export interface QueueInfo {
-  steering: number;
-  followUp: number;
+  steering: string[];
+  followUp: string[];
 }
 
-export const IDLE_QUEUE: QueueInfo = { steering: 0, followUp: 0 };
+export const IDLE_QUEUE = emptyPendingQueues;
 
 export interface Notice {
   id: number;
@@ -108,7 +118,9 @@ export interface EventSlice {
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
   queue: QueueInfo;
-  extensionUi: ExtensionUiRequest | null;
+  extensionUiRequests: ExtensionUiRequest[];
+  extensionUiRespondingId: string | null;
+  extensionDisplays: GenericExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
   editorText: { text: string; nonce: number } | null;
@@ -123,8 +135,10 @@ export function emptyEventSlice(): EventSlice {
     runState: "idle",
     tools: {},
     retry: null,
-    queue: IDLE_QUEUE,
-    extensionUi: null,
+    queue: IDLE_QUEUE(),
+    extensionUiRequests: [],
+    extensionUiRespondingId: null,
+    extensionDisplays: [],
     notices: [],
     statuses: {},
     editorText: null,
@@ -201,8 +215,26 @@ function pushNotice(slice: EventSlice, kind: Notice["kind"], text: string): void
   slice.nextNoticeId += 1;
 }
 
-function asStringArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function upsertExtensionUiRequest(current: ExtensionUiRequest[], request: ExtensionUiRequest): ExtensionUiRequest[] {
+  const index = current.findIndex((candidate) => candidate.id === request.id);
+  if (index < 0) return [...current, request];
+  const next = [...current];
+  next[index] = request;
+  return next;
+}
+
+function updateExtensionDisplay(current: GenericExtensionDisplay[], event: WireEvent): GenericExtensionDisplay[] {
+  if (!Array.isArray(event.extensionDisplays)) return current;
+  return event.extensionDisplays.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const display = value as Record<string, unknown>;
+    if (typeof display.id !== "string" || typeof display.method !== "string" || typeof display.attribution !== "string") return [];
+    return [{ id: display.id, method: display.method, attribution: display.attribution, payload: display.payload }];
+  }).slice(-20);
 }
 
 /**
@@ -254,7 +286,8 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       if (slice.runState !== "failed" && slice.runState !== "aborted") slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.queue = IDLE_QUEUE;
+      slice.queue = IDLE_QUEUE();
+      slice.extensionUiRequests = [];
       changed = true;
       resync = true;
       break;
@@ -330,8 +363,8 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "queue_update": {
       slice.queue = {
-        steering: asStringArray(event.steering).length,
-        followUp: asStringArray(event.followUp).length,
+        steering: asStringArray(event.steering),
+        followUp: asStringArray(event.followUp),
       };
       changed = true;
       break;
@@ -344,7 +377,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "runtime_error": {
       slice.runState = "failed";
-      slice.extensionUi = null;
+      slice.extensionUiRequests = [];
       pushNotice(slice, "error", `Pi runtime stopped: ${String(event.error ?? "unknown error")}`);
       changed = true;
       break;
@@ -356,7 +389,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       const dialog = parseExtensionUiRequest(event);
       if (dialog) {
         changed = true;
-        slice.extensionUi = dialog;
+        slice.extensionUiRequests = upsertExtensionUiRequest(current.extensionUiRequests, dialog);
       } else if (method === "notify") {
         const kind = event.notifyType === "warning" || event.notifyType === "error" ? event.notifyType : "info";
         pushNotice(slice, kind, String(event.message ?? ""));
@@ -376,8 +409,33 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
           slice.editorText = { text: event.text, nonce: (current.editorText?.nonce ?? 0) + 1 };
           changed = true;
         }
+      } else {
+        const displays = updateExtensionDisplay(current.extensionDisplays, event);
+        if (displays !== current.extensionDisplays) {
+          slice.extensionDisplays = displays;
+          changed = true;
+        }
+        if (!EXTENSION_ONE_WAY_METHODS.has(method) && event.responseRequired !== false) {
+          const unsupported = parsePendingExtensionUiRequest(event);
+          if (unsupported) {
+            slice.extensionUiRequests = upsertExtensionUiRequest(current.extensionUiRequests, unsupported);
+            changed = true;
+          }
+        }
       }
-      // setWidget targets terminal regions; no truthful web surface exists yet.
+      break;
+    }
+    case "extension_ui_remove": {
+      const id = typeof event.id === "string" ? event.id : "";
+      if (!id || !current.extensionUiRequests.some((request) => request.id === id)) break;
+      slice.extensionUiRequests = current.extensionUiRequests.filter((request) => request.id !== id);
+      changed = true;
+      break;
+    }
+    case "extension_ui_clear": {
+      if (current.extensionUiRequests.length === 0) break;
+      slice.extensionUiRequests = [];
+      changed = true;
       break;
     }
     default:

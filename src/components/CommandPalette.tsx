@@ -113,7 +113,7 @@ export function CommandPalette({
     const sessions: PaletteItem[] = state.sessions.map((session) => ({
       id: `session-${session.id}`,
       group: "Sessions",
-      title: session.title || "Untitled session",
+      title: session.title || "New session",
       hint: `${session.project} · ${relativeTime(session.modified)}`,
       run: () => onOpenSession(session.id),
     }));

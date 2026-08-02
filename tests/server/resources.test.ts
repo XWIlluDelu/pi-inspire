@@ -44,6 +44,56 @@ describe("ResourceStore", () => {
     expect(() => resources.get(descriptor.id, "s2")).toThrow("no longer available");
   });
 
+  it("binds citation handles to one branch view while allowing same-view append revalidation", async () => {
+    const { project } = await workspace();
+    await mkdir(join(project, "node_modules"));
+    await writeFile(join(project, "node_modules", "branch-only.txt"), "branch A\n");
+    const citation = { role: "assistant", content: [{ type: "text", text: "[branch](node_modules/branch-only.txt)" }] };
+    const contextA = { sessionId: "s1", viewId: "view-a", cwd: project, messages: [citation] };
+    const descriptor = await resources.resolve(contextA, "node_modules/branch-only.txt");
+    const resource = resources.get(descriptor.id, "s1", "view-a");
+
+    await expect(resources.revalidate(resource, { ...contextA, messages: [citation, { role: "assistant", content: "append" }] })).resolves.toBeUndefined();
+    expect(() => resources.get(descriptor.id, "s1", "view-b")).toThrow("no longer available");
+    await expect(resources.revalidate(resource, { sessionId: "s1", viewId: "view-b", cwd: project, messages: [] })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("preflights availability without retaining preview handles and shares one lazy transcript load", async () => {
+    const { project } = await workspace();
+    await writeFile(join(project, "visible.md"), "visible\n");
+    await mkdir(join(project, "node_modules"));
+    await writeFile(join(project, "node_modules", "hidden.md"), "hidden\n");
+    let messageLoads = 0;
+    const context = {
+      sessionId: "s1",
+      viewId: "view-s1",
+      cwd: project,
+      loadMessages: async () => {
+        messageLoads += 1;
+        return [{ role: "assistant", content: [{ type: "text", text: "See `missing.md`." }] }];
+      },
+    };
+
+    const results = await resources.probe(context, [
+      "visible.md",
+      "missing.md",
+      "node_modules/hidden.md",
+      "file://%",
+    ]);
+
+    expect(results).toEqual([
+      { reference: "visible.md", availability: "available" },
+      { reference: "missing.md", availability: "missing", message: "The referenced file was not found" },
+      {
+        reference: "node_modules/hidden.md",
+        availability: "unavailable",
+        message: "The file is not part of this session's workspace or transcript",
+      },
+      { reference: "file://%", availability: "invalid", message: "The file reference is not valid" },
+    ]);
+    expect(messageLoads).toBe(1);
+  });
+
   it("does not load the transcript for an indexed workspace file", async () => {
     const { project } = await workspace();
     await writeFile(join(project, "indexed.txt"), "indexed\n");

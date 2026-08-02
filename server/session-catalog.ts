@@ -1,5 +1,11 @@
 import { SessionManager, SettingsManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
-import { projectNameFromCwd, type SessionListResponse, type SessionSummary } from "../shared/contracts.js";
+import {
+  MAX_SESSION_DISPLAY_TITLE_CHARS,
+  MAX_SESSION_LIST_PAGE_SIZE,
+  projectNameFromCwd,
+  type SessionListResponse,
+  type SessionSummary,
+} from "../shared/contracts.js";
 
 const CACHE_MS = 5_000;
 const SEARCHABLE_FIRST_MESSAGE_CHARS = 10_000;
@@ -17,9 +23,26 @@ export interface SessionRecord {
   searchText: string;
 }
 
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareSessionRecords(a: SessionRecord, b: SessionRecord): number {
+  return b.modified.getTime() - a.modified.getTime()
+    || b.created.getTime() - a.created.getTime()
+    || compareText(a.id, b.id)
+    || compareText(a.path, b.path);
+}
+
+export function orderSessionRecords(sessions: readonly SessionRecord[]): SessionRecord[] {
+  return [...sessions].sort(compareSessionRecords);
+}
+
 function displayTitle(session: SessionRecord): string {
   const candidate = session.name?.trim() || session.firstMessage.trim();
-  return candidate ? candidate.replace(/\s+/g, " ").slice(0, 120) : "Untitled session";
+  return candidate
+    ? candidate.replace(/\s+/g, " ").slice(0, MAX_SESSION_DISPLAY_TITLE_CHARS)
+    : "New session";
 }
 
 function slimSession(session: SessionInfo): SessionRecord {
@@ -49,7 +72,7 @@ export function newestPerCwd(
   const wanted = new Set(cwds);
   if (wanted.size === 0) return [];
   const matching = sessions.filter((session) => wanted.has(session.cwd));
-  matching.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  matching.sort(compareSessionRecords);
   const taken = new Map<string, number>();
   return matching.filter((session) => {
     const count = taken.get(session.cwd) ?? 0;
@@ -84,7 +107,9 @@ export class SessionCatalog implements SessionCatalogLike {
     this.loading = (async () => {
       const sessionDir = SettingsManager.create(this.startupCwd).getSessionDir();
       const sessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.listAll();
-      this.cached = sessions.map(slimSession);
+      // Pi storage enumeration is not an ordering contract. Page boundaries
+      // require one deterministic newest-first order with stable tie-breakers.
+      this.cached = orderSessionRecords(sessions.map(slimSession));
       this.byId = new Map(this.cached.map((session) => [session.id, session]));
       this.idByPath = new Map(this.cached.map((session) => [session.path, session.id]));
       this.loadedAt = Date.now();
@@ -113,8 +138,8 @@ export class SessionCatalog implements SessionCatalogLike {
     const query = options.query?.trim().toLowerCase().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset) ? Math.floor(options.offset!) : 0;
     const requestedLimit = Number.isFinite(options.limit) ? Math.floor(options.limit!) : 40;
-    const offset = Math.max(0, requestedOffset);
-    const limit = Math.min(100, Math.max(1, requestedLimit));
+    const offset = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, requestedOffset));
+    const limit = Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, requestedLimit));
     const filtered = query ? sessions.filter((session) => session.searchText.includes(query)) : sessions;
 
     return {

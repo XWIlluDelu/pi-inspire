@@ -8,6 +8,25 @@ interface PendingRequest {
   resolve: (response: RpcResponse) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  command: string;
+  written: boolean;
+}
+
+export class PiRpcOutcomeUnknownError extends Error {
+  readonly code = "PI_RPC_OUTCOME_UNKNOWN";
+  readonly outcomeUnknown = true;
+  stopped: Promise<void> = Promise.resolve();
+
+  constructor(readonly command: string, message = `Pi command ${command} outcome is unknown`) {
+    super(message);
+    this.name = "PiRpcOutcomeUnknownError";
+  }
+}
+
+export function isPiRpcOutcomeUnknown(error: unknown): error is PiRpcOutcomeUnknownError {
+  return error instanceof PiRpcOutcomeUnknownError || Boolean(
+    error && typeof error === "object" && (error as { outcomeUnknown?: unknown }).outcomeUnknown === true,
+  );
 }
 
 interface RpcResponse {
@@ -42,6 +61,7 @@ export class PiRpcProcess extends EventEmitter {
   private requestSequence = 0;
   private stderr = "";
   private stopping = false;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(private readonly options: PiRpcOptions) {
     super();
@@ -62,6 +82,7 @@ export class PiRpcProcess extends EventEmitter {
     });
     this.child = child;
     this.stopping = false;
+    this.stopPromise = null;
 
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-65_536);
@@ -165,7 +186,9 @@ export class PiRpcProcess extends EventEmitter {
     if (this.child !== child) return;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(this.withStderr(error));
+      pending.reject(pending.written
+        ? this.withStderr(new PiRpcOutcomeUnknownError(pending.command, `Pi command ${pending.command} outcome is unknown because the child exited`))
+        : this.withStderr(error));
     }
     this.pending.clear();
     this.child = null;
@@ -188,47 +211,102 @@ export class PiRpcProcess extends EventEmitter {
     }
 
     const id = `inspire_${++this.requestSequence}`;
+    const commandName = String(command.type);
     const response = await new Promise<RpcResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const pending: PendingRequest = {
+        resolve,
+        reject,
+        command: commandName,
+        written: false,
+        timer: undefined as unknown as NodeJS.Timeout,
+      };
+      pending.timer = setTimeout(() => {
+        if (this.pending.get(id) !== pending) return;
         this.pending.delete(id);
-        reject(this.withStderr(new Error(`Timed out waiting for Pi command ${String(command.type)}`)));
+        if (!pending.written) {
+          reject(this.withStderr(new Error(`Timed out before writing Pi command ${commandName}`)));
+          return;
+        }
+        const error = this.withStderr(new PiRpcOutcomeUnknownError(
+          commandName,
+          `Pi command ${commandName} outcome is unknown after its response timed out`,
+        )) as PiRpcOutcomeUnknownError;
+        error.stopped = this.stopForUnknown(error);
+        reject(error);
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
-        if (!error) return;
-        const pending = this.pending.get(id);
-        if (!pending) return;
+      this.pending.set(id, pending);
+      try {
+        child.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
+          if (!error) return;
+          const current = this.pending.get(id);
+          if (current !== pending) return;
+          clearTimeout(pending.timer);
+          this.pending.delete(id);
+          const unknown = this.withStderr(new PiRpcOutcomeUnknownError(
+            commandName,
+            `Pi command ${commandName} outcome is unknown after its stdin write failed`,
+          )) as PiRpcOutcomeUnknownError;
+          unknown.stopped = this.stopForUnknown(unknown);
+          pending.reject(unknown);
+        });
+        // A non-throwing write transfers the frame to Node's stream buffer;
+        // from this point the host cannot prove the child did not accept it.
+        pending.written = true;
+      } catch (error) {
         clearTimeout(pending.timer);
         this.pending.delete(id);
-        pending.reject(error);
-      });
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
 
     if (!response.success) throw new Error(response.error ?? `Pi command ${response.command} failed`);
     return response.data as T;
   }
 
-  sendExtensionUiResponse(response: Record<string, unknown>): void {
+  async sendExtensionUiResponse(response: Record<string, unknown>): Promise<void> {
     const child = this.child;
     if (!child || child.exitCode !== null || !child.stdin.writable) {
       throw new Error("Pi RPC process is not available");
     }
-    child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", ...response })}\n`);
+    await new Promise<void>((resolve, reject) => {
+      try {
+        child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", ...response })}\n`, (error) => {
+          if (!error) {
+            resolve();
+            return;
+          }
+          const unknown = this.withStderr(new PiRpcOutcomeUnknownError(
+            "extension_ui_response",
+            "Pi extension response outcome is unknown after its stdin write failed",
+          )) as PiRpcOutcomeUnknownError;
+          unknown.stopped = this.stopForUnknown(unknown);
+          reject(unknown);
+        });
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  /** A request-level timeout/write failure stops the protocol stream. Notify
+   * the owner after the child is gone: late frames can no longer be correlated,
+   * so keeping the wrapper in a runtime slot would make later reads or writes
+   * appear usable when they are not. Deliberate host shutdown still uses
+   * `stop()` directly and does not emit an unexpected-exit event. */
+  private stopForUnknown(error: PiRpcOutcomeUnknownError): Promise<void> {
+    const stopped = this.stop();
+    void stopped.then(() => this.emit("exit", error));
+    return stopped;
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     const child = this.child;
     if (!child) return;
     this.stopping = true;
     this.child = null;
 
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("Pi RPC process stopped"));
-    }
-    this.pending.clear();
-
-    await new Promise<void>((resolve) => {
+    const stopped = new Promise<void>((resolve) => {
       const force = setTimeout(() => child.kill("SIGKILL"), 1_500);
       child.once("exit", () => {
         clearTimeout(force);
@@ -236,5 +314,17 @@ export class PiRpcProcess extends EventEmitter {
       });
       child.kill("SIGTERM");
     });
+    this.stopPromise = stopped;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      const error = new PiRpcOutcomeUnknownError(
+        pending.command,
+        `Pi command ${pending.command} outcome is unknown because the child was stopped before its response`,
+      );
+      error.stopped = stopped;
+      pending.reject(pending.written ? error : new Error("Pi RPC process stopped"));
+    }
+    this.pending.clear();
+    await stopped;
   }
 }

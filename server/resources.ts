@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   type ResourceDescriptor,
   type ResourceKind,
+  type ResourceProbeResult,
 } from "../shared/contracts.js";
 import { collectSessionResourceReferences } from "../shared/resource-references.js";
 import { escapesBase } from "./paths.js";
@@ -13,6 +14,7 @@ import { indexedBasenameMatches, invalidateProjectIndex, isIndexedProjectFile } 
 
 export interface ResourceContext {
   sessionId: string;
+  viewId?: string;
   cwd: string;
   /** Tests and static runtimes may provide messages directly; the real
    * runtime supplies a lazy loader so indexed workspace previews avoid a
@@ -30,6 +32,7 @@ export interface ResolvedResource {
    * refused, not followed. */
   fileId?: { dev: number; ino: number };
   embedded?: { messageIndex: number; partIndex: number };
+  authority: "embedded" | "index" | "citation";
 }
 
 const MAX_HANDLES = 256;
@@ -155,6 +158,23 @@ async function contextMessages(context: ResourceContext): Promise<unknown[]> {
   return context.loadMessages ? context.loadMessages() : [];
 }
 
+function resourceViewId(context: ResourceContext): string {
+  return context.viewId ?? `legacy-view:${context.sessionId}`;
+}
+
+function classifiedProbeFailure(reference: string, error: unknown): ResourceProbeResult | null {
+  const record = error && typeof error === "object" ? error as { status?: unknown; message?: unknown; matches?: unknown } : null;
+  const status = typeof record?.status === "number" ? record.status : null;
+  const message = typeof record?.message === "string" ? record.message : undefined;
+  if (status === 409 && Array.isArray(record?.matches)) {
+    return { reference, availability: "ambiguous", ...(message ? { message } : {}), matches: record.matches.map(String) };
+  }
+  if (status === 404) return { reference, availability: "missing", ...(message ? { message } : {}) };
+  if (status === 403) return { reference, availability: "unavailable", ...(message ? { message } : {}) };
+  if (status === 400) return { reference, availability: "invalid", ...(message ? { message } : {}) };
+  return null;
+}
+
 function referencedBySession(context: ResourceContext, messages: unknown[], requested: string): boolean {
   let requestedPath: string;
   try {
@@ -175,7 +195,26 @@ function referencedBySession(context: ResourceContext, messages: unknown[], requ
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
 
-  async resolve(context: ResourceContext, reference: string): Promise<ResourceDescriptor> {
+  /** Check the bounded Files-pane projection without retaining opaque content
+   * handles. Citation-backed references share one lazy transcript load. */
+  async probe(context: ResourceContext, references: string[]): Promise<ResourceProbeResult[]> {
+    let messages: Promise<unknown[]> | null = null;
+    const sharedContext: ResourceContext = context.loadMessages
+      ? { ...context, loadMessages: () => (messages ??= context.loadMessages!()) }
+      : context;
+    return Promise.all(references.map(async (reference) => {
+      try {
+        await this.resolve(sharedContext, reference, false);
+        return { reference, availability: "available" as const };
+      } catch (error) {
+        const result = classifiedProbeFailure(reference, error);
+        if (result) return result;
+        throw error;
+      }
+    }));
+  }
+
+  async resolve(context: ResourceContext, reference: string, retainHandle = true): Promise<ResourceDescriptor> {
     const embedded = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
     if (embedded) {
       const messages = await contextMessages(context);
@@ -199,13 +238,14 @@ export class ResourceStore {
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
+        viewId: resourceViewId(context),
         reference,
         name: `embedded-image-${messageIndex + 1}`,
         mimeType,
         size: Buffer.byteLength(record.data, "base64"),
         kind: "image",
       };
-      this.remember({ descriptor, embedded: { messageIndex, partIndex } });
+      if (retainHandle) this.remember({ descriptor, embedded: { messageIndex, partIndex }, authority: "embedded" });
       return descriptor;
     }
 
@@ -267,6 +307,7 @@ export class ResourceStore {
     const descriptor: ResourceDescriptor = {
       id: randomUUID(),
       sessionId: context.sessionId,
+      viewId: resourceViewId(context),
       // A recovery answers with the location it actually opened, so the
       // preview never claims the bare shorthand was a real path.
       reference: recovered ?? reference,
@@ -275,7 +316,10 @@ export class ResourceStore {
       size: details.size,
       kind: kindFor(mimeType),
     };
-    this.remember({ descriptor, path, fileId: { dev: details.dev, ino: details.ino } });
+    const authority: ResolvedResource["authority"] = indexed && !escapesBase(within) || recovered !== null
+      ? "index"
+      : "citation";
+    if (retainHandle) this.remember({ descriptor, path, fileId: { dev: details.dev, ino: details.ino }, authority });
     return descriptor;
   }
 
@@ -306,12 +350,43 @@ export class ResourceStore {
     if (this.handles.size > MAX_HANDLES) this.handles.delete(this.handles.keys().next().value as string);
   }
 
-  get(id: string, sessionId: string): ResolvedResource {
+  forgetSession(sessionId: string): void {
+    for (const [id, resource] of this.handles) {
+      if (resource.descriptor.sessionId === sessionId) this.handles.delete(id);
+    }
+  }
+
+  get(id: string, sessionId: string, viewId?: string): ResolvedResource {
     const resource = this.handles.get(id);
-    if (!resource || resource.descriptor.sessionId !== sessionId) {
+    if (
+      !resource || resource.descriptor.sessionId !== sessionId ||
+      (viewId !== undefined && resource.descriptor.viewId !== viewId)
+    ) {
       throw Object.assign(new Error("The resource preview is no longer available"), { status: 404 });
     }
     return resource;
+  }
+
+  async revalidate(resource: ResolvedResource, context: ResourceContext): Promise<void> {
+    if (
+      resource.descriptor.sessionId !== context.sessionId ||
+      resource.descriptor.viewId !== resourceViewId(context)
+    ) {
+      throw Object.assign(new Error("The resource preview belongs to another branch view"), { status: 409 });
+    }
+    if (resource.authority === "embedded") return;
+    if (resource.authority === "index") {
+      let lexicalPath: string;
+      try { lexicalPath = referencePath(resource.descriptor.reference, context.cwd); } catch {
+        throw Object.assign(new Error("The resource is no longer authorized by the workspace"), { status: 403 });
+      }
+      if (await isIndexedProjectFile(context.cwd, lexicalPath)) return;
+      throw Object.assign(new Error("The resource is no longer authorized by the workspace"), { status: 403 });
+    }
+    const messages = await contextMessages(context);
+    if (!referencedBySession(context, messages, resource.descriptor.reference)) {
+      throw Object.assign(new Error("The resource is no longer cited by the visible branch"), { status: 403 });
+    }
   }
 
   async embeddedData(resource: ResolvedResource, context: ResourceContext): Promise<Buffer> {

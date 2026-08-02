@@ -13,12 +13,11 @@
 | Session continuity | [[session-continuity]] | Pi’s JSONL session tree remains canonical while the browser holds only a reloadable, virtualized projection. |
 | Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported extension dialogs natively. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
-| Remote access | [[remote-access]] | A later relay connects the same web interface to a selected machine without storing its Pi state centrally. |
 
 ## Cross-spec direction
 
 The product separates durable Pi state, a safe browser projection, and transient live events. The local host is the only privileged boundary and the browser remains replaceable: refreshing or reconnecting reconstructs the visible state from Pi’s session records and current runtime rather than from browser-local conversation authority.
 
-The local release implements the daily-use conversation slice inside the adaptable workbench frame: session discovery and continuation, defensive rich rendering, complete composer input, typed activity cards, extension dialogs, essential runtime controls, curated navigation (global pins, folder pins, a reversible Hidden group, collapsible folders), session-bound file previews, and keyboard-accelerated visible actions. Other contextual surfaces remain available for later changes, branch trees, subagents, and timelines.
+The local release implements the daily-use conversation slice inside the adaptable workbench frame: session discovery and continuation, bounded Pi branch-tree navigation and fork/edit-from-here actions, defensive rich rendering, complete composer input, typed activity cards, extension dialogs, essential runtime controls, curated navigation (global pins, folder pins, a reversible Hidden group, collapsible folders), session-bound file previews, and keyboard-accelerated visible actions. Other contextual surfaces remain available for later subagents and timelines.
 
 The front end uses one coherent light-and-dark component system at medium information density. Noto Sans SC owns the interface and reading flow, IBM Plex Serif appears only in the italic wordmark, and IBM Plex Mono owns code and machine-oriented data. Neutral paper surfaces, one brand accent (teal, tuned per theme) beside a small semantic annotation palette, fine boundaries, soft radii, and performance-safe state motion keep content dominant.

@@ -12,6 +12,25 @@ afterEach(async () => {
 });
 
 describe("loadSessionPreview", () => {
+  it("applies legacy migrations in memory without modifying JSONL bytes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-preview-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "legacy.jsonl");
+    const original = [
+      JSON.stringify({ type: "session", id: "legacy", timestamp: "2026-07-22T00:00:00.000Z", cwd: "/project" }),
+      JSON.stringify({ type: "message", timestamp: "2026-07-22T00:00:01.000Z", message: { role: "user", content: "legacy", timestamp: 1 } }),
+      "",
+    ].join("\n");
+    await writeFile(path, original);
+    const record: SessionRecord = {
+      id: "legacy", cwd: "/project", path, created: new Date(), modified: new Date(),
+      messageCount: 1, firstMessage: "legacy", searchText: "legacy",
+    };
+    const loaded = await loadSessionPreview(record);
+    expect(loaded.messages[0]).toMatchObject({ role: "user", content: "legacy" });
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
   it("projects the active Pi branch without modifying its JSONL file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-preview-"));
     directories.push(directory);

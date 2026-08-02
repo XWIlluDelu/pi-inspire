@@ -2,14 +2,9 @@
 
 ## Dependency boundaries
 
-The application pins `@earendil-works/pi-coding-agent` 0.80.10 to match the Pi environment against which session and RPC compatibility were verified. The package publishes its own shrinkwrapped dependency tree, so root npm overrides do not replace its nested `brace-expansion` 5.0.6 or `protobufjs` 7.6.4 packages.
+The application pins `@earendil-works/pi-coding-agent` exactly at the latest npm release. Every dependency update must preserve that latest-Pi compatibility boundary; an advisory in Pi's own shrinkwrapped tree is not grounds to downgrade Pi or to hold inspire behind the latest release.
 
-`npm audit --omit=dev` reports [GHSA-3jxr-9vmj-r5cp](https://github.com/advisories/GHSA-3jxr-9vmj-r5cp) for pathological brace expansion and [GHSA-j3f2-48v5-ccww](https://github.com/advisories/GHSA-j3f2-48v5-ccww) for pathological protobuf option parsing. Neither parser is exposed as an unauthenticated browser operation by inspire, but the findings should be retired by upgrading the pinned Pi package after compatibility with the user’s terminal installation is verified rather than by carrying a misleading application override.
-
-Sources:
-
-- `package.json` and `package-lock.json` for the pinned and nested versions.
-- `npm audit --omit=dev --json` with the dependency versions above.
+Pi publishes a shrinkwrapped dependency tree. Root npm overrides do not reliably replace those nested dependencies and would misstate the supported runtime boundary, so inspire does not use an override to manufacture a clean audit. Findings in that tree remain recorded production advisories, are contained by inspire's loopback/authentication and projection boundaries where applicable, and must be tracked to an upstream Pi release that actually updates its supported tree.
 
 ## Pi capabilities and boundaries
 

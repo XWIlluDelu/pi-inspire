@@ -1,0 +1,245 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AttachmentStore } from "../../server/attachments.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { RuntimeController } from "../../server/runtime.js";
+import type { SessionCatalogLike, SessionRecord } from "../../server/session-catalog.js";
+
+const directories: string[] = [];
+const SESSION_ID = "33333333-3333-4333-8333-333333333333";
+
+function message(id: string, parentId: string | null, role: "user" | "assistant", text: string, timestamp: number) {
+  return {
+    type: "message", id, parentId, timestamp: new Date(timestamp).toISOString(),
+    message: role === "user"
+      ? { role, content: text, timestamp }
+      : {
+          role, content: [{ type: "text", text }], provider: "test", model: "test",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "stop", timestamp,
+        },
+  };
+}
+
+function textOf(entry: Record<string, unknown>): string {
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((item) => item && typeof item === "object" ? String((item as { text?: unknown }).text ?? "") : "").join("");
+  return "";
+}
+
+afterEach(async () => {
+  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+describe("installed Pi branch extension bridge", () => {
+  it("runs real no-model tree/fork hook dialogs through RuntimeController's response lane with one writer", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-real-runtime-branch-"));
+    directories.push(directory);
+    const sessionFile = join(directory, "source.jsonl");
+    const sessionDir = join(directory, "sessions");
+    const hookExtension = join(directory, "dialog-hooks.ts");
+    await writeFile(hookExtension, `
+export default function (pi) {
+  pi.on("session_before_tree", async (_event, ctx) => {
+    if (!await ctx.ui.confirm("Navigate branch?", "Confirm tree navigation")) return { cancel: true };
+  });
+  pi.on("session_before_fork", async (_event, ctx) => {
+    if (await ctx.ui.input("Fork branch?", "Type continue") !== "continue") return { cancel: true };
+  });
+}
+`);
+    const entries = [
+      message("u1", null, "user", "question one", 1),
+      message("a1", "u1", "assistant", "answer one", 2),
+      message("u2", "a1", "user", "question two", 3),
+      message("a2", "u2", "assistant", "answer two", 4),
+    ];
+    await writeFile(sessionFile, `${[
+      { type: "session", version: 3, id: SESSION_ID, timestamp: "2026-08-01T00:00:00.000Z", cwd: directory },
+      ...entries,
+    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+    const record: SessionRecord = {
+      id: SESSION_ID, cwd: directory, path: sessionFile, created: new Date(), modified: new Date(),
+      messageCount: entries.length, firstMessage: "question one", searchText: "question one",
+    };
+    const catalog: SessionCatalogLike = {
+      refresh: async () => [record], get: async (id) => id === SESSION_ID ? record : undefined,
+      list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
+      listByIds: async () => [], listByCwds: async () => [], invalidate() {},
+    };
+    const attachments = new AttachmentStore(join(directory, "uploads"));
+    const workers: PiRpcProcess[] = [];
+    const runtime = new RuntimeController(catalog, attachments, (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: ["--no-extensions", "--session-dir", sessionDir, ...(options.args ?? []), "--extension", hookExtension],
+        env: {
+          ...options.env,
+          PI_CODING_AGENT_DIR: join(directory, "config"),
+          PI_CODING_AGENT_SESSION_DIR: sessionDir,
+          PI_OFFLINE: "1",
+        },
+      });
+      workers.push(worker);
+      return worker;
+    });
+    const dialogs: Array<Record<string, unknown>> = [];
+    const responses: Promise<void>[] = [];
+    runtime.on("event", (event) => {
+      const record = event as Record<string, unknown>;
+      if (record.type !== "extension_ui_request" || (record.method !== "confirm" && record.method !== "input")) return;
+      dialogs.push(record);
+      responses.push(runtime.extensionUiResponse({
+        sessionId: record.sessionId,
+        id: record.id,
+        ...(record.method === "confirm" ? { confirmed: true } : { value: "continue" }),
+      }));
+    });
+    try {
+      await runtime.openSession(SESSION_ID);
+      await vi.waitFor(async () => expect((await runtime.snapshot()).active?.commands).toBeDefined(), { timeout: 10_000 });
+      let tree = await runtime.branchTree(SESSION_ID);
+      await runtime.navigateBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "a1", mode: "switch" });
+      tree = await runtime.branchTree(SESSION_ID);
+      await runtime.navigateBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "a2", mode: "switch" });
+      tree = await runtime.branchTree(SESSION_ID);
+      const forked = await runtime.forkBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "u2" });
+      const destinationTree = await runtime.branchTree(forked.sessionId);
+      await runtime.navigateBranch({
+        sessionId: forked.sessionId,
+        revision: destinationTree.revision,
+        targetId: "a1",
+        mode: "switch",
+      });
+      await Promise.all(responses);
+      expect(runtime.activeSessionId).toBe(forked.sessionId);
+      expect(workers).toHaveLength(1);
+      expect(dialogs.filter((event) => event.method === "confirm")).toHaveLength(3);
+      expect(dialogs.filter((event) => event.method === "input")).toHaveLength(1);
+    } finally {
+      await runtime.close();
+      await attachments.close();
+    }
+  }, 30_000);
+
+  it("answers no-model tree/fork hook dialogs, survives stock fork rebind, and navigates again", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-real-branch-"));
+    directories.push(directory);
+    const sessionFile = join(directory, "source.jsonl");
+    const sessionDir = join(directory, "sessions");
+    const hookExtension = join(directory, "dialog-hooks.ts");
+    await writeFile(hookExtension, `
+export default function (pi) {
+  pi.on("session_before_tree", async (_event, ctx) => {
+    const accepted = await ctx.ui.confirm("Navigate branch?", "Confirm tree navigation");
+    if (!accepted) return { cancel: true };
+  });
+  pi.on("session_before_fork", async (_event, ctx) => {
+    const answer = await ctx.ui.input("Fork branch?", "Type continue");
+    if (answer !== "continue") return { cancel: true };
+  });
+}
+`);
+    const entries = [
+      message("u1", null, "user", "question one", 1),
+      message("a1", "u1", "assistant", "answer one", 2),
+      message("u2", "a1", "user", "question two", 3),
+      message("a2", "u2", "assistant", "answer two", 4),
+      message("u3", "a2", "user", "question three", 5),
+      message("a3", "u3", "assistant", "answer three", 6),
+    ];
+    await writeFile(sessionFile, `${[
+      { type: "session", version: 3, id: SESSION_ID, timestamp: "2026-08-01T00:00:00.000Z", cwd: directory },
+      ...entries,
+    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+    const command = "inspire_branch_abcdefghijklmnopqrstuvwxyz123456";
+    const statusKey = "inspire_status_abcdefghijklmnopqrstuvwxyz123456";
+    const workerId = "worker_abcdefghijklmnopqrstuvwxyz123456";
+    const rpc = new PiRpcProcess({
+      cwd: directory,
+      args: [
+        "--no-extensions",
+        "--extension", resolve("server/extensions/inspire-branch-bridge.ts"),
+        "--extension", hookExtension,
+        "--session-dir", sessionDir,
+        "--session", sessionFile,
+      ],
+      env: {
+        PI_CODING_AGENT_DIR: join(directory, "config"),
+        PI_CODING_AGENT_SESSION_DIR: sessionDir,
+        PI_OFFLINE: "1",
+        INSPIRE_BRANCH_COMMAND: command,
+        INSPIRE_BRANCH_STATUS_KEY: statusKey,
+        INSPIRE_BRANCH_WORKER_ID: workerId,
+      },
+    });
+    const statuses: Array<Record<string, unknown>> = [];
+    let promptResolved = false;
+    let statusBeforePromptFence = false;
+    const dialogs: Array<Record<string, unknown>> = [];
+    rpc.on("event", (event) => {
+      const record = event as Record<string, unknown>;
+      if (record.type === "extension_ui_request" && record.method === "setStatus" && record.statusKey === statusKey) {
+        statuses.push(record);
+        if (!promptResolved) statusBeforePromptFence = true;
+      } else if (record.type === "extension_ui_request" && (record.method === "confirm" || record.method === "input")) {
+        dialogs.push(record);
+        rpc.sendExtensionUiResponse({
+          id: record.id,
+          ...(record.method === "confirm" ? { confirmed: true } : { value: "continue" }),
+        });
+      }
+    });
+
+    await rpc.start();
+    try {
+      const commands = await rpc.request<{ commands: Array<Record<string, unknown>> }>({ type: "get_commands" });
+      expect(commands.commands.some((item) => item.name === command || item.invocationName === command)).toBe(true);
+      const initial = await rpc.request<{ entries: Array<Record<string, unknown>>; leafId: string | null }>({ type: "get_entries" });
+      const assistantOne = initial.entries.find((entry) => textOf(entry) === "answer one")!;
+      const assistantThree = initial.entries.find((entry) => textOf(entry) === "answer three")!;
+      const userThree = initial.entries.find((entry) => textOf(entry) === "question three")!;
+      expect(assistantOne?.id).toBeTruthy();
+      expect(assistantThree?.id).toBeTruthy();
+      expect(userThree?.id).toBeTruthy();
+
+      const navigate = async (sessionId: string, targetId: string, trustedTail: string) => {
+        const nonce = `nonce_${statuses.length}_abcdefghijklmnopqrstuvwxyz123456`;
+        const payload = Buffer.from(JSON.stringify({ v: 1, nonce, workerId, sessionId, operation: "navigate", targetId })).toString("base64url");
+        promptResolved = false;
+        await rpc.request({ type: "prompt", message: `/${command} ${payload}` });
+        promptResolved = true;
+        const event = statuses.at(-1)!;
+        const result = JSON.parse(Buffer.from(String(event.statusText), "base64url").toString("utf8")) as Record<string, unknown>;
+        expect(result).toMatchObject({ v: 1, nonce, workerId, sessionId, ok: true, cancelled: false, effectiveLeaf: targetId });
+        const verified = await rpc.request<{ entries: unknown[]; leafId: string | null }>({ type: "get_entries", since: trustedTail });
+        expect(verified.entries).toEqual([]);
+        expect(verified.leafId).toBe(targetId);
+      };
+
+      const trustedTail = String(initial.entries.at(-1)!.id);
+      await navigate(SESSION_ID, String(assistantOne.id), trustedTail);
+      await navigate(SESSION_ID, String(assistantThree.id), trustedTail);
+      expect(statusBeforePromptFence).toBe(true);
+
+      const forked = await rpc.request<{ text: string; cancelled: boolean }>({ type: "fork", entryId: String(userThree.id) });
+      expect(forked).toMatchObject({ text: "question three", cancelled: false });
+      const state = await rpc.request<{ sessionId: string; sessionFile: string }>({ type: "get_state" });
+      expect(state.sessionId).not.toBe(SESSION_ID);
+      expect(resolve(state.sessionFile).startsWith(resolve(sessionDir))).toBe(true);
+      const afterForkCommands = await rpc.request<{ commands: Array<Record<string, unknown>> }>({ type: "get_commands" });
+      expect(afterForkCommands.commands.some((item) => item.name === command || item.invocationName === command)).toBe(true);
+      const forkEntries = await rpc.request<{ entries: Array<Record<string, unknown>>; leafId: string | null }>({ type: "get_entries" });
+      const forkAssistantOne = forkEntries.entries.find((entry) => textOf(entry) === "answer one")!;
+      await navigate(state.sessionId, String(forkAssistantOne.id), String(forkEntries.entries.at(-1)!.id));
+      expect(dialogs.filter((event) => event.method === "confirm")).toHaveLength(3);
+      expect(dialogs.filter((event) => event.method === "input")).toHaveLength(1);
+    } finally {
+      await rpc.stop();
+    }
+  }, 30_000);
+});

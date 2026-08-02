@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
-import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
+import { PiRpcOutcomeUnknownError, type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, RuntimeController, safeProjection } from "../../server/runtime.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import type { SessionCatalogLike, SessionRecord } from "../../server/session-catalog.js";
@@ -53,6 +53,9 @@ class FakeRpc extends EventEmitter {
       case "get_messages":
         value = { messages: [] };
         break;
+      case "get_entries":
+        value = { entries: [], leafId: command.since ?? null };
+        break;
       case "get_session_stats":
         value = {};
         break;
@@ -97,6 +100,15 @@ async function preview(session: SessionRecord): Promise<ActiveSessionSnapshot> {
     isStreaming: false,
     isCompacting: false,
     messages: [{ role: "user", content: `preview:${session.id}`, timestamp: 1 }],
+    transcriptPage: {
+      sessionId: session.id,
+      revision: 1,
+      viewId: `view-${session.id}`,
+      messages: [{ role: "user", content: `preview:${session.id}`, timestamp: 1 }],
+      hasOlder: false,
+      olderCursor: null,
+    },
+    projectionHealth: { status: "ok" },
     availableModels: [],
     commands: [],
   };
@@ -165,7 +177,7 @@ describe("RuntimeController concurrent sessions", () => {
       new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("open waited for worker")), 100)),
     ]);
     expect(opened.active?.messages).toEqual([{ role: "user", content: "preview:a", timestamp: 1 }]);
-    expect(worker.starts).toBe(1);
+    await vi.waitFor(() => expect(worker.starts).toBe(1));
 
     const prompting = runtime.prompt({ sessionId: "a", message: "continue" });
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
@@ -326,6 +338,33 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("does not restage or duplicate attachments when prompt acceptance is unknown", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, (options) => {
+      worker = new FakeRpc(options);
+      const request = worker.request.bind(worker);
+      worker.request = async <T,>(command: Record<string, unknown>) => {
+        if (command.type !== "prompt") return request<T>(command);
+        worker.commands.push(command);
+        const error = new PiRpcOutcomeUnknownError("prompt");
+        error.stopped = Promise.resolve();
+        throw error;
+      };
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    await runtime.openSession("a");
+    const doc = await store.add(upload("notes.txt", "text/plain"));
+    await expect(runtime.prompt({ sessionId: "a", message: "send once", attachmentIds: [doc.id] })).rejects.toThrow(/outcome is unknown/);
+    expect(worker.commands.filter((command) => command.type === "prompt")).toHaveLength(1);
+    await expect(runtime.prompt({ sessionId: "a", message: "do not retry", attachmentIds: [doc.id] })).rejects.toThrow(/already belong/);
+    expect(worker.commands.filter((command) => command.type === "prompt")).toHaveLength(1);
+    await store.remove(doc.id);
+    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/already belong/);
+    await runtime.close();
+  });
+
   it("delivers addressed writes to their named session, not the current selection", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -423,7 +462,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("loads resource messages lazily and caches them until the next message event", async () => {
+  it("loads resource messages from the host projection without get_messages", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     let worker!: FakeRpc;
@@ -444,7 +483,7 @@ describe("RuntimeController concurrent sessions", () => {
     expect(worker.commands.filter((command) => command.type === "get_messages")).toHaveLength(0);
     await context.loadMessages!();
     await context.loadMessages!();
-    expect(worker.commands.filter((command) => command.type === "get_messages")).toHaveLength(1);
+    expect(worker.commands.filter((command) => command.type === "get_messages")).toHaveLength(0);
     await runtime.close();
   });
 
@@ -650,12 +689,129 @@ describe("RuntimeController concurrent sessions", () => {
     await vi.waitFor(() => expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(MAX_IDLE_WORKERS + 1));
 
     // Reopening a reclaimed session transparently starts one replacement,
-    // after the previous process has stopped.
+    // after the previous process and sole projection have stopped.
     await runtime.openSession("c");
     await vi.waitFor(() => expect(workers.filter((worker) => worker.sessionId === "c")).toHaveLength(2));
     expect(workers.filter((worker) => worker.sessionId === "c").map((worker) => worker.stops)).toEqual([1, 0]);
     expect(previewCalls.get("c")).toBe(2);
     await runtime.close();
+  });
+
+  it("bounds dormant slots and status projection across hundreds of opens and reopens evicted sessions", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const ids = Array.from({ length: 240 }, (_, index) => `session-${index}`);
+    const workers: FakeRpc[] = [];
+    const previewCalls = new Map<string, number>();
+    const runtime = new RuntimeController(
+      catalog(ids.map((id) => record(id, "/project"))),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      async (session) => {
+        previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
+        return preview(session);
+      },
+    );
+    for (const id of ids) await runtime.openSession(id);
+    const slots = (runtime as unknown as { slots: Map<string, unknown> }).slots;
+    await vi.waitFor(() => expect(slots.size).toBeLessThanOrEqual(MAX_IDLE_WORKERS + 1));
+    const snapshot = await runtime.snapshot();
+    expect(Object.keys(snapshot.sessionStatuses ?? {})).toHaveLength(slots.size);
+    expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(MAX_IDLE_WORKERS + 1);
+
+    const reopened = await runtime.openSession(ids[0]!);
+    expect(reopened.active?.sessionId).toBe(ids[0]);
+    await vi.waitFor(() => expect(previewCalls.get(ids[0]!)).toBe(2));
+    await vi.waitFor(() => expect(slots.size).toBeLessThanOrEqual(MAX_IDLE_WORKERS + 1));
+    await runtime.close();
+  }, 30_000);
+
+  it("reclaims processless failed projections while retaining lightweight status across hundreds of exits", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const ids = Array.from({ length: 220 }, (_, index) => `failed-${index}`);
+    const workers: FakeRpc[] = [];
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runtime = new RuntimeController(
+      catalog(ids.map((id) => record(id, "/tmp"))),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      type ReclaimSlot = { projection: { close(): Promise<void> } | null; runState: string; ready: boolean };
+      const slots = (runtime as unknown as { slots: Map<string, ReclaimSlot> }).slots;
+      let projectionsClosed = 0;
+      for (const [index, id] of ids.entries()) {
+        await runtime.openSession(id);
+        await vi.waitFor(() => expect(slots.get(id)?.ready).toBe(true));
+        const projection = slots.get(id)!.projection!;
+        const close = projection.close.bind(projection);
+        projection.close = async () => { projectionsClosed += 1; await close(); };
+        workers.find((worker) => worker.sessionId === id)!.emit("exit", new Error(`exit-${index}`));
+      }
+      await vi.waitFor(() => expect([...slots.values()].filter((slot) => slot.projection).length).toBeLessThanOrEqual(1));
+      expect(projectionsClosed).toBeGreaterThanOrEqual(ids.length - 1);
+      expect(slots.size).toBe(ids.length);
+      expect([...slots.values()].every((slot) => slot.runState === "failed")).toBe(true);
+
+      await runtime.openSession(ids[0]!);
+      await vi.waitFor(() => expect(workers.filter((worker) => worker.sessionId === ids[0])).toHaveLength(2));
+      expect(slots.get(ids[0]!)?.projection).toBeTruthy();
+    } finally {
+      errors.mockRestore();
+      await runtime.close();
+    }
+  }, 30_000);
+
+  it("reloads a reclaimed conflicted projection without starting a writer until abort clears policy", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    type InternalSlot = { projection: unknown; conflict: { message: string; revision: number } | null; runState: string; attention: "failed" | null; ready: boolean };
+    const slots = (runtime as unknown as { slots: Map<string, InternalSlot> }).slots;
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
+      workers[0]!.emit("exit", new Error("conflicted exit"));
+      const a = slots.get("a")!;
+      a.conflict = { message: "retained conflict", revision: 1 };
+      a.runState = "conflict";
+      a.attention = "failed";
+
+      await runtime.openSession("b");
+      await vi.waitFor(() => expect(a.projection).toBeNull());
+      await runtime.openSession("a");
+      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+      expect(a.projection).toBeTruthy();
+      expect(a.conflict?.message).toBe("retained conflict");
+      expect(workers.filter((worker) => worker.sessionId === "a")).toHaveLength(1);
+
+      await runtime.abort("a");
+      expect(a.conflict).toBeNull();
+      await runtime.prompt({ sessionId: "a", message: "after recovery" });
+      await vi.waitFor(() => expect(workers.filter((worker) => worker.sessionId === "a")).toHaveLength(2));
+    } finally {
+      await runtime.close();
+    }
   });
 
   it("publishes running and unseen completion state, then acknowledges it when viewed", async () => {
@@ -681,7 +837,9 @@ describe("RuntimeController concurrent sessions", () => {
     expect((await runtime.snapshot()).sessionStatuses.a).toEqual({ runState: "running", indicator: "running" });
 
     workers[0]!.emit("event", { type: "agent_settled" });
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({ runState: "idle", indicator: "completed" });
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).sessionStatuses.a).toEqual({ runState: "idle", indicator: "completed" });
+    });
     expect(events.at(-1)).toMatchObject({ type: "agent_settled", sessionId: "a", sessionStatus: { indicator: "completed" } });
 
     await runtime.openSession("a");
@@ -719,8 +877,194 @@ describe("RuntimeController concurrent sessions", () => {
     const recovered = await runtime.snapshot();
     expect(recovered.active?.messages).toEqual([{ role: "user", content: "preview:a", timestamp: 1 }]);
     expect(recovered.runState).toBe("failed");
-    expect(recovered.pendingExtensionUi).toBeNull();
+    expect(recovered.pendingExtensionUiRequests).toEqual([]);
     expect(recovered.sessionStatuses.a).toEqual({ runState: "failed" });
+    await runtime.close();
+  });
+
+  it("snapshots exact pending queues for reconnect and clears them on settle and worker replacement", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+
+    worker.emit("event", { type: "queue_update", steering: ["first", "second"], followUp: ["later"] });
+    expect((await runtime.snapshot()).pendingQueues).toEqual({ steering: ["first", "second"], followUp: ["later"] });
+
+    worker.emit("event", { type: "agent_settled" });
+    await vi.waitFor(async () => expect((await runtime.snapshot()).pendingQueues).toEqual({ steering: [], followUp: [] }));
+
+    worker.emit("event", { type: "queue_update", steering: ["stale"], followUp: [] });
+    worker.emit("exit", new Error("replacement required"));
+    expect((await runtime.snapshot()).pendingQueues).toEqual({ steering: [], followUp: [] });
+    await runtime.close();
+  });
+
+  it("retains generic extension display content and cancels unknown interactive methods", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["one", "two"],
+      extensionPath: "/extensions/plan.ts",
+      body: "x".repeat(140 * 1024),
+      apiToken: "must not cross",
+    });
+    let snapshot = await runtime.snapshot();
+    expect(snapshot.extensionDisplays).toEqual([
+      expect.objectContaining({
+        id: "setWidget:plan",
+        attribution: "/extensions/plan.ts · plan",
+        payload: expect.objectContaining({ truncated: true }),
+      }),
+    ]);
+    expect(JSON.stringify(snapshot.extensionDisplays)).not.toContain("must not cross");
+    expect(snapshot.pendingExtensionUiRequests).toEqual([]);
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "future-dialog",
+      method: "chooseFiles",
+      title: "Choose files",
+      paths: ["a", "b"],
+    });
+    snapshot = await runtime.snapshot();
+    expect(snapshot.pendingExtensionUiRequests).toEqual([
+      expect.objectContaining({ id: "future-dialog", method: "chooseFiles", unsupported: true }),
+    ]);
+    await runtime.extensionUiResponse({ sessionId: "a", id: "future-dialog", cancelled: true });
+    expect(worker.uiResponses).toContainEqual({ id: "future-dialog", cancelled: true });
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    await runtime.close();
+  });
+
+  it("preserves concurrent dialogs, mirrors expiry, and clears every request at lifecycle boundaries", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const emitted: Array<Record<string, unknown>> = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    runtime.on("event", (event) => emitted.push(event as Record<string, unknown>));
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+
+    worker.emit("event", { type: "extension_ui_request", id: "first", method: "confirm", timeout: 100 });
+    worker.emit("event", { type: "extension_ui_request", id: "second", method: "input" });
+    let snapshot = await runtime.snapshot();
+    expect(snapshot.pendingExtensionUiRequests?.map((request) => request.id)).toEqual(["first", "second"]);
+    expect(snapshot.pendingExtensionUiRequests?.[0]?.timeout).toBe(100);
+    expect(snapshot.pendingExtensionUiRequests?.[0]?.expiresAt).toBeGreaterThan(Date.now());
+
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 120));
+    snapshot = await runtime.snapshot();
+    expect(snapshot.pendingExtensionUiRequests?.map((request) => request.id)).toEqual(["second"]);
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "extension_ui_remove", id: "first", reason: "expired" }));
+    await expect(runtime.extensionUiResponse({ sessionId: "a", id: "first", confirmed: true })).rejects.toThrow(/no longer pending/);
+    expect(worker.uiResponses).not.toContainEqual(expect.objectContaining({ id: "first" }));
+
+    await runtime.extensionUiResponse({ sessionId: "a", id: "second", value: "answer" });
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    worker.emit("event", { type: "extension_ui_request", id: "abort-a", method: "confirm", timeout: 1_000 });
+    worker.emit("event", { type: "extension_ui_request", id: "abort-b", method: "confirm" });
+    await runtime.abort("a");
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+
+    worker.emit("event", { type: "extension_ui_request", id: "settle-a", method: "confirm" });
+    worker.emit("event", { type: "extension_ui_request", id: "settle-b", method: "confirm" });
+    worker.emit("event", { type: "agent_settled" });
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+
+    worker.emit("event", { type: "extension_ui_request", id: "replacement", method: "confirm", timeout: 1_000 });
+    worker.emit("exit", new Error("replace worker"));
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    await runtime.close();
+  });
+
+  it("treats a written extension response with a lost ordered fence as acceptance-unknown", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    let responseWritten = false;
+    const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, (options) => {
+      worker = new FakeRpc(options);
+      const send = worker.sendExtensionUiResponse.bind(worker);
+      worker.sendExtensionUiResponse = (response) => { send(response); responseWritten = true; };
+      const request = worker.request.bind(worker);
+      worker.request = async <T,>(command: Record<string, unknown>) => {
+        if (responseWritten && command.type === "get_state") {
+          const error = new PiRpcOutcomeUnknownError("get_state");
+          error.stopped = Promise.resolve();
+          throw error;
+        }
+        return request<T>(command);
+      };
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    worker.emit("event", { type: "extension_ui_request", id: "unknown-ui", method: "confirm" });
+    await expect(runtime.extensionUiResponse({ sessionId: "a", id: "unknown-ui", confirmed: true })).rejects.toThrow(/outcome is unknown/);
+    expect(worker.uiResponses).toEqual([{ id: "unknown-ui", confirmed: true }]);
+    expect(worker.stops).toBe(1);
+    expect((await runtime.snapshot()).runState).toBe("conflict");
+    await expect(runtime.extensionUiResponse({ sessionId: "a", id: "unknown-ui", confirmed: true })).rejects.toThrow();
+    expect(worker.uiResponses).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("retires the writer when extension-response stdin delivery is acceptance-unknown", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, (options) => {
+      worker = new FakeRpc(options);
+      worker.sendExtensionUiResponse = async () => {
+        const error = new PiRpcOutcomeUnknownError("extension_ui_response");
+        error.stopped = Promise.resolve();
+        throw error;
+      };
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    worker.emit("event", { type: "extension_ui_request", id: "unknown-write", method: "confirm" });
+    await expect(runtime.extensionUiResponse({ sessionId: "a", id: "unknown-write", confirmed: true })).rejects.toThrow(/outcome is unknown/);
+    expect(worker.stops).toBe(1);
+    expect((await runtime.snapshot()).runState).toBe("conflict");
     await runtime.close();
   });
 
@@ -748,21 +1092,95 @@ describe("RuntimeController concurrent sessions", () => {
       title: "Proceed?",
       message: "Confirm the operation",
     });
-    expect((await runtime.snapshot()).pendingExtensionUi).toBeNull();
+    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
 
     const restored = await runtime.openSession("a");
-    expect(restored.pendingExtensionUi).toEqual({
+    expect(restored.pendingExtensionUiRequests).toEqual([{
       sessionId: "a",
       id: "question-1",
       method: "confirm",
       title: "Proceed?",
       message: "Confirm the operation",
-    });
+    }]);
     await runtime.openSession("b");
     await runtime.extensionUiResponse({ sessionId: "a", id: "question-1", value: true });
     expect(workers[0]!.uiResponses).toEqual([{ id: "question-1", value: true }]);
     expect(workers[1]!.uiResponses).toEqual([]);
-    expect((await runtime.openSession("a")).pendingExtensionUi).toBeNull();
+    expect((await runtime.openSession("a")).pendingExtensionUiRequests).toEqual([]);
+    await runtime.close();
+  });
+
+  it("owns and drains a provisional new-session worker during concurrent close", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolveStart) => { releaseStart = resolveStart; });
+    const runtime = new RuntimeController(catalog([]), store, (options) => {
+      worker = new FakeRpc(options);
+      worker.startGate = startGate;
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    const creating = runtime.newSession("/tmp");
+    await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    const closing = runtime.close();
+    await vi.waitFor(() => expect(worker.stops).toBe(1));
+    await expect(runtime.newSession("/tmp")).rejects.toThrow(/closing/);
+    releaseStart();
+    await expect(creating).rejects.toThrow(/closing/);
+    await expect(closing).resolves.toBeUndefined();
+    const internal = runtime as unknown as { slots: Map<string, unknown>; provisionalSlots: Map<string, unknown> };
+    expect(internal.slots.size).toBe(0);
+    expect(internal.provisionalSlots.size).toBe(0);
+    expect(worker.stops).toBe(1);
+  });
+
+  it("atomically cleans a provisional identity-rebind race and startup failure", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers: FakeRpc[] = [];
+    let releaseIdentity!: () => void;
+    const identityGate = new Promise<void>((resolveIdentity) => { releaseIdentity = resolveIdentity; });
+    const runtime = new RuntimeController(catalog([]), store, (options) => {
+      const worker = new FakeRpc(options);
+      const request = worker.request.bind(worker);
+      worker.request = async <T,>(command: Record<string, unknown>) => {
+        const result = await request<T>(command);
+        if (command.type === "get_state") await identityGate;
+        return result;
+      };
+      workers.push(worker);
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    const creating = runtime.newSession("/tmp");
+    await vi.waitFor(() => expect(workers[0]?.commands.some((command) => command.type === "get_state")).toBe(true));
+    const closing = runtime.close();
+    await vi.waitFor(() => expect(workers[0]?.stops).toBe(1));
+    releaseIdentity();
+    await expect(creating).rejects.toThrow(/closing/);
+    await closing;
+    const internal = runtime as unknown as { slots: Map<string, unknown>; provisionalSlots: Map<string, unknown> };
+    expect(internal.slots.size).toBe(0);
+    expect(internal.provisionalSlots.size).toBe(0);
+    expect(workers.reduce((sum, worker) => sum + worker.starts, 0)).toBe(1);
+    expect(workers.reduce((sum, worker) => sum + worker.stops, 0)).toBe(1);
+  });
+
+  it("unregisters and stops a provisional worker whose startup fails", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(catalog([]), store, (options) => {
+      worker = new FakeRpc(options);
+      worker.start = async () => { worker.starts += 1; throw new Error("startup failed"); };
+      return worker as unknown as PiRpcProcess;
+    }, preview);
+    await expect(runtime.newSession("/tmp")).rejects.toThrow(/startup failed/);
+    const internal = runtime as unknown as { slots: Map<string, unknown>; provisionalSlots: Map<string, unknown> };
+    expect(internal.slots.size).toBe(0);
+    expect(internal.provisionalSlots.size).toBe(0);
+    expect(worker.starts).toBe(1);
+    expect(worker.stops).toBe(1);
     await runtime.close();
   });
 
@@ -790,11 +1208,150 @@ describe("RuntimeController concurrent sessions", () => {
 
     const created = await runtime.newSession("/tmp");
     expect(created.active?.sessionId).toBe("new-id");
-    expect(created.pendingExtensionUi).toMatchObject({ sessionId: "new-id", id: "trust-1", method: "confirm" });
+    expect(created.pendingExtensionUiRequests).toEqual([
+      expect.objectContaining({ sessionId: "new-id", id: "trust-1", method: "confirm" }),
+    ]);
     // No event may ever leave the host addressed to a pending-* session.
     expect(events.every((event) => !String(event.sessionId ?? "").startsWith("pending-"))).toBe(true);
     await runtime.extensionUiResponse({ sessionId: "new-id", id: "trust-1", value: true });
     expect(worker.uiResponses).toEqual([{ id: "trust-1", value: true }]);
+    await runtime.close();
+  });
+
+  it("deletes an unopened catalog session through the injected destructive boundary", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const source = catalog([record("a", "/tmp")]);
+    source.invalidate = vi.fn();
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(source, store, undefined, preview, 15_000, undefined, remove);
+
+    await expect(runtime.deleteSession("a")).resolves.toEqual({ sessionId: "a", disposition: "trashed" });
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: "a", path: "/sessions/a.jsonl" }));
+    expect(source.invalidate).toHaveBeenCalledOnce();
+    await runtime.close();
+  });
+
+  it("refuses an ambiguous catalog identity before touching either file", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const first = record("a", "/tmp");
+    const second = { ...record("a", "/other"), path: "/sessions/copied-a.jsonl" };
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(catalog([first, second]), store, undefined, preview, 15_000, undefined, remove);
+
+    await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+      message: "The session identity is ambiguous in the Pi catalog",
+      status: 409,
+    });
+    expect(remove).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("refuses to delete the selected session before touching its file", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, (options) => (
+      new FakeRpc(options) as unknown as PiRpcProcess
+    ), preview, 15_000, undefined, remove);
+
+    await runtime.openSession("a");
+    await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+      message: "Switch to another session before deleting this one",
+      status: 409,
+    });
+    expect(remove).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("refuses to delete an unselected session while its agent is still running", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers = new Map<string, FakeRpc>();
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(workers.get("a")?.starts).toBe(1));
+    workers.get("a")!.emit("event", { type: "agent_start" });
+    await runtime.openSession("b");
+    await expect(runtime.deleteSession("a")).rejects.toMatchObject({ status: 409 });
+    expect(remove).not.toHaveBeenCalled();
+    expect(workers.get("a")?.stops).toBe(0);
+    await runtime.close();
+  });
+
+  it("stops and retires an idle unselected worker before deleting its file", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers = new Map<string, FakeRpc>();
+    const remove = vi.fn(async () => "deleted" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(workers.get("a")?.starts).toBe(1));
+    await runtime.openSession("b");
+    await vi.waitFor(() => expect(workers.get("b")?.starts).toBe(1));
+    const internal = runtime as unknown as { slots: Map<string, { activeOperations: number }> };
+    await vi.waitFor(() => expect(internal.slots.get("a")?.activeOperations).toBe(0));
+
+    await expect(runtime.deleteSession("a")).resolves.toEqual({ sessionId: "a", disposition: "deleted" });
+    expect(workers.get("a")?.stops).toBe(1);
+    expect(runtime.sessionCwd("a")).toBeNull();
+    expect(remove).toHaveBeenCalledOnce();
+    await runtime.close();
+  });
+
+  it("blocks new opens while a deletion outcome is in flight", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    let entered = false;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+      15_000,
+      undefined,
+      async () => {
+        entered = true;
+        await gate;
+        return "trashed";
+      },
+    );
+
+    const deleting = runtime.deleteSession("a");
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await expect(runtime.openSession("a")).rejects.toMatchObject({ message: "That session is being deleted", status: 409 });
+    release();
+    await expect(deleting).resolves.toEqual({ sessionId: "a", disposition: "trashed" });
     await runtime.close();
   });
 
