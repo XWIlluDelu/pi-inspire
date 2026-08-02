@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 
@@ -31,19 +32,7 @@ describe("Transcript older-page anchor", () => {
   it("loads near the top without a button and preserves the visible anchor", async () => {
     let release!: () => void;
     const loading = new Promise<void>((resolve) => { release = resolve; });
-    let observed: Element | null = null;
-    let intersectionCallback: IntersectionObserverCallback | null = null;
-    vi.stubGlobal("IntersectionObserver", class {
-      constructor(callback: IntersectionObserverCallback) { intersectionCallback = callback; }
-      observe(target: Element) { observed = target; }
-      unobserve() {}
-      disconnect() {}
-      takeRecords() { return []; }
-      readonly root = null;
-      readonly rootMargin = "320px 0px 0px";
-      readonly thresholds = [0];
-    });
-    let height = 200;
+    let height = 1_000;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -52,31 +41,103 @@ describe("Transcript older-page anchor", () => {
       await loading;
       return true;
     });
-    const { container } = render(
+    const messages = [{ role: "user", content: "newest", timestamp: 2 }];
+    const renderTranscript = (hasOlder: boolean) => (
       <Transcript
-        messages={[{ role: "user", content: "newest", timestamp: 2 }]}
+        messages={messages}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
-        hasOlder
+        hasOlder={hasOlder}
         onLoadOlder={onLoadOlder}
-      />,
+      />
     );
+    const { container, rerender } = render(renderTranscript(false));
     const transcript = container.querySelector(".transcript") as HTMLDivElement;
-    Object.defineProperty(transcript, "scrollHeight", { configurable: true, get: () => height });
-    transcript.scrollTop = 40;
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    transcript.scrollTop = 400;
+    fireEvent.scroll(transcript); // leave latest-follow before paging becomes available
+    rerender(renderTranscript(true));
+    expect(onLoadOlder).not.toHaveBeenCalled();
 
+    transcript.scrollTop = 40;
     expect(screen.queryByRole("button", { name: "Load older messages" })).not.toBeInTheDocument();
-    expect(observed).not.toBeNull();
     act(() => {
-      const entries = [{ target: observed!, isIntersecting: true } as IntersectionObserverEntry];
-      intersectionCallback?.(entries, {} as IntersectionObserver);
-      intersectionCallback?.(entries, {} as IntersectionObserver);
+      fireEvent.scroll(transcript);
+      fireEvent.scroll(transcript);
     });
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
-    height = 500;
+    height = 1_300;
     release();
     await waitFor(() => expect(transcript.scrollTop).toBe(340));
+    vi.unstubAllGlobals();
+  });
+
+  it("loads another page when the user returns to the near-top boundary", async () => {
+    let height = 1_000;
+    let calls = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    function Harness({ enabled }: { enabled: boolean }) {
+      const [messages, setMessages] = useState([{ role: "user", content: "newest", timestamp: 3 }]);
+      const [remaining, setRemaining] = useState(2);
+      const [loading, setLoading] = useState(false);
+      const loadOlder = async () => {
+        setLoading(true);
+        await Promise.resolve();
+        calls += 1;
+        height += 1_000;
+        setMessages((current) => [
+          { role: "user", content: `older page ${calls}`, timestamp: 3 - calls },
+          ...current,
+        ]);
+        setRemaining((current) => current - 1);
+        setLoading(false);
+        return true;
+      };
+      return (
+        <Transcript
+          messages={messages}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+          hasOlder={enabled && remaining > 0}
+          loadingOlder={loading}
+          onLoadOlder={loadOlder}
+        />
+      );
+    }
+
+    const { container, rerender } = render(<Harness enabled={false} />);
+    const transcript = container.querySelector(".transcript") as HTMLDivElement;
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    transcript.scrollTop = 400;
+    fireEvent.scroll(transcript);
+    rerender(<Harness enabled />);
+
+    transcript.scrollTop = 40;
+    fireEvent.scroll(transcript);
+    await waitFor(() => expect(calls).toBe(1));
+    expect(transcript.scrollTop).toBe(1_040);
+
+    transcript.scrollTop = 40;
+    fireEvent.scroll(transcript);
+    await waitFor(() => expect(calls).toBe(2));
+    expect(screen.getByText("older page 2")).toBeInTheDocument();
+    expect(screen.queryByText("Loading earlier messages…")).not.toBeInTheDocument();
+
+    transcript.scrollTop = 40;
+    fireEvent.scroll(transcript);
+    expect(calls).toBe(2);
     vi.unstubAllGlobals();
   });
 

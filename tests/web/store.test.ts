@@ -578,6 +578,45 @@ describe("transcript paging", () => {
     expect(store.getState().olderMessagesError).toBeNull();
   });
 
+  it("uses each returned cursor to load consecutive older pages", async () => {
+    const requested: string[] = [];
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ snapshot: activeSnapshot({
+          messages: [{ role: "user", content: "new", timestamp: 3 }],
+          transcriptPage: {
+            sessionId: "s1", revision: 4,
+            messages: [{ role: "user", content: "new", timestamp: 3 }],
+            hasOlder: true, olderCursor: "cursor-2",
+          },
+        }) }) };
+      }
+      if (url.startsWith("/api/transcript/older")) {
+        const cursor = new URL(url, "http://localhost").searchParams.get("cursor") ?? "";
+        requested.push(cursor);
+        return cursor === "cursor-2"
+          ? { body: {
+              sessionId: "s1", revision: 4,
+              messages: [{ role: "assistant", content: "middle", timestamp: 2 }],
+              hasOlder: true, olderCursor: "cursor-1",
+            } }
+          : { body: {
+              sessionId: "s1", revision: 4,
+              messages: [{ role: "user", content: "old", timestamp: 1 }],
+              hasOlder: false, olderCursor: null,
+            } };
+      }
+      return baseRoutes(url, init);
+    });
+
+    const { store } = await initStore();
+    expect(await store.loadOlderMessages()).toBe(true);
+    expect(await store.loadOlderMessages()).toBe(true);
+    expect(requested).toEqual(["cursor-2", "cursor-1"]);
+    expect(store.getState().messages.map((message) => message.timestamp)).toEqual([1, 2, 3]);
+    expect(store.getState().hasOlderMessages).toBe(false);
+  });
+
   it("keeps a failed automatic page local to the transcript and clears it on retry", async () => {
     let attempts = 0;
     installFetch((url, init) => {

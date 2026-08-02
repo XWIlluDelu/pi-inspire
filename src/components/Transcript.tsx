@@ -453,6 +453,7 @@ export function findLiteralMatches(text: string, query: string, rowIndex: number
 // @tanstack/react-virtual; smaller histories render plainly (also keeps jsdom
 // tests and screen-reader browsing straightforward).
 const VIRTUALIZE_AT = 60;
+const OLDER_PRELOAD_PX = 320;
 
 interface TranscriptScrollAnchor {
   key: string;
@@ -505,12 +506,15 @@ export function Transcript({
   extensionDisplays?: GenericExtensionDisplay[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const olderSentinelRef = useRef<HTMLDivElement>(null);
   const olderLoadInFlightRef = useRef(false);
   const onLoadOlderRef = useRef(onLoadOlder);
   const sessionIdRef = useRef(sessionId);
+  const hasOlderRef = useRef(hasOlder);
+  const olderErrorRef = useRef(olderError);
   onLoadOlderRef.current = onLoadOlder;
   sessionIdRef.current = sessionId;
+  hasOlderRef.current = hasOlder;
+  olderErrorRef.current = olderError;
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -569,6 +573,7 @@ export function Transcript({
     const nextPinned = searchQuery.length > 0 && currentMatch >= 0 ? false : isPinned;
     pinnedRef.current = nextPinned;
     setPinned(nextPinned);
+    if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlder();
   };
 
   const restoreGeometricFollow = () => {
@@ -666,7 +671,7 @@ export function Transcript({
   virtualizeRef.current = virtualize;
   virtualizerRef.current = virtualizer;
 
-  const loadOlder = useCallback(async () => {
+  async function loadOlder() {
     const element = scrollRef.current;
     if (!element || olderLoadInFlightRef.current) return;
     olderLoadInFlightRef.current = true;
@@ -689,6 +694,11 @@ export function Transcript({
         current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
       }
       olderLoadInFlightRef.current = false;
+      // If one short page still leaves the viewport inside the preload zone,
+      // continue filling it. Otherwise the next upward scroll owns the trigger.
+      if (current && current.scrollTop <= OLDER_PRELOAD_PX) {
+        requestAnimationFrame(requestOlder);
+      }
     };
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const anchorIndex = anchor ? rowsRef.current.findIndex((row) => row.key === anchor.key) : -1;
@@ -699,24 +709,11 @@ export function Transcript({
         restore();
       }
     }));
-  }, []);
+  }
 
-  // Loading-state changes re-arm an intersecting sentinel after a stale page is
-  // discarded. The component-local lock stays held through scroll restoration,
-  // so a successful prepend cannot race into a duplicate request.
-  useEffect(() => {
-    const root = scrollRef.current;
-    const sentinel = olderSentinelRef.current;
-    if (!root || !sentinel || !hasOlder || olderError) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.target === sentinel && entry.isIntersecting)) void loadOlder();
-    }, {
-      root,
-      rootMargin: "320px 0px 0px",
-    });
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasOlder, loadingOlder, olderError, sessionId, loadOlder]);
+  function requestOlder() {
+    if (hasOlderRef.current && !olderErrorRef.current) void loadOlder();
+  }
 
   const searchMatches = useMemo(
     () => rows.flatMap((row, rowIndex) => (
@@ -756,6 +753,14 @@ export function Transcript({
     if (virtualize) virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
     else element.scrollTop = element.scrollHeight;
   }, [messages.length, lastText, virtualize, rows.length, virtualizer]);
+
+  // The existing scroll handler is the single proximity authority. This runs
+  // after initial latest-follow so a short transcript can fill its viewport,
+  // while a normal long transcript stays at the latest message until scrolled.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element && element.scrollTop <= OLDER_PRELOAD_PX) requestOlder();
+  }, [hasOlder, olderError, sessionId, rows.length]);
 
   // One delegated handler serves every data-file-path element (Markdown
   // links/images, inline-code paths) regardless of virtualization or memoized
@@ -817,7 +822,7 @@ export function Transcript({
       </div>
       <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick} onCopy={handleRichTextCopy}>
         {hasOlder ? (
-          <div className="transcript__older-sentinel" ref={olderSentinelRef}>
+          <div className="transcript__older-sentinel">
             {loadingOlder ? (
               <span className="transcript__older-status" role="status">
                 <Loader2 size={13} className="spin" aria-hidden />
