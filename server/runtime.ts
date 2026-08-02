@@ -36,7 +36,7 @@ import {
 } from "../shared/contracts.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { addAttachmentContext, AttachmentStore, resolveProjectFiles } from "./attachments.js";
-import { isPiRpcOutcomeUnknown, PiRpcOutcomeUnknownError, PiRpcProcess, type PiRpcOptions } from "./pi-rpc.js";
+import { isPiRpcOutcomeUnknown, MAX_RPC_LINE_BYTES, PiRpcOutcomeUnknownError, PiRpcProcess, type PiRpcOptions } from "./pi-rpc.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 import { deleteSessionFile, type DeleteSessionRecord } from "./session-delete.js";
 import { loadSessionPreview, type ActiveSessionSnapshot } from "./session-preview.js";
@@ -44,10 +44,12 @@ import {
   boundedTranscriptValue,
   SessionProjection,
   TRANSIENT_OVERLAY_MAX_BYTES,
+  type InitialMaterializationAttestation,
   type ProjectionReconcileResult,
   type SessionProjectionView,
 } from "./session-projection.js";
 import type { ResourceContext } from "./resources.js";
+import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
 
 const BUSY_STATES = new Set<RunState>(["running", "retrying", "compacting", "queued"]);
@@ -58,6 +60,7 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(new URL("./extensions/inspire-branch
 const MAX_PROMPT_CHARS = 500_000;
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
+const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 /** Keep a small warm cache, but never stop selected, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
@@ -103,13 +106,36 @@ export interface RuntimeLike {
 
 type CompletionAttention = "completed" | "failed";
 
-function persistedJson(value: unknown): unknown {
-  const encoded = JSON.stringify(value);
-  return encoded === undefined ? undefined : JSON.parse(encoded) as unknown;
+interface RpcEntryChain {
+  entries: SessionEntry[];
+  leafId: string | null;
 }
 
-function samePersistedJson(left: unknown, right: unknown): boolean {
-  return isDeepStrictEqual(persistedJson(left), persistedJson(right));
+function parseRpcEntryChain(
+  value: unknown,
+  options: { expectedParentId: string | null; maxEntries: number; maxBytes: number; label: string },
+): RpcEntryChain {
+  const invalid = (detail: string): Error => new Error(`Pi reported ${detail} ${options.label} entries`);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("invalid");
+  if (Buffer.byteLength(JSON.stringify(value)) > options.maxBytes) throw invalid("oversized");
+  const response = value as Record<string, unknown>;
+  if (!Array.isArray(response.entries) || response.entries.length > options.maxEntries) throw invalid("invalid");
+  const entries: SessionEntry[] = [];
+  let expectedParentId = options.expectedParentId;
+  for (const value of response.entries) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("invalid");
+    const entry = value as Record<string, unknown>;
+    if (
+      typeof entry.type !== "string" ||
+      typeof entry.id !== "string" || entry.id.length === 0 || entry.id.length > 200 ||
+      entry.parentId !== expectedParentId ||
+      !isCanonicalIsoTimestamp(entry.timestamp)
+    ) throw invalid("non-contiguous");
+    entries.push(entry as unknown as SessionEntry);
+    expectedParentId = entry.id;
+  }
+  if (response.leafId !== expectedParentId) throw invalid("inconsistent");
+  return { entries, leafId: expectedParentId };
 }
 
 function isCanonicalIsoTimestamp(value: unknown): value is string {
@@ -145,6 +171,20 @@ function deferredExpectation(): PersistenceExpectation {
     },
   };
   return expectation;
+}
+
+function persistenceMessageKey(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const record = message as Record<string, unknown>;
+  if (record.role === "custom" && typeof record.customType === "string") return `custom:${record.customType}`;
+  const correlation = messageFallbackCorrelation(message);
+  return correlation ? `message:${correlation}` : null;
+}
+
+function persistenceEntryKey(entry: SessionEntry): string | null {
+  if (entry.type === "message") return persistenceMessageKey(entry.message);
+  if (entry.type === "custom_message") return `custom:${entry.customType}`;
+  return null;
 }
 
 function messageExpectation(message: unknown): PersistenceExpectation | null {
@@ -198,6 +238,7 @@ class PreviewProjection extends EventEmitter implements SessionProjectionView {
   get messages(): readonly unknown[] { return this.preview.messages; }
   get model(): unknown { return this.preview.model; }
   get thinkingLevel(): string { return this.preview.thinkingLevel; }
+  attestInitialMaterialization(_cwd: string, _workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation { return "mismatch"; }
   hasActiveEntryType(_type: string): boolean { return false; }
   async suspendReconciliation(): Promise<void> {}
   resumeReconciliation(): void {}
@@ -225,7 +266,7 @@ class PreviewProjection extends EventEmitter implements SessionProjectionView {
 
   async reconcile(_force = false): Promise<ProjectionReconcileResult> {
     return {
-      changed: false, kind: "none", previousRevision: 1, revision: 1,
+      changed: false, initialMaterialization: false, kind: "none", previousRevision: 1, revision: 1,
       previousFingerprint: this.fingerprint, fingerprint: this.fingerprint, healthChanged: false,
       sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
       uncommittedBytes: 0, previousUncommittedBytes: 0, previousTailVerified: true,
@@ -373,6 +414,7 @@ interface RuntimeSlot {
   activeOverlayIds: Map<string, string>;
   conflict: ProjectionConflict | null;
   persistenceExpectations: PersistenceExpectation[];
+  absorbedPersistenceEntries: Map<string, SessionEntry[]>;
   pendingPartialPersistence: PendingPartialPersistence | null;
   mutationTail: Promise<void>;
   mutationPending: number;
@@ -609,26 +651,54 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private async appendedEntriesAreOwned(slot: RuntimeSlot, result: ProjectionReconcileResult): Promise<boolean> {
+    const projection = slot.projection;
+    const initialMaterialization = result.initialMaterialization;
     if (
+      !projection ||
       result.kind !== "append" ||
-      !result.appendedEntries?.length ||
+      !Array.isArray(result.appendedEntries) ||
       slot.workerProjectionRevision !== result.previousRevision ||
       slot.workerProjectionFingerprint !== result.previousFingerprint ||
       (!slot.pendingPartialPersistence && slot.workerProjectionSourceVersion !== result.previousSourceVersion) ||
-      slot.workerProjectionSourceIdentity !== slot.projection?.sourceIdentity
+      (!initialMaterialization && slot.workerProjectionSourceIdentity !== projection.sourceIdentity)
     ) return false;
+
+    if (initialMaterialization) {
+      const rpc = slot.process;
+      if (!rpc) return false;
+      try {
+        const workerEntries = await this.readNewSessionEntries(slot, rpc);
+        if (projection.attestInitialMaterialization(slot.cwd, workerEntries) === "mismatch") return false;
+      } catch {
+        return false;
+      }
+    }
+
     let expectedParent = slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+    let expectationsConsumed = 0;
     for (const entry of result.appendedEntries) {
       if (entry.parentId !== expectedParent) return false;
       expectedParent = entry.id;
+
+      const expectation = slot.persistenceExpectations[expectationsConsumed];
+      if (initialMaterialization) {
+        if (expectation?.matcher?.(entry) === true) {
+          expectationsConsumed += 1;
+        } else if (
+          (entry.type === "message" || entry.type === "custom_message") &&
+          !this.rememberAbsorbedPersistenceEntry(slot, entry)
+        ) {
+          return false;
+        }
+        continue;
+      }
+      if (!expectation) return false;
+      await expectation.ready;
+      if (expectation.matcher?.(entry) !== true) return false;
+      expectationsConsumed += 1;
     }
-    const expectations = slot.persistenceExpectations.slice(0, result.appendedEntries.length);
-    if (expectations.length !== result.appendedEntries.length) return false;
-    await Promise.all(expectations.map((expectation) => expectation.ready));
-    if (!expectations.every((expectation, index) => expectation.matcher?.(result.appendedEntries![index]!) === true)) {
-      return false;
-    }
-    slot.persistenceExpectations.splice(0, expectations.length);
+
+    slot.persistenceExpectations.splice(0, expectationsConsumed);
     if (slot.navigationLease) slot.navigationLease = null;
     return true;
   }
@@ -721,6 +791,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.workerProjectionSourceIdentity = null;
     slot.workerProjectionSourceVersion = null;
     slot.workerProjectionObservedBytes = null;
+    slot.absorbedPersistenceEntries.clear();
   }
 
   private writerProjectionBaselineMatches(slot: RuntimeSlot): boolean {
@@ -792,9 +863,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const expectedSourceVersion = priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
     const expectedObservedBytes = priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
     const observedBytes = projection.committedBytes + projection.uncommittedBytes;
+    const initialMaterialization = result.initialMaterialization;
     const strictPhysicalProgress = expectedObservedBytes !== null &&
       result.previousSourceVersion === expectedSourceVersion &&
-      projection.sourceIdentity === (priorPartial?.sourceIdentity ?? slot.workerProjectionSourceIdentity) &&
+      (initialMaterialization || projection.sourceIdentity === (priorPartial?.sourceIdentity ?? slot.workerProjectionSourceIdentity)) &&
       result.previousTailVerified && observedBytes > expectedObservedBytes;
     const acceptOwnedAppend = async (): Promise<boolean> => {
       if (!strictPhysicalProgress) return false;
@@ -818,7 +890,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         result.uncommittedBytes === 0 && result.changed && await acceptOwnedAppend();
       if (exactCompletion) this.clearPartialPersistence(slot);
       else await this.failPartialPersistence(slot, "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped", false);
-    } else if (projection.health.status === "error" && slot.process && this.writerOwnershipActive(slot)) {
+    } else if (
+      projection.health.status === "error" && slot.process &&
+      (this.writerOwnershipActive(slot) || slot.workerProjectionSourceIdentity === null)
+    ) {
       slot.conflict = {
         message: `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
         revision: projection.revision,
@@ -827,7 +902,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.attention = this.selectedSessionId === slot.id ? null : "failed";
       await this.stopWriter(slot);
     } else if (slot.process && (result.sourceChanged || result.changed) && !this.writerProjectionBaselineMatches(slot)) {
-      if (this.writerOwnershipActive(slot)) {
+      if (initialMaterialization || this.writerOwnershipActive(slot)) {
         if (result.changed && await this.appendedEntriesAreOwned(slot, result)) {
           this.captureWriterProjectionResult(slot, result);
           this.reconcileOverlay(slot);
@@ -975,6 +1050,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
+  private async readNewSessionEntries(slot: RuntimeSlot, rpc: PiRpcProcess): Promise<SessionEntry[]> {
+    const response = await rpc.request<Record<string, unknown>>({ type: "get_entries" });
+    if (slot.process !== rpc) {
+      throw Object.assign(new Error("The new-session worker changed while its entries were inspected"), { status: 409 });
+    }
+    return parseRpcEntryChain(response, {
+      expectedParentId: null,
+      maxEntries: NEW_SESSION_ENTRY_MAX_COUNT,
+      maxBytes: MAX_RPC_LINE_BYTES,
+      label: "new-session",
+    }).entries;
+  }
+
   private async withExpectedPersistence<T>(
     slot: RuntimeSlot,
     expectations: readonly PersistenceExpectation[],
@@ -1029,8 +1117,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!rpc) continue;
       slot.process = null;
       slot.ready = false;
-      // Both authorities are independently reloadable. Close the sole host
-      // parser/watcher before a later reopen may construct its replacement.
+      // Persisted sessions are reloadable. An unselected idle session whose
+      // first file never materialized has no catalog identity to reopen, so
+      // reclaiming it explicitly abandons that empty transient session.
       const projection = slot.projection;
       slot.projection = null;
       slot.preview = null;
@@ -1165,8 +1254,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  private rememberAbsorbedPersistenceEntry(slot: RuntimeSlot, entry: SessionEntry): boolean {
+    const key = persistenceEntryKey(entry);
+    if (!key) return false;
+    const entries = slot.absorbedPersistenceEntries.get(key) ?? [];
+    entries.push(structuredClone(entry));
+    slot.absorbedPersistenceEntries.set(key, entries);
+    return true;
+  }
+
+  private consumeAbsorbedPersistenceEvent(slot: RuntimeSlot, message: unknown): boolean {
+    const key = persistenceMessageKey(message);
+    const matcher = messageExpectation(message)?.matcher;
+    if (!key || !matcher) return false;
+    const entries = slot.absorbedPersistenceEntries.get(key);
+    if (!entries) return false;
+    const index = entries.findIndex(matcher);
+    if (index < 0) return false;
+    entries.splice(index, 1);
+    if (entries.length === 0) slot.absorbedPersistenceEntries.delete(key);
+    return true;
+  }
+
   private recordPersistenceEvent(slot: RuntimeSlot, event: Record<string, unknown>): void {
     if (event.type === "message_end") {
+      if (this.consumeAbsorbedPersistenceEvent(slot, event.message)) return;
       const expectation = messageExpectation(event.message);
       if (expectation) slot.persistenceExpectations.push(expectation);
       return;
@@ -1270,6 +1382,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.clearPendingExtensionUi(slot, "settled");
         for (const expectation of slot.persistenceExpectations) expectation.settle(null);
         slot.persistenceExpectations = [];
+        slot.absorbedPersistenceEntries.clear();
         this.catalog.invalidate();
         this.scheduleIdleWorkerEviction();
         break;
@@ -1555,6 +1668,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         activeOverlayIds: new Map(),
         conflict: null,
         persistenceExpectations: [],
+        absorbedPersistenceEntries: new Map(),
         pendingPartialPersistence: null,
         mutationTail: Promise.resolve(),
         mutationPending: 0,
@@ -1618,12 +1732,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       type: "get_entries",
       ...(baseline.tailEntryId === null ? {} : { since: baseline.tailEntryId }),
     });
-    const returnedEntries = rpcEntries.entries;
-    if (
-      !Array.isArray(returnedEntries) ||
-      returnedEntries.length > STARTUP_DELTA_MAX_ENTRIES ||
-      Buffer.byteLength(JSON.stringify(rpcEntries)) > STARTUP_DELTA_MAX_BYTES
-    ) fail();
+    const parsedRpcEntries = (() => {
+      try {
+        return parseRpcEntryChain(rpcEntries, {
+          expectedParentId: baseline.tailEntryId,
+          maxEntries: STARTUP_DELTA_MAX_ENTRIES,
+          maxBytes: STARTUP_DELTA_MAX_BYTES,
+          label: "startup",
+        });
+      } catch {
+        return fail();
+      }
+    })();
     const state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
     if (
       state.sessionId !== slot.id ||
@@ -1637,14 +1757,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (projection.health.status === "error" || projection.sourceIdentity !== baseline.sourceIdentity ||
       projection.uncommittedBytes > 0) fail();
 
-    const delta = returnedEntries as unknown[];
+    const delta = parsedRpcEntries.entries;
     if (!reconciled.changed) {
       if (
         reconciled.kind !== "none" || reconciled.sourceChanged ||
         projection.revision !== baseline.revision ||
         projection.fingerprint !== baseline.fingerprint ||
         delta.length !== 0 ||
-        rpcEntries.leafId !== baseline.leafId ||
+        parsedRpcEntries.leafId !== baseline.leafId ||
         projection.leafId !== baseline.leafId
       ) fail();
       return;
@@ -1672,20 +1792,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       delta.length === 0
     ) fail();
 
-    let expectedParentId = baseline.leafId;
     let sawThinkingInitializer = false;
     for (let index = 0; index < delta.length; index += 1) {
-      const rpcEntry = delta[index];
+      const rpcEntry = delta[index]!;
       const projectedEntry = (appendedEntries as readonly SessionEntry[])[index];
-      if (!rpcEntry || typeof rpcEntry !== "object" || Array.isArray(rpcEntry) || !projectedEntry) fail();
-      const record = rpcEntry as Record<string, unknown>;
-      if (
-        typeof record.id !== "string" || record.id.length === 0 || record.id.length > 200 ||
-        record.parentId !== expectedParentId ||
-        !isCanonicalIsoTimestamp(record.timestamp) ||
-        !samePersistedJson(projectedEntry, rpcEntry)
-      ) fail();
-
+      if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry)) fail();
+      const record = rpcEntry as unknown as Record<string, unknown>;
       const keys = Object.keys(record).sort();
       if (record.type === "custom") {
         if (
@@ -1702,13 +1814,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       } else {
         fail();
       }
-      expectedParentId = record.id as string;
     }
 
     if (
-      rpcEntries.leafId !== expectedParentId ||
-      projection.leafId !== expectedParentId ||
-      projection.tailEntryId !== expectedParentId ||
+      projection.leafId !== parsedRpcEntries.leafId ||
+      projection.tailEntryId !== parsedRpcEntries.leafId ||
       projection.thinkingLevel !== state.thinkingLevel
     ) fail();
   }
@@ -1964,6 +2074,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       activeOverlayIds: new Map(),
       conflict: null,
       persistenceExpectations: [],
+      absorbedPersistenceEntries: new Map(),
       pendingPartialPersistence: null,
       mutationTail: Promise.resolve(),
       mutationPending: 0,
@@ -1998,9 +2109,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ) throw new Error("Pi created a duplicate or reserved session identity");
       slot.id = sessionId;
       slot.sessionPath = reportedPath;
+      const initialEntries = await this.readNewSessionEntries(slot, rpc);
+      this.assertNotClosing();
       let projection: SessionProjectionView;
       if (slot.sessionPath) {
-        projection = await SessionProjection.open({
+        const pendingProjection = await SessionProjection.openPending({
           id: sessionId,
           cwd,
           path: slot.sessionPath,
@@ -2012,6 +2125,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           searchText: "",
         });
         this.assertNotClosing();
+        if (
+          pendingProjection.sourceIdentity !== null &&
+          pendingProjection.attestInitialMaterialization(cwd, initialEntries) === "mismatch"
+        ) {
+          await pendingProjection.close();
+          throw Object.assign(new Error("The new session file appeared with entries that do not match its Pi worker"), { status: 409 });
+        }
+        projection = pendingProjection;
       } else if (this.loadPreview !== loadSessionPreview) {
         const empty: ActiveSessionSnapshot = {
           sessionId,
@@ -2115,6 +2236,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         await this.compactSlot(slot, compact.instructions);
         return;
       }
+      let accepted = false;
       try {
         const resolved = resolvedPrompt;
         const projectFiles = resolvedProjectFiles;
@@ -2136,6 +2258,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
             ...(request.behavior ? { streamingBehavior: request.behavior } : {}),
           });
+          accepted = true;
           await this.reconcileSlot(slot, true);
           this.throwIfConflicted(slot);
         } catch (error) {
@@ -2143,9 +2266,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           throw error;
         }
       } catch (error) {
-        if (error && typeof error === "object" && (error as { outcomeUnknown?: unknown }).outcomeUnknown === true) {
-          // Dispatch may have committed. Treat leased attachments as consumed;
-          // restaging would invite a duplicate prompt on retry.
+        const outcomeUnknown = error && typeof error === "object" &&
+          (error as { outcomeUnknown?: unknown }).outcomeUnknown === true;
+        if (accepted || outcomeUnknown) {
+          // Pi accepted the prompt, or may have accepted it before losing the
+          // response. Restaging would invite a duplicate prompt on retry.
           if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
           throw error;
         }
@@ -2500,6 +2625,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           activeOverlayIds: new Map(),
           conflict: null,
           persistenceExpectations: [],
+          absorbedPersistenceEntries: new Map(),
           pendingPartialPersistence: null,
           mutationTail: Promise.resolve(),
           mutationPending: 0,
@@ -2615,7 +2741,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const expectation = deferredExpectation();
       return await this.withExpectedPersistence(slot, [expectation], async () => {
-        const result = await this.requestPersistence<unknown>(slot, ready.process, { type: "compact", customInstructions }, 180_000);
+        const result = await this.requestPersistence<unknown>(
+          slot,
+          ready.process,
+          { type: "compact", customInstructions },
+          180_000,
+        );
         expectation.settle(compactionMatcher(result));
         await this.reconcileSlot(slot, true);
         this.throwIfConflicted(slot);

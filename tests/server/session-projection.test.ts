@@ -40,6 +40,53 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("keeps a Pi-owned new session healthy until its reported JSONL path first materializes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pending-projection-"));
+    directories.push(directory);
+    const path = join(directory, "pending-session.jsonl");
+    const record: SessionRecord = {
+      id: "pending-session", path, cwd: directory, created: new Date(), modified: new Date(),
+      messageCount: 0, firstMessage: "", searchText: "",
+    };
+    const projection = await SessionProjection.openPending(record);
+    try {
+      expect(projection).toMatchObject({ revision: 1, fingerprint: "", sourceIdentity: null, health: { status: "ok" } });
+      await expect(projection.reconcile(true)).resolves.toMatchObject({ changed: false, kind: "none", sourceChanged: false });
+
+      const model = {
+        type: "model_change", id: "model-1", parentId: null, timestamp: "2026-08-01T00:00:01.000Z",
+        provider: "test", modelId: "model",
+      };
+      const thinking = {
+        type: "thinking_level_change", id: "thinking-1", parentId: "model-1", timestamp: "2026-08-01T00:00:02.000Z",
+        thinkingLevel: "medium",
+      };
+      await writeFile(path, `${[header("pending-session"), model, thinking].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+      await expect(projection.reconcile(true)).resolves.toMatchObject({
+        changed: true,
+        kind: "append",
+        previousRevision: 1,
+        revision: 2,
+        previousSourceVersion: null,
+        appendedEntries: [model, thinking],
+        previousLeafId: null,
+      });
+      expect(projection).toMatchObject({ sourceIdentity: expect.any(String), health: { status: "ok" } });
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("still rejects a missing JSONL on an ordinary existing-session open", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-missing-projection-"));
+    directories.push(directory);
+    const record: SessionRecord = {
+      id: "missing-session", path: join(directory, "missing.jsonl"), cwd: directory,
+      created: new Date(), modified: new Date(), messageCount: 1, firstMessage: "missing", searchText: "missing",
+    };
+    await expect(SessionProjection.open(record)).rejects.toThrow(/ENOENT|no such file/i);
+  });
+
   it("uses transcript-specific projection budgets with the shared sensitive-key policy", () => {
     const projected = boundedTranscriptValue({ authorization: "secret", nested: { token: "secret", text: "x".repeat(70_000) } }) as Record<string, unknown>;
     expect(projected.authorization).toBe("[redacted]");

@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import {
   buildContextEntries,
   buildSessionContext,
+  CURRENT_SESSION_VERSION,
   migrateSessionEntries,
   sessionEntryToContextMessages,
   type SessionEntry,
@@ -15,6 +16,7 @@ import type { BranchTreeResponse, ProjectionHealth, TranscriptPage } from "../sh
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import type { SessionRecord } from "./session-catalog.js";
 import { BRANCH_TREE_MAX_BYTES, boundedUserText, projectSessionTree } from "./session-tree.js";
+import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
 
 /** Persisted JSONL and child RPC frames are independent trust boundaries. */
@@ -53,8 +55,12 @@ interface Candidate {
   leafId: string | null;
 }
 
+export type InitialMaterializationAttestation = "partial" | "complete" | "mismatch";
+
 export interface ProjectionReconcileResult {
   changed: boolean;
+  /** This observation belongs to the new-session file's first materialization. */
+  initialMaterialization: boolean;
   kind: "none" | "append" | "rewrite";
   previousRevision: number;
   revision: number;
@@ -99,6 +105,7 @@ export interface SessionProjectionView {
   readonly committedBytes: number;
   readonly uncommittedBytes: number;
   readonly uncommittedFingerprint: string | null;
+  attestInitialMaterialization(cwd: string, workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation;
   hasActiveEntryType(type: string): boolean;
   suspendReconciliation(): Promise<void>;
   resumeReconciliation(): void;
@@ -286,6 +293,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
   private currentUncommittedFingerprint: string | null = null;
   private reconcileTail: Promise<ProjectionReconcileResult> = Promise.resolve({
     changed: false,
+    initialMaterialization: false,
     kind: "none",
     previousRevision: 0,
     revision: 0,
@@ -305,23 +313,52 @@ export class SessionProjection extends EventEmitter implements SessionProjection
   private reconciliationResume: Promise<void> | null = null;
   private resolveReconciliationResume: (() => void) | null = null;
   private closed = false;
+  /** Pi reserves a path for a new session but delays creating the JSONL.
+   * Only new-session ownership may enter this state; it remains active across
+   * complete-line prefixes until disk catches the creating worker's entries. */
+  private initialMaterializationPending: boolean;
 
-  private constructor(session: SessionRecord, private readonly readHooks?: SessionProjectionReadHooks) {
+  private constructor(
+    session: SessionRecord,
+    private readonly readHooks?: SessionProjectionReadHooks,
+    initialMaterializationPending = false,
+  ) {
     super();
     this.sessionId = session.id;
     this.path = resolve(session.path);
+    this.initialMaterializationPending = initialMaterializationPending;
+    if (initialMaterializationPending) {
+      this.currentRevision = 1;
+      this.appendFromRevision = 1;
+      this.revisionFingerprints.set(1, "");
+    }
   }
 
-  static async open(session: SessionRecord, readHooks?: SessionProjectionReadHooks): Promise<SessionProjection> {
-    const projection = new SessionProjection(session, readHooks);
+  private static async openMode(
+    session: SessionRecord,
+    readHooks: SessionProjectionReadHooks | undefined,
+    initialMaterializationPending: boolean,
+  ): Promise<SessionProjection> {
+    const projection = new SessionProjection(session, readHooks, initialMaterializationPending);
     const result = await projection.reconcile(true);
-    if (projection.revision === 0) {
+    const loaded = initialMaterializationPending ? projection.health.status !== "error" : projection.revision > 0;
+    if (!loaded) {
       await projection.close();
       throw Object.assign(new Error(projection.health.message ?? "Session projection could not be loaded"), { status: 422 });
     }
     projection.startWatching();
     if (result.changed) projection.emit("update", result);
     return projection;
+  }
+
+  static open(session: SessionRecord, readHooks?: SessionProjectionReadHooks): Promise<SessionProjection> {
+    return SessionProjection.openMode(session, readHooks, false);
+  }
+
+  /** Create the sole projection for a Pi-owned new session whose reported
+   * path may not exist until Pi flushes its first assistant message. */
+  static openPending(session: SessionRecord, readHooks?: SessionProjectionReadHooks): Promise<SessionProjection> {
+    return SessionProjection.openMode(session, readHooks, true);
   }
 
   get revision(): number { return this.currentRevision; }
@@ -338,6 +375,20 @@ export class SessionProjection extends EventEmitter implements SessionProjection
   get sourceVersion(): string | null {
     const value = this.currentIdentity;
     return value ? `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}` : null;
+  }
+  attestInitialMaterialization(cwd: string, workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation {
+    const header = this.currentHeader;
+    if (
+      !this.initialMaterializationPending || !header ||
+      header.version !== CURRENT_SESSION_VERSION ||
+      resolve(header.cwd) !== resolve(cwd) ||
+      header.parentSession !== undefined ||
+      this.currentEntries.length > workerEntries.length ||
+      !samePersistedJson(this.currentEntries, workerEntries.slice(0, this.currentEntries.length))
+    ) return "mismatch";
+    if (this.currentEntries.length < workerEntries.length || this.currentUncommittedBytes > 0) return "partial";
+    this.initialMaterializationPending = false;
+    return "complete";
   }
   get committedBytes(): number { return this.currentCommittedBytes; }
   get uncommittedBytes(): number { return this.currentUncommittedBytes; }
@@ -449,6 +500,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         if (JSON.stringify(previous) !== JSON.stringify(this.currentHealth)) {
           this.emit("update", {
             changed: false,
+            initialMaterialization: this.initialMaterializationPending,
             kind: "none",
             previousRevision: this.revision,
             revision: this.revision,
@@ -481,6 +533,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       if (previous !== JSON.stringify(this.currentHealth)) {
         this.emit("update", {
           changed: false,
+          initialMaterialization: this.initialMaterializationPending,
           kind: "none",
           previousRevision: this.revision,
           revision: this.revision,
@@ -522,6 +575,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     const previousSourceVersion = this.sourceVersion;
     const previousUncommittedBytes = this.uncommittedBytes;
     const previousUncommittedFingerprint = this.uncommittedFingerprint;
+    const initialMaterialization = this.initialMaterializationPending;
     try {
       if (!force && this.currentIdentity) {
         const details = await stat(this.path, { bigint: true });
@@ -533,7 +587,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           next.ctimeNs === this.currentIdentity.ctimeNs
         ) {
           return {
-            changed: false, kind: "none", previousRevision, revision: this.revision,
+            changed: false, initialMaterialization, kind: "none", previousRevision, revision: this.revision,
             previousFingerprint, fingerprint: this.fingerprint, healthChanged: false,
             sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
             uncommittedBytes: this.uncommittedBytes,
@@ -543,6 +597,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       }
 
       const candidate = (await this.tryReadAppendCandidate()) ?? await this.readCandidate();
+      const initialFileAppearance = initialMaterialization && this.currentIdentity === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
       const previousEntries = this.currentEntries;
       const previousLeafId = this.currentLeafId;
@@ -551,10 +606,10 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       if (changed) {
         const prefixVerified = this.currentCommittedBytes === 0 || candidate.previousPrefixFingerprint === this.currentFingerprint;
         const tailVerified = previousUncommittedBytes === 0 || candidate.previousTailFingerprint === previousUncommittedFingerprint;
-        kind = this.currentIdentity && sameObject(candidate.identity, this.currentIdentity) &&
+        kind = initialFileAppearance || (
+          this.currentIdentity && sameObject(candidate.identity, this.currentIdentity) &&
           candidate.committedBytes >= this.currentCommittedBytes && this.currentFingerprint && prefixVerified && tailVerified
-          ? "append"
-          : "rewrite";
+        ) ? "append" : "rewrite";
         if (
           kind === "append" &&
           previousEntries.every((entry, index) => candidate.entries[index]?.id === entry.id)
@@ -586,6 +641,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         candidate.previousTailFingerprint === previousUncommittedFingerprint;
       return {
         changed,
+        initialMaterialization,
         kind,
         previousRevision,
         revision: this.revision,
@@ -601,9 +657,33 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         ...(appendedEntries ? { appendedEntries, previousLeafId } : {}),
       };
     } catch (error) {
+      if (
+        initialMaterialization &&
+        this.currentIdentity === null &&
+        (error as NodeJS.ErrnoException)?.code === "ENOENT"
+      ) {
+        this.currentHealth = { status: "ok" };
+        return {
+          changed: false,
+          initialMaterialization,
+          kind: "none",
+          previousRevision,
+          revision: this.revision,
+          previousFingerprint,
+          fingerprint: this.fingerprint,
+          healthChanged: previousHealth !== JSON.stringify(this.health),
+          sourceChanged: false,
+          previousSourceVersion,
+          sourceVersion: this.sourceVersion,
+          uncommittedBytes: this.uncommittedBytes,
+          previousUncommittedBytes,
+          previousTailVerified: true,
+        };
+      }
       this.currentHealth = healthError(error);
       return {
         changed: false,
+        initialMaterialization,
         kind: "none",
         previousRevision,
         revision: this.revision,

@@ -198,7 +198,9 @@ function CompletionMenu({
   onPick: (item: CompletionItem) => void;
 }) {
   const refs = useRef<Array<HTMLDivElement | null>>([]);
-  useEffect(() => refs.current[active]?.scrollIntoView?.({ block: "nearest" }), [active]);
+  useEffect(() => {
+    refs.current[active]?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
   let previousGroup = "";
   return (
     <div className="completion" id={id} role="listbox" aria-label={token.kind === "file" ? "Project file completions" : "Slash command completions"} aria-busy={status === "loading"}>
@@ -339,18 +341,20 @@ export function Composer() {
         file,
       }));
     }
-    const sourceOrder = new Map(["inspire", "extension", "prompt", "skill"].map((source, index) => [source, index]));
-    return rankCommands(commands, completion.query)
-      .map((command) => ({
-        key: `${command.source ?? "command"}:${command.name}`,
-        title: `/${command.name}`,
-        hint: command.description,
-        group: command.source ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}` : "Command",
-        command,
-      }))
-      .sort((left, right) =>
-        (sourceOrder.get(left.command?.source ?? "") ?? 99) - (sourceOrder.get(right.command?.source ?? "") ?? 99),
+    const ranked = rankCommands(commands, completion.query);
+    if (!completion.query.trim()) {
+      const sourceOrder = new Map(["inspire", "extension", "prompt", "skill"].map((source, index) => [source, index]));
+      ranked.sort((left, right) =>
+        (sourceOrder.get(left.source ?? "") ?? 99) - (sourceOrder.get(right.source ?? "") ?? 99),
       );
+    }
+    return ranked.map((command) => ({
+      key: `${command.source ?? "command"}:${command.name}`,
+      title: `/${command.name}`,
+      hint: command.description,
+      group: command.source ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}` : "Command",
+      command,
+    }));
   }, [completion, completionFiles, commands]);
 
   useEffect(() => setCompletionActive(0), [completion?.kind, completion?.query]);

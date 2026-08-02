@@ -165,6 +165,33 @@ describe("caret completion", () => {
     clearLeftovers();
   });
 
+  it("does not register scrollIntoView's return value as an effect cleanup", async () => {
+    clearLeftovers();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: () => Promise.resolve(),
+    });
+    try {
+      const view = render(<Composer />);
+      const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+      typeDraft("/");
+      textarea.setSelectionRange(1, 1);
+      fireEvent.select(textarea);
+      await screen.findByRole("listbox", { name: "Slash command completions" });
+      expect(() => view.unmount()).not.toThrow();
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
+  });
+
   it("inserts a slash command with a trailing space without executing it", async () => {
     clearLeftovers();
     const before = promptBodies.length;

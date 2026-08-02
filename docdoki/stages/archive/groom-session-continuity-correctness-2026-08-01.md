@@ -26,7 +26,8 @@ Make long histories bounded end to end and follow externally persisted Pi entrie
 - Settled snapshots, transcript paging, resource discovery, branch views, and reconnect reconstruction no longer depend on aggregate `get_messages`. Live events use a bounded correlated overlay until persistence absorbs them.
 - Watch notifications are hints backed by stat/poll reconciliation. Append, missed watch, partial line, rewrite, truncation, replacement, compaction, old-ancestor branch, and close races retain either a complete last-good projection or an attributable error/conflict.
 - Every persistence-capable runtime operation passes through the slot mutation FIFO and a forced freshness check. Idle stale workers are replaced; busy external divergence stops the writer and enters a visible conflict rather than merging or retrying an unknown outcome.
-- Startup accepts only the narrowly attested, state-equivalent missing `thinking_level_change` delta that Pi 0.83 may create. A second pre-start baseline rejects factory-time writes; the public RPC boundary cannot prove authorship of an exactly equivalent forbidden concurrent append afterward, so the external one-writer rule remains explicit.
+- Startup accepts only a narrowly attested, state-equivalent append composed of installed-extension non-transcript `custom` state plus at most one missing `thinking_level_change`. A second pre-start baseline rejects factory-time writes; the public RPC boundary cannot prove authorship of an exactly equivalent forbidden concurrent append afterward, so the external one-writer rule remains explicit.
+- A new-session-only materialization transition covers Pi 0.83 reporting a future JSONL path before creating it. The host accepts only header/cwd/root-consistent complete-line prefixes that exactly match the creating worker’s bounded entry chain, remains correct when disk notifications precede stdout message events, and returns to ordinary inode/append ownership once the first flush is complete; existing-session missing files still fail.
 - Older-page prepends preserve the visible anchor, loaded history survives live snapshots, same-session responses cannot regress newer revisions or cross branch views, and conflict/projection failures remain visible through resync and recovery.
 
 ## Decisions
@@ -39,8 +40,8 @@ Make long histories bounded end to end and follow externally persisted Pi entrie
 ## Verified
 
 - Frozen fixtures cover a session larger than the child frame limit and browser page, malformed unterminated child output, large/deep branches, partial lines, same-size rewrites, truncation/replacement, compaction, equal-timestamp messages, projection eviction/incarnation, close races, and external divergence before and during writes.
-- Focused projection/runtime/RPC/app/store/transcript tests pass, including real Pi 0.83 no-model startup, navigation, fork, and dialog-lane integration.
-- The completed work is included in the final repository-wide 491-test validation, TypeScript check, production build, real Chromium smoke, and diff hygiene. Its frozen performance evidence remains recorded by [[groom-evidence-gated-maintenance-2026-08-01]].
+- Focused projection/runtime/RPC/app/store/transcript tests include header-only and successive complete-line first-flush prefixes, disk-before-event ordering, late-event exact-once consumption, existing-session missing-file rejection, and real Pi 0.83 startup, navigation, fork, and dialog-lane integration.
+- The completed work is included in the final repository-wide 527-test validation, TypeScript check, production build, real Chromium smoke, diff hygiene, and a real model first-materialization flow. Its frozen performance evidence remains recorded by [[groom-evidence-gated-maintenance-2026-08-01]].
 
 ## Residual boundary
 

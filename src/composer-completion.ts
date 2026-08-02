@@ -1,3 +1,4 @@
+import { fuzzyFilter } from "@earendil-works/pi-tui";
 import type { ProjectFileResult } from "./api";
 import type { PiCommand } from "./store";
 
@@ -83,11 +84,5 @@ export function rankProjectFiles(files: readonly ProjectFileResult[], query: str
 }
 
 export function rankCommands(commands: readonly PiCommand[], query: string): PiCommand[] {
-  return commands
-    .flatMap((command) => {
-      const score = fuzzyScore(`${command.name} ${command.description ?? ""}`, query);
-      return score === null ? [] : [{ command, score }];
-    })
-    .sort((left, right) => left.score - right.score || left.command.name.localeCompare(right.command.name))
-    .map(({ command }) => command);
+  return fuzzyFilter([...commands], query, (command) => command.name);
 }

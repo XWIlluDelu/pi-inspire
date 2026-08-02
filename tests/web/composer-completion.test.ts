@@ -64,11 +64,12 @@ describe("composer caret completion", () => {
     expect(files.map((file) => file.path)).toEqual(["docs/field report.md", "src/report-field.ts"]);
   });
 
-  it("fuzzy-filters descriptions while retaining generic command sources", () => {
+  it("uses Pi's command-name matcher rather than unrelated description text", () => {
     const commands = rankCommands([
-      { name: "deploy", description: "Ship the build", source: "future-source" },
-      { name: "compact", description: "Summarize context", source: "inspire" },
-    ], "sum ctx");
-    expect(commands).toEqual([expect.objectContaining({ name: "compact", source: "inspire" })]);
+      { name: "loop", description: "Run repeatedly", source: "prompt" },
+      { name: "review-loop", description: "Review repeatedly", source: "extension" },
+      { name: "goal", description: "Run a loop to completion", source: "extension" },
+    ], "loop");
+    expect(commands.map((command) => command.name)).toEqual(["loop", "review-loop"]);
   });
 });

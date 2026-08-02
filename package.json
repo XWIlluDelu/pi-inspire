@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
     "@tanstack/react-virtual": "^3.14.7",
     "express": "^5.2.1",
     "highlight.js": "^11.11.1",

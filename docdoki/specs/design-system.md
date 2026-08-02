@@ -401,8 +401,10 @@ Recent, and No thinking labels; its active descendant indexes options rather
 than headings. Thinking levels read lowercase (`medium`, `xhigh`) and the
 control states when the active model cannot use them. The caret completion
 surface uses the same Level-2 grammar above the writing area, with source
-headings, a mono path/description column, and an accent edge on the active
-option. At the right, the **context gauge** — a
+headings in its unfiltered inventory, a mono path/description column, and an
+accent edge on the active option. A typed slash query ranks command names
+across sources without letting headings or descriptions displace the strongest
+match. At the right, the **context gauge** — a
 14px ring plus percent in `{typography.size-xs}` — reports context-window
 occupancy from Pi's session stats: calm `muted`/`accent` below 60%,
 `warning` from 60%, `error` from 85%, with exact token counts and a
