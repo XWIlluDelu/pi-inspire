@@ -382,11 +382,16 @@ warning capsule surface.
   project index (directories first), and clicking a file opens the
   session-bound preview pane.
 - The nav column begins with one brand/new-session target: the transparent
-  reticle favicon + wordmark + `New session` in the full column, and the same
-  larger reticle alone in the collapsed rail. It follows the favicon's theme
-  colors (teal in light, white in dark) and opens the welcome/new-session surface without
-  creating a session. Search, sessions, and the explorer follow; settings and
-  refresh live in the topbar and palette respectively.
+  22px reticle favicon + wordmark + `New session` optically centered in the
+  full column (font ink, not only line boxes), and the same reticle at 26px alone in the collapsed rail,
+  where the topbar then carries the wordmark instead of a session title.
+  It follows the favicon's theme colors (teal in light, white in dark) and opens
+  the welcome/new-session surface without creating a session. It remains an
+  action button even while that surface is open: no selected/current-page state
+  or persistent fill is shown. On narrow columns
+  the action chip disappears before it can clip. Search, sessions, and the
+  explorer follow; settings and refresh live in the topbar and palette
+  respectively.
 
 ### Transcript
 
@@ -396,8 +401,8 @@ warning capsule surface.
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra
   spacing before each user turn groups a prompt with its response.
-- **Assistant flow** — no container. The `Assistant rounds` preference is a pure presentation choice: `Details` preserves the existing attribution head line ("Pi" at `{typography.size-sm}`/600 with model, time, and any unusual end reason in `{typography.size-xs}` `faint`/`warning`), while `Divider` replaces that whole line with one 24px hairline and adds no exception text or inferred state. There is no footer meta line.
-- **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are sans prose; tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Tool cards add `Compact`: each uninterrupted adjacent run becomes a wrapping row of tool + status icon pills. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries.
+- **Assistant flow** — no container. The `Assistant rounds` preference is a pure presentation choice: `Details` preserves the existing attribution head line ("Pi" at `{typography.size-sm}`/600 with model, time, and any unusual end reason in `{typography.size-xs}` `faint`/`warning`), while `Divider` replaces that whole line with one 24px neutral hairline centered in the ordinary turn gap, adding no exception text, inferred state, semantic color, or replacement line height. There is no footer meta line.
+- **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are inline-rendered sans prose (emphasis, inline code, and math survive within the one-line ellipsis); tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Tool cards add `Compact`: each uninterrupted adjacent run becomes a wrapping row of quiet 30px tiles — a 3px semantic left edge, tool icon, status glyph, and restrained padding/spacing. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. The outer hairline remains neutral; failure turns the short semantic edge, tool icon, and status glyph red in both resting and selected states. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries.
 - **Code block** — `surface` (dark: `surface-inset`) background, hairline
   border, `{rounded.md}`, header bar with language label
   (`{typography.size-xs}` `faint`) and copy action; code at

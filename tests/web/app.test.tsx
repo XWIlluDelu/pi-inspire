@@ -137,6 +137,21 @@ describe("welcome flow", () => {
     expect(screen.getByLabelText("Message")).toBeInTheDocument();
   });
 
+  it("shows the wordmark in the topbar exactly while the navigation is a rail", async () => {
+    render(<App />);
+    const navToggle = screen.getByRole("button", { name: "Toggle navigation" });
+    fireEvent.click(navToggle);
+    const topbar = document.querySelector(".topbar") as HTMLElement;
+    expect(topbar.querySelector(".wordmark")).not.toBeNull();
+    expect(document.querySelector(".nav--rail .wordmark")).toBeNull();
+    expect(within(topbar).queryByRole("button", { name: "Rename session" })).not.toBeInTheDocument();
+    expect(within(topbar).queryByRole("button", { name: "Copy project path" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(topbar).getByRole("button", { name: "Toggle navigation" }));
+    expect(topbar.querySelector(".wordmark")).toBeNull();
+    expect(within(topbar).getByRole("button", { name: "Rename session" })).toBeInTheDocument();
+  });
+
   it("renames the session through the topbar control", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
@@ -593,10 +608,24 @@ describe("folder grouping and settings page", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(within(dialog).getByRole("group", { name: "Theme" })).toBeInTheDocument();
     expect(within(dialog).getByRole("group", { name: "Project location" })).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Thinking cards")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Tool cards")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Assistant rounds")).toBeInTheDocument();
+    const thinkingCards = within(dialog).getByLabelText("Thinking cards");
+    const toolCards = within(dialog).getByLabelText("Tool cards");
+    const assistantRounds = within(dialog).getByLabelText("Assistant rounds");
+    expect(assistantRounds).toBeInTheDocument();
     expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
+
+    const optionLabels = (label: string) => within(screen.getByRole("listbox", { name: label }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    fireEvent.click(thinkingCards);
+    expect(optionLabels("Thinking cards")).toEqual(["Expanded", "Collapsed", "Hidden"]);
+    fireEvent.click(thinkingCards);
+    fireEvent.click(toolCards);
+    expect(optionLabels("Tool cards")).toEqual(["Expanded", "Collapsed", "Compact", "Hidden"]);
+    fireEvent.click(toolCards);
+    fireEvent.click(assistantRounds);
+    expect(optionLabels("Assistant rounds")).toEqual(["Details", "Divider"]);
+    fireEvent.click(assistantRounds);
     expect(within(dialog).getByRole("combobox", { name: "Completion attention" })).toBeInTheDocument();
     expect(within(dialog).getByText(/permission is requested only when you choose it/i)).toBeInTheDocument();
     // the overlay floats above the conversation instead of replacing it

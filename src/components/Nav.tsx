@@ -471,12 +471,10 @@ function ProjectGroup({
 
 export function Nav({
   collapsed,
-  newSessionActive = false,
   onNewSession,
   onSelectSession,
 }: {
   collapsed: boolean;
-  newSessionActive?: boolean;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
 }) {
@@ -494,7 +492,6 @@ export function Nav({
           onClick={onNewSession}
           title="New session"
           aria-label="New session"
-          aria-current={newSessionActive ? "page" : undefined}
         >
           <span className="nav__brand-icon nav__brand-icon--rail" aria-hidden />
         </button>
@@ -543,7 +540,6 @@ export function Nav({
           className="nav__brand-new"
           onClick={onNewSession}
           aria-label="New session"
-          aria-current={newSessionActive ? "page" : undefined}
         >
           <span className="nav__brand-icon" aria-hidden />
           <Wordmark />
@@ -626,10 +622,10 @@ export function Nav({
                 <ChevronRight size={13} className={`chev ${hiddenExpanded ? "chev--open" : ""}`} aria-hidden />
                 <EyeOff size={14} aria-hidden />
                 <span className="nav__group-name">Hidden</span>
+                <span className="nav__group-count" aria-hidden>
+                  {hiddenCount}
+                </span>
               </button>
-              <span className="nav__group-count" aria-hidden>
-                {hiddenCount}
-              </span>
             </h2>
             {hiddenExpanded ? (
               <>
