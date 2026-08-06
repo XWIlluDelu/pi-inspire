@@ -38,7 +38,23 @@ export function isAbortableRunState(runState: RunState): boolean {
   return isBusyRunState(runState) || runState === "conflict";
 }
 
-export type SessionIndicator = "running" | "completed" | "failed";
+export type SessionIndicator = "running" | "completed" | "failed" | "attention";
+
+export type ProjectionConflictKind =
+  | "external-change"
+  | "incomplete-persistence"
+  | "projection-failure"
+  | "outcome-unknown"
+  | "fork-overflow";
+
+/** External source movement is safe to display as attention only after the
+ * worker has stopped; every other conflict represents an integrity or outcome
+ * boundary that remains an error. */
+export function projectionConflictSeverity(
+  conflict: Pick<ProjectionConflict, "kind"> | null | undefined,
+): "attention" | "error" {
+  return conflict?.kind === "external-change" ? "attention" : "error";
+}
 
 export interface SessionRuntimeStatus {
   runState: RunState;
@@ -447,6 +463,9 @@ export interface BranchForkResponse {
 }
 
 export interface ProjectionConflict {
+  /** Stable machine classification; the browser must not infer severity from
+   * human-readable message text. */
+  kind: ProjectionConflictKind;
   message: string;
   revision: number;
 }

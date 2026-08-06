@@ -218,8 +218,8 @@ describe("welcome flow", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
     releaseFailure();
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("model unavailable after selection");
+    const warning = await screen.findByText("model unavailable after selection");
+    expect(warning.closest(".notice")).toHaveClass("notice--warning");
     expect(document.activeElement).toBe(trigger);
     modelFailureGate = null;
     store.dismissError();
@@ -401,11 +401,13 @@ describe("welcome flow", () => {
     expect(store.getState().extensionUiRequests[0]?.id).toBe("blocked");
     act(() => ws.emit({
       type: "session_projection_conflict", sessionId: "s1",
-      conflict: { message: "external writer conflict", revision: 2 },
+      conflict: { kind: "external-change", message: "external writer conflict", revision: 2 },
       sessionStatus: { runState: "conflict" },
     }));
-    expect(await screen.findByText("external writer conflict")).toBeInTheDocument();
-    expect(screen.getByText("Conflict")).toBeInTheDocument();
+    const warning = await screen.findByText("external writer conflict");
+    expect(warning.closest(".banner")).toHaveClass("banner--warning");
+    expect(screen.getByText("Needs recovery")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recover" })).toBeInTheDocument();
     const before = abortCalls;
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(abortCalls).toBe(before + 1));
@@ -466,6 +468,25 @@ describe("session attention indicators", () => {
     // background output never enters the visible transcript
     expect(screen.queryByText("secret background draft")).not.toBeInTheDocument();
     expect(screen.getByText("hello world")).toBeInTheDocument();
+  });
+
+  it("shows a yellow recovery dot for an unseen external session update", async () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    const nav = screen.getByRole("navigation", { name: "Sessions" });
+    const olderRow = sessionRowButton(nav, "Older work");
+
+    act(() =>
+      ws.emit({
+        type: "session_projection_conflict",
+        sessionId: "s0",
+        conflict: { kind: "external-change", message: "Session changed outside this worker", revision: 3 },
+        sessionStatus: { runState: "conflict", indicator: "attention" },
+      }),
+    );
+    const dot = within(olderRow).getByRole("img", { name: "Needs recovery" });
+    expect(dot).toHaveClass("nav__row-dot--attention");
+    expect(dot).toHaveAttribute("title", "Needs recovery");
   });
 
   it("turns green on unseen success and red on unseen error", async () => {

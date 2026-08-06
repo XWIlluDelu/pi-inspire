@@ -562,7 +562,13 @@ export function Composer() {
         <span className="composer__spacer" />
         <ContextMeter />
         {abortable ? (
-          <button type="button" className="composer__send composer__send--abort" onClick={() => void store.abort()} aria-label="Abort running task" title="Abort">
+          <button
+            type="button"
+            className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
+            onClick={() => void store.abort()}
+            aria-label={state.runState === "conflict" ? "Recover session" : "Abort running task"}
+            title={state.runState === "conflict" ? "Recover session" : "Abort"}
+          >
             <Square size={14} aria-hidden />
           </button>
         ) : (

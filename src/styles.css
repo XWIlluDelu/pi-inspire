@@ -203,6 +203,7 @@
   --success: #2f7d4f;
   --warning: #9a6b00;
   --error: #b3403c;
+  --on-status: #ffffff;
   --error-tint: rgba(179, 64, 60, 0.08);
   --info: #33649e;
   --think: #7b5fc0;
@@ -238,6 +239,7 @@
   --success: #5fc78e;
   --warning: #e0b054;
   --error: #e5837b;
+  --on-status: #06211f;
   --error-tint: rgba(229, 131, 123, 0.12);
   --info: #7ea9dd;
   --think: #b9a7ee;
@@ -604,6 +606,17 @@ a {
   justify-content: center;
 }
 
+.nav__error {
+  margin: calc(var(--space-3) * -1) var(--space-3) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: var(--error);
+  background: var(--error-tint);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
 .nav__search {
   display: flex;
   align-items: center;
@@ -822,6 +835,11 @@ a {
 .nav__row-dot--failed {
   background: var(--error);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 15%, transparent);
+}
+
+.nav__row-dot--attention {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 15%, transparent);
 }
 
 @keyframes dot-breathe {
@@ -1365,6 +1383,15 @@ a {
 .banner--warning {
   color: var(--warning);
   background: var(--warning-tint);
+}
+
+.banner--warning button {
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
 }
 
 /* --- Transcript --- */
@@ -2495,11 +2522,21 @@ a {
 
 .composer__send--abort {
   background: var(--error);
-  color: #ffffff;
+  color: var(--on-status);
 }
 
 .composer__send--abort:hover {
   background: var(--error);
+  filter: brightness(1.08);
+}
+
+.composer__send--recover {
+  background: var(--warning);
+  color: var(--on-status);
+}
+
+.composer__send--recover:hover {
+  background: var(--warning);
   filter: brightness(1.08);
 }
 
@@ -3427,6 +3464,14 @@ body.pane-resizing .nav {
   width: min(560px, 100%);
 }
 
+.welcome__error {
+  width: min(560px, 100%);
+  margin: var(--space-2) 0 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
 .welcome__dir {
   flex: 1;
   min-width: 0;
@@ -3881,6 +3926,17 @@ body.pane-resizing .nav {
 .session-delete__warning svg {
   flex: 0 0 auto;
   margin-top: 2px;
+}
+
+.session-delete__error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--error);
+  background: var(--error-tint);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 .session-delete__actions {

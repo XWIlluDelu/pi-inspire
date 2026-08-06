@@ -662,7 +662,7 @@ describe("RuntimeController projection ownership gate", () => {
         return compactionResult as T;
       };
       const compacting = runtime.prompt({ sessionId: "session-a", message: "/compact" });
-      const rejected = expect(compacting).rejects.toThrow(/abort to recover/);
+      const rejected = expect(compacting).rejects.toThrow(/changed on disk outside this worker/);
       await started;
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
       await appendFile(path, `${JSON.stringify({
@@ -695,7 +695,7 @@ describe("RuntimeController projection ownership gate", () => {
         }
         return result;
       };
-      await expect(first.runtime.rename("session-a", "owned")).rejects.toThrow(/abort to recover/);
+      await expect(first.runtime.rename("session-a", "owned")).rejects.toThrow(/changed on disk outside this worker/);
       expect((await first.runtime.snapshot()).runState).toBe("conflict");
     } finally {
       await first.runtime.close();
@@ -717,7 +717,7 @@ describe("RuntimeController projection ownership gate", () => {
         }
         return result;
       };
-      await expect(second.runtime.setThinkingLevel("session-a", "high")).rejects.toThrow(/abort to recover/);
+      await expect(second.runtime.setThinkingLevel("session-a", "high")).rejects.toThrow(/changed on disk outside this worker/);
       expect((await second.runtime.snapshot()).runState).toBe("conflict");
     } finally {
       await second.runtime.close();
@@ -737,6 +737,7 @@ describe("RuntimeController projection ownership gate", () => {
       const snapshot = await runtime.snapshot();
       expect(snapshot.runState).toBe("conflict");
       expect(snapshot.active?.projectionConflict?.message).toMatch(/changed on disk/);
+      expect(snapshot.active?.projectionConflict?.kind).toBe("external-change");
       await runtime.abort("session-a");
       expect(workers[0]!.commands.some((command) => command.type === "abort")).toBe(false);
       expect(workers[0]!.stops).toBe(1);
@@ -753,7 +754,7 @@ describe("RuntimeController projection ownership gate", () => {
         type: "message", id: "external", parentId: "u1", timestamp: "2026-08-01T00:00:03.000Z",
         message: { role: "assistant", content: "external", timestamp: 3 },
       })}\n`);
-      await expect(runtime.extensionUiResponse({ sessionId: "session-a", id: "blocked", confirmed: true })).rejects.toThrow(/abort to recover/);
+      await expect(runtime.extensionUiResponse({ sessionId: "session-a", id: "blocked", confirmed: true })).rejects.toThrow(/changed on disk outside this worker/);
       expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
       await runtime.abort("session-a");
       const recovered = await runtime.snapshot();
