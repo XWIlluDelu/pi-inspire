@@ -157,6 +157,39 @@ describe("welcome flow", () => {
     expect(renamedTo).toBe("Spectral analysis");
   });
 
+  it("keeps extension status in the leading cluster before the fixed topbar actions", async () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    const text = "mc: 80.9K (30%) • idle";
+    act(() => ws.emit({
+      type: "extension_ui_request",
+      sessionId: store.getState().sessionId,
+      id: "context-status",
+      method: "setStatus",
+      statusKey: "magic-context",
+      statusText: text,
+    }));
+
+    const chip = await screen.findByTitle(text);
+    expect(chip).toHaveClass("topbar__extension-status");
+    const identity = document.querySelector(".topbar__ident");
+    const status = chip.closest(".topbar__status");
+    const actions = document.querySelector(".topbar__actions");
+    expect(identity?.nextElementSibling).toBe(status);
+    expect(status?.nextElementSibling).toBe(actions);
+    expect(actions).toContainElement(screen.getByRole("button", { name: "Open command palette" }));
+    expect(document.querySelector(".topbar__spacer")).not.toBeInTheDocument();
+
+    act(() => ws.emit({
+      type: "extension_ui_request",
+      sessionId: store.getState().sessionId,
+      id: "context-status-clear",
+      method: "setStatus",
+      statusKey: "magic-context",
+      statusText: undefined,
+    }));
+  });
+
   it("cancels a topbar rename editor when the visible session changes", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));

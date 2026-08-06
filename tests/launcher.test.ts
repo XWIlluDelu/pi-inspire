@@ -89,7 +89,8 @@ describe("production launcher", () => {
         return false;
       }
     });
-    expect(await readFile(statePath, "utf8")).toContain('"schemaVersion":1');
+    const firstState = JSON.parse(await readFile(statePath, "utf8")) as { schemaVersion: number; token: string };
+    expect(firstState.schemaVersion).toBe(1);
     expect(Buffer.concat(output).toString()).toContain("No managed insπre instance is running.");
 
     const stopOutput = runLauncher(["stop"], env);
@@ -98,5 +99,22 @@ describe("production launcher", () => {
     expect(exitCode).toBe(0);
     activeEnvironment = null;
     await expect(readFile(statePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const restarted = spawn(launcher, ["start"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    activeEnvironment = env;
+    children.push(restarted);
+    await waitFor(() => {
+      try {
+        return runLauncher(["status"], env).startsWith("insπre is running.");
+      } catch {
+        return false;
+      }
+    });
+    const secondState = JSON.parse(await readFile(statePath, "utf8")) as { token: string };
+    expect(secondState.token).toBe(firstState.token);
+    expect(runLauncher(["stop"], env)).toContain("Stopped insπre process");
+    const restartedExit = restarted.exitCode ?? await new Promise<number | null>((resolveExit) => restarted.once("close", resolveExit));
+    expect(restartedExit).toBe(0);
+    activeEnvironment = null;
   }, 120_000);
 });

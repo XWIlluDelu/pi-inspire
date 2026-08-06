@@ -28,29 +28,20 @@ export interface ProjectFileResult {
   name: string;
 }
 
-const TOKEN_KEY = "inspire.token";
-
 // Deterministic development-only token, matched by the dev:host script.
-// In production the host generates a random token per launch, so this value
-// never authenticates there and no fallback applies.
+// Production authentication is an origin-scoped HttpOnly pairing cookie; the
+// query token remains only long enough to establish that pairing.
 export const DEV_TOKEN = "inspire-dev-token";
 
 export function resolveToken(): string | null {
   const url = new URL(window.location.href);
   const fromUrl = url.searchParams.get("token");
   if (fromUrl) {
-    sessionStorage.setItem(TOKEN_KEY, fromUrl);
     url.searchParams.delete("token");
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     return fromUrl;
   }
-  const stored = sessionStorage.getItem(TOKEN_KEY);
-  if (stored) return stored;
   return import.meta.env.DEV ? DEV_TOKEN : null;
-}
-
-export function setToken(token: string): void {
-  sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export class ApiError extends Error {
@@ -79,11 +70,16 @@ async function ensureOk(response: Response): Promise<void> {
   throw new ApiError(response.status, message, matches);
 }
 
-async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
+function authorizationHeader(token: string | null): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function request<T>(token: string | null, path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...authorizationHeader(token),
       ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
     },
@@ -115,15 +111,16 @@ function contentTotalSize(response: Response, blob: Blob): number {
 }
 
 async function fetchResourceContent(
-  token: string,
+  token: string | null,
   id: string,
   sessionId: string,
   options: ResourceContentOptions = {},
 ): Promise<ResourceContentResponse> {
   const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
     signal: options.signal,
+    credentials: "same-origin",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...authorizationHeader(token),
       ...(options.byteLimit ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` } : {}),
     },
   });
@@ -132,24 +129,25 @@ async function fetchResourceContent(
   return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
-async function uploadFiles(token: string, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {
+async function uploadFiles(token: string | null, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
   // No Content-Type header: the browser sets the multipart boundary.
   const response = await fetch("/api/attachments", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "same-origin",
+    headers: authorizationHeader(token),
     body: form,
   });
   await ensureOk(response);
   return (await response.json()) as { attachments: UploadedAttachment[] };
 }
 
-function post<T>(token: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+function post<T>(token: string | null, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
   return request<T>(token, path, { ...init, method: "POST", body: JSON.stringify(body ?? {}) });
 }
 
-export function createApi(token: string) {
+export function createApi(token: string | null = null) {
   return {
     bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
@@ -226,7 +224,18 @@ export function createApi(token: string) {
 
 export type Api = ReturnType<typeof createApi>;
 
-export function eventsUrl(token: string): string {
+export async function pairHost(token: string): Promise<void> {
+  const response = await fetch("/api/auth/pair", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  await ensureOk(response);
+}
+
+export function eventsUrl(token: string | null = null): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/events?token=${encodeURIComponent(token)}`;
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${window.location.host}/events${query}`;
 }

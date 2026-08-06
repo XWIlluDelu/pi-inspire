@@ -542,6 +542,13 @@ a {
   border-color: var(--hairline);
 }
 
+.chip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- Left navigation --- */
 
 .nav {
@@ -1241,17 +1248,20 @@ a {
   gap: var(--space-2);
   height: var(--topbar-h);
   padding: 0 var(--space-3) 0 var(--space-4);
+  overflow: hidden;
   background: var(--bg-canvas);
 }
 
-/* Session identity: the title is the rename affordance; the project location
-   sits beside it (folder name by default, full path on toggle). */
+/* Session identity stays in the leading cluster with status. It yields through
+   ellipsis before either cluster can collide with the fixed action targets. */
 .topbar__ident {
+  flex: 0 1 auto;
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
   max-width: 56%;
+  overflow: hidden;
 }
 
 .topbar__title {
@@ -1296,6 +1306,13 @@ a {
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
+.topbar__project-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar__project-layer--hidden {
   opacity: 0;
   pointer-events: none;
@@ -1325,8 +1342,33 @@ a {
   background: var(--bg-inset);
 }
 
-.topbar__spacer {
-  flex: 1;
+/* Status immediately follows session identity on the left. Its bounded share
+   and shrinkable labels preserve that placement without crossing later chrome. */
+.topbar__status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: min(38%, 360px);
+}
+
+.topbar__status > .chip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.topbar__extension-status {
+  flex: 1 1 auto;
+}
+
+.topbar__actions {
+  flex: 0 0 auto;
+  display: flex;
+  margin-left: auto;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .topbar__rename {
@@ -3401,11 +3443,55 @@ body.pane-resizing .nav {
   gap: var(--space-4);
 }
 
+.token-gate__title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
 .token-gate__hint {
   margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: 1.6;
+}
+
+.token-gate__error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+
+.token-gate__instruction {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.token-gate__instruction code {
+  width: fit-content;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.token-gate__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.token-gate__actions span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 .token-gate form {
