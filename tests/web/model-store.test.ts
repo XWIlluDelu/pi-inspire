@@ -77,6 +77,7 @@ describe("recent model preference", () => {
     expect(patches).toEqual([]);
     expect(store.getState().prefs.recentModelIds).toEqual([]);
     expect(store.getState().model).toMatchObject({ provider: "kimi-coding", id: "kimi-k3" });
-    expect(store.getState().error).toBe("model unavailable");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.some((notice) => notice.kind === "warning" && notice.text === "model unavailable")).toBe(true);
   });
 });

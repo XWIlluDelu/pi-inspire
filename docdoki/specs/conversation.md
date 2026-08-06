@@ -10,6 +10,7 @@ covers:
   - src/components/Transcript.tsx
   - src/components/ActivityBar.tsx
   - src/components/BranchTree.tsx
+  - src/components/Composer.tsx
   - src/components/ExtensionUiDialog.tsx
   - server/runtime.ts
   - tests/web/ansi.test.tsx
@@ -37,11 +38,11 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 - Tool activity uses compact cards by default while retaining an explicit path to complete arguments and output when safe to show.
 - A tool result recognized as a unified diff renders as typed, tinted lines (added, removed, context, hunk, file markers) instead of a raw dump, and is never truncated; recognition is strict enough that prose with leading `-`/`+` characters is never recolored.
 - Structured file paths and explicit local file references in conversation content remain distinguishable from external web links and can open the owning session’s resource preview.
-- The contextual Branches mode shows the bounded Pi entry tree, active path, and effective leaf. Branch switching, edit-from-here, and fork are explicit confirmed actions; edit and fork copy the original user text into the destination composer without auto-submitting it, and unsupported root-user edit is visibly unavailable.
+- The contextual Branches mode shows the bounded Pi entry tree, active path, and effective leaf. Branch switching, edit-from-here, and fork are explicit confirmed actions; edit and fork copy the original user text into the destination composer without auto-submitting it, and unsupported root-user edit is visibly unavailable. A known branch load or action failure remains actionable inside this pane and does not duplicate itself into the global error banner.
 - Unknown tools and noninteractive extension display messages receive a generic, attributable, inspectable fallback instead of disappearing. Payloads remain subject to host redaction and transport bounds; unsupported future response-bearing methods enter the same cancellable dialog model rather than being dropped.
 - Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry timers; expiry, settle, abort, worker replacement/exit, and close remove stale requests, and snapshots restore only live requests.
 - The user can abort active work, send steering input during work, and queue follow-up input for after completion. Exact ordered steering and follow-up arrays remain separate in live events and reconnect snapshots, render as labelled pending rows outside persisted messages, and clear on settle or worker replacement without inventing cross-queue chronology or cancellation controls.
-- Running, retrying, compacting, queued, aborted, failed, and settled states remain distinguishable.
+- Running, retrying, compacting, queued, user-stopped, failed, and settled states remain distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.
 - When earlier history exists, each upward return to the transcript's near-top boundary automatically requests the next cursor-bound page; a short page that leaves the viewport inside that boundary continues filling until the boundary moves away or history ends. The existing scroll surface owns this one proximity check, so loading-state rerenders cannot consume the next trigger. Coalesce an in-flight request, prepend only when the session generation, revision, view, and effective leaf still match, then restore the same visible message at the same viewport offset through virtualization. Same-view snapshots preserve pages already loaded behind a changed older cursor, while a rewrite or view change replaces them. Ordinary failure pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the authoritative snapshot. The host's existing page and cursor bounds remain unchanged.
 - Refreshing the browser reconstructs settled conversation state from Pi and then resumes live updates.
 

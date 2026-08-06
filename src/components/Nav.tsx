@@ -118,6 +118,7 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
   running: "Working",
   completed: "Completed",
   failed: "Failed",
+  attention: "Needs recovery",
 };
 
 /** Read-only explorer for the visible session's workspace. Collapsed it is a
@@ -267,8 +268,9 @@ function SessionRow({
         : opening
           ? "Wait for this session to finish opening"
           : "Delete session";
-  // Yellow stays on while a session works, including the visible one; green
-  // and red are unseen-completion attention and clear once the row is viewed.
+  // Yellow stays on while a session works or needs external-change recovery,
+  // including the visible one; green and red are unseen completion attention
+  // and clear once the row is viewed.
   const attention =
     indicator === "completed" || indicator === "failed" ? (active ? null : indicator) : (indicator ?? null);
   const title = session.title || "New session";
@@ -500,6 +502,9 @@ export function Nav({
           />
         </label>
       </div>
+      {state.sessionActionError ? (
+        <p className="nav__error" role="alert">{state.sessionActionError}</p>
+      ) : null}
       <div className="nav__list">
         {pinned.length > 0 ? (
           <section className="nav__group nav__group--pinned" aria-labelledby="nav-pinned-title">
@@ -596,7 +601,13 @@ export function Nav({
       <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
       <ScrollRail container={navRef} scroller=".explorer__tree" variant="nav" />
       {deleteCandidate ? (
-        <SessionDeleteDialog session={deleteCandidate} onClose={() => setDeleteCandidate(null)} />
+        <SessionDeleteDialog
+          session={deleteCandidate}
+          onClose={() => {
+            store.clearSessionDeleteError();
+            setDeleteCandidate(null);
+          }}
+        />
       ) : null}
     </nav>
   );

@@ -26,6 +26,7 @@ tokens:
     success: "#2f7d4f"
     warning: "#9a6b00"
     error: "#b3403c"
+    on-status: "#ffffff"        # foreground on filled warning/error controls
     error-tint: "rgba(179, 64, 60, 0.08)"
     warning-tint: "rgba(154, 107, 0, 0.08)"
     info: "#33649e"            # annotation: tool activity
@@ -52,6 +53,7 @@ tokens:
     success: "#5fc78e"
     warning: "#e0b054"
     error: "#e5837b"
+    on-status: "#06211f"        # foreground on filled warning/error controls
     error-tint: "rgba(229, 131, 123, 0.12)"
     warning-tint: "rgba(224, 176, 84, 0.12)"
     info: "#7ea9dd"
@@ -281,7 +283,9 @@ code. No other radii.
   hover shows `surface-inset`; active/toggled state uses `accent` icon plus
   `accent-tint` background.
 - **`send/abort`** — the send button is `button-primary` sized to the
-  composer; abort keeps the same geometry with `error` semantics.
+  composer; abort keeps the same geometry with `error` semantics, while
+  conflict recovery uses the same geometry with `warning` semantics. Filled
+  status controls use the theme's `on-status` foreground.
 
 ### Chips & badges
 
@@ -340,8 +344,9 @@ warning capsule surface.
 - Row hover shows `surface-inset`; the active row pairs the 2px `accent`
   inset edge with an `accent-tint` wash that fades toward the right, so the
   highlight points back at the edge. Running/attention dots use `accent`,
-  `success`, `error`; the running dot breathes (`{motion.breathe}`) while
-  settled attention dots rest under a soft 3px ring of their hue.
+  `success`, `warning`, and `error`; the running dot breathes
+  (`{motion.breathe}`) while settled attention dots rest under a soft 3px ring
+  of their hue.
 - Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age column, which fades as they appear on hover or focus, so no text moves: ordinary rows expose Pin + Hide, while Hidden rows expose Restore + Delete. Delete uses `error` only on hover/focus and never adds a third slot; under `hover: none` the pair leaves the overlay and takes its own space beside the age instead of replacing it. A folder pin is state rather than an action, so once set it stays visible in `accent` beside the folder name. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden — separate by a spacing step, never by a rule.
 - Session pagination is a compact bordered text control below the chronological groups, paired with a centered `{typography.size-xs}` `faint` live count (`Showing N of total`). Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and completion replaces it with the end message. The touch layout raises the target to 40px; no viewport uses infinite scroll.
 - The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
@@ -461,10 +466,21 @@ stay single-line text.
 
 ### Notices & banners
 
-Toast notices bottom-right at Level 2, `{rounded.md}`, semantic left edge
-(3px), auto-dismiss; inline banners (error/reconnect) sit under the topbar
-at Level 1 with `error-tint`/warning tint backgrounds and full-width
-hairline.
+Toast notices sit bottom-right at Level 2 with `{rounded.md}`, a 3px semantic
+left edge, and auto-dismiss. Reversible preflight or control refusals — missing
+project directory, attachment/reference limits, model/thinking/rename changes,
+preference persistence, and desktop-notification permission — use the warning
+variant rather than the session-wide error banner. Errors with their own retry
+surface remain there: open/create in navigation and the start surface, deletion
+in its confirmation dialog, and branch failures in the Branches pane.
+
+Global banners sit under the topbar at Level 1 with `error-tint`/warning-tint
+backgrounds and a full-width hairline. Automatic reconnect and a snapshot
+refresh failure without a red projection conflict are yellow; selected-session
+prompt, abort, and extension-response failures without a narrower recovery
+surface use red. Blocking integrity and acceptance-unknown states stay red and
+actionable. A verified external source move is instead a persistent yellow
+attention banner with recovery, never an auto-dismissing notice.
 
 ### Focus & keyboard
 
