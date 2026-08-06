@@ -54,6 +54,73 @@ describe("formula rendering", () => {
     expect(container.querySelector(".katex-display")).toBeTruthy();
   });
 
+  it("renders a complete formula-rich Pi response without stripped structures", () => {
+    const source = String.raw`$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$
+$$\int_{0}^{\infty} e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+$$A =
+\begin{bmatrix}
+1 & 2 \\
+3 & 4
+\end{bmatrix}$$
+$$\begin{aligned}
+f(x) &= x^2 + 2x + 1 \\
+     &= (x+1)^2
+\end{aligned}$$
+$$f(x)=
+\begin{cases}
+x^2, & x\geq 0 \\
+-x, & x<0
+\end{cases}$$`;
+    const { container } = render(<RichText text={source} />);
+    expect(container.querySelectorAll(".katex-display")).toHaveLength(5);
+    expect(container.querySelector(".sqrt svg path[d]")).toBeTruthy();
+    expect(container.querySelectorAll(".katex-mathml mtable")).toHaveLength(3);
+    expect(container.querySelectorAll("annotation")[2]?.textContent).toContain("A =");
+  });
+
+  it.each([
+    ["radical", String.raw`\sqrt{\pi}`],
+    ["wide accent", String.raw`\widehat{abcdef}`],
+    ["extensible arrow", String.raw`\xrightarrow{n}`],
+    ["extensible brace", String.raw`\overbrace{a+b+c}^{n}`],
+  ])("preserves KaTeX's SVG path for %s", (_label, formula) => {
+    const { container } = render(<RichText text={`$$${formula}$$`} />);
+    const paths = [...container.querySelectorAll(".katex-display svg path")];
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((path) => path.hasAttribute("d"))).toBe(true);
+  });
+
+  it("preserves non-path SVG geometry such as cancellation lines", () => {
+    const { container } = render(<RichText text={String.raw`$$\cancel{x}$$`} />);
+    const line = container.querySelector(".katex-display svg line");
+    expect(line).toHaveAttribute("x1", "0");
+    expect(line).toHaveAttribute("y2", "0");
+    expect(line).toHaveAttribute("stroke-width", "0.046em");
+  });
+
+  it("preserves MathML structure and layout metadata for assistive technology", () => {
+    const formula = String.raw`$$\begin{aligned}f(x)&=x^2\\&=(x+1)^2\end{aligned}$$`;
+    const { container } = render(<RichText text={formula} />);
+    const math = container.querySelector(".katex-mathml math");
+    const table = math?.querySelector("mtable");
+    expect(math?.getAttribute("display")).toBe("block");
+    expect(table?.getAttribute("rowspacing")).toBe("0.25em");
+    expect(table?.getAttribute("columnalign")).toBe("right left");
+    expect(table?.getAttribute("columnspacing")).toBe("0em");
+    expect(math?.querySelector("annotation")?.getAttribute("encoding")).toBe("application/x-tex");
+  });
+
+  it("keeps KaTeX trust-only commands inert", () => {
+    const formula = String.raw`$\href{https://attacker.invalid}{x} + \htmlClass{attacker}{y} + \includegraphics{https://attacker.invalid/x.png}$`;
+    const { container } = render(<RichText text={formula} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".attacker")).toBeNull();
+    expect(container.textContent).toContain("\\href");
+    expect(container.textContent).toContain("\\htmlClass");
+    expect(container.textContent).toContain("\\includegraphics");
+  });
+
   it("renders the project name expression ins$\\pi$re", () => {
     const { container } = render(<RichText text="ins$\pi$re" />);
     expect(container.querySelector(".katex")).toBeTruthy();
@@ -88,6 +155,7 @@ $$z$$
     ["bare double dollar", "$$"],
     ["leading double dollar", "$$x"],
     ["multiline double dollar", "$$\nx"],
+    ["first-line multiline double dollar", "$$A=\nx"],
     ["bare parenthesis", String.raw`\(`],
     ["parenthesis", String.raw`\(x`],
     ["bare bracket", String.raw`\[`],
