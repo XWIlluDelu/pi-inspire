@@ -161,8 +161,8 @@
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 48px;
-  --content-max: 760px;
-  --composer-max: 760px;
+  --content-max: 880px;
+  --composer-max: 880px;
   --font-sans: "Noto Sans SC", "IBM Plex Sans", system-ui, sans-serif;
   --font-serif: "IBM Plex Serif", Georgia, serif;
   --font-mono: "IBM Plex Mono", "Noto Sans SC", ui-monospace, monospace;
@@ -589,23 +589,36 @@ a {
   min-width: 0;
   height: 38px;
   display: flex;
+  /* Center the visual boxes; the three pieces differ enough in typography
+     that a common text baseline reads as misaligned. */
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-md);
   color: var(--ink);
+  /* A narrow column must hide the action chip before it clips mid-glyph. */
+  overflow: hidden;
 }
 
+/* This is always an action, never a selected navigation state. */
 .nav__brand-new:hover,
-.nav__brand-new:focus-visible,
-.nav__brand-new[aria-current="page"] {
+.nav__brand-new:focus-visible {
+  background: var(--bg-inset);
+}
+
+.nav__brand-new:active {
   background: var(--accent-tint);
+}
+
+.nav__brand-new > .wordmark {
+  /* IBM Plex Serif's italic ink sits high inside its centered line box. */
+  transform: translateY(1px);
 }
 
 .nav__brand-icon {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   color: var(--accent-deep);
   background: currentColor;
   mask: url("/favicon.svg") center / contain no-repeat;
@@ -621,10 +634,16 @@ a {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  transform: translateY(-1px);
   color: var(--accent-deep);
   font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
+}
+
+.nav__brand-action svg {
+  flex: 0 0 auto;
+  display: block;
 }
 
 .nav__brand-rail {
@@ -637,14 +656,17 @@ a {
 }
 
 .nav__brand-rail:hover,
-.nav__brand-rail:focus-visible,
-.nav__brand-rail[aria-current="page"] {
+.nav__brand-rail:focus-visible {
+  background: var(--bg-inset);
+}
+
+.nav__brand-rail:active {
   background: var(--accent-tint);
 }
 
 .nav__brand-icon--rail {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
 }
 
 .nav__mock {
@@ -1244,6 +1266,7 @@ a {
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
+  pointer-events: none;
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
@@ -1324,6 +1347,10 @@ a {
   min-width: 0;
   max-width: 56%;
   overflow: hidden;
+}
+
+.topbar__ident--brand {
+  align-items: center;
 }
 
 .topbar__title {
@@ -1649,35 +1676,19 @@ a {
 }
 
 .turn--round-divider {
-  position: relative;
-  gap: var(--space-1);
-}
-
-.turn__head--divider {
-  height: 8px;
-  align-items: center;
+  /* Center the 1px marker in the ordinary 24px inter-turn gap without
+     consuming another content row. */
+  margin-top: calc(-1 * var(--space-3));
+  gap: var(--space-3);
 }
 
 .turn__divider {
-  display: block;
   width: 24px;
   height: 1px;
+  flex: 0 0 1px;
   border-radius: 1px;
-  background: var(--hairline-strong);
-}
-
-/* Copy remains available on turn hover without making the divider row tall. */
-.turn__head--divider .turn__actions {
-  position: absolute;
-  right: 0;
-  top: -9px;
-  z-index: 1;
-  opacity: 0;
-}
-
-.turn:hover .turn__head--divider .turn__actions,
-.turn:focus-within .turn__head--divider .turn__actions {
-  opacity: 1;
+  /* Divider mode carries no hidden status; keep the rule purely structural. */
+  background: var(--hairline);
 }
 
 .turn__who {
@@ -2038,9 +2049,9 @@ a {
 }
 
 /* Compact tool calls retain chronological position while changing only their
-   local flow from vertical cards to a wrapping icon strip. */
+   local flow from vertical cards to a wrapping strip of quiet tiles. */
 .tool-strip {
-  --tool-detail-origin: 22px;
+  --tool-detail-origin: 28px;
   display: flex;
   flex-direction: column;
 }
@@ -2049,43 +2060,44 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .tool-strip__item {
-  width: 46px;
-  height: 28px;
+  min-width: 56px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 6px;
+  padding-inline: 8px 11px;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
+  border-left: 3px solid var(--info);
+  border-radius: 8px;
   background: var(--bg-surface);
-  color: var(--info);
+  color: var(--muted);
   cursor: pointer;
-  transition: border-color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard),
-    transform var(--dur-micro) var(--ease-standard);
+  transition: background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
 }
 
 .tool-strip__item:hover,
 .tool-strip__item:focus-visible {
-  border-color: color-mix(in srgb, var(--info) 48%, var(--hairline));
   background: var(--bg-inset);
 }
 
 .tool-strip__item--active {
-  border-color: var(--info);
-  background: color-mix(in srgb, var(--info) 8%, var(--bg-surface));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 12%, transparent);
-  transform: translateY(1px);
+  background: var(--bg-inset);
+  border-color: var(--hairline-strong);
+  border-left-color: var(--info);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
-.tool-strip__item--failed {
+.tool-strip__item--failed,
+.tool-strip__item--failed.tool-strip__item--active {
   color: var(--error);
-  border-color: color-mix(in srgb, var(--error) 38%, var(--hairline));
+  border-left-color: var(--error);
 }
 
 .status-unknown {
@@ -2143,9 +2155,22 @@ a {
   }
 }
 
-/* Thinking summaries are prose, not machine data. */
+/* Thinking summaries are prose, not machine data. Inline Markdown keeps its
+   emphasis and math inside the one-line ellipsis contract. */
 .card__summary--prose {
   font-family: var(--font-sans);
+}
+
+.card__summary--prose .rich-text {
+  display: inline;
+  min-width: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.card__summary--prose .katex {
+  font-size: 1em;
 }
 
 .card__status {
@@ -4683,6 +4708,51 @@ body.srail-dragging {
 }
 
 /* --- Responsive --- */
+
+@media (max-width: 1280px) {
+  :root {
+    --nav-w: 216px;
+    --content-max: 800px;
+    --composer-max: 800px;
+  }
+
+  .nav__brand-new {
+    justify-content: center;
+    gap: 5px;
+    padding-inline: var(--space-1);
+  }
+
+  /* The environment marker yields to the fused brand target, not vice versa. */
+  .nav__mock {
+    display: none;
+  }
+
+  .topbar {
+    gap: 5px;
+    padding-inline: var(--space-2) var(--space-3);
+  }
+
+  .nav__brand-action {
+    font-size: var(--text-xs);
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --nav-w: 200px;
+    --content-max: 740px;
+    --composer-max: 740px;
+  }
+
+  .nav__brand-action {
+    display: none;
+  }
+
+  .topbar__project {
+    max-width: 240px;
+  }
+}
 
 @media (max-width: 900px) {
   .app {

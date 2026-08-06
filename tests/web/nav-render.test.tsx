@@ -86,16 +86,16 @@ describe("session navigation controls", () => {
   it("uses one icon-and-wordmark target for brand and new session in both nav widths", () => {
     const onNewSession = vi.fn();
     const { rerender } = render(
-      <Nav collapsed={false} newSessionActive onNewSession={onNewSession} onSelectSession={() => undefined} />,
+      <Nav collapsed={false} onNewSession={onNewSession} onSelectSession={() => undefined} />,
     );
     const brand = screen.getByRole("button", { name: "New session" });
-    expect(brand).toHaveAttribute("aria-current", "page");
+    expect(brand).not.toHaveAttribute("aria-current");
     expect(brand.querySelector(".nav__brand-icon")).not.toBeNull();
     expect(brand).toHaveTextContent("insπre");
     fireEvent.click(brand);
     expect(onNewSession).toHaveBeenCalledOnce();
 
-    rerender(<Nav collapsed newSessionActive={false} onNewSession={onNewSession} onSelectSession={() => undefined} />);
+    rerender(<Nav collapsed onNewSession={onNewSession} onSelectSession={() => undefined} />);
     const railBrand = screen.getByRole("button", { name: "New session" });
     expect(railBrand.querySelector(".nav__brand-icon--rail")).not.toBeNull();
     expect(railBrand).not.toHaveTextContent("π");
@@ -133,7 +133,12 @@ describe("session navigation controls", () => {
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: 'Hide "Alpha session"' }));
-    await screen.findByRole("heading", { name: "Hidden" });
+    const hiddenHeading = await screen.findByRole("heading", { name: "Hidden" });
+    // The summary count shares the toggle's fixed right column with folder
+    // counts, keeping both its alignment and the whole-row hit target.
+    expect(hiddenHeading.querySelector(".nav__group-count")?.parentElement).toBe(
+      screen.getByRole("button", { name: "Hidden" }),
+    );
     // Hidden starts closed, and its folder disappears with its last session.
     expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
     expect(groupNames()).toEqual(["beta", "Hidden"]);

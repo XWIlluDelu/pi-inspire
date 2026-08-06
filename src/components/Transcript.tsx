@@ -109,7 +109,11 @@ function ThinkingCard({ text, visibility }: { text: string; visibility: Visibili
       className="card--thinking"
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
-      summary={<span className="card__summary card__summary--prose">{firstLine.slice(0, 90)}</span>}
+      summary={
+        <span className="card__summary card__summary--prose">
+          <RichText text={firstLine.slice(0, 90)} variant="thinking" inline />
+        </span>
+      }
     >
       <RichText text={clean} variant="thinking" />
     </CollapsibleCard>
@@ -552,12 +556,8 @@ const AssistantTurn = memo(function AssistantTurn({
   const divider = assistantRoundDisplay === "divider";
   return (
     <div className={`turn turn--assistant ${divider ? "turn--round-divider" : ""} ${streaming ? "turn--streaming" : ""}`}>
-      {divider ? (
-        <div className="turn__head turn__head--divider">
-          <span className="turn__divider" aria-hidden />
-          <MessageActions text={messageText(message)} />
-        </div>
-      ) : (
+      {divider ? <span className="turn__divider" aria-hidden /> : null}
+      {divider ? null : (
         /* Details deliberately remains the existing attribution row verbatim. */
         <div className="turn__head">
           <span className="turn__who">Pi</span>

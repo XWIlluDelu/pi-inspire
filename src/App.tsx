@@ -190,15 +190,20 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
     );
   }
 
-  // Without a session the nav brand already identifies the product; the
-  // serif wordmark steps in here only while the nav is a rail.
-  if (!show || !state.sessionId) {
-    return navCollapsed ? (
-      <h1 className="topbar__title">
-        <Wordmark />
-      </h1>
-    ) : null;
+  // A rail has no wordmark of its own, so the serif mark steps into the
+  // topbar there; the selected session stays inside the center surface.
+  if (navCollapsed && !editing) {
+    return (
+      <div className="topbar__ident topbar__ident--brand">
+        <h1 className="topbar__title">
+          <Wordmark />
+        </h1>
+      </div>
+    );
   }
+
+  // Without a session the expanded nav brand already identifies the product.
+  if (!show || !state.sessionId) return null;
 
   const catalogTitle = state.sessions.find((session) => session.id === state.sessionId)?.title;
   const heading = sessionHeading(state.sessionName, catalogTitle, state.messages, !state.hasOlderMessages);
@@ -438,7 +443,6 @@ export function App() {
   const navigationContent = (
     <Nav
       collapsed={navCollapsed}
-      newSessionActive={draftingNew}
       onNewSession={newSession}
       onSelectSession={openSession}
     />
@@ -495,7 +499,9 @@ export function App() {
           >
             <PanelLeft size={15} aria-hidden />
           </button>
-          <SessionIdent show={!draftingNew} navCollapsed={navCollapsed} />
+          {/* The rail owns no wordmark; while it is visible, the topbar carries
+              only the brand and leaves the selected session inside the center. */}
+          <SessionIdent show={!navCollapsed && !draftingNew} navCollapsed={navCollapsed} />
           <div className="topbar__status" aria-live="polite">
             <StateChip runState={state.runState} conflict={state.projectionConflict} />
             {statuses.map(([key, text]) => (
