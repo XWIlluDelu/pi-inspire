@@ -1556,6 +1556,30 @@ a {
   color: var(--warning);
 }
 
+.turn__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  opacity: 0.32;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.turn--user > .turn__actions {
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.turn:hover .turn__actions,
+.turn:focus-within .turn__actions {
+  opacity: 1;
+}
+
+.turn__action.icon-button {
+  width: 26px;
+  height: 26px;
+  color: var(--faint);
+}
+
 /* A quiet caret marks where streamed text is still arriving. */
 .turn--streaming .assistant-doc > .rich-text:last-child > :is(p, h1, h2, h3, h4, li, ul, ol):last-child::after {
   content: "▍";
@@ -3461,15 +3485,49 @@ body.pane-resizing .nav {
 }
 
 .welcome__composer {
-  width: min(560px, 100%);
+  width: min(720px, 100%);
 }
 
 .welcome__error {
-  width: min(560px, 100%);
+  width: min(720px, 100%);
   margin: var(--space-2) 0 0;
   color: var(--error);
   font-size: var(--text-sm);
   text-align: left;
+}
+
+.welcome__session-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.55fr);
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.welcome__session-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.welcome__session-field .dropdown,
+.welcome__session-field .dropdown__trigger {
+  min-width: 0;
+  width: 100%;
+}
+
+.welcome__session-field .dropdown__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome__session-field .dropdown__menu {
+  min-width: 100%;
+  max-width: min(420px, calc(100vw - var(--space-8)));
 }
 
 .welcome__dir {
@@ -3498,7 +3556,7 @@ body.pane-resizing .nav {
 }
 
 .welcome__recent {
-  width: min(560px, 100%);
+  width: min(720px, 100%);
   margin-top: var(--space-4);
 }
 
@@ -4394,6 +4452,12 @@ button.branch-row__main:disabled { cursor: default; }
   background: var(--warning-soft);
   border-bottom: 1px solid var(--border-subtle);
   font-size: var(--text-xs);
+}
+
+@media (max-width: 620px) {
+  .welcome__session-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 520px) {

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
 import {
@@ -14,7 +15,8 @@ import {
   type InstanceState,
 } from "./instance-state.mjs";
 import { GitInspectionService } from "./git-inspection.js";
-import { MockCatalog, MockGitInspection, MockRuntime } from "./mock.js";
+import { availableModelOptions } from "./model-catalog.js";
+import { MOCK_AVAILABLE_MODELS, MockCatalog, MockGitInspection, MockRuntime } from "./mock.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
@@ -49,6 +51,20 @@ const preferences = new PreferencesStore(
 );
 const resources = new ResourceStore();
 const git = mock ? new MockGitInspection() : new GitInspectionService();
+const modelRuntime = mock ? null : await ModelRuntime.create().catch((error) => {
+  console.error("Unable to load Pi's model catalog for the new-session picker:", error instanceof Error ? error.message : String(error));
+  return null;
+});
+const readAvailableModels = async () => {
+  if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
+  if (!modelRuntime) return [];
+  try {
+    return await availableModelOptions(modelRuntime);
+  } catch (error) {
+    console.error("Unable to refresh Pi's available models:", error instanceof Error ? error.message : String(error));
+    return [];
+  }
+};
 const application = createInspireServer({
   token,
   runtime,
@@ -60,6 +76,7 @@ const application = createInspireServer({
   mock,
   version: packageJson.version,
   piVersion: piPackage.version,
+  availableModels: readAvailableModels,
   distDir: join(root, "dist"),
 });
 

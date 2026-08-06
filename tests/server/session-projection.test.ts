@@ -440,14 +440,17 @@ describe("SessionProjection bounded paging", () => {
     const { projection } = await fixture(lines);
     try {
       const ids: string[] = [];
+      const entryIds: string[] = [];
       let page = projection.latestPage();
       while (true) {
         ids.push(...page.messages.map((value) => String((value as Record<string, unknown>).__inspireMessageId)));
+        entryIds.push(...page.messages.map((value) => String((value as Record<string, unknown>).__inspireEntryId)));
         if (!page.hasOlder) break;
         page = projection.page(page.olderCursor!);
       }
       expect(ids).toHaveLength(120);
       expect(new Set(ids).size).toBe(120);
+      expect(entryIds).toEqual(ids.map((id) => id.replace(/:0$/, "")));
     } finally {
       await projection.close();
     }

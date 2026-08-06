@@ -26,7 +26,15 @@ import type { SessionCatalogLike } from "./session-catalog.js";
 
 const openSchema = z.object({ id: z.string().min(1).max(128) });
 const deleteSessionParamsSchema = z.object({ sessionId: z.string().min(1).max(128) });
-const newSchema = z.object({ cwd: z.string().min(1).max(4_096), name: z.string().max(160).optional() });
+const newSchema = z.object({
+  cwd: z.string().min(1).max(4_096),
+  name: z.string().max(160).optional(),
+  model: z.object({
+    provider: z.string().min(1).max(120),
+    id: z.string().min(1).max(240),
+  }).strict().optional(),
+  thinkingLevel: z.enum(THINKING_LEVELS).optional(),
+}).strict();
 const sessionIdField = z.string().min(1).max(200);
 const promptSchema = z.object({
   sessionId: sessionIdField,
@@ -123,6 +131,8 @@ export interface AppDependencies {
   mock: boolean;
   version: string;
   piVersion: string;
+  /** Browser-safe configured model metadata, available without a live worker. */
+  availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   distDir?: string;
 }
 
@@ -239,6 +249,7 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       piVersion: deps.piVersion,
       mock: deps.mock,
       preferences: await deps.preferences.read(),
+      availableModels: deps.availableModels ? await deps.availableModels() : [],
       snapshot: await deps.runtime.snapshot(),
     };
     response.json(body);
@@ -265,8 +276,8 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json(await deps.runtime.openSession(id));
   });
   app.post("/api/sessions/new", async (request, response) => {
-    const { cwd, name } = newSchema.parse(request.body);
-    response.json(await deps.runtime.newSession(cwd, name));
+    const { cwd, name, model, thinkingLevel } = newSchema.parse(request.body);
+    response.json(await deps.runtime.newSession(cwd, { name, model, thinkingLevel }));
   });
   app.post("/api/sessions/rename", async (request, response) => {
     const { sessionId, name } = renameSchema.parse(request.body);

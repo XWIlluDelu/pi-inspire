@@ -145,6 +145,7 @@ function contextMessages(entries: SessionEntry[], leafId: string | null, byId: M
     sessionEntryToContextMessages(entry).map((message, index) => ({
       ...message,
       __inspireMessageId: `${entry.id}:${index}`,
+      __inspireEntryId: entry.id,
     })),
   );
 }

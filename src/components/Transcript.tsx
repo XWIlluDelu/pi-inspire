@@ -1,7 +1,10 @@
 import {
   Brain,
+  Check,
   CheckCircle2,
   ChevronRight,
+  Copy,
+  GitFork,
   Loader2,
   Package,
   Search,
@@ -28,6 +31,7 @@ import { handleRichTextCopy, RichText } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff, type DiffLine } from "../diff";
+import { useCopied } from "../use-copied";
 
 export function relativeTime(timestamp: number | string): string {
   const time = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
@@ -276,16 +280,54 @@ function GenericCard({ item, visibility }: { item: AssistantContent & { type: st
 
 // --- Turns ---
 
+function MessageActions({ text, forkEntryId }: { text: string; forkEntryId?: string }) {
+  const { copied, copy } = useCopied();
+  const [forking, setForking] = useState(false);
+  if (!text && !forkEntryId) return null;
+  return (
+    <div className="turn__actions">
+      {text ? (
+        <button
+          type="button"
+          className="icon-button turn__action"
+          aria-label={copied ? "Message copied" : "Copy message"}
+          title={copied ? "Copied" : "Copy message"}
+          onClick={() => void copy(text)}
+        >
+          {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
+        </button>
+      ) : null}
+      {forkEntryId ? (
+        <button
+          type="button"
+          className="icon-button turn__action"
+          aria-label="Fork session from this input"
+          title="Fork a new session from this input"
+          disabled={forking}
+          onClick={() => {
+            setForking(true);
+            void store.forkFromEntry(forkEntryId).finally(() => setForking(false));
+          }}
+        >
+          {forking ? <Loader2 size={13} className="spin" aria-hidden /> : <GitFork size={13} aria-hidden />}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage }) {
   const timestamp = message.timestamp;
+  const text = messageText(message);
   return (
     <div className="turn turn--user">
       <div
         className="user-bubble"
         title={timestamp != null ? new Date(timestamp).toLocaleString() : undefined}
       >
-        <RichText text={messageText(message)} variant="user" />
+        <RichText text={text} variant="user" />
       </div>
+      <MessageActions text={text} forkEntryId={message.__inspireEntryId} />
     </div>
   );
 });
@@ -315,6 +357,7 @@ const AssistantTurn = memo(function AssistantTurn({
         {message.stopReason && message.stopReason !== "stop" ? (
           <span className="turn__flag">{message.stopReason}</span>
         ) : null}
+        <MessageActions text={messageText(message)} />
       </div>
       <div className="assistant-doc">
         {items.map((item, index) => {

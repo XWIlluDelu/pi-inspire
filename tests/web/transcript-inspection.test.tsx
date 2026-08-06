@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Transcript, findLiteralMatches } from "../../src/components/Transcript";
+import { store } from "../../src/store";
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -122,6 +123,45 @@ describe("settled transcript search", () => {
       />,
     );
     expect(screen.getByRole("searchbox", { name: "Search conversation" })).toHaveValue("");
+  });
+});
+
+describe("message actions", () => {
+  it("copies each conversation message and forks through its authoritative entry id", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const originalFork = store.forkFromEntry;
+    const fork = vi.fn(async () => true);
+    store.forkFromEntry = fork;
+    try {
+      render(
+        <Transcript
+          sessionId="s1"
+          messages={[
+            { role: "user", content: "**user source**", timestamp: 1, __inspireEntryId: "entry-user" },
+            { role: "assistant", content: [{ type: "text", text: "assistant source" }], timestamp: 2 },
+          ]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+        />,
+      );
+
+      const userTurn = screen.getByText("user source").closest(".turn") as HTMLElement;
+      fireEvent.click(within(userTurn).getByRole("button", { name: "Copy message" }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("**user source**"));
+      expect(within(userTurn).getByRole("button", { name: "Message copied" })).toBeInTheDocument();
+
+      fireEvent.click(within(userTurn).getByRole("button", { name: "Fork session from this input" }));
+      await waitFor(() => expect(fork).toHaveBeenCalledWith("entry-user"));
+
+      const assistantTurn = screen.getByText("assistant source").closest(".turn") as HTMLElement;
+      fireEvent.click(within(assistantTurn).getByRole("button", { name: "Copy message" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("assistant source"));
+      expect(within(assistantTurn).queryByRole("button", { name: /Fork session/ })).not.toBeInTheDocument();
+    } finally {
+      store.forkFromEntry = originalFork;
+    }
   });
 });
 

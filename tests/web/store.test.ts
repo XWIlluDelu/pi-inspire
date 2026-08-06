@@ -32,6 +32,21 @@ async function initStore(): Promise<{ store: AppStore; socket: FakeWebSocket }> 
 describe("websocket lifecycle", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("retains bootstrap model choices while an active preview has not loaded its worker catalog", async () => {
+    const models = [{ provider: "anthropic", id: "claude-sonnet-4", reasoning: true }];
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({
+          availableModels: models,
+          snapshot: activeSnapshot({ availableModels: [] }),
+        }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().availableModels).toEqual(models);
+  });
+
   it("does not issue an HTTP resync on open; the pushed snapshot is authoritative", async () => {
     let snapshotCalls = 0;
     installFetch((url, init) => {
@@ -1996,6 +2011,29 @@ describe("selection race ownership", () => {
     await opening;
     // The stale open response is discarded; the newer selection stands.
     expect(store.getState().sessionId).toBe("s-B");
+  });
+
+  it("returns no created identity when a newer selection supersedes session creation", async () => {
+    let releaseNew!: () => void;
+    const newGate = new Promise<void>((resolveGate) => { releaseNew = resolveGate; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/sessions/new")) {
+        await newGate;
+        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
+      }
+      if (url.startsWith("/api/sessions/open")) {
+        return { body: activeSnapshot({ sessionId: "s-C", sessionName: "C" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const creating = store.newSession("/proj", "B");
+    await store.openSession("s-C");
+    releaseNew();
+
+    await expect(creating).resolves.toBeNull();
+    expect(store.getState().sessionId).toBe("s-C");
   });
 
   it("a successful new session clears the superseded opener", async () => {
