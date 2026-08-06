@@ -76,6 +76,11 @@ export type { ActivityTool, ExtensionUiRequest, Notice, QueueInfo, RetryInfo, Wi
 // --- Store state ---
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "offline";
+export type ConnectionProblem =
+  | { kind: "host-unreachable" }
+  | { kind: "host-error"; message: string }
+  | { kind: "stream-interrupted" }
+  | null;
 
 /** Text-like previews are range-capped; a body shorter than the file's
  * size marks the preview truncated. */
@@ -204,6 +209,7 @@ interface ComposerPartition {
 export interface AppState extends EventSlice {
   needsToken: boolean;
   connection: ConnectionState;
+  connectionProblem: ConnectionProblem;
   bootstrapped: boolean;
   mock: boolean;
   /** Host-reported insπre version, shown on the settings page. */
@@ -301,6 +307,7 @@ const initialState: AppState = {
   ...emptyEventSlice(),
   needsToken: false,
   connection: "connecting",
+  connectionProblem: null,
   bootstrapped: false,
   mock: false,
   version: "",
@@ -376,6 +383,7 @@ export class AppStore {
   private state: AppState = initialState;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  private authToken: string | null = null;
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1_000;
@@ -554,7 +562,8 @@ export class AppStore {
     this.transportGeneration += 1;
     this.attentionArms.clear();
     socket?.close();
-    this.set({ needsToken: true, error: null, connection: "offline" });
+    this.authToken = null;
+    this.set({ needsToken: true, error: null, connection: "offline", connectionProblem: null });
   }
 
   // --- Bootstrap ---
@@ -582,11 +591,8 @@ export class AppStore {
     if (this.state.openingSessionId !== null) this.set({ openingSessionId: null });
   }
 
-  async init(token: string | null): Promise<void> {
-    if (!token) {
-      this.set({ needsToken: true, connection: "offline" });
-      return;
-    }
+  async init(token: string | null = this.authToken): Promise<void> {
+    this.authToken = token;
     this.api = createApi(token);
     this.transportGeneration += 1;
     try {
@@ -599,6 +605,7 @@ export class AppStore {
         availableModels: Array.isArray(boot.availableModels) ? boot.availableModels : [],
         bootstrapped: true,
         needsToken: false,
+        connectionProblem: null,
       });
       this.applySnapshot(boot.snapshot);
       this.connect(token);
@@ -616,7 +623,14 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
-        this.set({ connection: "offline", error: null, errorSeverity: "error" });
+        this.set({
+          connection: "offline",
+          connectionProblem: error instanceof ApiError
+            ? { kind: "host-error", message: error.message }
+            : { kind: "host-unreachable" },
+          error: null,
+          errorSeverity: "error",
+        });
         this.scheduleReconnect(token);
       }
     }
@@ -1084,7 +1098,7 @@ export class AppStore {
 
   // --- WebSocket lifecycle ---
 
-  private connect(token: string): void {
+  private connect(token: string | null): void {
     if (this.socket) {
       // Replacing a transport forfeits any operation evidence owned by it.
       this.attentionArms.clear();
@@ -1098,7 +1112,7 @@ export class AppStore {
       this.reconnectDelay = 1_000;
       // The host pushes an authoritative snapshot as the first frame, so no
       // redundant HTTP resync is needed here.
-      this.set({ connection: "open" });
+      this.set({ connection: "open", connectionProblem: null });
     };
     socket.onmessage = (frame) => {
       if (this.socket !== socket) return;
@@ -1118,6 +1132,7 @@ export class AppStore {
       this.branchActionRequest += 1;
       this.set({
         connection: "reconnecting",
+        connectionProblem: { kind: "stream-interrupted" },
         branchTreeLoading: false,
         branchActionId: null,
         branchTreeError: this.state.branchTree ? "Branch history is stale — refresh after reconnecting" : null,
@@ -1127,7 +1142,7 @@ export class AppStore {
     socket.onerror = () => socket.close();
   }
 
-  private scheduleReconnect(token: string): void {
+  private scheduleReconnect(token: string | null): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
@@ -1135,6 +1150,13 @@ export class AppStore {
       void this.init(token);
     }, delay);
   }
+
+  retryConnection = (): void => {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectDelay = 1_000;
+    void this.init(this.authToken);
+  };
 
   // --- Sessions ---
 
