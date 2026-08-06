@@ -16,46 +16,17 @@ import { useCopied } from "../use-copied";
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 
 // Shared sanitize schema for every variant. Raw HTML from model content is
-// never parsed (react-markdown drops it without rehype-raw); KaTeX runs with
-// trust disabled, and the sanitizer allows only the markup KaTeX and the
-// Markdown pipeline themselves produce.
+// never parsed (react-markdown drops it without rehype-raw), and the remaining
+// untrusted Markdown tree is sanitized before KaTeX runs. The two math marker
+// classes must survive that boundary so rehype-katex can replace them with
+// output generated under trust:false. This follows rehype-katex's documented
+// ordering and avoids maintaining an incomplete parallel allowlist of KaTeX's
+// MathML, HTML, SVG, and accessibility attributes.
 const schema = {
   ...defaultSchema,
-  tagNames: [
-    ...(defaultSchema.tagNames ?? []),
-    "math",
-    "semantics",
-    "annotation",
-    "mrow",
-    "mi",
-    "mo",
-    "mn",
-    "ms",
-    "mtext",
-    "mspace",
-    "msup",
-    "msub",
-    "msubsup",
-    "mfrac",
-    "msqrt",
-    "mroot",
-    "mtable",
-    "mtr",
-    "mtd",
-    "mlabeledtr",
-    "munder",
-    "mover",
-    "munderover",
-    "mpadded",
-    "mphantom",
-    "menclose",
-    "mstyle",
-    "merror",
-  ],
   attributes: {
     ...defaultSchema.attributes,
-    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "style", "ariaHidden"],
-    annotation: [...(defaultSchema.attributes?.annotation ?? []), "encoding"],
+    code: [["className", /^language-./, "math-inline", "math-display"]],
   },
   // file: links survive sanitization so the link renderer can convert them
   // into data-file-path references; they never navigate (clicks are
@@ -115,14 +86,65 @@ function firstUnclosedBackslashMath(raw: string): number {
 }
 
 function hasRealDisplayClose(raw: string): boolean {
-  if (raw.startsWith("$$")) return raw.length >= 4 && raw.endsWith("$$");
   return !raw.startsWith("\\[") || scanBackslashMath(raw).hasOpeningDisplayClose;
+}
+
+/** Parse only a complete sequence of unescaped `$$…$$` displays separated by
+ * line whitespace. This is deliberately narrower than TeX parsing: it repairs
+ * Markdown's paragraph/block classification without looking inside formula
+ * syntax beyond escaped delimiter parity. */
+function dollarDisplaySegments(raw: string): string[] | null {
+  const segments: string[] = [];
+  let cursor = 0;
+  while (cursor < raw.length) {
+    if (!raw.startsWith("$$", cursor)) return null;
+    const bodyStart = cursor + 2;
+    let slashRun = 0;
+    let close = -1;
+    for (cursor = bodyStart; cursor < raw.length - 1; cursor += 1) {
+      const character = raw[cursor]!;
+      if (character === "\\") {
+        slashRun += 1;
+        continue;
+      }
+      const escaped = slashRun % 2 === 1;
+      slashRun = 0;
+      if (!escaped && character === "$" && raw[cursor + 1] === "$") {
+        close = cursor;
+        break;
+      }
+    }
+    if (close < 0) return null;
+    cursor = close + 2;
+    segments.push(raw.slice(bodyStart, close));
+    if (cursor === raw.length) return segments;
+
+    const separatorStart = cursor;
+    while (cursor < raw.length && /\s/.test(raw[cursor]!)) cursor += 1;
+    const separator = raw.slice(separatorStart, cursor);
+    if (!separator.includes("\n") || cursor === raw.length) return null;
+  }
+  return null;
+}
+
+function displayMathNode(value: string, position?: unknown): Record<string, unknown> {
+  return {
+    type: "math",
+    value,
+    position,
+    data: {
+      hName: "code",
+      hProperties: { className: ["language-math", "math-display"] },
+      hChildren: [{ type: "text", value }],
+    },
+  };
 }
 
 /** Recover source only where the math tokenizer consumed an opener without a
  * real close. Text-node recovery starts at the unmatched TeX opener, keeping
  * ordinary Markdown decoding before it. Code nodes are never visited. The
- * same pass promotes a complete paragraph-only `$$…$$` token to display math. */
+ * same pass promotes complete line-separated `$$…$$` tokens to display math
+ * and restores first-line formula text that the block tokenizer called meta. */
 const remarkMathSourceSafety: Plugin<[], Root> = function remarkMathSourceSafety() {
   return (tree, file) => {
     const source = String(file.value);
@@ -131,13 +153,29 @@ const remarkMathSourceSafety: Plugin<[], Root> = function remarkMathSourceSafety
       for (let index = 0; index < parent.children.length; index += 1) {
         const node = parent.children[index]!;
         const raw = sourceSlice(node, source);
-        if (node.type === "math" && raw !== null && !hasRealDisplayClose(raw)) {
-          parent.children[index] = {
-            type: "paragraph",
-            children: [{ type: "text", value: raw, position: node.position }],
-            position: node.position,
-          };
-          continue;
+        if (node.type === "math" && raw !== null) {
+          if (raw.startsWith("$$")) {
+            const segments = dollarDisplaySegments(raw);
+            if (!segments) {
+              parent.children[index] = {
+                type: "paragraph",
+                children: [{ type: "text", value: raw, position: node.position }],
+                position: node.position,
+              };
+            } else if (segments.length > 1 || node.meta != null) {
+              parent.children.splice(index, 1, ...segments.map((value) => displayMathNode(value)));
+              index += segments.length - 1;
+            }
+            continue;
+          }
+          if (!hasRealDisplayClose(raw)) {
+            parent.children[index] = {
+              type: "paragraph",
+              children: [{ type: "text", value: raw, position: node.position }],
+              position: node.position,
+            };
+            continue;
+          }
         }
         if (node.type === "text" && raw !== null) {
           const opener = firstUnclosedBackslashMath(raw);
@@ -146,18 +184,27 @@ const remarkMathSourceSafety: Plugin<[], Root> = function remarkMathSourceSafety
         }
         if (node.type === "paragraph") {
           const children = node.children as Array<Record<string, unknown>> | undefined;
-          if (children?.length === 1 && children[0]?.type === "inlineMath" && raw?.startsWith("$$") && raw.endsWith("$$") && raw.length >= 4) {
-            const value = children[0].value as string;
-            parent.children[index] = {
-              type: "math",
-              value,
-              position: node.position,
-              data: {
-                hName: "code",
-                hProperties: { className: ["language-math", "math-display"] },
-                hChildren: [{ type: "text", value }],
-              },
-            };
+          const inlineDisplays: Array<Record<string, unknown>> = [];
+          let hasLineSeparator = false;
+          let promotable = Boolean(children?.length);
+          for (const child of children ?? []) {
+            if (child.type === "text") {
+              const value = String(child.value ?? "");
+              if (!/^\s+$/.test(value)) promotable = false;
+              if (value.includes("\n")) hasLineSeparator = true;
+              continue;
+            }
+            const childRaw = sourceSlice(child, source);
+            const segments = child.type === "inlineMath" && childRaw !== null ? dollarDisplaySegments(childRaw) : null;
+            if (!segments || segments.length !== 1) {
+              promotable = false;
+              continue;
+            }
+            inlineDisplays.push(displayMathNode(segments[0]!, child.position));
+          }
+          if (promotable && inlineDisplays.length > 0 && (inlineDisplays.length === 1 || hasLineSeparator)) {
+            parent.children.splice(index, 1, ...inlineDisplays);
+            index += inlineDisplays.length - 1;
             continue;
           }
         }
@@ -324,16 +371,30 @@ function urlTransform(url: string): string {
 
 // Memoized: settled Markdown/KaTeX/highlighting is expensive to reparse, and
 // stream deltas only change the trailing message's props.
-export const RichText = memo(function RichText({ text, variant = "assistant" }: { text: string; variant?: RichTextVariant }) {
+const inlineComponents: Components = {
+  ...components,
+  p: ({ children }: { children?: ReactNode }) => <>{children}</>,
+};
+
+export const RichText = memo(function RichText({
+  text,
+  variant = "assistant",
+  inline = false,
+}: {
+  text: string;
+  variant?: RichTextVariant;
+  /** Render paragraph source without the paragraph element, for card headers. */
+  inline?: boolean;
+}) {
   return (
-    <div className={`rich-text rich-text--${variant}`}>
+    <div className={`rich-text rich-text--${variant} ${inline ? "rich-text--inline" : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkMathSourceSafety]}
         rehypePlugins={[
-          [rehypeKatex, { trust: false, strict: false, throwOnError: false }],
           [rehypeSanitize, schema],
+          [rehypeKatex, { trust: false, strict: false, throwOnError: false }],
         ]}
-        components={components}
+        components={inline ? inlineComponents : components}
         urlTransform={urlTransform}
       >
         {text}
