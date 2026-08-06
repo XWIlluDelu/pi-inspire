@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -24,6 +25,7 @@ import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 
+const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
 const openSchema = z.object({ id: z.string().min(1).max(128) });
 const deleteSessionParamsSchema = z.object({ sessionId: z.string().min(1).max(128) });
 const newSchema = z.object({
@@ -119,6 +121,8 @@ const gitDiffSchema = z.object({
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
+export const ACCESS_COOKIE = "inspire_access";
+const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
 
 export interface AppDependencies {
   token: string;
@@ -139,6 +143,37 @@ export interface AppDependencies {
 function bearerToken(request: Request): string | undefined {
   const value = request.get("authorization");
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
+}
+
+function cookieToken(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  for (const segment of header.split(";")) {
+    const separator = segment.indexOf("=");
+    if (separator < 0 || segment.slice(0, separator).trim() !== ACCESS_COOKIE) continue;
+    try {
+      return decodeURIComponent(segment.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function tokenMatches(candidate: string | undefined, expected: string): boolean {
+  if (candidate === undefined) return false;
+  const left = Buffer.from(candidate);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function setAccessCookie(request: Request, response: Response, token: string): void {
+  response.cookie(ACCESS_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: request.secure,
+    path: "/",
+    maxAge: ACCESS_COOKIE_MAX_AGE_MS,
+  });
 }
 
 function originAllowed(origin: string | undefined, host: string | undefined): boolean {
@@ -230,11 +265,32 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
   app.use(express.json({ limit: "2mb" }));
 
+  // Pair one browser profile to this loopback host. The credential becomes an
+  // origin-scoped HttpOnly cookie; it never needs durable JavaScript storage.
+  app.post("/api/auth/pair", (request, response) => {
+    if (!originAllowed(request.get("origin"), request.get("host"))) {
+      return response.status(403).json({ error: "Origin is not allowed" });
+    }
+    const { token } = pairSchema.parse(request.body);
+    if (!tokenMatches(token, deps.token)) return response.status(401).json({ error: "Access token is not valid" });
+    setAccessCookie(request, response, deps.token);
+    response.status(204).end();
+  });
+
   app.use("/api", (request, response, next) => {
     if (!originAllowed(request.get("origin"), request.get("host"))) {
       return response.status(403).json({ error: "Origin is not allowed" });
     }
-    if (bearerToken(request) !== deps.token) return response.status(401).json({ error: "Authentication required" });
+    const bearer = bearerToken(request);
+    const cookie = cookieToken(request.get("cookie"));
+    if (!tokenMatches(bearer, deps.token) && !tokenMatches(cookie, deps.token)) {
+      return response.status(401).json({ error: "Authentication required" });
+    }
+    // Existing token URLs and non-cookie clients transparently establish the
+    // browser pairing on their first authenticated API request.
+    if (tokenMatches(bearer, deps.token) && !tokenMatches(cookie, deps.token)) {
+      setAccessCookie(request, response, deps.token);
+    }
     next();
   });
 
@@ -483,6 +539,17 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
+    // The launcher URL pairs before the application bundle runs, then removes
+    // the bearer from browser history. Invalid credentials are also stripped
+    // and fall through to the ordinary pairing surface.
+    app.get("/", (request, response, next) => {
+      const candidate = typeof request.query.token === "string" ? request.query.token : undefined;
+      if (candidate === undefined) return next();
+      if (tokenMatches(candidate, deps.token)) setAccessCookie(request, response, deps.token);
+      const clean = new URL(request.originalUrl, `http://${request.get("host") ?? "127.0.0.1"}`);
+      clean.searchParams.delete("token");
+      response.redirect(303, `${clean.pathname}${clean.search}${clean.hash}` || "/");
+    });
     // Content-hashed bundles under /assets are safe to cache forever. Every
     // other dist file is unhashed — theme-init.js, index.html — so it must
     // revalidate, or a rebuild is served stale for up to a year.
@@ -544,9 +611,11 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       socket.destroy();
       return;
     }
+    const queryToken = url.searchParams.get("token") ?? undefined;
+    const pairedToken = cookieToken(request.headers.cookie);
     if (
       url.pathname !== "/events" ||
-      url.searchParams.get("token") !== deps.token ||
+      (!tokenMatches(queryToken, deps.token) && !tokenMatches(pairedToken, deps.token)) ||
       !originAllowed(request.headers.origin, request.headers.host)
     ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");

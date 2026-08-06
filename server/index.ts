@@ -1,8 +1,8 @@
-import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
 import {
@@ -33,7 +33,8 @@ if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
 }
 const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("INSPIRE_PORT must be a valid TCP port");
-const token = process.env.INSPIRE_TOKEN ?? randomBytes(32).toString("base64url");
+const tokenPath = process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
+const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
 const mock = process.env.INSPIRE_MOCK === "1";
 
 const attachments = new AttachmentStore();

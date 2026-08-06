@@ -32,6 +32,36 @@ async function initStore(): Promise<{ store: AppStore; socket: FakeWebSocket }> 
 describe("websocket lifecycle", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("uses the host pairing cookie without retaining a bearer in the PWA window", async () => {
+    const fetch = installFetch(baseRoutes);
+    const store = new AppStore();
+    await store.init(null);
+    const socket = FakeWebSocket.instances.at(-1)!;
+
+    const bootstrapCall = fetch.mock.calls.find(([url]) => String(url).startsWith("/api/bootstrap"));
+    expect(bootstrapCall?.[1]).toMatchObject({ credentials: "same-origin" });
+    expect(bootstrapCall?.[1]?.headers).not.toHaveProperty("Authorization");
+    expect(socket.url).toBe("ws://localhost:3000/events");
+  });
+
+  it("distinguishes an unreachable host from a host that requires pairing", async () => {
+    vi.useFakeTimers();
+    try {
+      installFetch(() => { throw new TypeError("Failed to fetch"); });
+      const store = new AppStore();
+      await store.init(null);
+      expect(store.getState()).toMatchObject({
+        needsToken: false,
+        bootstrapped: false,
+        connection: "offline",
+        connectionProblem: { kind: "host-unreachable" },
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("retains bootstrap model choices while an active preview has not loaded its worker catalog", async () => {
     const models = [{ provider: "anthropic", id: "claude-sonnet-4", reasoning: true }];
     installFetch((url, init) => {

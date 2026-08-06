@@ -20,7 +20,7 @@ import {
   type RunState,
   type ThemePreference,
 } from "../shared/contracts";
-import { setToken } from "./api";
+import { ApiError, pairHost } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -86,44 +86,45 @@ function StateChip({
     case "running":
       return (
         <span key="running" className="chip chip--accent chip--live">
-          <Loader2 size={12} className="spin" aria-hidden /> Running
+          <Loader2 size={12} className="spin" aria-hidden /> <span className="chip__label">Running</span>
         </span>
       );
     case "retrying":
       return (
         <span key="retrying" className="chip chip--warning chip--live">
-          <AlertTriangle size={12} aria-hidden /> Retrying
+          <AlertTriangle size={12} aria-hidden /> <span className="chip__label">Retrying</span>
         </span>
       );
     case "compacting":
       return (
         <span key="compacting" className="chip chip--info chip--live">
-          <RefreshCw size={12} className="spin-slow" aria-hidden /> Compacting
+          <RefreshCw size={12} className="spin-slow" aria-hidden /> <span className="chip__label">Compacting</span>
         </span>
       );
     case "queued":
       return (
         <span key="queued" className="chip chip--muted">
-          <Clock size={12} aria-hidden /> Queued
+          <Clock size={12} aria-hidden /> <span className="chip__label">Queued</span>
         </span>
       );
     case "aborted":
       return (
         <span key="aborted" className="chip chip--muted">
-          <Ban size={12} aria-hidden /> Stopped
+          <Ban size={12} aria-hidden /> <span className="chip__label">Stopped</span>
         </span>
       );
     case "failed":
       return (
         <span key="failed" className="chip chip--error">
-          <XCircle size={12} aria-hidden /> Failed
+          <XCircle size={12} aria-hidden /> <span className="chip__label">Failed</span>
         </span>
       );
     case "conflict": {
       const attention = projectionConflictSeverity(conflict) === "attention";
       return (
         <span key="conflict" className={`chip chip--${attention ? "warning" : "error"}`}>
-          <AlertTriangle size={12} aria-hidden /> {attention ? "Needs recovery" : "Conflict"}
+          <AlertTriangle size={12} aria-hidden />
+          <span className="chip__label">{attention ? "Needs recovery" : "Conflict"}</span>
         </span>
       );
     }
@@ -234,7 +235,9 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
           {/* Both layers always occupy the same grid cell, so toggling the
               copied state never shifts the layout. */}
           <span className={`topbar__project-layer ${copied ? "topbar__project-layer--hidden" : ""}`}>
-            {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
+            <span className="topbar__project-label">
+              {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
+            </span>
           </span>
           <span
             className={`topbar__project-layer ${copied ? "" : "topbar__project-layer--hidden"}`}
@@ -250,21 +253,34 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
 
 function TokenGate() {
   const [value, setValue] = useState("");
+  const [pairing, setPairing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
     <div className="token-gate">
       <div className="token-gate__card">
         <Wordmark large />
-        <p className="token-gate__hint">
-          This insπre host requires its access token. Open the URL printed by the host (it contains{" "}
-          <code>?token=…</code>), or paste the token below.
-        </p>
+        <div>
+          <h1 className="token-gate__title">Pair this browser</h1>
+          <p className="token-gate__hint">
+            The host is running, but this browser has not been paired yet. Open the URL printed by{" "}
+            <code>./inspire</code>, or paste its access token once below. The pairing is remembered on this device.
+          </p>
+        </div>
         <form
           onSubmit={(event) => {
             event.preventDefault();
             const token = value.trim();
-            if (!token) return;
-            setToken(token);
-            void store.init(token);
+            if (!token || pairing) return;
+            setPairing(true);
+            setError(null);
+            void pairHost(token)
+              .then(() => store.init(null))
+              .catch((reason: unknown) => {
+                setError(reason instanceof ApiError && reason.status === 401
+                  ? "That access token does not match this host."
+                  : "The host became unavailable before pairing completed.");
+              })
+              .finally(() => setPairing(false));
           }}
         >
           <input
@@ -275,10 +291,41 @@ function TokenGate() {
             aria-label="Access token"
             autoComplete="off"
           />
-          <button type="submit" className="button button--primary" disabled={!value.trim()}>
-            Connect
+          <button type="submit" className="button button--primary" disabled={!value.trim() || pairing}>
+            {pairing ? "Pairing…" : "Pair"}
           </button>
         </form>
+        {error ? <p className="token-gate__error" role="alert">{error}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function HostUnavailable({ problem }: { problem: NonNullable<ReturnType<typeof store.getState>["connectionProblem"]> }) {
+  const host = typeof window === "undefined" ? "the configured address" : window.location.host;
+  const hostError = problem.kind === "host-error";
+  return (
+    <div className="token-gate">
+      <div className="token-gate__card">
+        <Wordmark large />
+        <div>
+          <h1 className="token-gate__title">{hostError ? "Host needs attention" : "Host not reachable"}</h1>
+          <p className="token-gate__hint">
+            {hostError
+              ? `The host answered at ${host}, but could not initialize: ${problem.message}`
+              : `The installed app is ready, but no insπre host is reachable at ${host}.`}
+          </p>
+        </div>
+        <div className="token-gate__instruction">
+          <span>Start or restart it from the insπre project directory:</span>
+          <code>./inspire</code>
+        </div>
+        <div className="token-gate__actions">
+          <button type="button" className="button button--primary" onClick={() => store.retryConnection()}>
+            Try again
+          </button>
+          <span><Loader2 size={12} className="spin" aria-hidden /> Reconnecting automatically</span>
+        </div>
       </div>
     </div>
   );
@@ -386,6 +433,9 @@ export function App() {
   }, [state.runState, state.extensionUiRequests.length, paletteOpen]);
 
   if (state.needsToken) return <TokenGate />;
+  if (!state.bootstrapped && state.connection === "offline" && state.connectionProblem) {
+    return <HostUnavailable problem={state.connectionProblem} />;
+  }
 
   const statuses = Object.entries(state.statuses);
   const navigationContent = <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />;
@@ -440,46 +490,55 @@ export function App() {
             <PanelLeft size={15} aria-hidden />
           </button>
           <SessionIdent show={!draftingNew} navCollapsed={navCollapsed} />
-          <StateChip runState={state.runState} conflict={state.projectionConflict} />
-          {statuses.map(([key, text]) => (
-            <span key={key} className="chip chip--muted">
-              {text}
-            </span>
-          ))}
-          <span className="topbar__spacer" />
-          {state.connection !== "open" ? (
-            <span className="chip chip--warning chip--live">
-              <Loader2 size={12} className="spin" aria-hidden />
-              {state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setPaletteOpen(true)}
-            aria-label="Open command palette"
-            title="Command palette (Ctrl+K)"
-          >
-            <Command size={15} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
-            onClick={() => setSettingsOpen((value) => !value)}
-            aria-label="Settings"
-            title="Settings"
-          >
-            <SettingsIcon size={15} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
-            onClick={() => store.setResourcesOpen(!state.resourcesOpen)}
-            aria-label="Toggle resources panel"
-            title="Toggle resources panel (Ctrl+.)"
-          >
-            <PanelRight size={15} aria-hidden />
-          </button>
+          <div className="topbar__status" aria-live="polite">
+            <StateChip runState={state.runState} conflict={state.projectionConflict} />
+            {statuses.map(([key, text]) => (
+              <span key={key} className="chip chip--muted topbar__extension-status" title={text}>
+                <span className="chip__label">{text}</span>
+              </span>
+            ))}
+            {state.connection !== "open" ? (
+              <span className={`chip chip--warning ${state.connectionProblem?.kind === "host-unreachable" ? "" : "chip--live"}`}>
+                {state.connectionProblem?.kind === "host-unreachable"
+                  ? <AlertTriangle size={12} aria-hidden />
+                  : <Loader2 size={12} className="spin" aria-hidden />}
+                <span className="chip__label">
+                  {state.connectionProblem?.kind === "host-unreachable"
+                    ? "Host unavailable"
+                    : state.connection === "reconnecting" ? "Reconnecting" : "Connecting"}
+                </span>
+              </span>
+            ) : null}
+          </div>
+          <div className="topbar__actions">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setPaletteOpen(true)}
+              aria-label="Open command palette"
+              title="Command palette (Ctrl+K)"
+            >
+              <Command size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+              onClick={() => setSettingsOpen((value) => !value)}
+              aria-label="Settings"
+              title="Settings"
+            >
+              <SettingsIcon size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
+              onClick={() => store.setResourcesOpen(!state.resourcesOpen)}
+              aria-label="Toggle resources panel"
+              title="Toggle resources panel (Ctrl+.)"
+            >
+              <PanelRight size={15} aria-hidden />
+            </button>
+          </div>
         </header>
         {state.error ? (
           <div className={`banner banner--${state.errorSeverity}`} role={state.errorSeverity === "warning" ? "status" : "alert"}>
@@ -497,7 +556,14 @@ export function App() {
         ) : null}
         {state.connection !== "open" && !state.error ? (
           <div className="banner banner--warning" role="status">
-            Connection to the insπre host interrupted — retrying automatically. The last settled state stays visible.
+            <span>
+              {state.connectionProblem?.kind === "host-unreachable"
+                ? `The insπre host is not reachable at ${window.location.host}. Start or restart it with ./inspire; the last settled state stays visible.`
+                : state.connectionProblem?.kind === "host-error"
+                  ? `The host responded but could not initialize: ${state.connectionProblem.message}`
+                  : "The live host connection was interrupted. The last settled state stays visible."}
+            </span>
+            <button type="button" onClick={() => store.retryConnection()}>Retry now</button>
           </div>
         ) : null}
         {settingsOpen ? <Settings onClose={() => setSettingsOpen(false)} /> : null}

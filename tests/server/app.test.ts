@@ -6,7 +6,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { AttachmentStore } from "../../server/attachments.js";
-import { createInspireServer, MAX_JOINING_EVENT_BYTES } from "../../server/app.js";
+import { ACCESS_COOKIE, createInspireServer, MAX_JOINING_EVENT_BYTES } from "../../server/app.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -93,6 +93,11 @@ describe("local host API", () => {
   it("requires the launch token and rejects foreign origins", async () => {
     await request(application.server).get("/api/bootstrap").expect(401);
     await api().set("Origin", "https://example.invalid").expect(403);
+    await request(application.server)
+      .post("/api/auth/pair")
+      .set("Origin", "https://example.invalid")
+      .send({ token })
+      .expect(403);
     const health = await request(application.server)
       .get("/api/health")
       .set("Authorization", `Bearer ${token}`)
@@ -111,6 +116,33 @@ describe("local host API", () => {
     // network requests just by rendering.
     expect(response.headers["content-security-policy"]).toContain("img-src 'self' data: blob:");
     expect(response.headers["content-security-policy"]).not.toMatch(/img-src[^;]*https:/);
+  });
+
+  it("pairs a browser once with an HttpOnly same-site cookie for HTTP and WebSocket access", async () => {
+    const agent = request.agent(application.server);
+    await agent.post("/api/auth/pair").set("Origin", baseUrl).send({ token: "wrong" }).expect(401);
+    const paired = await agent.post("/api/auth/pair").set("Origin", baseUrl).send({ token }).expect(204);
+    const setCookie = paired.headers["set-cookie"] as unknown as string[];
+    expect(setCookie[0]).toContain(`${ACCESS_COOKIE}=`);
+    expect(setCookie[0]).toContain("HttpOnly");
+    expect(setCookie[0]).toContain("SameSite=Strict");
+    expect(setCookie[0]).toContain("Path=/");
+    await agent.get("/api/bootstrap").expect(200);
+
+    const cookie = setCookie[0]!.split(";", 1)[0]!;
+    const socket = new WebSocket(`${baseUrl.replace("http", "ws")}/events`, {
+      headers: { Cookie: cookie },
+      origin: baseUrl,
+    });
+    try {
+      const firstFrame = await new Promise<Record<string, unknown>>((resolveFrame, reject) => {
+        socket.once("message", (data) => resolveFrame(JSON.parse(data.toString()) as Record<string, unknown>));
+        socket.once("error", reject);
+      });
+      expect(firstFrame.type).toBe("snapshot");
+    } finally {
+      socket.close();
+    }
   });
 
   it("caches hashed assets immutably but revalidates unhashed dist files", async () => {
@@ -144,6 +176,12 @@ describe("local host API", () => {
       // The SPA shell is always revalidated so a new bundle hash is picked up.
       const shell = await request(served.server).get("/some/deep/route").expect(200);
       expect(shell.headers["cache-control"]).toBe("no-cache");
+
+      const browser = request.agent(served.server);
+      const launch = await browser.get(`/?token=${encodeURIComponent(token)}`).redirects(0).expect(303);
+      expect(launch.headers.location).toBe("/");
+      expect(String(launch.headers["set-cookie"])).toContain(`${ACCESS_COOKIE}=`);
+      await browser.get("/api/bootstrap").expect(200);
     } finally {
       await served.close();
       await rm(dist, { recursive: true, force: true });

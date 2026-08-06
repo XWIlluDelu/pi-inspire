@@ -5,8 +5,9 @@ import { resolveToken } from "./api";
 import { store } from "./store";
 import "./styles.css";
 
-// Extract ?token= from the URL, keep it in sessionStorage only, and strip it
-// from the address bar before any render or network activity.
+// A launch URL token exists only for this pairing attempt and is stripped
+// before render. Ordinary PWA launches authenticate with the host-owned
+// HttpOnly pairing cookie.
 void store.init(resolveToken());
 
 // The service worker owns only the static shell. Session APIs and the event

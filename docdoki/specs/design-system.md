@@ -334,9 +334,15 @@ warning capsule surface.
   its full bounded value remains in the hover title. Beside it the project
   location renders in mono `{typography.size-xs}` `faint` — folder name or full
   path per the `projectDisplay` preference — and clicking it copies the absolute
-  path. The model is never shown here.
-- **Topbar actions** — nav toggle at the left; command palette, settings
-  (opens the settings overlay), and context-pane toggle at the right. There
+  path. The model is never shown here. Identity owns the flexible width and
+  yields through ellipsis before neighboring chrome can collide.
+- **Topbar status and actions** — runtime and extension status capsules remain
+  in the leading cluster, immediately after session identity, while the action
+  targets stay fixed at the right. Status is vertically centered; long extension
+  text ellipsizes with its full value in the tooltip. The session title and
+  project location yield first, and the bounded status cluster yields next, so
+  neither can cross the command palette, settings (opens the settings overlay),
+  or context-pane targets. The nav toggle remains at the left. There
   is no compact button: users type `/compact [instructions]`, which the
   host routes to Pi's RPC compact command. Below 900px, the open navigation
   drawer begins beneath the 48px center topbar, so this one toggle remains
