@@ -277,7 +277,8 @@ describe("completion attention", () => {
     expect(FakeNotification.requestPermission).toHaveBeenCalledOnce();
     expect(store.getState().prefs.completionAttention).toBe("off");
     expect(patches).toEqual([]);
-    expect(store.getState().error).toMatch(/denied/);
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.some((notice) => notice.kind === "warning" && /denied/.test(notice.text))).toBe(true);
   });
 
   it("persists desktop intent after permission is granted", async () => {
@@ -297,6 +298,7 @@ describe("completion attention", () => {
     vi.stubGlobal("Notification", undefined);
     expect(await store.setCompletionAttention("desktop")).toBe(false);
     expect(store.getState().prefs.completionAttention).toBe("off");
-    expect(store.getState().error).toMatch(/not supported/);
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.some((notice) => notice.kind === "warning" && /not supported/.test(notice.text))).toBe(true);
   });
 });

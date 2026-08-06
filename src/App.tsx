@@ -13,7 +13,13 @@ import {
   XCircle,
 } from "lucide-react";
 import { Profiler, useEffect, useState } from "react";
-import { MAX_SESSION_DISPLAY_TITLE_CHARS, type RunState, type ThemePreference } from "../shared/contracts";
+import {
+  MAX_SESSION_DISPLAY_TITLE_CHARS,
+  projectionConflictSeverity,
+  type ProjectionConflict,
+  type RunState,
+  type ThemePreference,
+} from "../shared/contracts";
 import { setToken } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
@@ -67,7 +73,13 @@ export function sessionHeading(
   return "New session";
 }
 
-function StateChip({ runState }: { runState: RunState }) {
+function StateChip({
+  runState,
+  conflict,
+}: {
+  runState: RunState;
+  conflict: ProjectionConflict | null;
+}) {
   // Keys force a remount across state changes so the entrance animation
   // replays; `chip--live` marks states still in progress (they breathe).
   switch (runState) {
@@ -97,8 +109,8 @@ function StateChip({ runState }: { runState: RunState }) {
       );
     case "aborted":
       return (
-        <span key="aborted" className="chip chip--error">
-          <Ban size={12} aria-hidden /> Aborted
+        <span key="aborted" className="chip chip--muted">
+          <Ban size={12} aria-hidden /> Stopped
         </span>
       );
     case "failed":
@@ -107,12 +119,14 @@ function StateChip({ runState }: { runState: RunState }) {
           <XCircle size={12} aria-hidden /> Failed
         </span>
       );
-    case "conflict":
+    case "conflict": {
+      const attention = projectionConflictSeverity(conflict) === "attention";
       return (
-        <span key="conflict" className="chip chip--error">
-          <AlertTriangle size={12} aria-hidden /> Conflict
+        <span key="conflict" className={`chip chip--${attention ? "warning" : "error"}`}>
+          <AlertTriangle size={12} aria-hidden /> {attention ? "Needs recovery" : "Conflict"}
         </span>
       );
+    }
     case "idle":
       return null;
     default: {
@@ -426,7 +440,7 @@ export function App() {
             <PanelLeft size={15} aria-hidden />
           </button>
           <SessionIdent show={!draftingNew} navCollapsed={navCollapsed} />
-          <StateChip runState={state.runState} />
+          <StateChip runState={state.runState} conflict={state.projectionConflict} />
           {statuses.map(([key, text]) => (
             <span key={key} className="chip chip--muted">
               {text}
@@ -468,11 +482,17 @@ export function App() {
           </button>
         </header>
         {state.error ? (
-          <div className="banner banner--error" role="alert">
+          <div className={`banner banner--${state.errorSeverity}`} role={state.errorSeverity === "warning" ? "status" : "alert"}>
             <span>{state.error}</span>
-            <button type="button" onClick={() => store.dismissError()}>
-              Dismiss
-            </button>
+            {state.projectionConflict ? (
+              <button type="button" onClick={() => void store.abort()}>
+                Recover
+              </button>
+            ) : (
+              <button type="button" onClick={() => store.dismissError()}>
+                Dismiss
+              </button>
+            )}
           </div>
         ) : null}
         {state.connection !== "open" && !state.error ? (

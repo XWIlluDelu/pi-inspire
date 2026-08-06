@@ -837,14 +837,14 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    type InternalSlot = { projection: unknown; conflict: { message: string; revision: number } | null; runState: string; attention: "failed" | null; ready: boolean };
+    type InternalSlot = { projection: unknown; conflict: { kind: "projection-failure"; message: string; revision: number } | null; runState: string; attention: "failed" | null; ready: boolean };
     const slots = (runtime as unknown as { slots: Map<string, InternalSlot> }).slots;
     try {
       await runtime.openSession("a");
       await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
       workers[0]!.emit("exit", new Error("conflicted exit"));
       const a = slots.get("a")!;
-      a.conflict = { message: "retained conflict", revision: 1 };
+      a.conflict = { kind: "projection-failure", message: "retained conflict", revision: 1 };
       a.runState = "conflict";
       a.attention = "failed";
 
@@ -878,20 +878,53 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    type InternalSlot = { conflict: { message: string; revision: number } | null; runState: string; ready: boolean };
+    type InternalSlot = { conflict: { kind: "external-change"; message: string; revision: number } | null; runState: string; ready: boolean };
     const slots = (runtime as unknown as { slots: Map<string, InternalSlot> }).slots;
     try {
       await runtime.openSession("a");
       await vi.waitFor(() => expect(worker?.starts).toBe(1));
       const slot = slots.get("a")!;
-      slot.conflict = { message: "Session changed on disk", revision: 2 };
+      slot.conflict = { kind: "external-change", message: "Session changed on disk", revision: 2 };
       slot.runState = "conflict";
       worker!.emit("event", { type: "agent_settled" });
       await vi.waitFor(() => expect(worker?.stops).toBe(1));
-      expect(slot.conflict).toEqual({ message: "Session changed on disk", revision: 2 });
+      expect(slot.conflict).toEqual({ kind: "external-change", message: "Session changed on disk", revision: 2 });
       expect(slot.runState).toBe("conflict");
       await expect(runtime.prompt({ sessionId: "a", message: "must not restart" })).rejects.toThrow("Session changed on disk");
       expect(worker?.starts).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("derives background conflict indicators after selection changes", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+    );
+    type InternalSlot = {
+      conflict: { kind: "external-change" | "projection-failure"; message: string; revision: number } | null;
+      runState: string;
+      attention: "completed" | "failed" | null;
+    };
+    const slots = (runtime as unknown as { slots: Map<string, InternalSlot> }).slots;
+    try {
+      await runtime.openSession("a");
+      const a = slots.get("a")!;
+      a.conflict = { kind: "external-change", message: "external update", revision: 2 };
+      a.runState = "conflict";
+      a.attention = null;
+      expect((await runtime.snapshot()).sessionStatuses.a).toEqual({ runState: "conflict" });
+
+      const selectedB = await runtime.openSession("b");
+      expect(selectedB.sessionStatuses.a).toEqual({ runState: "conflict", indicator: "attention" });
+
+      a.conflict = { kind: "projection-failure", message: "damaged projection", revision: 3 };
+      expect((await runtime.snapshot()).sessionStatuses.a).toEqual({ runState: "conflict", indicator: "failed" });
     } finally {
       await runtime.close();
     }

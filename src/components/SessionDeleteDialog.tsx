@@ -69,6 +69,9 @@ export function SessionDeleteDialog({
           <AlertTriangle size={14} aria-hidden />
           Make sure this session is not open in another Pi process.
         </p>
+        {state.sessionDeleteError ? (
+          <p className="session-delete__error" role="alert">{state.sessionDeleteError}</p>
+        ) : null}
 
         <footer className="session-delete__actions">
           <button type="button" className="button" onClick={onClose} disabled={deleting}>Cancel</button>

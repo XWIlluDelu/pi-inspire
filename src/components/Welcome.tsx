@@ -31,7 +31,7 @@ export function Welcome() {
     try {
       // newSession resolves once the runtime is ready to accept a prompt. A
       // failed creation keeps the previous session selected (the store maps
-      // the error into a banner), so the draft only fires into a session
+      // the error into this start surface), so the draft only fires into a session
       // this submission actually created.
       const before = store.getState().sessionId;
       await store.newSession(target || undefined);
@@ -106,6 +106,9 @@ export function Welcome() {
           </button>
         </div>
       </form>
+      {state.sessionActionError ? (
+        <p className="welcome__error" role="alert">{state.sessionActionError}</p>
+      ) : null}
 
       {browsing ? (
         <DirectoryPicker

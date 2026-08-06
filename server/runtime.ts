@@ -823,13 +823,35 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.pendingPartialPersistence = null;
   }
 
-  private failPartialPersistence(slot: RuntimeSlot, message: string, emit = true): Promise<void> {
+  private setProjectionConflict(
+    slot: RuntimeSlot,
+    kind: ProjectionConflict["kind"],
+    message: string,
+  ): ProjectionConflict {
+    const conflict = {
+      kind,
+      message,
+      revision: slot.projection?.revision ?? slot.branchRevision,
+    } satisfies ProjectionConflict;
+    slot.conflict = conflict;
+    slot.runState = "conflict";
+    // Conflict is authoritative and statusFor derives its indicator from the
+    // kind whenever the slot is in the background. Clear any older completion
+    // marker so it cannot reappear after recovery.
+    slot.attention = null;
+    return conflict;
+  }
+
+  private failPartialPersistence(
+    slot: RuntimeSlot,
+    message: string,
+    emit = true,
+    kind: ProjectionConflict["kind"] = "incomplete-persistence",
+  ): Promise<void> {
     this.clearPartialPersistence(slot);
     const newlyConflicted = !slot.conflict;
-    slot.conflict = { message, revision: slot.projection?.revision ?? slot.branchRevision };
-    slot.runState = "conflict";
-    slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-    if (emit && newlyConflicted) this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+    const conflict = this.setProjectionConflict(slot, kind, message);
+    if (emit && newlyConflicted) this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
     return this.stopWriter(slot);
   }
 
@@ -902,12 +924,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       projection.health.status === "error" && slot.process &&
       (this.writerOwnershipActive(slot) || slot.workerProjectionSourceIdentity === null)
     ) {
-      slot.conflict = {
-        message: `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
-        revision: projection.revision,
-      };
-      slot.runState = "conflict";
-      slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+      this.setProjectionConflict(
+        slot,
+        "projection-failure",
+        `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
+      );
       await this.stopWriter(slot);
     } else if (slot.process && (result.sourceChanged || result.changed) && !this.writerProjectionBaselineMatches(slot)) {
       if (initialMaterialization || this.writerOwnershipActive(slot)) {
@@ -915,12 +936,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.captureWriterProjectionResult(slot, result);
           this.reconcileOverlay(slot);
         } else {
-          slot.conflict = {
-            message: "Session changed on disk: its source version moved while the Pi runtime was active; abort to recover before writing",
-            revision: projection.revision,
-          };
-          slot.runState = "conflict";
-          slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+          this.setProjectionConflict(
+            slot,
+            "external-change",
+            "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
+          );
           await this.stopWriter(slot);
         }
       } else {
@@ -974,11 +994,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private markForkBufferOverflow(slot: RuntimeSlot): void {
     if (slot.forkBufferOverflow) return;
     slot.forkBufferOverflow = true;
-    if (!slot.conflict) {
-      slot.conflict = { message: FORK_BUFFER_OVERFLOW_MESSAGE, revision: slot.projection?.revision ?? 0 };
-    }
-    slot.runState = "conflict";
-    slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+    if (!slot.conflict) this.setProjectionConflict(slot, "fork-overflow", FORK_BUFFER_OVERFLOW_MESSAGE);
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
     slot.forkOverflowCleanup = this.cleanupForkBufferOverflow(slot);
     void slot.forkOverflowCleanup.catch((error) => logRuntimeError(slot.id, error));
@@ -999,13 +1015,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (slot.pendingPartialPersistence) {
       this.clearPartialPersistence(slot);
       if (!slot.conflict) {
-        slot.conflict = {
-          message: "Pi stopped before an incomplete JSONL persistence frame was verified",
-          revision: slot.projection?.revision ?? slot.branchRevision,
-        };
-        slot.runState = "conflict";
-        slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+        const conflict = this.setProjectionConflict(
+          slot,
+          "incomplete-persistence",
+          "Pi stopped before an incomplete JSONL persistence frame was verified",
+        );
+        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
       }
     }
     slot.process = null;
@@ -1043,14 +1058,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (slot.conflict) throw Object.assign(new Error(slot.conflict.message), { status: 409 });
     if (slot.process && slot.ready && !this.writerProjectionBaselineMatches(slot)) {
       if (this.writerOwnershipActive(slot)) {
-        slot.conflict = {
-          message: "Session changed on disk while the Pi runtime was active; abort to recover before writing",
-          revision: slot.projection.revision,
-        };
-        slot.runState = "conflict";
-        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+        const conflict = this.setProjectionConflict(
+          slot,
+          "external-change",
+          "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
+        );
         await this.stopWriter(slot);
-        throw Object.assign(new Error(slot.conflict.message), { status: 409 });
+        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
+        throw Object.assign(new Error(conflict.message), { status: 409 });
       }
       await this.stopWriter(slot);
     }
@@ -1065,14 +1080,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     await error.stopped.catch(() => undefined);
     await this.stopWriter(slot);
     if (slot.projection) await this.reconcileSlot(slot, true).catch(() => undefined);
-    slot.conflict = {
-      message: `Pi ${error.command} outcome is unknown; the worker was stopped and disk state reconciled`,
-      revision: slot.projection?.revision ?? slot.branchRevision,
-    };
-    slot.runState = "conflict";
-    slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
-    throw Object.assign(new Error(slot.conflict.message), { status: 504, outcomeUnknown: true });
+    const conflict = this.setProjectionConflict(
+      slot,
+      "outcome-unknown",
+      `Pi ${error.command} outcome is unknown; the worker was stopped and disk state reconciled`,
+    );
+    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
+    throw Object.assign(new Error(conflict.message), { status: 504, outcomeUnknown: true });
   }
 
   private async requestPersistence<T>(
@@ -1268,7 +1282,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private statusFor(slot: RuntimeSlot): SessionRuntimeStatus {
-    const indicator = isBusyRunState(slot.runState) ? "running" : (slot.attention ?? undefined);
+    let indicator: SessionRuntimeStatus["indicator"];
+    if (isBusyRunState(slot.runState)) {
+      indicator = "running";
+    } else if (slot.conflict && slot.id !== this.selectedSessionId) {
+      indicator = slot.conflict.kind === "external-change" ? "attention" : "failed";
+    } else {
+      indicator = slot.attention ?? undefined;
+    }
     return { runState: slot.runState, ...(indicator ? { indicator } : {}) };
   }
 
@@ -1546,15 +1567,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       if (owner.pendingPartialPersistence) {
         this.clearPartialPersistence(owner);
-        owner.conflict = {
-          message: "Pi exited before an incomplete JSONL persistence frame was verified",
-          revision: owner.projection?.revision ?? owner.branchRevision,
-        };
-        owner.runState = "conflict";
+        this.setProjectionConflict(
+          owner,
+          "incomplete-persistence",
+          "Pi exited before an incomplete JSONL persistence frame was verified",
+        );
       } else {
         owner.runState = "failed";
+        owner.attention = this.selectedSessionId === owner.id ? null : "failed";
       }
-      owner.attention = this.selectedSessionId === owner.id ? null : "failed";
       this.clearPendingExtensionUi(owner, "stopped");
       owner.pendingQueues = emptyPendingQueues();
       owner.extensionDisplays = [];
@@ -2426,10 +2447,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async failUnknownBranchOutcome(slot: RuntimeSlot, message: string): Promise<never> {
     await this.stopWriter(slot);
     await this.reconcileSlot(slot, true).catch(() => undefined);
-    slot.conflict = { message, revision: slot.projection?.revision ?? slot.branchRevision };
-    slot.runState = "conflict";
-    slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+    const conflict = this.setProjectionConflict(slot, "outcome-unknown", message);
+    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
     throw Object.assign(new Error(message), { status: 504, outcomeUnknown: true });
   }
 

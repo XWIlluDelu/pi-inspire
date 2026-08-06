@@ -140,7 +140,8 @@ describe("branch request view ownership", () => {
       if (selectionOutcome === "failed") {
         expect(store.getState().sessionId).toBe("s1");
         expect(store.getState().branchTreeError).toMatch(/stale/);
-        expect(store.getState().error).toBe("selection failed");
+        expect(store.getState().error).toBeNull();
+        expect(store.getState().sessionActionError).toBe("selection failed");
       } else {
         expect(store.getState().sessionId).toBe("s2");
         expect(store.getState().branchTree).toBeNull();

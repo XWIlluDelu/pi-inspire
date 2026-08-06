@@ -23,6 +23,7 @@ import {
   type ModelIdentity,
   type ProjectDirEntry,
   type ProjectDisplayPreference,
+  projectionConflictSeverity,
   type ProjectionConflict,
   type ProjectionHealth,
   type ResourceDescriptor,
@@ -233,6 +234,9 @@ export interface AppState extends EventSlice {
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
+  /** Global operation error. Projection conflicts use errorSeverity to
+   * distinguish safe external attention from integrity failures. */
+  errorSeverity: "error" | "warning";
   /** Rendered union of chronological catalog pages and separately hydrated
    * curated/live identities. Only the chronological pages advance the cursor. */
   sessions: SessionSummary[];
@@ -245,6 +249,11 @@ export interface AppState extends EventSlice {
   /** Current operation, retained after failure so retry copy stays truthful. */
   sessionListOperation: "reset" | "older" | "refresh" | "preserve" | "hydrate" | null;
   sessionListError: string | null;
+  /** Selection failures stay with the session navigation/start surface rather
+   * than competing with transcript integrity errors in the topbar. */
+  sessionActionError: string | null;
+  /** Destructive-action failures stay inside the confirmation dialog. */
+  sessionDeleteError: string | null;
   /** Authoritative per-session runtime status for every live session worker,
    * keyed by session id. Drives nav attention indicators. */
   sessionStatuses: Record<string, SessionRuntimeStatus>;
@@ -319,6 +328,7 @@ const initialState: AppState = {
   projectionHealth: { status: "ok" },
   projectionConflict: null,
   projectionError: null,
+  errorSeverity: "error",
   sessions: [],
   sessionQuery: "",
   sessionListTotal: 0,
@@ -328,6 +338,8 @@ const initialState: AppState = {
   sessionListHydrating: false,
   sessionListOperation: null,
   sessionListError: null,
+  sessionActionError: null,
+  sessionDeleteError: null,
   sessionStatuses: {},
   attentionSessionIds: [],
   openingSessionId: null,
@@ -421,8 +433,8 @@ export class AppStore {
     for (const listener of this.listeners) listener();
   }
 
-  private fail(message: string): void {
-    this.set({ error: message });
+  private fail(message: string, severity: "error" | "warning" = "error"): void {
+    this.set({ error: message, errorSeverity: severity });
   }
 
   private notify(kind: Notice["kind"], text: string): void {
@@ -531,11 +543,11 @@ export class AppStore {
         notification.close();
       };
     } catch {
-      this.fail("Desktop notifications are unavailable in this browser context");
+      this.notify("warning", "Desktop notifications are unavailable in this browser context");
     }
   }
 
-  dismissError = (): void => this.set({ error: null });
+  dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
   private handleAuthFailure(): void {
     // Null the owned socket first so its close handler cannot schedule a
@@ -606,7 +618,7 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
-        this.set({ connection: "offline", error: error instanceof Error ? error.message : "Bootstrap failed" });
+        this.set({ connection: "offline", error: null, errorSeverity: "error" });
         this.scheduleReconnect(token);
       }
     }
@@ -695,6 +707,7 @@ export class AppStore {
     const projectionConflict = active?.projectionConflict ?? null;
     const projectionError = projectionConflict?.message ??
       (projectionHealth.status === "error" ? projectionHealth.message ?? "Session projection failed" : null);
+    const projectionSeverity = projectionConflictSeverity(projectionConflict) === "attention" ? "warning" : "error";
     const clearedProjectionError = !projectionError && this.state.error === this.state.projectionError;
     const sessionStatuses = snapshot.sessionStatuses ?? {};
     this.reconcileAttentionArms(sessionStatuses);
@@ -720,12 +733,15 @@ export class AppStore {
       projectionHealth,
       projectionConflict,
       projectionError,
-      ...(projectionError ? { error: projectionError } : clearedProjectionError ? { error: null } : {}),
+      ...(projectionError
+        ? { error: projectionError, errorSeverity: projectionSeverity }
+        : clearedProjectionError ? { error: null, errorSeverity: "error" } : {}),
       streaming: Boolean(active?.isStreaming),
       runState: active?.projectionConflict ? "conflict" : snapshot.runState,
       // Wholesale replace: the host clears completion attention for the
       // session that was just viewed, so stale client state must not linger.
       sessionStatuses,
+      sessionActionError: null,
       // Settled activity is rebuilt from the selected worker. Background
       // extension dialogs are restored in Pi request order when their owning
       // session is viewed.
@@ -882,6 +898,7 @@ export class AppStore {
           : this.state.projectionConflict;
       const projectionError = conflict?.message ??
         (health.status === "error" ? health.message ?? "Session projection failed" : null);
+      const projectionSeverity = projectionConflictSeverity(conflict) === "attention" ? "warning" : "error";
       const clearedProjectionError = !projectionError && this.state.error === this.state.projectionError;
       this.set({
         ...(sessionStatuses ? { sessionStatuses } : {}),
@@ -889,7 +906,9 @@ export class AppStore {
         projectionHealth: health,
         projectionConflict: conflict,
         projectionError,
-        ...(projectionError ? { error: projectionError } : clearedProjectionError ? { error: null } : {}),
+        ...(projectionError
+          ? { error: projectionError, errorSeverity: projectionSeverity }
+          : clearedProjectionError ? { error: null, errorSeverity: "error" } : {}),
       });
       const revision = typeof event.revision === "number" ? event.revision : undefined;
       void this.resync(eventSessionId ?? this.state.sessionId, this.selectionGeneration, revision);
@@ -900,8 +919,13 @@ export class AppStore {
       if (sessionStatuses) this.set({ sessionStatuses });
       const conflict = event.conflict as ProjectionConflict | undefined;
       if (typeof conflict?.message === "string") {
-        this.set({ projectionConflict: conflict, projectionError: conflict.message, runState: "conflict" });
-        this.fail(conflict.message);
+        this.set({
+          projectionConflict: conflict,
+          projectionError: conflict.message,
+          runState: "conflict",
+          error: conflict.message,
+          errorSeverity: projectionConflictSeverity(conflict) === "attention" ? "warning" : "error",
+        });
       }
       return;
     }
@@ -979,10 +1003,14 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
-        this.set({
-          error: this.state.projectionError ??
+        const currentProjectionError = this.state.projectionError;
+        this.fail(
+          currentProjectionError ??
             (error instanceof Error ? `Failed to refresh session: ${error.message}` : "Failed to refresh session"),
-        });
+          currentProjectionError && projectionConflictSeverity(this.state.projectionConflict) === "error"
+            ? "error"
+            : "warning",
+        );
       }
     }
   }
@@ -1552,7 +1580,6 @@ export class AppStore {
       await this.api.refreshSessions();
       if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
       await this.requestSessionReset(query, ticket);
-      if (ticket === this.sessionLoadTicket) this.set({ error: null });
     } catch (error) {
       if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
       if (error instanceof ApiError && error.status === 401) {
@@ -1577,6 +1604,7 @@ export class AppStore {
     if (id === this.state.sessionId && this.openingOwner === null) return;
     if (id === this.state.openingSessionId) return; // duplicate pending target
     this.invalidateBranchForSelectionIntent();
+    this.set({ sessionActionError: null });
     const ticket = ++this.selectionRequest;
     this.claimOpening(ticket, id);
     try {
@@ -1586,14 +1614,14 @@ export class AppStore {
       if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return;
       this.applySnapshot(snapshot);
       this.ensureSessionVisible(id);
-      this.set({ error: null });
+      this.set({ sessionActionError: null });
       if (this.readyWhileOpening.get(id) === ticket) {
         this.readyWhileOpening.delete(id);
         void this.resync(id, this.selectionGeneration);
       }
     } catch (error) {
       if (ticket === this.selectionRequest && this.openingOwner === ticket) {
-        this.fail(error instanceof Error ? error.message : "Failed to open session");
+        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to open session" });
       }
     } finally {
       if (this.readyWhileOpening.get(id) === ticket) this.readyWhileOpening.delete(id);
@@ -1607,10 +1635,11 @@ export class AppStore {
     if (!this.api) return;
     const target = cwd?.trim() || this.state.cwd;
     if (!target) {
-      this.fail("Enter a project directory to start a session");
+      this.notify("warning", "Enter a project directory to start a session");
       return;
     }
     this.invalidateBranchForSelectionIntent();
+    this.set({ sessionActionError: null });
     const ticket = ++this.selectionRequest;
     // A new-session intent supersedes any opener immediately. There is no
     // destination id to show until the host returns the new session identity,
@@ -1621,11 +1650,11 @@ export class AppStore {
       if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return; // superseded by a newer selection
       this.applySnapshot(snapshot);
       if (snapshot.active?.sessionId) this.ensureSessionVisible(snapshot.active.sessionId);
-      this.set({ error: null });
+      this.set({ sessionActionError: null });
       void this.refreshLoadedSessions();
     } catch (error) {
       if (ticket === this.selectionRequest && this.openingOwner === ticket) {
-        this.fail(error instanceof Error ? error.message : "Failed to create session");
+        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to create session" });
       }
     } finally {
       this.releaseOpening(ticket);
@@ -1638,19 +1667,21 @@ export class AppStore {
     try {
       await this.api.renameSession(sessionId, trimmedName);
       // The response may return after a session switch; only the owning
-      // session's visible title updates or clears its visible error.
-      if (this.state.sessionId === sessionId) this.set({ sessionName: trimmedName, error: null });
+      // session's visible title updates.
+      if (this.state.sessionId === sessionId) this.set({ sessionName: trimmedName });
       void this.refreshLoadedSessions();
       return true;
     } catch (error) {
       // A background rename must not surface its failure over another visible
       // session. The caller still receives false for its owning editor.
       if (this.state.sessionId === sessionId) {
-        this.fail(error instanceof Error ? error.message : "Failed to rename session");
+        this.notify("warning", error instanceof Error ? error.message : "Failed to rename session");
       }
       return false;
     }
   };
+
+  clearSessionDeleteError = (): void => this.set({ sessionDeleteError: null });
 
   deleteSession = async (sessionId: string): Promise<SessionDeleteDisposition | null> => {
     if (
@@ -1660,13 +1691,13 @@ export class AppStore {
     const preserveQuery = this.state.sessionQuery;
     const preserveOffset = this.state.sessionListNextOffset;
     const preserveTotal = this.state.sessionListTotal;
-    this.set({ deletingSessionId: sessionId, error: null });
+    this.set({ deletingSessionId: sessionId, sessionDeleteError: null });
     try {
       // Hiding is an optimistic preference write. Fence it before DELETE so a
       // late PATCH cannot resurrect the deleted id in durable navigation data.
       await this.prefsWrites;
       if (!this.state.prefs.hiddenSessionIds.includes(sessionId)) {
-        this.fail("The session must remain in Hidden before it can be deleted");
+        this.set({ sessionDeleteError: "The session must remain in Hidden before it can be deleted" });
         return null;
       }
       const result = await this.api.deleteSession(sessionId);
@@ -1699,7 +1730,7 @@ export class AppStore {
       void this.preserveLoadedSessions(preserveQuery, preserveOffset, preserveTotal);
       return result.disposition;
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to delete session");
+      this.set({ sessionDeleteError: error instanceof Error ? error.message : "Failed to delete session" });
       return null;
     } finally {
       if (this.state.deletingSessionId === sessionId) this.set({ deletingSessionId: null });
@@ -1714,11 +1745,11 @@ export class AppStore {
     const composer = this.composerFor(sessionId);
     if (composer.sending) return false;
     if (composer.attachments.some((item) => item.status === "uploading")) {
-      this.fail("Attachments are still uploading");
+      this.notify("warning", "Attachments are still uploading");
       return false;
     }
     if (composer.attachments.some((item) => item.status === "error")) {
-      this.fail("Remove failed attachments before sending");
+      this.notify("warning", "Remove failed attachments before sending");
       return false;
     }
     const included = composer.attachments;
@@ -1793,7 +1824,7 @@ export class AppStore {
       this.savePrefs({ recentModelIds });
       await this.resync(sessionId, this.selectionGeneration);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to set model");
+      this.notify("warning", error instanceof Error ? error.message : "Failed to set model");
     }
   };
 
@@ -1812,7 +1843,7 @@ export class AppStore {
         this.set({ thinkingLevel: previous });
         void this.resync();
       }
-      this.fail(error instanceof Error ? error.message : "Failed to set thinking level");
+      this.notify("warning", error instanceof Error ? error.message : "Failed to set thinking level");
     }
   };
 
@@ -1877,7 +1908,7 @@ export class AppStore {
     const composer = this.composerFor(sessionId);
     const room = MAX_ATTACHMENTS - composer.attachments.length;
     const accepted = files.slice(0, Math.max(0, room));
-    if (accepted.length < files.length) this.fail(`At most ${MAX_ATTACHMENTS} attachments per message`);
+    if (accepted.length < files.length) this.notify("warning", `At most ${MAX_ATTACHMENTS} attachments per message`);
     if (accepted.length === 0) return;
 
     const pending: PendingAttachment[] = accepted.map((file) => {
@@ -1948,7 +1979,7 @@ export class AppStore {
     const composer = this.composerFor(sessionId);
     if (composer.sending || composer.projectFiles.includes(path)) return;
     if (composer.projectFiles.length >= MAX_PROJECT_FILES) {
-      this.fail(`At most ${MAX_PROJECT_FILES} project files per message`);
+      this.notify("warning", `At most ${MAX_PROJECT_FILES} project files per message`);
       return;
     }
     composer.projectFiles = [...composer.projectFiles, path];
@@ -2086,7 +2117,7 @@ export class AppStore {
           this.set({ prefs: { ...this.state.prefs, ...restored } });
         }
         if (curationPatch) this.curationChanged();
-        this.fail(error instanceof Error ? error.message : "Failed to save the preference");
+        this.notify("warning", error instanceof Error ? error.message : "Failed to save the preference");
       });
   }
 
@@ -2096,7 +2127,7 @@ export class AppStore {
     if (completionAttention === "desktop") {
       const NotificationApi = typeof window !== "undefined" ? window.Notification : undefined;
       if (!NotificationApi) {
-        this.fail("Desktop notifications are not supported by this browser");
+        this.notify("warning", "Desktop notifications are not supported by this browser");
         return false;
       }
       let permission = NotificationApi.permission;
@@ -2106,12 +2137,12 @@ export class AppStore {
           // never request permission during bootstrap or background events.
           permission = await NotificationApi.requestPermission();
         } catch {
-          this.fail("The browser could not request notification permission");
+          this.notify("warning", "The browser could not request notification permission");
           return false;
         }
       }
       if (permission !== "granted") {
-        this.fail(permission === "denied" ? "Desktop notification permission was denied" : "Desktop notification permission was not granted");
+        this.notify("warning", permission === "denied" ? "Desktop notification permission was denied" : "Desktop notification permission was not granted");
         return false;
       }
     }
@@ -2277,7 +2308,7 @@ export class AppStore {
       }
       if (!owns()) return false;
       const message = error instanceof Error ? error.message : "Branch navigation failed";
-      this.set({ branchTreeError: message, error: message });
+      this.set({ branchTreeError: message });
       return false;
     } finally {
       if (owns() && this.state.branchActionId === actionId) this.set({ branchActionId: null });
@@ -2306,7 +2337,7 @@ export class AppStore {
       if (!owns()) return false;
       this.applySnapshot(response.snapshot);
       this.ensureSessionVisible(response.sessionId);
-      this.set({ editorText: { text: response.editorText, nonce: (this.state.editorText?.nonce ?? 0) + 1 }, error: null });
+      this.set({ editorText: { text: response.editorText, nonce: (this.state.editorText?.nonce ?? 0) + 1 } });
       void this.refreshLoadedSessions();
       return true;
     } catch (error) {
@@ -2316,7 +2347,7 @@ export class AppStore {
       }
       if (!owns()) return false;
       const message = error instanceof Error ? error.message : "Fork failed";
-      this.set({ branchTreeError: message, error: message });
+      this.set({ branchTreeError: message });
       return false;
     } finally {
       if (owns() && this.state.branchActionId === actionId) this.set({ branchActionId: null });

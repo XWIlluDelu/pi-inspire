@@ -351,6 +351,43 @@ describe("multi-session event routing", () => {
     expect(store.getState().error).toBe("ownership conflict");
   });
 
+  it.each([
+    ["external-change", { status: "ok" as const }, "warning"],
+    ["projection-failure", { status: "error" as const, message: "damaged projection" }, "error"],
+  ] as const)("keeps %s severity when event-driven resync fails", async (kind, health, expectedSeverity) => {
+    let snapshotCalls = 0;
+    let releaseSnapshot!: (value: { status: number; body: { error: string } }) => void;
+    const failedSnapshot = new Promise<{ status: number; body: { error: string } }>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/snapshot")) {
+        snapshotCalls += 1;
+        return failedSnapshot;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const conflict = { kind, message: `${kind} conflict`, revision: 2 };
+    socket.emit({
+      type: "session_projection_conflict", sessionId: "s1", conflict,
+      sessionStatus: { runState: "conflict" },
+    });
+    let updatesAfterFailure = 0;
+    const unsubscribe = store.subscribe(() => { updatesAfterFailure += 1; });
+    socket.emit({
+      type: "session_projection_changed", sessionId: "s1", revision: 2, health, conflict,
+      sessionStatus: { runState: "conflict" },
+    });
+    await vi.waitFor(() => expect(snapshotCalls).toBe(1));
+    updatesAfterFailure = 0;
+    releaseSnapshot({ status: 503, body: { error: "snapshot unavailable" } });
+    await vi.waitFor(() => expect(updatesAfterFailure).toBeGreaterThan(0));
+    expect(store.getState().errorSeverity).toBe(expectedSeverity);
+    expect(store.getState().error).toBe(`${kind} conflict`);
+    unsubscribe();
+  });
+
   it("keeps conflict abortable while an extension dialog is pending", async () => {
     let aborts = 0;
     installFetch((url, init) => {
@@ -844,7 +881,8 @@ describe("thinking level control", () => {
     await store.setThinkingLevel("xhigh");
     // rolled back: the UI must not claim a level the runtime rejected
     expect(store.getState().thinkingLevel).toBe("medium");
-    expect(store.getState().error).toBe("unsupported level");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.some((notice) => notice.kind === "warning" && notice.text === "unsupported level")).toBe(true);
     await vi.waitFor(() => expect(snapshotCalls).toBeGreaterThan(0));
   });
 
@@ -938,7 +976,8 @@ describe("session switching guard", () => {
     await store.openSession("s9");
     expect(store.getState().openingSessionId).toBeNull();
     expect(store.getState().sessionId).toBe("s1"); // active session unchanged
-    expect(store.getState().error).toBe("session is owned by another Pi process");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().sessionActionError).toBe("session is owned by another Pi process");
 
     // a later selection is not blocked by the failed attempt
     vi.stubGlobal(
@@ -1057,7 +1096,7 @@ describe("navigation curation", () => {
     store.toggleSessionPin("s7");
     expect(store.getState().prefs.pinnedSessionIds).toEqual(["s7"]);
 
-    await vi.waitFor(() => expect(store.getState().error).toBe("preference write rejected"));
+    await vi.waitFor(() => expect(store.getState().notices.some((notice) => notice.kind === "warning" && notice.text === "preference write rejected")).toBe(true));
     expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
   });
 
@@ -1077,7 +1116,7 @@ describe("navigation curation", () => {
 
     store.setTheme("dark"); // this write fails
     store.setTheme("light"); // …but a newer local change already owns the field
-    await vi.waitFor(() => expect(store.getState().error).toBe("preference write rejected"));
+    await vi.waitFor(() => expect(store.getState().notices.some((notice) => notice.kind === "warning" && notice.text === "preference write rejected")).toBe(true));
     expect(store.getState().prefs.theme).toBe("light");
   });
 
@@ -1184,7 +1223,8 @@ describe("navigation curation", () => {
     // Neither write reached disk, so the surviving value has to be the one the
     // host still holds — not "dark", which was only ever a local optimism.
     await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("system"));
-    expect(store.getState().error).toBe("preference write rejected");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.some((notice) => notice.kind === "warning" && notice.text === "preference write rejected")).toBe(true);
   });
 });
 
@@ -2136,6 +2176,7 @@ describe("session deletion ownership", () => {
     expect(store.getState().sessions).toHaveLength(1);
     expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
     expect(sessionDraft("s2")).toBe("keep me");
-    expect(store.getState().error).toBe("Session is still running");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().sessionDeleteError).toBe("Session is still running");
   });
 });
