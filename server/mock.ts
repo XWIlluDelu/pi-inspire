@@ -10,6 +10,8 @@ import type {
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
+  ModelOption,
+  NewSessionOptions,
   PromptRequest,
   SessionDeleteResponse,
   SessionListResponse,
@@ -68,6 +70,11 @@ power = np.abs(np.fft.rfft(signal)) ** 2
 \`\`\`
 
 See the [Pi documentation](https://pi.dev) for the runtime contract.`;
+
+export const MOCK_AVAILABLE_MODELS: ModelOption[] = [
+  { provider: "kimi-coding", id: "kimi-k3", name: "Kimi K3", reasoning: true },
+  { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+];
 
 const initialMessages = [
   {
@@ -255,10 +262,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         projectionHealth: { status: "ok" },
         projectionConflict: null,
         stats: { contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 } },
-        availableModels: [
-          { provider: "kimi-coding", id: "kimi-k3", contextWindow: 131_072, reasoning: true },
-          { provider: "anthropic", id: "claude-sonnet-4", contextWindow: 200_000, reasoning: true },
-        ],
+        availableModels: structuredClone(MOCK_AVAILABLE_MODELS),
         commands: [
           { name: "compact", description: "Compact the current context", source: "extension" },
           { name: "skill:docdoki", description: "Maintain project design documents", source: "skill" },
@@ -281,10 +285,17 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return this.activate(id, summaries.find((item) => item.id === id)?.cwd ?? "/home/demo/research");
   }
 
-  async newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot> {
+  async newSession(cwdInput: string, options: NewSessionOptions = {}): Promise<ActiveSnapshot> {
     const id = `mock-new-${++this.nextSession}`;
     const snapshot = this.activate(id, cwdInput);
-    if (snapshot.active) snapshot.active.sessionName = name?.trim() || undefined;
+    if (snapshot.active) {
+      snapshot.active.sessionName = options.name?.trim() || undefined;
+      const selected = options.model
+        ? MOCK_AVAILABLE_MODELS.find((model) => model.provider === options.model?.provider && model.id === options.model.id)
+        : undefined;
+      if (selected) snapshot.active.model = structuredClone(selected);
+      if (options.thinkingLevel) snapshot.active.thinkingLevel = options.thinkingLevel;
+    }
     return snapshot;
   }
 

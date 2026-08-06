@@ -27,6 +27,7 @@ import {
   type BranchTreeResponse,
   type ExtensionUiRequest,
   type GenericExtensionDisplay,
+  type NewSessionOptions,
   type PendingQueues,
   type ProjectionConflict,
   type PromptRequest,
@@ -90,7 +91,7 @@ export interface RuntimeLike {
    * the host's current selection. */
   sessionCwd(sessionId: string): string | null;
   openSession(id: string): Promise<ActiveSnapshot>;
-  newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot>;
+  newSession(cwdInput: string, options?: NewSessionOptions): Promise<ActiveSnapshot>;
   deleteSession(sessionId: string): Promise<SessionDeleteResponse>;
   prompt(request: PromptRequest): Promise<void>;
   abort(sessionId: string): Promise<void>;
@@ -2098,13 +2099,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (this.selectedSessionId === sessionId || this.selectionReservations.has(sessionId)) {
       throw Object.assign(new Error("The session became active while deletion was being prepared"), { status: 409 });
     }
-    const current = await this.deletionCatalogRecord(sessionId);
-    if (resolve(current.path) !== path) {
-      throw Object.assign(new Error("The session path changed while deletion was being prepared"), { status: 409 });
-    }
-
+    // The initial forced catalog read established one unambiguous id/path.
+    // The destructive adapter now reopens that exact path, verifies its
+    // current regular-file identity and embedded session id, and quarantines
+    // that inode atomically. A second global JSONL rescan cannot close a race
+    // beyond that path-local authority and made browser deletion pay for the
+    // full project catalog twice.
     try {
-      const disposition = await this.deleteSessionRecord(current);
+      const disposition = await this.deleteSessionRecord(initial);
       return { sessionId, disposition };
     } finally {
       this.catalog.invalidate();
@@ -2124,7 +2126,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return deletion;
   }
 
-  async newSession(cwdInput: string, name?: string): Promise<ActiveSnapshot> {
+  async newSession(cwdInput: string, options: NewSessionOptions = {}): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
     const cwd = await this.resolveWorkspaceRoot(cwdInput);
@@ -2137,7 +2139,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!details.isDirectory()) throw Object.assign(new Error("Project path is not a directory"), { status: 400 });
     this.assertNotClosing();
 
-    const args = name?.trim() ? ["--name", name.trim().slice(0, 160)] : [];
+    const name = options.name?.trim().slice(0, 160) || undefined;
+    const args: string[] = [];
+    if (name) args.push("--name", name);
+    if (options.model) args.push("--model", `${options.model.provider}/${options.model.id}`);
+    if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const bridge = newBridgeIdentity();
     const rpc = this.createProcess(this.workerOptions(cwd, args, bridge));
     const slot: RuntimeSlot = {
@@ -2267,7 +2273,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         sessionName: name,
         cwd,
         model: projection.model ?? state.model,
-        thinkingLevel: projection.thinkingLevel || String(state.thinkingLevel ?? "off"),
+        thinkingLevel: projection.hasActiveEntryType("thinking_level_change")
+          ? projection.thinkingLevel
+          : String(state.thinkingLevel ?? "off"),
         isStreaming: false,
         isCompacting: false,
         messages: page.messages,

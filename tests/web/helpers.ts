@@ -124,6 +124,10 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     piVersion: "0.80.10",
     mock: false,
     preferences: DEFAULT_PREFS,
+    availableModels: [
+      { provider: "kimi-coding", id: "kimi-k3", name: "Kimi K3", reasoning: true },
+      { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+    ],
     snapshot: { active: null, runState: "idle", sessionStatuses: {} },
     ...overrides,
   };

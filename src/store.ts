@@ -21,6 +21,8 @@ import {
   type InspirePreferences,
   type LaunchPreference,
   type ModelIdentity,
+  type ModelOption,
+  type NewSessionOptions,
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   projectionConflictSeverity,
@@ -140,12 +142,7 @@ function classifiedResourceFailure(reference: string, error: unknown): ResourceP
   return null;
 }
 
-export interface ModelOption {
-  provider: string;
-  id: string;
-  name?: string;
-  reasoning?: boolean;
-}
+export type { ModelOption } from "../shared/contracts";
 
 export interface PiCommand {
   name: string;
@@ -599,6 +596,7 @@ export class AppStore {
         prefs: boot.preferences,
         mock: boot.mock,
         version: boot.version,
+        availableModels: Array.isArray(boot.availableModels) ? boot.availableModels : [],
         bootstrapped: true,
         needsToken: false,
       });
@@ -718,7 +716,9 @@ export class AppStore {
       project: cwd ? projectNameFromCwd(cwd) : null,
       model: (active?.model as AppState["model"]) ?? null,
       thinkingLevel: typeof active?.thinkingLevel === "string" ? active.thinkingLevel : this.state.thinkingLevel,
-      availableModels: Array.isArray(active?.availableModels) ? (active.availableModels as ModelOption[]) : [],
+      availableModels: active && Array.isArray(active.availableModels) && active.availableModels.length > 0
+        ? (active.availableModels as ModelOption[])
+        : this.state.availableModels,
       commands: Array.isArray(active?.commands) ? (active.commands as PiCommand[]) : [],
       contextUsage: contextUsage(active?.stats ?? null),
       messages,
@@ -1631,12 +1631,13 @@ export class AppStore {
 
   /** Creates a session. Never falls back to "/": without an active or explicit
    * project directory the caller must collect one (the welcome page does). */
-  newSession = async (cwd?: string, name?: string): Promise<void> => {
-    if (!this.api) return;
+  newSession = async (cwd?: string, nameOrOptions: string | NewSessionOptions = {}): Promise<string | null> => {
+    if (!this.api) return null;
+    const options = typeof nameOrOptions === "string" ? { name: nameOrOptions } : nameOrOptions;
     const target = cwd?.trim() || this.state.cwd;
     if (!target) {
       this.notify("warning", "Enter a project directory to start a session");
-      return;
+      return null;
     }
     this.invalidateBranchForSelectionIntent();
     this.set({ sessionActionError: null });
@@ -1646,16 +1647,20 @@ export class AppStore {
     // but the old opening owner must not remain visible during that handoff.
     this.claimOpening(ticket, null);
     try {
-      const snapshot = await this.api.newSession(target, name);
-      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return; // superseded by a newer selection
+      const snapshot = await this.api.newSession(target, options);
+      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return null; // superseded by a newer selection
       this.applySnapshot(snapshot);
-      if (snapshot.active?.sessionId) this.ensureSessionVisible(snapshot.active.sessionId);
+      const sessionId = snapshot.active?.sessionId ?? null;
+      if (sessionId) this.ensureSessionVisible(sessionId);
+      if (options.model) this.rememberModel(options.model);
       this.set({ sessionActionError: null });
       void this.refreshLoadedSessions();
+      return sessionId;
     } catch (error) {
       if (ticket === this.selectionRequest && this.openingOwner === ticket) {
         this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to create session" });
       }
+      return null;
     } finally {
       this.releaseOpening(ticket);
     }
@@ -1809,6 +1814,14 @@ export class AppStore {
     }
   };
 
+  private rememberModel(model: ModelIdentity): void {
+    const recentModelIds = [
+      model,
+      ...this.state.prefs.recentModelIds.filter((candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model)),
+    ].slice(0, 8);
+    this.savePrefs({ recentModelIds });
+  }
+
   setModel = async (provider: string, modelId: string): Promise<void> => {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId) return;
@@ -1816,12 +1829,7 @@ export class AppStore {
       await this.api.setModel(sessionId, provider, modelId);
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
-      const chosen = { provider, id: modelId };
-      const recentModelIds = [
-        chosen,
-        ...this.state.prefs.recentModelIds.filter((model) => modelIdentityKey(model) !== modelIdentityKey(chosen)),
-      ].slice(0, 8);
-      this.savePrefs({ recentModelIds });
+      this.rememberModel({ provider, id: modelId });
       await this.resync(sessionId, this.selectionGeneration);
     } catch (error) {
       this.notify("warning", error instanceof Error ? error.message : "Failed to set model");
@@ -2313,6 +2321,26 @@ export class AppStore {
     } finally {
       if (owns() && this.state.branchActionId === actionId) this.set({ branchActionId: null });
     }
+  };
+
+  /** Fork directly from a settled transcript input. The tree is still the
+   * revision/capability authority; the bubble supplies only its owning entry
+   * id and never bypasses the normal branch validation path. */
+  forkFromEntry = async (targetId: string): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    if (!sessionId || !targetId) return false;
+    await this.loadBranchTree();
+    if (this.state.sessionId !== sessionId) return false;
+    const node = this.state.branchTree?.nodes.find((candidate) => candidate.id === targetId);
+    if (!node?.canFork) {
+      this.notify("warning", this.state.branchTreeError ?? "That input is no longer available to fork");
+      return false;
+    }
+    const forked = await this.forkBranch(targetId);
+    if (!forked && this.state.sessionId === sessionId) {
+      this.notify("warning", this.state.branchTreeError ?? "Fork failed");
+    }
+    return forked;
   };
 
   forkBranch = async (targetId: string): Promise<boolean> => {

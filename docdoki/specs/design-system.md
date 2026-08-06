@@ -2,6 +2,13 @@
 purpose: The concrete design-token and component contract for insπre’s front end; single design authority that styles.css and the components implement.
 covers:
   - index.html
+  - public/favicon.svg
+  - public/app-icon.svg
+  - public/app-icon-maskable.svg
+  - public/app-icon-192.png
+  - public/app-icon-512.png
+  - public/app-icon-maskable-512.png
+  - public/apple-touch-icon.png
   - src/styles.css
   - src/**/*.tsx
   - tests/web/app.test.tsx
@@ -306,6 +313,18 @@ warning capsule surface.
   in the center, the scroll-under fade. The nav header holds the italic
   serif wordmark (π in KaTeX math italic) and the mock badge; the rail shows
   the math-italic π alone.
+- **Installed-app identity** — the mark is a precision optical reticle: four
+  cardinal sight lines converge on a small hollow circle, while one 60° arc in
+  the upper-right and its 180° counterpart in the lower-left carry the circular
+  visual reference to Pi without reusing the π glyph. The geometry is teal and
+  white only. Sight lines, arcs, and the closed center ring have separately
+  compensated weights; exposed master-mark terminals receive only a sub-unit
+  manufacturing radius, preserving the instrument character without brittle
+  knife edges. Ordinary launcher assets place the master mark on the deep-teal
+  rounded tile; maskable and Apple assets use a full-bleed deep-teal field so
+  the operating system owns the final silhouette. The transparent browser
+  favicon is a separately drawn 16-unit optical size with one-pixel key strokes
+  and a white dark-scheme projection, not a mechanical reduction of the master.
 - **Topbar identity** — the session heading (600) is the rename affordance. An
   explicit Pi session name wins; otherwise the same normalized first-prompt
   projection used by navigation is shown, while a conversation with no prompt

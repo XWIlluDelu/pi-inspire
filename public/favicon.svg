@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-labelledby="title">
+  <title id="title">insπre</title>
+  <style>
+    svg { color: #00726d; }
+    @media (prefers-color-scheme: dark) { svg { color: #ffffff; } }
+  </style>
+  <circle cx="8" cy="8" r="1.25" fill="none" stroke="currentColor" stroke-width="1"/>
+  <path d="M8 1.5v4.25M14.5 8h-4.25M8 14.5v-4.25M1.5 8h4.25" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="butt"/>
+  <path d="M9.6 2.4a5.75 5.75 0 0 1 4 4M6.4 13.6a5.75 5.75 0 0 1-4-4" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="butt"/>
+</svg>

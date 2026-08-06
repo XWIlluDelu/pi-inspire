@@ -12,6 +12,7 @@ import type {
   HostDirListing,
   HostRootsResponse,
   InspirePreferences,
+  NewSessionOptions,
   ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
@@ -174,7 +175,8 @@ export function createApi(token: string) {
     sessionsByCwds: (cwds: string[]) =>
       post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-cwd", { cwds }),
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
-    newSession: (cwd: string, name?: string) => post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, name }),
+    newSession: (cwd: string, options: NewSessionOptions = {}) =>
+      post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, ...options }),
     renameSession: (sessionId: string, name: string) =>
       post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
     deleteSession: (sessionId: string) =>

@@ -31,6 +31,9 @@ export type AssistantContent = TextContent | ThinkingContent | ToolCallContent |
 
 export interface ChatMessage {
   role: string;
+  /** Host projection metadata: message-row identity and its owning Pi entry. */
+  __inspireMessageId?: string;
+  __inspireEntryId?: string;
   content?: unknown;
   timestamp?: number;
   provider?: string;

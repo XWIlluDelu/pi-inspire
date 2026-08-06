@@ -20,6 +20,20 @@ export interface ModelIdentity {
   id: string;
 }
 
+/** Browser-safe projection of Pi model metadata. Request/auth fields never
+ * cross the host boundary. */
+export interface ModelOption extends ModelIdentity {
+  name?: string;
+  reasoning?: boolean;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+}
+
+export interface NewSessionOptions {
+  name?: string;
+  model?: ModelIdentity;
+  thinkingLevel?: ThinkingLevel;
+}
+
 export function modelIdentityKey(model: Pick<ModelIdentity, "provider" | "id">): string {
   return JSON.stringify([model.provider, model.id]);
 }
@@ -504,6 +518,8 @@ export interface BootstrapResponse {
   piVersion: string;
   mock: boolean;
   preferences: InspirePreferences;
+  /** Configured models are available before any session owns a Pi worker. */
+  availableModels: ModelOption[];
   snapshot: ActiveSnapshot;
 }
 

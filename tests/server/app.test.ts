@@ -46,6 +46,9 @@ describe("local host API", () => {
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
+      availableModels: async () => [{
+        provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true,
+      }],
       distDir: join(temporary, "missing-dist"),
     });
     await new Promise<void>((resolve) => application.server.listen(0, "127.0.0.1", resolve));
@@ -96,7 +99,12 @@ describe("local host API", () => {
       .expect(200);
     expect(health.body).toEqual({ appName: "insπre", mock: true });
     const response = await api().expect(200);
-    expect(response.body).toMatchObject({ appName: "insπre", mock: true, piVersion: "0.80.10" });
+    expect(response.body).toMatchObject({
+      appName: "insπre",
+      mock: true,
+      piVersion: "0.80.10",
+      availableModels: [{ provider: "anthropic", id: "claude-sonnet-4", reasoning: true }],
+    });
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.headers["content-security-policy"]).toContain("default-src 'self'");
     // Remote images are barred so untrusted transcript content cannot fire
@@ -169,6 +177,29 @@ describe("local host API", () => {
       .expect(200);
     expect(opened.body.active.messages).toHaveLength(5);
     expect(opened.body.active.model.id).toBe("kimi-k3");
+  });
+
+  it("creates a session with an explicitly selected model and thinking level", async () => {
+    const created = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        cwd: temporary,
+        model: { provider: "anthropic", id: "claude-sonnet-4" },
+        thinkingLevel: "high",
+      })
+      .expect(200);
+    expect(created.body.active).toMatchObject({
+      cwd: temporary,
+      model: { provider: "anthropic", id: "claude-sonnet-4" },
+      thinkingLevel: "high",
+    });
+
+    await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary, thinkingLevel: "unbounded" })
+      .expect(400);
   });
 
   it("serves authenticated session-addressed older transcript pages", async () => {
