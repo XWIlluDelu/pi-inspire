@@ -1,13 +1,16 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { useEffect } from "react";
-import type {
-  AssistantRoundDisplayPreference,
-  CompletionAttentionPreference,
-  LaunchPreference,
-  ProjectDisplayPreference,
-  ThemePreference,
-  ToolVisibilityPreference,
-  VisibilityPreference,
+import {
+  ASSISTANT_ROUND_DISPLAYS,
+  TOOL_VISIBILITY_PREFERENCES,
+  VISIBILITY_PREFERENCES,
+  type AssistantRoundDisplayPreference,
+  type CompletionAttentionPreference,
+  type LaunchPreference,
+  type ProjectDisplayPreference,
+  type ThemePreference,
+  type ToolVisibilityPreference,
+  type VisibilityPreference,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
@@ -19,23 +22,24 @@ const THEMES: Array<{ value: ThemePreference; label: string; icon: React.ReactNo
   { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
 ];
 
-const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> = [
-  { value: "hidden", label: "Hidden" },
-  { value: "collapsed", label: "Collapsed" },
-  { value: "expanded", label: "Expanded" },
-];
+function preferenceLabel(value: string): string {
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
+}
 
-const TOOL_VISIBILITIES: Array<{ value: ToolVisibilityPreference; label: string }> = [
-  { value: "hidden", label: "Hidden" },
-  { value: "compact", label: "Compact" },
-  { value: "collapsed", label: "Collapsed" },
-  { value: "expanded", label: "Expanded" },
-];
+const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> = VISIBILITY_PREFERENCES.map((value) => ({
+  value,
+  label: preferenceLabel(value),
+}));
 
-const ASSISTANT_ROUNDS: Array<{ value: AssistantRoundDisplayPreference; label: string }> = [
-  { value: "divider", label: "Divider" },
-  { value: "details", label: "Details" },
-];
+const TOOL_VISIBILITIES: Array<{ value: ToolVisibilityPreference; label: string }> = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
+  value,
+  label: preferenceLabel(value),
+}));
+
+const ASSISTANT_ROUNDS: Array<{ value: AssistantRoundDisplayPreference; label: string }> = ASSISTANT_ROUND_DISPLAYS.map((value) => ({
+  value,
+  label: preferenceLabel(value),
+}));
 
 const PROJECT_DISPLAYS: Array<{ value: ProjectDisplayPreference; label: string }> = [
   { value: "folder", label: "Folder name" },

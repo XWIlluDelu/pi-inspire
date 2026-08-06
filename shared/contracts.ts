@@ -1,5 +1,5 @@
-export const VISIBILITY_PREFERENCES = ["hidden", "collapsed", "expanded"] as const;
-export const TOOL_VISIBILITY_PREFERENCES = ["hidden", "compact", "collapsed", "expanded"] as const;
+export const VISIBILITY_PREFERENCES = ["expanded", "collapsed", "hidden"] as const;
+export const TOOL_VISIBILITY_PREFERENCES = ["expanded", "collapsed", "compact", "hidden"] as const;
 export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MAX_ATTACHMENTS = 8;

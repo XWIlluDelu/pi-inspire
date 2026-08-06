@@ -209,6 +209,37 @@ describe("transcript density preferences", () => {
     expect(screen.getByText("alpha result")).toBeInTheDocument();
     return waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
   });
+
+  it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", () => {
+    const text = "First line with **strong** and $E = mc^2$\nSecond line";
+    const { rerender } = render(
+      <Transcript
+        messages={[{ role: "assistant", timestamp: 1, content: [{ type: "thinking", thinking: text }] }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const collapsed = document.querySelector(".card--thinking .card__header") as HTMLElement;
+    const summary = collapsed.querySelector(".card__summary--prose") as HTMLElement;
+    expect(within(summary).getByText("strong").tagName).toBe("STRONG");
+    expect(summary.querySelector(".katex")).not.toBeNull();
+    expect(screen.queryByText("Second line")).not.toBeInTheDocument();
+
+    fireEvent.click(collapsed);
+    const expanded = screen.getByText(/Second line/, { selector: ".rich-text--thinking p" });
+    expect(within(expanded.parentElement as HTMLElement).getByText("strong").tagName).toBe("STRONG");
+
+    rerender(
+      <Transcript
+        messages={[{ role: "assistant", timestamp: 1, content: [{ type: "thinking", thinking: text }] }]}
+        streaming={false}
+        thinkingVisibility="hidden"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Thinking/i })).not.toBeInTheDocument();
+  });
 });
 
 describe("persisted user images", () => {
