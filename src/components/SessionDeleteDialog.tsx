@@ -43,10 +43,7 @@ export function SessionDeleteDialog({
       >
         <header className="session-delete__header">
           <span className="session-delete__icon" aria-hidden><Trash2 size={17} /></span>
-          <div className="session-delete__heading">
-            <h2 className="dialog__title" id="session-delete-title">Delete session?</h2>
-            <span className="session-delete__project">{session.project}</span>
-          </div>
+          <h2 className="dialog__title" id="session-delete-title">Delete session?</h2>
           <button
             type="button"
             className="icon-button"
@@ -62,8 +59,10 @@ export function SessionDeleteDialog({
         <div className="session-delete__session" title={session.title}>
           {session.title || "New session"}
         </div>
-        <p className="dialog__message" id="session-delete-description">
-          The Pi conversation file will be moved to Trash when available. If Trash is unavailable, it will be permanently deleted. Forked sessions and project files are not removed.
+        <p className="dialog__message session-delete__description" id="session-delete-description">
+          <span>This session will be moved to Trash.</span>
+          <span>If Trash is unavailable, it will be permanently deleted.</span>
+          <span>Forked sessions remain; project files are unchanged.</span>
         </p>
         <p className="session-delete__warning" id="session-delete-warning">
           <AlertTriangle size={14} aria-hidden />

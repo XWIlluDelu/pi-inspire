@@ -82,11 +82,15 @@ export function ModelSelector({
   models,
   recent,
   onChange,
+  emptyLabel = "No session model",
+  disabled = false,
 }: {
   value: ModelOption | null;
   models: ModelOption[];
   recent: ModelIdentity[];
   onChange: (provider: string, id: string) => void;
+  emptyLabel?: string;
+  disabled?: boolean;
 }) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -181,7 +185,7 @@ export function ModelSelector({
   };
 
   const reasoning = value?.reasoning;
-  const display = value?.name ?? value?.id ?? "No session model";
+  const display = value?.name ?? value?.id ?? emptyLabel;
   return (
     <div className="model-picker" ref={rootRef}>
       <button
@@ -191,7 +195,7 @@ export function ModelSelector({
         aria-label="Model"
         aria-haspopup="listbox"
         aria-expanded={open}
-        disabled={models.length === 0}
+        disabled={disabled || models.length === 0}
         title={reasoning === false ? `${display} — thinking is not supported` : `${display} — ${value?.provider ?? "no provider"}`}
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(event) => {

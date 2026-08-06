@@ -232,19 +232,16 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
           title={copied ? "Copied" : `Copy path — ${state.cwd}`}
           aria-label="Copy project path"
         >
-          {/* Both layers always occupy the same grid cell, so toggling the
-              copied state never shifts the layout. */}
-          <span className={`topbar__project-layer ${copied ? "topbar__project-layer--hidden" : ""}`}>
-            <span className="topbar__project-label">
-              {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
-            </span>
+          {/* The normal label remains the sole width authority. Copy feedback
+              overlays it, so a wider hidden message cannot extend hover chrome. */}
+          <span className={`topbar__project-label ${copied ? "topbar__project-label--copied" : ""}`}>
+            {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
           </span>
-          <span
-            className={`topbar__project-layer ${copied ? "" : "topbar__project-layer--hidden"}`}
-            aria-hidden={!copied}
-          >
-            <Check size={11} aria-hidden /> Copied
-          </span>
+          <Check
+            size={11}
+            className={`topbar__project-feedback ${copied ? "topbar__project-feedback--visible" : ""}`}
+            aria-hidden
+          />
         </button>
       ) : null}
     </div>
@@ -438,16 +435,25 @@ export function App() {
   }
 
   const statuses = Object.entries(state.statuses);
-  const navigationContent = <Nav collapsed={navCollapsed} onNewSession={newSession} onSelectSession={openSession} />;
+  const navigationContent = (
+    <Nav
+      collapsed={navCollapsed}
+      newSessionActive={draftingNew}
+      onNewSession={newSession}
+      onSelectSession={openSession}
+    />
+  );
   const transcriptContent = state.sessionId && !draftingNew ? (
     <Transcript
       messages={state.messages}
       streaming={state.streaming}
       sessionId={state.sessionId}
+      viewId={state.transcriptViewId ?? ""}
       queue={state.queue}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.prefs.thinkingVisibility}
       toolVisibility={state.prefs.toolVisibility}
+      assistantRoundDisplay={state.prefs.assistantRoundDisplay}
       hasOlder={state.hasOlderMessages}
       loadingOlder={state.loadingOlderMessages}
       olderError={state.olderMessagesError}
@@ -577,7 +583,7 @@ export function App() {
             ) : composerContent}
           </>
         ) : (
-          <Welcome />
+          <Welcome showRecent={navCollapsed} />
         )}
       </main>
       {state.resourcesOpen ? (

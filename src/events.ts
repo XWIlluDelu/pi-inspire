@@ -34,6 +34,9 @@ export interface ChatMessage {
   /** Host projection metadata: message-row identity and its owning Pi entry. */
   __inspireMessageId?: string;
   __inspireEntryId?: string;
+  /** Position in Pi's authoritative active-path message projection. Embedded
+   * image content is addressed by this index plus its content-part index. */
+  __inspireMessageIndex?: number;
   content?: unknown;
   timestamp?: number;
   provider?: string;

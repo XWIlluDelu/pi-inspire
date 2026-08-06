@@ -125,26 +125,16 @@ describe("welcome flow", () => {
     expect(composeDocumentTitle(null, "", 0)).toBe("insπre");
   });
 
-  it("lists recent sessions in a collapsible list and opens one into the transcript", async () => {
+  it("avoids a duplicate recent list beside expanded navigation and opens a session from the nav", async () => {
     render(<App />);
-    // welcome page with the real routes
-    const heading = await screen.findByText("Recent sessions");
-    expect(screen.getByLabelText("Project directory")).toBeInTheDocument();
-    // no separate continue-previous card: the list carries every recent session
+    expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
+    expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
     expect(screen.queryByText("Continue previous")).not.toBeInTheDocument();
-    const recent = within(heading.closest(".welcome__recent") as HTMLElement);
-    expect(recent.getByText("Older work")).toBeInTheDocument();
-    expect(recent.getByText("Previous work")).toBeInTheDocument();
 
-    // the list can be closed and reopened
-    fireEvent.click(recent.getByRole("button", { name: /Recent sessions/ }));
-    expect(recent.queryByText("Older work")).not.toBeInTheDocument();
-    fireEvent.click(recent.getByRole("button", { name: /Recent sessions/ }));
-
-    fireEvent.click(recent.getByText("Previous work"));
-    // the opened session's message renders in the transcript
+    const nav = screen.getByRole("navigation", { name: "Sessions" });
+    fireEvent.click(within(nav).getByText("Previous work"));
     expect(await screen.findByText("hello world")).toBeInTheDocument();
-    expect(screen.getByLabelText("Message")).toBeInTheDocument(); // composer docked
+    expect(screen.getByLabelText("Message")).toBeInTheDocument();
   });
 
   it("renames the session through the topbar control", async () => {
@@ -308,7 +298,8 @@ describe("welcome flow", () => {
     expect(screen.getByLabelText("Project directory")).toHaveValue("D:\\projects");
   });
 
-  it("attributes an assistant turn exactly once, in its head line", async () => {
+  it("keeps the existing attribution row intact in Details mode", async () => {
+    act(() => store.setAssistantRoundDisplay("details"));
     render(<App />);
     await screen.findByText("answer text");
     const transcript = within(screen.getByRole("log"));
@@ -604,6 +595,7 @@ describe("folder grouping and settings page", () => {
     expect(within(dialog).getByRole("group", { name: "Project location" })).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Thinking cards")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Tool cards")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Assistant rounds")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
     expect(within(dialog).getByRole("combobox", { name: "Completion attention" })).toBeInTheDocument();
     expect(within(dialog).getByText(/permission is requested only when you choose it/i)).toBeInTheDocument();

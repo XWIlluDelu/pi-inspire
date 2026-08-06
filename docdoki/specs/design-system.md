@@ -358,11 +358,13 @@ warning capsule surface.
 - **Start surface** — the welcome canvas carries the one piece of brand
   ornament: a huge KaTeX math-italic π watermark at 4% ink (5% in dark)
   receding into the lower-right corner, clipped by its own layer so it
-  never scrolls or intercepts input.
+  never scrolls or intercepts input. Its recent-session list appears only
+  when navigation is collapsed; the expanded navigation already owns the same
+  session choices and the welcome surface does not duplicate them.
 
 ### Navigation
 
-- Folder-first hierarchy: group headers are a quiet semibold tier above their rows — `{typography.size-sm}`/600 `muted` with `0.04em` tracking on a 28px line. The chevron is 13px, folder and pin glyphs are 14px, and the folder-pin target is 24px (36px where hover is unavailable), so folder identity and curation state remain legible without competing with the transcript. Session rows remain single-line at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column at `{typography.size-xs}`, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
+- Folder-first hierarchy: group headers are a quiet semibold tier above their rows — `{typography.size-sm}`/600 `muted` with `0.04em` tracking on a 28px line. The entire header row toggles the folder, not just its label. The chevron is 13px and the folder glyph is 14px; folder curation uses the same two 22px trailing action targets as session rows. Session rows remain single-line at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column at `{typography.size-xs}`, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
 - Groups collapse freely — including the active session's group; a collapsed
   folder that hides the active session takes the `accent-tint` highlight and
   2px `accent` left edge itself. Active search overrides collapse.
@@ -372,16 +374,19 @@ warning capsule surface.
   `success`, `warning`, and `error`; the running dot breathes
   (`{motion.breathe}`) while settled attention dots rest under a soft 3px ring
   of their hue.
-- Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age column, which fades as they appear on hover or focus, so no text moves: ordinary rows expose Pin + Hide, while Hidden rows expose Restore + Delete. Delete uses `error` only on hover/focus and never adds a third slot; under `hover: none` the pair leaves the overlay and takes its own space beside the age instead of replacing it. A folder pin is state rather than an action, so once set it stays visible in `accent` beside the folder name. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden — separate by a spacing step, never by a rule.
-- Session pagination is a compact bordered text control below the chronological groups, paired with a centered `{typography.size-xs}` `faint` live count (`Showing N of total`). Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and completion replaces it with the end message. The touch layout raises the target to 40px; no viewport uses infinite scroll.
+- Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age/count column, which fades as they appear on hover or focus, so no text moves. Ordinary session and folder rows expose Pin + Hide; Hidden sessions expose Restore + Delete, while Hidden folders expose Restore without inventing folder deletion. Delete uses `error` only on hover/focus. Folder Hidden is independent metadata keyed by exact cwd: restoring a folder preserves any sessions hidden individually, and Pin/Hidden are mutually exclusive at the folder level. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden (sessions and whole folders) — separate by a spacing step, never by a rule.
+- Session pagination is a compact bordered text control below the chronological groups. It appears only while loading, on failure, or while older sessions remain; a fully loaded list emits no redundant `Showing N of N` or completion message. Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and the touch layout raises the target to 40px.
 - The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
   single header bar (folder icon + project name + chevron); expanded it takes
   up to half the column with a lazily loaded tree derived from the host's
   project index (directories first), and clicking a file opens the
   session-bound preview pane.
-- The nav column holds only brand, new-session, search, sessions, and the
-  explorer — settings and refresh live in the topbar and palette
-  respectively.
+- The nav column begins with one brand/new-session target: the transparent
+  reticle favicon + wordmark + `New session` in the full column, and the same
+  larger reticle alone in the collapsed rail. It follows the favicon's theme
+  colors (teal in light, white in dark) and opens the welcome/new-session surface without
+  creating a session. Search, sessions, and the explorer follow; settings and
+  refresh live in the topbar and palette respectively.
 
 ### Transcript
 
@@ -391,20 +396,8 @@ warning capsule surface.
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra
   spacing before each user turn groups a prompt with its response.
-- **Assistant flow** — no container: one attribution head line ("Pi" at
-  `{typography.size-sm}`/600 with model, time, and any unusual end reason in
-  `{typography.size-xs}` `faint`/`warning`) above an open document flow. The
-  model appears exactly once per turn, and routine `stop` reasons are
-  hidden. There is no footer meta line.
-- **Thinking card / tool card / generic card** — one collapsible card
-  anatomy: ~34px header row (icon 14px, label, one-line summary, status
-  icon, chevron), `{rounded.md}`, `surface` background, hairline border,
-  and a 3px annotation-colored left edge (`think` violet / `info` blue /
-  `error` when failed / `hairline-strong` unknown) with the icon in the
-  same hue. Thinking summaries are sans prose; tool summaries are mono;
-  labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded
-  bodies are inset with a hairline top; thinking bodies take a faint violet
-  tint.
+- **Assistant flow** — no container. The `Assistant rounds` preference is a pure presentation choice: `Details` preserves the existing attribution head line ("Pi" at `{typography.size-sm}`/600 with model, time, and any unusual end reason in `{typography.size-xs}` `faint`/`warning`), while `Divider` replaces that whole line with one 24px hairline and adds no exception text or inferred state. There is no footer meta line.
+- **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are sans prose; tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Tool cards add `Compact`: each uninterrupted adjacent run becomes a wrapping row of tool + status icon pills. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries.
 - **Code block** — `surface` (dark: `surface-inset`) background, hairline
   border, `{rounded.md}`, header bar with language label
   (`{typography.size-xs}` `faint`) and copy action; code at
@@ -418,9 +411,15 @@ warning capsule surface.
 
 ### Composer
 
-A level-0 surface at the reading column width: attachment/reference chip
-rows on top, auto-growing textarea (`{typography.size-md}`, max 40vh), and
-a meta row. Model and thinking level are quiet content-sized dropdowns: a
+A level-0 surface at the reading column width: ordinary attachment/reference
+chips and 64px image-thumbnail tiles on top, auto-growing textarea
+(`{typography.size-md}`, max 40vh), and a meta row. Image tiles omit file
+metadata, keep removal as a corner action, and open a centered image viewer.
+The viewer uses one full-viewport translucent blur plane with the crisp image
+above it and no image-edge shadow; image activation toggles fit/2× zoom, while
+thresholded drag pans only after zoom. Backdrop, close control, and Escape own
+dismissal. Sent user turns reuse the same thumbnail/viewer grammar. Model and
+thinking level are quiet content-sized dropdowns: a
 `{typography.size-sm}` value plus 11px chevron (flips while open) that
 hugs its value when closed. The menu is the themed replacement for the
 OS-drawn native option popup — a Level-2 anchored listbox (raised surface,

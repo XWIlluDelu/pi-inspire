@@ -3,6 +3,7 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  Circle,
   Copy,
   GitFork,
   Loader2,
@@ -12,8 +13,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GenericExtensionDisplay, PendingQueues, VisibilityPreference } from "../../shared/contracts";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type {
+  AssistantRoundDisplayPreference,
+  GenericExtensionDisplay,
+  PendingQueues,
+  ToolVisibilityPreference,
+  VisibilityPreference,
+} from "../../shared/contracts";
 import { isLocalResourceReference, isToolResourceArgumentKey } from "../../shared/resource-references";
 import {
   asMessage,
@@ -28,6 +35,7 @@ import {
 } from "../store";
 import { Dropdown } from "./Dropdown";
 import { handleRichTextCopy, RichText } from "./RichText";
+import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ScrollRail } from "./ScrollRail";
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff, type DiffLine } from "../diff";
@@ -180,6 +188,10 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
   );
 }
 
+function toolStatus(result: ChatMessage | undefined, streaming: boolean): ToolStatus {
+  return result ? (result.isError ? "failure" : "success") : streaming ? "running" : "unknown";
+}
+
 function statusIcon(status: ToolStatus) {
   switch (status) {
     case "running":
@@ -189,7 +201,7 @@ function statusIcon(status: ToolStatus) {
     case "failure":
       return <XCircle size={14} className="status-error" aria-label="failed" />;
     default:
-      return null;
+      return <Circle size={12} className="status-unknown" aria-label="no result" />;
   }
 }
 
@@ -208,31 +220,21 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
   );
 }
 
-function ToolCard({
+function ToolDetails({
   call,
   result,
   streaming,
-  visibility,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
   streaming: boolean;
-  visibility: VisibilityPreference;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const status: ToolStatus = result ? (result.isError ? "failure" : "success") : streaming ? "running" : "unknown";
   const output = result ? toolResultText(result) : "";
   const diff = result && !result.isError ? parseUnifiedDiff(output) : null;
   const truncated = !diff && output.length > 600;
   return (
-    <CollapsibleCard
-      defaultVisibility={visibility}
-      className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
-      icon={<Wrench size={14} aria-hidden />}
-      label={<code className="card__tool-name">{call.name}</code>}
-      summary={<ToolSummary call={call} />}
-      status={statusIcon(status)}
-    >
+    <>
       <div className="card__section-label">Arguments</div>
       {toolFileArguments(call).map((arg) => (
         <FileRefButton key={`${arg.key}:${arg.value}`} reference={arg.value} className="card__file-arg">
@@ -260,7 +262,130 @@ function ToolCard({
       ) : (
         <div className="card__pending">{streaming ? "Running…" : "No result recorded"}</div>
       )}
+    </>
+  );
+}
+
+function ToolCard({
+  call,
+  result,
+  streaming,
+  visibility,
+}: {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+  streaming: boolean;
+  visibility: VisibilityPreference;
+}) {
+  const status = toolStatus(result, streaming);
+  return (
+    <CollapsibleCard
+      defaultVisibility={visibility}
+      className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
+      icon={<Wrench size={14} aria-hidden />}
+      label={<code className="card__tool-name">{call.name}</code>}
+      summary={<ToolSummary call={call} />}
+      status={statusIcon(status)}
+    >
+      <ToolDetails call={call} result={result} streaming={streaming} />
     </CollapsibleCard>
+  );
+}
+
+interface CompactTool {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+}
+
+const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
+  running: "running",
+  success: "finished",
+  failure: "failed",
+  unknown: "no result",
+};
+
+/** Compact mode changes only the geometry of an adjacent run of tool calls:
+ * icons wrap horizontally, while one selected call reveals its ordinary
+ * details directly below that row without reordering transcript content. */
+function CompactToolStrip({ tools, streaming }: { tools: CompactTool[]; streaming: boolean }) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [renderedIndex, setRenderedIndex] = useState<number | null>(null);
+  const [origin, setOrigin] = useState(22);
+  const panelId = useId();
+  const itemsRef = useRef<HTMLDivElement>(null);
+  const rendered = renderedIndex == null ? null : tools[renderedIndex] ?? null;
+
+  // Keep the last detail mounted for the brief grid-collapse transition; it is
+  // inert throughout closing and is removed once no pixels remain visible.
+  useEffect(() => {
+    if (selectedIndex != null || renderedIndex == null) return;
+    const timer = window.setTimeout(() => setRenderedIndex(null), 180);
+    return () => window.clearTimeout(timer);
+  }, [selectedIndex, renderedIndex]);
+
+  return (
+    <div
+      className="tool-strip"
+      style={{ "--tool-detail-origin": `${origin}px` } as React.CSSProperties}
+    >
+      <div ref={itemsRef} className="tool-strip__items" aria-label="Tool calls">
+        {tools.map((tool, index) => {
+          const status = toolStatus(tool.result, streaming);
+          const summary = toolSummary(tool.call);
+          const active = selectedIndex === index;
+          return (
+            <button
+              key={tool.call.id ?? index}
+              type="button"
+              className={`tool-strip__item ${active ? "tool-strip__item--active" : ""} ${status === "failure" ? "tool-strip__item--failed" : ""}`}
+              aria-label={`${tool.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`}
+              aria-expanded={active}
+              aria-controls={active ? panelId : undefined}
+              title={`${tool.call.name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`}
+              onClick={(event) => {
+                const itemsBounds = itemsRef.current?.getBoundingClientRect();
+                const itemBounds = event.currentTarget.getBoundingClientRect();
+                if (itemsBounds) setOrigin(itemBounds.left - itemsBounds.left + itemBounds.width / 2);
+                if (active) {
+                  setSelectedIndex(null);
+                } else {
+                  setRenderedIndex(index);
+                  setSelectedIndex(index);
+                }
+              }}
+            >
+              <Wrench size={14} aria-hidden />
+              {statusIcon(status)}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        className={`tool-strip__reveal ${selectedIndex != null ? "tool-strip__reveal--open" : ""}`}
+        aria-hidden={selectedIndex == null}
+        inert={selectedIndex == null}
+      >
+        <div className="tool-strip__reveal-inner">
+          {rendered ? (
+            <section
+              key={rendered.call.id ?? renderedIndex}
+              id={panelId}
+              className={`card card--tool tool-strip__detail ${toolStatus(rendered.result, streaming) === "failure" ? "card--failed" : ""}`}
+            >
+              <div className="tool-strip__detail-head">
+                <span className="card__icon"><Wrench size={14} aria-hidden /></span>
+                <code className="card__tool-name">{rendered.call.name}</code>
+                <ToolSummary call={rendered.call} />
+                <span className="card__status">{statusIcon(toolStatus(rendered.result, streaming))}</span>
+              </div>
+              <div className="card__body">
+                <ToolDetails call={rendered.call} result={rendered.result} streaming={streaming} />
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -316,16 +441,50 @@ function MessageActions({ text, forkEntryId }: { text: string; forkEntryId?: str
   );
 }
 
-const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage }) {
+const UserBubble = memo(function UserBubble({
+  message,
+  sessionId,
+  viewId,
+}: {
+  message: ChatMessage;
+  sessionId: string;
+  viewId: string;
+}) {
   const timestamp = message.timestamp;
   const text = messageText(message);
+  const images: Array<{ key: string; reference: string } | { key: string; src: string }> = [];
+  if (Array.isArray(message.content)) {
+    message.content.forEach((part, partIndex) => {
+      if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "image") return;
+      const image = part as { data?: unknown; mimeType?: unknown };
+      if (Number.isSafeInteger(message.__inspireMessageIndex) && sessionId && viewId) {
+        images.push({ key: `persisted:${partIndex}`, reference: `pi-embedded://${message.__inspireMessageIndex}/${partIndex}` });
+      } else if (typeof image.data === "string" && typeof image.mimeType === "string" && /^image\//i.test(image.mimeType)) {
+        images.push({ key: `inline:${partIndex}`, src: `data:${image.mimeType};base64,${image.data}` });
+      }
+    });
+  }
   return (
     <div className="turn turn--user">
       <div
         className="user-bubble"
         title={timestamp != null ? new Date(timestamp).toLocaleString() : undefined}
       >
-        <RichText text={text} variant="user" />
+        {images.length > 0 ? (
+          <div className="user-bubble__images" aria-label="Attached images">
+            {images.map((image) => "reference" in image ? (
+              <PersistedImage
+                key={image.key}
+                sessionId={sessionId}
+                viewId={viewId}
+                reference={image.reference}
+              />
+            ) : (
+              <ImagePreview key={image.key} src={image.src} className="image-preview--message" />
+            ))}
+          </div>
+        ) : null}
+        {text ? <RichText text={text} variant="user" /> : null}
       </div>
       <MessageActions text={text} forkEntryId={message.__inspireEntryId} />
     </div>
@@ -338,53 +497,79 @@ const AssistantTurn = memo(function AssistantTurn({
   streaming,
   thinkingVisibility,
   toolVisibility,
+  assistantRoundDisplay,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
   streaming: boolean;
   thinkingVisibility: VisibilityPreference;
-  toolVisibility: VisibilityPreference;
+  toolVisibility: ToolVisibilityPreference;
+  assistantRoundDisplay: AssistantRoundDisplayPreference;
 }) {
   const items = contentItems(message);
+  const renderedItems: React.ReactNode[] = [];
+  const ordinaryToolVisibility: VisibilityPreference = toolVisibility === "compact" ? "collapsed" : toolVisibility;
+  for (let index = 0; index < items.length;) {
+    const item = items[index]!;
+    if (item.type === "toolCall" && toolVisibility === "compact") {
+      const tools: CompactTool[] = [];
+      const start = index;
+      while (index < items.length && items[index]?.type === "toolCall") {
+        const call = items[index] as ToolCallContent;
+        tools.push({ call, result: toolResults.get(call.id) });
+        index += 1;
+      }
+      renderedItems.push(
+        <CompactToolStrip key={`tools:${(tools[0]?.call.id ?? start)}`} tools={tools} streaming={streaming} />,
+      );
+      continue;
+    }
+    if (item.type === "text") {
+      const text = (item as { text?: string }).text ?? "";
+      if (text) renderedItems.push(<RichText key={index} text={text} variant="assistant" />);
+    } else if (item.type === "thinking") {
+      renderedItems.push(
+        <ThinkingCard key={index} text={(item as { thinking?: string }).thinking ?? ""} visibility={thinkingVisibility} />,
+      );
+    } else if (item.type === "toolCall") {
+      const call = item as ToolCallContent;
+      renderedItems.push(
+        <ToolCard
+          key={call.id ?? index}
+          call={call}
+          result={toolResults.get(call.id)}
+          streaming={streaming}
+          visibility={ordinaryToolVisibility}
+        />,
+      );
+    } else {
+      renderedItems.push(
+        <GenericCard key={index} item={item as AssistantContent & { type: string }} visibility={ordinaryToolVisibility} />,
+      );
+    }
+    index += 1;
+  }
+  const divider = assistantRoundDisplay === "divider";
   return (
-    <div className={`turn turn--assistant ${streaming ? "turn--streaming" : ""}`}>
-      {/* One attribution line: who, model (exactly once), time, and any
-          unusual end reason. Routine "stop" is noise and stays hidden. */}
-      <div className="turn__head">
-        <span className="turn__who">Pi</span>
-        {message.model ? <span className="turn__detail">{message.model}</span> : null}
-        {message.timestamp != null ? <span className="turn__detail">{clockTime(message.timestamp)}</span> : null}
-        {message.stopReason && message.stopReason !== "stop" ? (
-          <span className="turn__flag">{message.stopReason}</span>
-        ) : null}
-        <MessageActions text={messageText(message)} />
-      </div>
-      <div className="assistant-doc">
-        {items.map((item, index) => {
-          if (item.type === "text") {
-            const text = (item as { text?: string }).text ?? "";
-            return text ? <RichText key={index} text={text} variant="assistant" /> : null;
-          }
-          if (item.type === "thinking") {
-            return (
-              <ThinkingCard key={index} text={(item as { thinking?: string }).thinking ?? ""} visibility={thinkingVisibility} />
-            );
-          }
-          if (item.type === "toolCall") {
-            const call = item as ToolCallContent;
-            return (
-              <ToolCard
-                key={call.id ?? index}
-                call={call}
-                result={toolResults.get(call.id)}
-                streaming={streaming}
-                visibility={toolVisibility}
-              />
-            );
-          }
-          return <GenericCard key={index} item={item as AssistantContent & { type: string }} visibility={toolVisibility} />;
-        })}
-      </div>
+    <div className={`turn turn--assistant ${divider ? "turn--round-divider" : ""} ${streaming ? "turn--streaming" : ""}`}>
+      {divider ? (
+        <div className="turn__head turn__head--divider">
+          <span className="turn__divider" aria-hidden />
+          <MessageActions text={messageText(message)} />
+        </div>
+      ) : (
+        /* Details deliberately remains the existing attribution row verbatim. */
+        <div className="turn__head">
+          <span className="turn__who">Pi</span>
+          {message.model ? <span className="turn__detail">{message.model}</span> : null}
+          {message.timestamp != null ? <span className="turn__detail">{clockTime(message.timestamp)}</span> : null}
+          {message.stopReason && message.stopReason !== "stop" ? (
+            <span className="turn__flag">{message.stopReason}</span>
+          ) : null}
+          <MessageActions text={messageText(message)} />
+        </div>
+      )}
+      <div className="assistant-doc">{renderedItems}</div>
     </div>
   );
 });
@@ -528,23 +713,27 @@ export function Transcript({
   streaming,
   thinkingVisibility,
   toolVisibility,
+  assistantRoundDisplay = "details",
   hasOlder = false,
   loadingOlder = false,
   olderError = null,
   onLoadOlder = store.loadOlderMessages,
   sessionId = "",
+  viewId = "",
   queue = { steering: [], followUp: [] },
   extensionDisplays = [],
 }: {
   messages: ChatMessage[];
   streaming: boolean;
   thinkingVisibility: VisibilityPreference;
-  toolVisibility: VisibilityPreference;
+  toolVisibility: ToolVisibilityPreference;
+  assistantRoundDisplay?: AssistantRoundDisplayPreference;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   olderError?: string | null;
   onLoadOlder?: () => Promise<boolean>;
   sessionId?: string;
+  viewId?: string;
   queue?: PendingQueues;
   extensionDisplays?: GenericExtensionDisplay[];
 }) {
@@ -657,7 +846,7 @@ export function Transcript({
       if (message.role === "user") {
         built.push({
           key,
-          node: <UserBubble message={message} />,
+          node: <UserBubble message={message} sessionId={sessionId} viewId={viewId} />,
           searchText: settled ? messageText(message) : "",
           searchScope: "user",
         });
@@ -671,6 +860,7 @@ export function Transcript({
               streaming={index === activeStreamingIndex}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
+              assistantRoundDisplay={assistantRoundDisplay}
             />
           ),
           searchText: settled && index !== activeStreamingIndex ? messageText(message) : "",
@@ -681,7 +871,10 @@ export function Transcript({
         if (!paired) {
           built.push({
             key,
-            node: <UnpairedToolResultRow toolName={message.toolName} visibility={toolVisibility} />,
+            node: <UnpairedToolResultRow
+            toolName={message.toolName}
+            visibility={toolVisibility === "compact" ? "collapsed" : toolVisibility}
+          />,
             searchText: "",
             searchScope: null,
           });
@@ -689,14 +882,17 @@ export function Transcript({
       } else {
         built.push({
           key,
-          node: <UnknownRoleRow message={message} visibility={toolVisibility} />,
+          node: <UnknownRoleRow
+            message={message}
+            visibility={toolVisibility === "compact" ? "collapsed" : toolVisibility}
+          />,
           searchText: "",
           searchScope: null,
         });
       }
     });
     return built;
-  }, [messages, activeStreamingIndex, thinkingVisibility, toolVisibility, toolResults, toolCallIds]);
+  }, [messages, activeStreamingIndex, thinkingVisibility, toolVisibility, assistantRoundDisplay, toolResults, toolCallIds, sessionId, viewId]);
 
   const virtualize = rows.length >= VIRTUALIZE_AT;
   const getRowKey = useCallback((index: number) => rows[index]?.key ?? index, [rows]);
