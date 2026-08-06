@@ -1,4 +1,6 @@
 export const VISIBILITY_PREFERENCES = ["hidden", "collapsed", "expanded"] as const;
+export const TOOL_VISIBILITY_PREFERENCES = ["hidden", "compact", "collapsed", "expanded"] as const;
+export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MAX_ATTACHMENTS = 8;
 export const MAX_PROJECT_FILES = 20;
@@ -10,6 +12,8 @@ export const MAX_SESSION_ID_HYDRATION_IDS = 600;
 export const MAX_SESSION_CWD_HYDRATION_CWDS = 100;
 
 export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
+export type ToolVisibilityPreference = (typeof TOOL_VISIBILITY_PREFERENCES)[number];
+export type AssistantRoundDisplayPreference = (typeof ASSISTANT_ROUND_DISPLAYS)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type LaunchPreference = "welcome" | "continue";
@@ -79,7 +83,10 @@ export interface InspirePreferences {
   theme: ThemePreference;
   launch: LaunchPreference;
   thinkingVisibility: VisibilityPreference;
-  toolVisibility: VisibilityPreference;
+  toolVisibility: ToolVisibilityPreference;
+  /** Detailed preserves Pi's current per-message attribution verbatim; divider
+   * replaces that whole row with one quiet visual boundary. */
+  assistantRoundDisplay: AssistantRoundDisplayPreference;
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
   /** Opt-in attention for terminal transitions that were not visible. */
@@ -90,6 +97,9 @@ export interface InspirePreferences {
   /** Project directories pinned as a whole. Identity is the exact cwd, the
    * same identity navigation groups and collapse state already use. */
   pinnedProjectCwds: string[];
+  /** Project directories moved into Hidden as complete folder groups. This is
+   * independent of per-session hiding so restoration cannot erase it. */
+  hiddenProjectCwds: string[];
   /** Sessions moved into the reversible Hidden group. Navigation metadata
    * only: nothing in Pi's session storage changes. */
   hiddenSessionIds: string[];
@@ -101,11 +111,13 @@ export const defaultPreferences: InspirePreferences = {
   launch: "welcome",
   thinkingVisibility: "collapsed",
   toolVisibility: "collapsed",
+  assistantRoundDisplay: "divider",
   projectDisplay: "folder",
   completionAttention: "off",
   recentModelIds: [],
   pinnedSessionIds: [],
   pinnedProjectCwds: [],
+  hiddenProjectCwds: [],
   hiddenSessionIds: [],
   navCollapsedGroups: [],
 };

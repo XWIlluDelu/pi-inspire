@@ -1252,6 +1252,30 @@ describe("navigation curation", () => {
     expect(byCwdRequests).toBe(1);
   });
 
+  it("fetches a hidden folder by cwd so restoring it never depends on the first page", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot(),
+            preferences: { ...bootstrapPayload().preferences, hiddenProjectCwds: ["/work/hidden-folder"] },
+          }),
+        };
+      }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        expect(jsonBody(init)).toEqual({ cwds: ["/work/hidden-folder"] });
+        return { body: { sessions: [sessionSummary({ id: "hidden-old", cwd: "/work/hidden-folder" })] } };
+      }
+      if (url.startsWith("/api/sessions")) {
+        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions.map((session) => session.id)).toEqual(["hidden-old"]));
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/hidden-folder"]);
+  });
+
   it("restores the last confirmed value when two writes fail in a row", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
@@ -1549,6 +1573,38 @@ describe("resource previews", () => {
     expect(secondRange).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
     expect(store.getState().selectedResourceReference).toBe("second.png");
     expect(store.getState().resourcePreview).toMatchObject({ status: "ready", objectUrl: "blob:second" });
+  });
+
+  it("loads an embedded transcript image only inside its owning branch view", async () => {
+    let range: string | null = null;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        const body = jsonBody(init) as { sessionId: string; reference: string };
+        return { body: {
+          id: "embedded-image",
+          sessionId: body.sessionId,
+          viewId: "view-s1",
+          reference: body.reference,
+          name: "Embedded image",
+          mimeType: "image/png",
+          size: 3,
+          kind: "image",
+        } };
+      }
+      if (url.includes("/api/resources/embedded-image/content")) {
+        range = new Headers(init.headers).get("Range");
+        return { body: "png" };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().transcriptViewId).toBe("view-s1");
+
+    const blob = await store.loadEmbeddedImage("s1", "view-s1", "pi-embedded://4/0", new AbortController().signal);
+    expect(await blob.text()).toContain("png");
+    expect(range).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
+    await expect(store.loadEmbeddedImage("s1", "obsolete", "pi-embedded://4/0", new AbortController().signal))
+      .rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("aborts a pending preview when the pane closes", async () => {

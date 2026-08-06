@@ -6,6 +6,7 @@ import { sessionSummary } from "./helpers";
 const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
   pinnedSessionIds: [],
   pinnedProjectCwds: [],
+  hiddenProjectCwds: [],
   hiddenSessionIds: [],
   ...overrides,
 });
@@ -94,6 +95,27 @@ describe("splitNavSections", () => {
     );
     expect(pinnedGroups.map((group) => group.cwd)).toEqual(["/home/u/archive"]);
     expect(groups.map((group) => group.cwd)).toEqual(["/home/u/active"]);
+  });
+
+  it("files an entire hidden folder once and keeps individual Hidden independent", () => {
+    const first = sessionSummary({ id: "a", cwd: "/home/u/hidden", modified: "2026-07-22T10:00:00Z" });
+    const second = sessionSummary({ id: "b", cwd: "/home/u/hidden", modified: "2026-07-21T10:00:00Z" });
+    const individuallyHidden = sessionSummary({ id: "c", cwd: "/home/u/visible" });
+    const sections = splitNavSections(
+      [second, individuallyHidden, first],
+      curation({
+        hiddenProjectCwds: ["/home/u/hidden"],
+        hiddenSessionIds: ["b", "c"],
+        pinnedSessionIds: ["a"],
+        pinnedProjectCwds: ["/home/u/hidden"],
+      }),
+    );
+    expect(sections.hiddenGroups).toHaveLength(1);
+    expect(sections.hiddenGroups[0]!.sessions.map((session) => session.id)).toEqual(["a", "b"]);
+    expect(sections.hidden.map((session) => session.id)).toEqual(["c"]);
+    expect(sections.pinned).toEqual([]);
+    expect(sections.pinnedGroups).toEqual([]);
+    expect(sections.groups).toEqual([]);
   });
 
   it("files a hidden session under Hidden even when its folder or the session itself is pinned", () => {

@@ -1,6 +1,11 @@
 import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { VISIBILITY_PREFERENCES, type ThemePreference } from "../../shared/contracts";
+import {
+  ASSISTANT_ROUND_DISPLAYS,
+  TOOL_VISIBILITY_PREFERENCES,
+  VISIBILITY_PREFERENCES,
+  type ThemePreference,
+} from "../../shared/contracts";
 import { isAbortableRunState, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { relativeTime } from "./Transcript";
@@ -104,22 +109,31 @@ export function CommandPalette({
       },
     );
     for (const value of VISIBILITY_PREFERENCES) {
-      actions.push(
-        {
-          id: `thinking-${value}`,
-          group: "Preferences",
-          title: `Thinking cards: ${value}`,
-          hint: state.prefs.thinkingVisibility === value ? "current" : undefined,
-          run: () => store.setThinkingVisibility(value),
-        },
-        {
-          id: `tools-${value}`,
-          group: "Preferences",
-          title: `Tool cards: ${value}`,
-          hint: state.prefs.toolVisibility === value ? "current" : undefined,
-          run: () => store.setToolVisibility(value),
-        },
-      );
+      actions.push({
+        id: `thinking-${value}`,
+        group: "Preferences",
+        title: `Thinking cards: ${value}`,
+        hint: state.prefs.thinkingVisibility === value ? "current" : undefined,
+        run: () => store.setThinkingVisibility(value),
+      });
+    }
+    for (const value of TOOL_VISIBILITY_PREFERENCES) {
+      actions.push({
+        id: `tools-${value}`,
+        group: "Preferences",
+        title: `Tool cards: ${value}`,
+        hint: state.prefs.toolVisibility === value ? "current" : undefined,
+        run: () => store.setToolVisibility(value),
+      });
+    }
+    for (const value of ASSISTANT_ROUND_DISPLAYS) {
+      actions.push({
+        id: `assistant-rounds-${value}`,
+        group: "Preferences",
+        title: `Assistant rounds: ${value}`,
+        hint: state.prefs.assistantRoundDisplay === value ? "current" : undefined,
+        run: () => store.setAssistantRoundDisplay(value),
+      });
     }
 
     const sessions: PaletteItem[] = state.sessions.map((session) => ({

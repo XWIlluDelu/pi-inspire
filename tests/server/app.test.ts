@@ -336,11 +336,13 @@ describe("local host API", () => {
       launch: "welcome",
       thinkingVisibility: "collapsed",
       toolVisibility: "hidden",
+      assistantRoundDisplay: "divider",
       projectDisplay: "folder",
       completionAttention: "off",
       recentModelIds: [],
       pinnedSessionIds: [],
       pinnedProjectCwds: [],
+      hiddenProjectCwds: [],
       hiddenSessionIds: [],
       navCollapsedGroups: ["/home/demo/older"],
     });
@@ -385,11 +387,13 @@ describe("local host API", () => {
       .expect(200);
     expect(response.body).toEqual({
       ...legacy,
+      assistantRoundDisplay: "divider",
       projectDisplay: "folder",
       completionAttention: "off",
       recentModelIds: [],
       pinnedSessionIds: [],
       pinnedProjectCwds: [],
+      hiddenProjectCwds: [],
       hiddenSessionIds: [],
       navCollapsedGroups: [],
     });

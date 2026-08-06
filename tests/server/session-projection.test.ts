@@ -94,6 +94,34 @@ describe("SessionProjection framing and last-good state", () => {
     expect(String((projected.nested as Record<string, unknown>).text)).toMatch(/truncated/);
   });
 
+  it("keeps persisted image bytes server-side while exposing stable browser references", async () => {
+    const data = Buffer.alloc(512 * 1024, 7).toString("base64");
+    const { projection } = await fixture([
+      message("u1", null, "user", [
+        { type: "text", text: "two images" },
+        { type: "image", data, mimeType: "image/png" },
+        { type: "image", data: "different", mimeType: "image/webp" },
+      ], 1),
+    ]);
+    try {
+      const projected = projection.latestPage().messages[0] as Record<string, unknown>;
+      expect(projected.__inspireMessageIndex).toBe(0);
+      expect(projected.content).toEqual([
+        { type: "text", text: "two images" },
+        { type: "image", mimeType: "image/png" },
+        { type: "image", mimeType: "image/webp" },
+      ]);
+      expect(JSON.stringify(projection.latestPage())).not.toContain(data.slice(0, 128));
+      expect(collectSessionResourceReferences([projected]).map((item) => item.reference)).toEqual([
+        "pi-embedded://0/2",
+        "pi-embedded://0/1",
+      ]);
+      expect(((projection.messages[0] as { content: Array<{ data?: string }> }).content[1]!).data).toBe(data);
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("keeps UTF-8 split-safe framing and a partial final line private until LF", async () => {
     const padding = "x".repeat(65_500);
     const first = message("u1", null, "user", `${padding}你`, 1);

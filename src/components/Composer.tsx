@@ -1,8 +1,5 @@
 import {
-  AlertTriangle,
-  FileText,
   FolderSearch,
-  Loader2,
   Paperclip,
   Send,
   Square,
@@ -11,6 +8,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { INSPIRE_COMMANDS } from "../../shared/commands";
 import type { ProjectFileResult } from "../api";
+import { clipboardFiles } from "../clipboard-files";
 import {
   parseCaretCompletion,
   rankCommands,
@@ -18,7 +16,6 @@ import {
   replaceCompletionToken,
   type CaretCompletion,
 } from "../composer-completion";
-import { formatBytes } from "../format";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import {
   isAbortableRunState,
@@ -26,9 +23,9 @@ import {
   store,
   THINKING_LEVELS,
   useAppState,
-  type PendingAttachment,
   type PiCommand,
 } from "../store";
+import { AttachmentList } from "./AttachmentList";
 import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
 
@@ -66,30 +63,6 @@ function ContextMeter() {
       </svg>
       <span aria-hidden>{Math.round(percent)}%</span>
     </div>
-  );
-}
-
-function AttachmentChip({ item }: { item: PendingAttachment }) {
-  const sending = useAppState().sending;
-  return (
-    <li className={`attachment attachment--${item.status}`} title={item.error ?? item.fileName}>
-      {item.kind === "image" && item.previewUrl ? (
-        <img className="attachment__thumb" src={item.previewUrl} alt={`Preview of ${item.fileName}`} />
-      ) : <FileText size={13} aria-hidden />}
-      <span className="attachment__name">{item.fileName}</span>
-      <span className="attachment__meta">{item.mimeType} · {formatBytes(item.size)}</span>
-      {item.status === "uploading" ? <Loader2 size={12} className="spin" aria-label="Uploading" /> : null}
-      {item.status === "error" ? <AlertTriangle size={12} className="status-error" aria-label="Upload failed" /> : null}
-      <button
-        type="button"
-        className="attachment__remove"
-        disabled={sending}
-        onClick={() => store.removeAttachment(item.localId)}
-        aria-label={`Remove ${item.fileName}`}
-      >
-        <X size={12} aria-hidden />
-      </button>
-    </li>
   );
 }
 
@@ -234,28 +207,6 @@ function CompletionMenu({
       ) : null}
     </div>
   );
-}
-
-/** Clipboard implementations differ on whether pasted images appear in
- * `files`, `items`, or both. Normalize both surfaces without double-uploading
- * the same browser File. */
-export function clipboardFiles(data: Pick<DataTransfer, "files" | "items"> | null | undefined): File[] {
-  if (!data) return [];
-  const candidates = [
-    ...Array.from(data.files ?? []),
-    ...Array.from(data.items ?? []).flatMap((item) => {
-      if (item.kind !== "file") return [];
-      const file = item.getAsFile();
-      return file ? [file] : [];
-    }),
-  ];
-  const keys = new Set<string>();
-  return candidates.filter((file) => {
-    const key = JSON.stringify([file.name, file.type, file.size, file.lastModified]);
-    if (keys.has(key)) return false;
-    keys.add(key);
-    return true;
-  });
 }
 
 export function Composer() {
@@ -489,11 +440,11 @@ export function Composer() {
           event.target.value = "";
         }}
       />
-      {state.attachments.length > 0 ? (
-        <ul className="composer__attachments" aria-label="Attachments">
-          {state.attachments.map((item) => <AttachmentChip key={item.localId} item={item} />)}
-        </ul>
-      ) : null}
+      <AttachmentList
+        items={state.attachments}
+        disabled={state.sending}
+        onRemove={store.removeAttachment}
+      />
       {state.projectFiles.length > 0 ? (
         <ul className="composer__attachments" aria-label="Referenced project files">
           {state.projectFiles.map((path) => (

@@ -2,7 +2,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
-import { clipboardFiles, Composer } from "../../src/components/Composer";
+import { clipboardFiles } from "../../src/clipboard-files";
+import { Composer } from "../../src/components/Composer";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -79,11 +80,21 @@ function clearLeftovers() {
 }
 
 describe("composer attachments", () => {
-  it("normalizes image clipboard items when files is empty or duplicates the item", () => {
-    const image = new File(["png"], "clipboard.png", { type: "image/png", lastModified: 7 });
-    const item = { kind: "file", getAsFile: () => image } as DataTransferItem;
-    expect(clipboardFiles({ files: [] as unknown as FileList, items: [item] as unknown as DataTransferItemList })).toEqual([image]);
-    expect(clipboardFiles({ files: [image] as unknown as FileList, items: [item] as unknown as DataTransferItemList })).toEqual([image]);
+  it("uses one clipboard projection without duplicating one paste or merging distinct files", () => {
+    const primary = new File(["png"], "image.png", { type: "image/png", lastModified: 7 });
+    const duplicateProjection = new File(["png"], "image.png", { type: "image/png", lastModified: 8 });
+    const fallbackItem = { kind: "file", getAsFile: () => duplicateProjection } as DataTransferItem;
+    expect(clipboardFiles({ files: [] as unknown as FileList, items: [fallbackItem] as unknown as DataTransferItemList }))
+      .toEqual([duplicateProjection]);
+    expect(clipboardFiles({ files: [primary] as unknown as FileList, items: [fallbackItem] as unknown as DataTransferItemList }))
+      .toEqual([primary]);
+
+    const sameMetadataA = new File(["one"], "image.png", { type: "image/png", lastModified: 9 });
+    const sameMetadataB = new File(["two"], "image.png", { type: "image/png", lastModified: 9 });
+    expect(clipboardFiles({
+      files: [sameMetadataA, sameMetadataB] as unknown as FileList,
+      items: [] as unknown as DataTransferItemList,
+    })).toEqual([sameMetadataA, sameMetadataB]);
   });
 
   it("uploads a selected file and sends its attachment id, then clears on accept", async () => {

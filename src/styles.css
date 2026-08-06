@@ -572,7 +572,59 @@ a {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-3) 0 var(--space-4);
+  padding: 0 var(--space-3);
+}
+
+.nav__brand-new,
+.nav__brand-rail {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.nav__brand-new {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+}
+
+.nav__brand-new:hover,
+.nav__brand-new:focus-visible,
+.nav__brand-new[aria-current="page"] {
+  background: var(--accent-tint);
+}
+
+.nav__brand-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  color: var(--accent-deep);
+  background: currentColor;
+  mask: url("/favicon.svg") center / contain no-repeat;
+  -webkit-mask: url("/favicon.svg") center / contain no-repeat;
+}
+
+:root[data-theme="dark"] .nav__brand-icon {
+  color: #fff;
+}
+
+.nav__brand-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--accent-deep);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .nav__brand-rail {
@@ -581,14 +633,18 @@ a {
   height: var(--topbar-h);
   display: grid;
   place-items: center;
-  font-family: "KaTeX_Math", var(--font-serif);
-  font-style: italic;
-  font-size: var(--text-xl);
-  color: var(--accent-deep);
+  padding: 0;
 }
 
-.nav--rail .icon-button {
-  margin: var(--space-2) auto 0;
+.nav__brand-rail:hover,
+.nav__brand-rail:focus-visible,
+.nav__brand-rail[aria-current="page"] {
+  background: var(--accent-tint);
+}
+
+.nav__brand-icon--rail {
+  width: 30px;
+  height: 30px;
 }
 
 .nav__mock {
@@ -605,12 +661,7 @@ a {
 .nav__controls {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
-}
-
-.nav__new {
-  justify-content: center;
+  padding: var(--space-1) var(--space-3) var(--space-3);
 }
 
 .nav__error {
@@ -736,9 +787,14 @@ a {
   pointer-events: auto;
 }
 
-.nav__row-action {
+.nav__row-action,
+.nav__row-action-spacer {
   width: 22px;
   height: 22px;
+  display: inline-block;
+}
+
+.nav__row-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1082,14 +1138,14 @@ a {
   }
 }
 
-/* A section header is a different tier from its rows: compact and semibold,
-   but large enough that the folder label and adjacent pin read as controls. */
+/* Folder headers and session rows share one interaction grammar: the main
+   button owns the full row, and a fixed right column swaps count for actions. */
 .nav__group-title {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-1);
   margin: 0;
-  padding: 0 var(--space-2);
   height: 28px;
   font-size: var(--text-sm);
   font-weight: 600;
@@ -1100,11 +1156,19 @@ a {
   border-radius: var(--radius-md);
 }
 
+.nav__group-title--folder:hover {
+  background: var(--bg-inset);
+}
+
+.nav__group--pinned > .nav__group-title {
+  padding: 0 var(--space-2);
+}
+
 /* A collapsed folder hiding the active session carries the highlight. */
-.nav__group-title--active {
+.nav__group-title--active,
+.nav__group-title--active:hover {
   background: var(--accent-tint);
   color: var(--ink);
-  position: relative;
 }
 
 .nav__group-title--active::before {
@@ -1116,6 +1180,7 @@ a {
   width: 2px;
   border-radius: 2px;
   background: var(--accent);
+  z-index: 1;
 }
 
 .nav__group--pinned + .nav__group {
@@ -1128,17 +1193,17 @@ a {
   margin-top: var(--space-3);
 }
 
-/* Sized to its label, so the folder pin sits beside the name rather than at
-   the far edge, which belongs to the count column. */
 .nav__group-toggle {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  flex: 0 1 auto;
-  min-width: 0;
   border: 0;
+  border-radius: inherit;
   background: transparent;
-  padding: 0;
+  padding: 0 var(--space-2);
   font: inherit;
   color: inherit;
   cursor: pointer;
@@ -1150,53 +1215,23 @@ a {
   opacity: 0.7;
 }
 
-/* A folder pin is state, not just an action: once set it stays visible. */
-.nav__group-pin {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
+.nav__group-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
   align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
+  gap: 1px;
   opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
+  pointer-events: none;
+  transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
-.nav__group-title:hover .nav__group-pin,
-.nav__group-title:focus-within .nav__group-pin,
-.nav__group-pin[aria-pressed="true"] {
+.nav__group-title--folder:hover .nav__group-actions,
+.nav__group-title--folder:focus-within .nav__group-actions {
   opacity: 1;
-}
-
-.nav__group-pin[aria-pressed="true"] {
-  color: var(--accent);
-}
-
-/* Lucide's pin path has more visual weight above its geometric center. */
-.nav__group-pin svg {
-  transform: translateY(1px);
-}
-
-.nav__group-pin:hover {
-  color: var(--accent-deep);
-}
-
-@media (hover: none) {
-  .nav__group-title {
-    height: 36px;
-  }
-
-  .nav__group-pin {
-    width: 36px;
-    height: 36px;
-    opacity: 1;
-  }
+  pointer-events: auto;
 }
 
 /* The same right-hand column the rows give their activity age. */
@@ -1209,20 +1244,47 @@ a {
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.nav__group-title--folder:hover .nav__group-count,
+.nav__group-title--folder:focus-within .nav__group-count {
+  opacity: 0;
+}
+
+@media (hover: none) {
+  .nav__group-title {
+    height: 36px;
+  }
+
+  .nav__group-title--folder .nav__group-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav__group-title--folder .nav__group-count {
+    opacity: 0;
+  }
 }
 
 .nav__group-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .nav__group-context {
+  min-width: 0;
   font-size: var(--text-xs);
   font-weight: 400;
   color: var(--muted);
   opacity: 0.75;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.nav__group--hidden-folder > .nav__group-title {
+  margin-left: var(--space-2);
 }
 
 .nav__row-main:disabled {
@@ -1277,7 +1339,10 @@ a {
 
 .topbar__project {
   flex: 0 1 auto;
-  display: inline-grid;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 0;
   max-width: 360px;
   border: 0;
@@ -1291,31 +1356,33 @@ a {
     background var(--dur-micro) var(--ease-standard);
 }
 
-/* Stacked layers share one cell: the copied confirmation swaps in without
-   moving anything. */
-.topbar__project-layer {
-  grid-area: 1 / 1;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  justify-self: start;
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
 .topbar__project-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
-.topbar__project-layer--hidden {
+.topbar__project-label--copied {
   opacity: 0;
+}
+
+.topbar__project-feedback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.75);
+  opacity: 0;
+  color: var(--success);
   pointer-events: none;
+  transition: opacity var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__project-feedback--visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .topbar__project:hover {
@@ -1581,6 +1648,38 @@ a {
   gap: var(--space-2);
 }
 
+.turn--round-divider {
+  position: relative;
+  gap: var(--space-1);
+}
+
+.turn__head--divider {
+  height: 8px;
+  align-items: center;
+}
+
+.turn__divider {
+  display: block;
+  width: 24px;
+  height: 1px;
+  border-radius: 1px;
+  background: var(--hairline-strong);
+}
+
+/* Copy remains available on turn hover without making the divider row tall. */
+.turn__head--divider .turn__actions {
+  position: absolute;
+  right: 0;
+  top: -9px;
+  z-index: 1;
+  opacity: 0;
+}
+
+.turn:hover .turn__head--divider .turn__actions,
+.turn:focus-within .turn__head--divider .turn__actions {
+  opacity: 1;
+}
+
 .turn__who {
   font-size: var(--text-sm);
   font-weight: 600;
@@ -1646,6 +1745,17 @@ a {
   padding: 10px 14px;
   font-size: var(--text-md);
   line-height: var(--leading-reading);
+}
+
+.user-bubble__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.user-bubble__images:last-child {
+  margin-bottom: 0;
 }
 
 .assistant-doc {
@@ -1925,6 +2035,112 @@ a {
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
+}
+
+/* Compact tool calls retain chronological position while changing only their
+   local flow from vertical cards to a wrapping icon strip. */
+.tool-strip {
+  --tool-detail-origin: 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-strip__items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-strip__item {
+  width: 46px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  color: var(--info);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+.tool-strip__item:hover,
+.tool-strip__item:focus-visible {
+  border-color: color-mix(in srgb, var(--info) 48%, var(--hairline));
+  background: var(--bg-inset);
+}
+
+.tool-strip__item--active {
+  border-color: var(--info);
+  background: color-mix(in srgb, var(--info) 8%, var(--bg-surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 12%, transparent);
+  transform: translateY(1px);
+}
+
+.tool-strip__item--failed {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 38%, var(--hairline));
+}
+
+.status-unknown {
+  color: var(--faint);
+}
+
+.tool-strip__reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: grid-template-rows var(--dur-standard) var(--ease-standard),
+    opacity var(--dur-standard) var(--ease-standard),
+    transform var(--dur-standard) var(--ease-standard);
+}
+
+.tool-strip__reveal--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.tool-strip__reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tool-strip__detail {
+  margin-top: var(--space-1);
+  transform-origin: var(--tool-detail-origin) top;
+  animation: tool-detail-in var(--dur-standard) var(--ease-standard);
+}
+
+.tool-strip__detail-head {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) 10px;
+  color: var(--muted);
+}
+
+@keyframes tool-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scaleY(0.94);
+    clip-path: inset(0 0 100% 0 round var(--radius-md));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0 round var(--radius-md));
+  }
 }
 
 /* Thinking summaries are prose, not machine data. */
@@ -2634,11 +2850,33 @@ a {
   border-color: color-mix(in srgb, var(--error) 50%, transparent);
 }
 
-.attachment__thumb {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: var(--radius-xs);
+.attachment--image {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.attachment--image .attachment__remove,
+.attachment--image .attachment__status {
+  position: absolute;
+  z-index: 2;
+  color: white;
+  background: color-mix(in srgb, black 66%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, black 30%, transparent);
+}
+
+.attachment--image .attachment__remove {
+  top: 4px;
+  right: 4px;
+}
+
+.attachment--image .attachment__status {
+  right: 5px;
+  bottom: 5px;
+  border-radius: var(--radius-pill);
 }
 
 .attachment__name {
@@ -2660,6 +2898,126 @@ a {
 
 .attachment__remove:hover {
   color: var(--error);
+}
+
+.image-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--faint);
+  cursor: zoom-in;
+}
+
+.image-preview:disabled {
+  cursor: default;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image-preview--attachment {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+}
+
+.image-preview--message {
+  width: clamp(132px, 28vw, 280px);
+  height: clamp(96px, 20vw, 210px);
+}
+
+.overlay.image-lightbox {
+  z-index: 80;
+  align-items: center;
+  padding: var(--space-6);
+  background: transparent;
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+/* Keep the depth-of-field treatment on one viewport-sized plane. The image is
+   a crisp sibling above it, so no blur edge or shadow halo can outline it. */
+.image-lightbox::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, black 52%, transparent);
+  backdrop-filter: blur(18px) saturate(0.82);
+}
+
+.image-lightbox__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(94vw, 1400px);
+  height: min(92dvh, 1000px);
+  overflow: hidden;
+  outline: none;
+}
+
+.image-lightbox__canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  touch-action: manipulation;
+}
+
+.image-lightbox__canvas--zoomed {
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-lightbox__canvas--panning {
+  cursor: grabbing;
+}
+
+.image-lightbox__canvas > img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  transform-origin: center;
+  transition: transform var(--dur-standard) var(--ease-standard);
+  will-change: transform;
+}
+
+.image-lightbox__canvas--panning > img {
+  transition: none;
+}
+
+.image-lightbox__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, black 70%, transparent);
+  color: white;
 }
 
 /* Project-file picker */
@@ -3582,40 +3940,6 @@ body.pane-resizing .nav {
   text-align: left;
 }
 
-.welcome__session-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.55fr);
-  gap: var(--space-2);
-  padding: 0 var(--space-1);
-}
-
-.welcome__session-field {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--faint);
-  font-size: var(--text-xs);
-}
-
-.welcome__session-field .dropdown,
-.welcome__session-field .dropdown__trigger {
-  min-width: 0;
-  width: 100%;
-}
-
-.welcome__session-field .dropdown__value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.welcome__session-field .dropdown__menu {
-  min-width: 100%;
-  max-width: min(420px, calc(100vw - var(--space-8)));
-}
-
 .welcome__dir {
   flex: 1;
   min-width: 0;
@@ -3845,7 +4169,15 @@ body.pane-resizing .nav {
   align-items: flex-start;
   justify-content: center;
   padding: 12dvh var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: overlay-in var(--dur-standard) var(--ease-standard);
+}
+
+@media (max-height: 480px) {
+  .overlay {
+    padding-top: var(--space-4);
+  }
 }
 
 @keyframes overlay-in {
@@ -4012,8 +4344,13 @@ body.pane-resizing .nav {
 
 .session-delete__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
+}
+
+.session-delete__header .dialog__title {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .session-delete__icon {
@@ -4028,19 +4365,6 @@ body.pane-resizing .nav {
   background: var(--error-tint);
 }
 
-.session-delete__heading {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.session-delete__project {
-  color: var(--faint);
-  font-size: var(--text-sm);
-}
-
 .session-delete__session {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--hairline);
@@ -4052,6 +4376,10 @@ body.pane-resizing .nav {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-delete__description span {
+  display: block;
 }
 
 .session-delete__warning {
@@ -4538,12 +4866,6 @@ button.branch-row__main:disabled { cursor: default; }
   background: var(--warning-soft);
   border-bottom: 1px solid var(--border-subtle);
   font-size: var(--text-xs);
-}
-
-@media (max-width: 620px) {
-  .welcome__session-controls {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 520px) {

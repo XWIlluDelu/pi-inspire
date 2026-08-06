@@ -152,9 +152,29 @@ function contextMessages(entries: SessionEntry[], leafId: string | null, byId: M
 
 interface BoundedTranscriptItem { value: unknown; serialized: string }
 
+/** Pi persists embedded image bytes in the canonical message. The browser only
+ * needs their MIME and stable message/part coordinates: content is fetched
+ * through the existing session-bound resource adapter when a thumbnail mounts. */
+function withoutPersistedImageData(value: unknown, persistedIndex: number | undefined): unknown {
+  if (persistedIndex === undefined || !value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.content)) return value;
+  let changed = false;
+  const content = record.content.map((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+    const item = part as Record<string, unknown>;
+    if (item.type !== "image" || typeof item.data !== "string") return part;
+    const { data: _data, ...metadata } = item;
+    changed = true;
+    return metadata;
+  });
+  return changed ? { ...record, content } : value;
+}
+
 /** Browser projection, not persisted data: constrain breadth/depth and strings.
  * The optional persisted index is applied before the item's sole serialization. */
 function boundedTranscriptItem(value: unknown, persistedIndex?: number): BoundedTranscriptItem {
+  const browserValue = withoutPersistedImageData(value, persistedIndex);
   const decorate = (projected: unknown): unknown => persistedIndex !== undefined && projected && typeof projected === "object" && !Array.isArray(projected)
     ? { ...(projected as Record<string, unknown>), __inspireMessageIndex: persistedIndex }
     : projected;
@@ -162,7 +182,7 @@ function boundedTranscriptItem(value: unknown, persistedIndex?: number): Bounded
     { depth: 16, stringChars: 64_000, arrayItems: 256, objectEntries: 256 },
     { depth: 8, stringChars: 2_000, arrayItems: 32, objectEntries: 32 },
   ]) {
-    const projected = decorate(projectSafeValue(value, limits));
+    const projected = decorate(projectSafeValue(browserValue, limits));
     const serialized = JSON.stringify(projected) ?? "null";
     if (Buffer.byteLength(serialized) <= 256 * 1024) return { value: projected, serialized };
   }

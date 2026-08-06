@@ -1,32 +1,77 @@
-import { ChevronRight, FolderOpen, Loader2, Send } from "lucide-react";
+import { ChevronRight, FolderOpen, Loader2, Paperclip, Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { modelIdentityKey } from "../../shared/contracts";
+import {
+  MAX_ATTACHMENTS,
+  THINKING_LEVELS,
+  modelIdentityKey,
+  type ModelOption,
+  type ThinkingLevel,
+} from "../../shared/contracts";
+import { clipboardFiles } from "../clipboard-files";
 import { supportedThinkingLevels } from "../model-options";
-import { store, useAppState } from "../store";
+import { setSessionDraft } from "../session-drafts";
+import { store, useAppState, type PendingAttachment } from "../store";
+import { AttachmentList } from "./AttachmentList";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { Dropdown } from "./Dropdown";
+import { ModelSelector } from "./ModelSelector";
 import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
-/**
- * Landing surface: one inline composer starts a session with its first
- * message; recent sessions sit below in a collapsible list. The project
- * directory is part of the composer's meta row; leaving it empty starts in
- * the current project.
- */
-export function Welcome() {
+interface WelcomeAttachment extends PendingAttachment {
+  file: File;
+}
+
+function localAttachment(file: File): WelcomeAttachment {
+  const image = /^image\//i.test(file.type);
+  return {
+    localId: crypto.randomUUID(),
+    file,
+    fileName: file.name || "pasted-image",
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    kind: image ? "image" : "file",
+    previewUrl: image && typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined,
+    status: "ready",
+  };
+}
+
+/** Landing composer. Its staged files remain browser-local until Pi has
+ * assigned the new session identity, then enter the normal attachment owner
+ * and prompt lifecycle before the first message is delivered. */
+export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
   const state = useAppState();
   const [draft, setDraft] = useState("");
   const [directory, setDirectory] = useState("");
+  const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
-  const [modelKey, setModelKey] = useState("");
-  const [thinkingLevel, setThinkingLevel] = useState("");
+  const [modelKey, setModelKey] = useState(() => state.model ? modelIdentityKey(state.model) : "");
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
+    THINKING_LEVELS.includes(state.thinkingLevel as ThinkingLevel)
+      ? state.thinkingLevel as ThinkingLevel
+      : "off",
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
-  const selectedModel = state.availableModels.find((model) => modelIdentityKey(model) === modelKey) ?? null;
+  const selectedModel = useMemo<ModelOption | null>(() => {
+    const catalogModel = state.availableModels.find((model) => modelIdentityKey(model) === modelKey);
+    if (catalogModel) return catalogModel;
+    return state.model && modelIdentityKey(state.model) === modelKey ? state.model : null;
+  }, [modelKey, state.availableModels, state.model]);
   const thinkingLevels = useMemo(() => supportedThinkingLevels(selectedModel), [selectedModel]);
+
+  useEffect(() => () => {
+    for (const attachment of attachmentsRef.current) {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    }
+  }, []);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -36,32 +81,53 @@ export function Welcome() {
   }, [draft]);
 
   useEffect(() => {
-    if (thinkingLevel && !thinkingLevels.includes(thinkingLevel as (typeof thinkingLevels)[number])) {
-      setThinkingLevel("");
-    }
+    if (!thinkingLevels.includes(thinkingLevel)) setThinkingLevel(thinkingLevels[0] ?? "off");
   }, [thinkingLevel, thinkingLevels]);
 
+  const addFiles = (files: File[]) => {
+    if (starting || files.length === 0) return;
+    const room = MAX_ATTACHMENTS - attachmentsRef.current.length;
+    const accepted = files.slice(0, Math.max(0, room));
+    setAttachmentError(accepted.length < files.length ? `At most ${MAX_ATTACHMENTS} attachments per message` : null);
+    if (accepted.length > 0) setAttachments((current) => [...current, ...accepted.map(localAttachment)]);
+  };
+
+  const removeAttachment = (localId: string) => {
+    setAttachments((current) => {
+      const target = current.find((item) => item.localId === localId);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return current.filter((item) => item.localId !== localId);
+    });
+    setAttachmentError(null);
+  };
+
   // A typed directory wins over the current project; empty means current.
-  const canStart = Boolean(draft.trim() && (directory.trim() || state.cwd) && !starting);
+  const canStart = Boolean((draft.trim() || attachments.length > 0) && (directory.trim() || state.cwd) && !starting);
 
   const start = async () => {
     if (!canStart) return;
     const message = draft;
+    const files = attachments.map((attachment) => attachment.file);
     const target = directory.trim();
     setStarting(true);
     try {
-      // newSession resolves once the runtime is ready to accept a prompt and
-      // returns only the identity owned by this selection request. A failed or
-      // superseded creation cannot redirect the draft into another session.
       const opened = await store.newSession(target || undefined, {
         ...(selectedModel ? { model: { provider: selectedModel.provider, id: selectedModel.id } } : {}),
-        ...(selectedModel?.reasoning !== false && thinkingLevel
-          ? { thinkingLevel: thinkingLevel as (typeof thinkingLevels)[number] }
-          : {}),
+        ...(selectedModel && selectedModel.reasoning !== false ? { thinkingLevel } : {}),
       });
-      if (opened) {
-        const sent = await store.sendPrompt(message);
-        if (sent) setDraft("");
+      if (!opened) return;
+
+      // The ordinary composer may mount before this async continuation. Drive
+      // both its durable browser draft and its live nonce channel, then let the
+      // normal upload/send path own all host attachment state.
+      setSessionDraft(opened, message);
+      store.replaceComposerText(message);
+      if (files.length > 0) await store.addFiles(files);
+      const sent = await store.sendPrompt(message);
+      if (sent) {
+        setSessionDraft(opened, "");
+        store.replaceComposerText("");
+        setDraft("");
       }
     } finally {
       setStarting(false);
@@ -77,13 +143,33 @@ export function Welcome() {
       </div>
 
       <form
-        className="composer welcome__composer"
+        className={`composer welcome__composer ${dropActive ? "composer--drop" : ""}`}
         aria-label="Start a session"
         onSubmit={(event) => {
           event.preventDefault();
           void start();
         }}
+        onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDropActive(false);
+          addFiles(Array.from(event.dataTransfer?.files ?? []));
+        }}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="composer__file-input"
+          aria-label="Attach files"
+          tabIndex={-1}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.target.value = "";
+          }}
+        />
+        <AttachmentList items={attachments} disabled={starting} onRemove={removeAttachment} />
         <textarea
           ref={textareaRef}
           className="composer__input"
@@ -93,6 +179,12 @@ export function Welcome() {
           aria-label="First message"
           autoFocus
           onChange={(event) => setDraft(event.target.value)}
+          onPaste={(event) => {
+            const files = clipboardFiles(event.clipboardData);
+            if (files.length === 0) return;
+            event.preventDefault();
+            addFiles(files);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -100,39 +192,17 @@ export function Welcome() {
             }
           }}
         />
-        <div className="welcome__session-controls">
-          <div className="welcome__session-field">
-            <span>Model</span>
-            <Dropdown
-              label="New session model"
-              value={modelKey}
-              disabled={starting}
-              options={[
-                { value: "", label: "Pi default" },
-                ...state.availableModels.map((model) => ({
-                  value: modelIdentityKey(model),
-                  label: `${model.name ?? model.id} · ${model.provider}`,
-                })),
-              ]}
-              onChange={setModelKey}
-            />
-          </div>
-          <div className="welcome__session-field">
-            <span>Effort</span>
-            <Dropdown
-              label="New session effort"
-              value={thinkingLevel}
-              display={selectedModel?.reasoning === false ? "Not supported" : undefined}
-              disabled={starting || selectedModel?.reasoning === false}
-              options={[
-                { value: "", label: "Pi default" },
-                ...thinkingLevels.map((level) => ({ value: level, label: level })),
-              ]}
-              onChange={setThinkingLevel}
-            />
-          </div>
-        </div>
         <div className="composer__meta">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={starting}
+            aria-label="Attach files"
+            title="Attach files (or paste / drop them)"
+          >
+            <Paperclip size={14} aria-hidden />
+          </button>
           <input
             className="welcome__dir"
             value={directory}
@@ -140,16 +210,36 @@ export function Welcome() {
             placeholder={state.cwd ?? "/path/to/project"}
             aria-label="Project directory"
             spellCheck={false}
+            disabled={starting}
           />
           <button
             type="button"
             className="icon-button"
             aria-label="Browse host directories"
             title="Browse host directories"
+            disabled={starting}
             onClick={() => setBrowsing(true)}
           >
             <FolderOpen size={14} aria-hidden />
           </button>
+          <ModelSelector
+            value={selectedModel}
+            models={state.availableModels}
+            recent={state.prefs.recentModelIds}
+            emptyLabel="Select model"
+            disabled={starting}
+            onChange={(provider, id) => setModelKey(modelIdentityKey({ provider, id }))}
+          />
+          <Dropdown
+            label="Thinking level"
+            title={selectedModel?.reasoning === false ? "The selected model does not support thinking" : "Thinking level"}
+            direction="up"
+            value={thinkingLevel}
+            display={selectedModel?.reasoning === false ? "thinking unavailable" : thinkingLevel}
+            disabled={starting || selectedModel?.reasoning === false}
+            options={thinkingLevels.map((level) => ({ value: level, label: level }))}
+            onChange={(value) => setThinkingLevel(value as ThinkingLevel)}
+          />
           <span className="composer__spacer" />
           <button
             type="submit"
@@ -162,6 +252,7 @@ export function Welcome() {
           </button>
         </div>
       </form>
+      {attachmentError ? <p className="welcome__error" role="alert">{attachmentError}</p> : null}
       {state.sessionActionError ? (
         <p className="welcome__error" role="alert">{state.sessionActionError}</p>
       ) : null}
@@ -177,7 +268,7 @@ export function Welcome() {
         />
       ) : null}
 
-      {recent.length > 0 ? (
+      {showRecent && recent.length > 0 ? (
         <div className="welcome__recent">
           <h2 className="welcome__recent-title">
             <button

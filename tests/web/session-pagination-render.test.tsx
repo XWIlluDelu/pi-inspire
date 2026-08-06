@@ -62,7 +62,7 @@ beforeAll(async () => {
 });
 
 describe("session pagination control", () => {
-  it("is keyboard-complete and renders truthful loading, retry, count, end, ARIA, and narrow-screen states", async () => {
+  it("is keyboard-complete, reports actionable states, and omits redundant completion chrome", async () => {
     const user = userEvent.setup();
     const { container } = render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
     const nav = screen.getByRole("navigation", { name: "Sessions" });
@@ -87,7 +87,7 @@ describe("session pagination control", () => {
     const last = within(nav).getByRole("button", { name: "Load older sessions" });
     last.focus();
     await user.keyboard(" ");
-    await waitFor(() => expect(status).toHaveTextContent("Showing 3 of 3 · All sessions loaded"));
+    await waitFor(() => expect(within(nav).queryByRole("status")).not.toBeInTheDocument());
     expect(within(nav).queryByRole("button", { name: "Load older sessions" })).not.toBeInTheDocument();
     expect(screen.getByText("Oldest")).toBeInTheDocument();
 
@@ -98,12 +98,12 @@ describe("session pagination control", () => {
       sessionStatus: { runState: "idle" },
     });
     const preserveRetry = await within(nav).findByRole("button", { name: "Retry refreshing loaded sessions" });
-    expect(status).toHaveTextContent("Showing 3 of 3 · Could not preserve loaded sessions");
+    expect(within(nav).getByRole("status")).toHaveTextContent("Showing 3 of 3 · Could not preserve loaded sessions");
     expect(store.getState().sessions).toHaveLength(3);
 
     failPreservedRefresh = false;
     await user.click(preserveRetry);
-    await waitFor(() => expect(status).toHaveTextContent("Showing 3 of 3 · All sessions loaded"));
+    await waitFor(() => expect(within(nav).queryByRole("status")).not.toBeInTheDocument());
 
     failVisibleHydration = true;
     FakeWebSocket.instances.at(-1)!.emit({
@@ -112,12 +112,12 @@ describe("session pagination control", () => {
       sessionStatus: { runState: "running" },
     });
     const hydrationRetry = await within(nav).findByRole("button", { name: "Retry session hydration" });
-    expect(status).toHaveTextContent("Showing 3 of 3 · Failed to hydrate session ids: Visible hydration failed");
+    expect(within(nav).getByRole("status")).toHaveTextContent("Showing 3 of 3 · Failed to hydrate session ids: Visible hydration failed");
 
     failVisibleHydration = false;
     await user.click(hydrationRetry);
     await waitFor(() => expect(screen.getByText("Hydrated live")).toBeInTheDocument());
-    expect(status).toHaveTextContent("Showing 3 of 3 · All sessions loaded");
+    expect(within(nav).queryByRole("status")).not.toBeInTheDocument();
 
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations).toEqual([]);
