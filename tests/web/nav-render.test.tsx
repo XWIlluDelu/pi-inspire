@@ -83,6 +83,24 @@ describe("session navigation controls", () => {
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });
 
+  it("uses one icon-and-wordmark target for brand and new session in both nav widths", () => {
+    const onNewSession = vi.fn();
+    const { rerender } = render(
+      <Nav collapsed={false} newSessionActive onNewSession={onNewSession} onSelectSession={() => undefined} />,
+    );
+    const brand = screen.getByRole("button", { name: "New session" });
+    expect(brand).toHaveAttribute("aria-current", "page");
+    expect(brand.querySelector(".nav__brand-icon")).not.toBeNull();
+    expect(brand).toHaveTextContent("insπre");
+    fireEvent.click(brand);
+    expect(onNewSession).toHaveBeenCalledOnce();
+
+    rerender(<Nav collapsed newSessionActive={false} onNewSession={onNewSession} onSelectSession={() => undefined} />);
+    const railBrand = screen.getByRole("button", { name: "New session" });
+    expect(railBrand.querySelector(".nav__brand-icon--rail")).not.toBeNull();
+    expect(railBrand).not.toHaveTextContent("π");
+  });
+
   it("collapses folders, exposes search matches, and pins without selecting", async () => {
     const onSelect = vi.fn();
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={onSelect} />);
@@ -134,6 +152,27 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
+  it("hides and restores a folder without rewriting its sessions' own curation", async () => {
+    render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder alpha" }));
+    await screen.findByRole("heading", { name: "Hidden" });
+    expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/alpha"]);
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    const hiddenSection = document.querySelector(".nav__group--hidden") as HTMLElement;
+    const hiddenFolder = within(hiddenSection).getByRole("button", { name: "alpha" });
+    expect(hiddenFolder).toHaveAttribute("aria-expanded", "true");
+    expect(within(hiddenSection).getByText("Alpha session")).toBeInTheDocument();
+    fireEvent.click(within(hiddenSection).getByRole("button", { name: "Restore folder alpha" }));
+
+    await waitFor(() => expect(store.getState().prefs.hiddenProjectCwds).toEqual([]));
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+    expect(screen.getByRole("button", { name: "Hide folder alpha" })).toBeInTheDocument();
+  });
+
   it("deletes only through Hidden after an explicit confirmation", async () => {
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
 
@@ -148,6 +187,14 @@ describe("session navigation controls", () => {
     fireEvent.click(deleteButton);
     const dialog = screen.getByRole("alertdialog", { name: "Delete session?" });
     expect(within(dialog).getByText("Beta session")).toBeInTheDocument();
+    expect(within(dialog).queryByText("beta")).not.toBeInTheDocument();
+    const description = dialog.querySelector("#session-delete-description");
+    expect(description).not.toBeNull();
+    expect(Array.from(description!.children).map((line) => line.textContent)).toEqual([
+      "This session will be moved to Trash.",
+      "If Trash is unavailable, it will be permanently deleted.",
+      "Forked sessions remain; project files are unchanged.",
+    ]);
     expect(within(dialog).getByText(/another Pi process/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alertdialog", { name: "Delete session?" })).not.toBeInTheDocument();
@@ -164,11 +211,11 @@ describe("session navigation controls", () => {
   it("restores then pins a session, and pins a folder above the ordinary ones", async () => {
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={() => undefined} />);
 
-    // Newest folder first by default. Folder controls use the larger header
-    // icon tier rather than the denser session-row action size.
+    // Newest folder first by default. Folder controls share the same compact
+    // right-hand action tier as session rows.
     expect(groupNames()).toEqual(["beta", "alpha"]);
     const folderPin = screen.getByRole("button", { name: "Pin folder alpha" });
-    expect(folderPin.querySelector("svg")).toHaveAttribute("width", "14");
+    expect(folderPin.querySelector("svg")).toHaveAttribute("width", "12");
     fireEvent.click(folderPin);
     await waitFor(() => expect(groupNames()).toEqual(["alpha", "beta"]));
 
@@ -192,6 +239,7 @@ describe("session navigation controls", () => {
     screen.getByRole("searchbox", { name: "Search sessions" }).focus();
     await user.tab(); // the newest folder's toggle
     await user.tab(); // its pin
+    await user.tab(); // its hide action
     await user.tab(); // its first session row
     expect(document.activeElement).toHaveClass("nav__row-main");
     await user.tab();

@@ -126,6 +126,146 @@ describe("settled transcript search", () => {
   });
 });
 
+describe("transcript density preferences", () => {
+  const assistant = {
+    role: "assistant",
+    model: "gpt-test",
+    stopReason: "toolUse",
+    timestamp: 2,
+    content: [
+      { type: "toolCall", id: "tool-a", name: "ffgrep", arguments: { query: "alpha" } },
+      { type: "toolCall", id: "tool-b", name: "read", arguments: { path: "src/a.ts" } },
+      { type: "text", text: "between tool runs" },
+      { type: "toolCall", id: "tool-c", name: "bash", arguments: { command: "npm test" } },
+    ],
+  };
+  const results = [
+    { role: "toolResult", toolCallId: "tool-a", toolName: "ffgrep", content: "alpha result", timestamp: 3 },
+    { role: "toolResult", toolCallId: "tool-b", toolName: "read", content: "read result", timestamp: 4 },
+    { role: "toolResult", toolCallId: "tool-c", toolName: "bash", content: "failed result", isError: true, timestamp: 5 },
+  ];
+
+  it("replaces only the assistant attribution row with a divider", () => {
+    const { container, rerender } = render(
+      <Transcript
+        messages={[assistant]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        assistantRoundDisplay="divider"
+      />,
+    );
+    expect(container.querySelectorAll(".turn__divider")).toHaveLength(1);
+    expect(screen.queryByText("Pi")).not.toBeInTheDocument();
+    expect(screen.queryByText("gpt-test")).not.toBeInTheDocument();
+    expect(screen.queryByText("toolUse")).not.toBeInTheDocument();
+
+    rerender(
+      <Transcript
+        messages={[assistant]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        assistantRoundDisplay="details"
+      />,
+    );
+    expect(container.querySelector(".turn__divider")).toBeNull();
+    expect(screen.getByText("Pi")).toBeInTheDocument();
+    expect(screen.getByText("gpt-test")).toBeInTheDocument();
+    expect(screen.getByText("toolUse")).toBeInTheDocument();
+  });
+
+  it("lays only adjacent tool calls across a row and reveals one downward detail panel", () => {
+    const { container } = render(
+      <Transcript
+        messages={[assistant, ...results]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="compact"
+        assistantRoundDisplay="divider"
+      />,
+    );
+    const strips = container.querySelectorAll(".tool-strip");
+    expect(strips).toHaveLength(2);
+    expect(strips[0]!.querySelectorAll(".tool-strip__item")).toHaveLength(2);
+    expect(strips[1]!.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+
+    const read = screen.getByRole("button", { name: /read: finished/i });
+    fireEvent.click(read);
+    expect(read).toHaveAttribute("aria-expanded", "true");
+    const detail = strips[0]!.querySelector(".tool-strip__detail");
+    expect(detail).not.toBeNull();
+    expect(strips[0]!.querySelector(".tool-strip__items")?.nextElementSibling).toContainElement(detail as HTMLElement);
+    expect(within(detail as HTMLElement).getByText("read result")).toBeInTheDocument();
+
+    const ffgrep = screen.getByRole("button", { name: /ffgrep: finished/i });
+    fireEvent.click(ffgrep);
+    expect(container.querySelectorAll(".tool-strip__detail")).toHaveLength(1);
+    expect(screen.queryByText("read result")).not.toBeInTheDocument();
+    expect(screen.getByText("alpha result")).toBeInTheDocument();
+
+    fireEvent.click(ffgrep);
+    expect(strips[0]!.querySelector(".tool-strip__reveal")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("alpha result")).toBeInTheDocument();
+    return waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
+  });
+});
+
+describe("persisted user images", () => {
+  it("loads a stable embedded-image reference and opens a keyboard-accessible preview", async () => {
+    const originalLoad = store.loadEmbeddedImage;
+    const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+    store.loadEmbeddedImage = load;
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:persisted-image") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    try {
+      render(
+        <Transcript
+          sessionId="s-images"
+          viewId="view-images"
+          messages={[{
+            role: "user",
+            content: [{ type: "image", mimeType: "image/png" }, { type: "text", text: "caption" }],
+            timestamp: 1,
+            __inspireMessageIndex: 4,
+          }]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+        />,
+      );
+      const thumbnail = await screen.findByRole("button", { name: "Preview attached image" });
+      expect(load).toHaveBeenCalledWith("s-images", "view-images", "pi-embedded://4/0", expect.any(AbortSignal));
+      expect(screen.getByText("caption")).toBeInTheDocument();
+      const thumbnailImage = within(thumbnail).getByRole("img", { name: "Attached image" });
+      expect(thumbnailImage).toHaveAttribute("draggable", "false");
+      expect(fireEvent.dragStart(thumbnailImage)).toBe(false);
+
+      fireEvent.click(thumbnail);
+      const preview = screen.getByRole("dialog", { name: "Image preview" });
+      const previewImage = within(preview).getByRole("img", { name: "Attached image" });
+      expect(previewImage).toHaveAttribute("draggable", "false");
+      expect(fireEvent.dragStart(previewImage)).toBe(false);
+
+      const zoom = within(preview).getByRole("button", { name: "Zoom image" });
+      fireEvent.click(zoom);
+      expect(within(preview).getByRole("button", { name: "Fit image to window" })).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.pointerDown(zoom, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
+      expect(zoom).toHaveClass("image-lightbox__canvas--panning");
+      fireEvent.pointerUp(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
+      fireEvent.click(zoom);
+      expect(zoom).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument());
+    } finally {
+      store.loadEmbeddedImage = originalLoad;
+    }
+  });
+});
+
 describe("message actions", () => {
   it("copies each conversation message and forks through its authoritative entry id", async () => {
     const writeText = vi.fn(async () => undefined);

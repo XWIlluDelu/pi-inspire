@@ -1,10 +1,12 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { useEffect } from "react";
 import type {
+  AssistantRoundDisplayPreference,
   CompletionAttentionPreference,
   LaunchPreference,
   ProjectDisplayPreference,
   ThemePreference,
+  ToolVisibilityPreference,
   VisibilityPreference,
 } from "../../shared/contracts";
 import { store, useAppState } from "../store";
@@ -21,6 +23,18 @@ const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> = [
   { value: "hidden", label: "Hidden" },
   { value: "collapsed", label: "Collapsed" },
   { value: "expanded", label: "Expanded" },
+];
+
+const TOOL_VISIBILITIES: Array<{ value: ToolVisibilityPreference; label: string }> = [
+  { value: "hidden", label: "Hidden" },
+  { value: "compact", label: "Compact" },
+  { value: "collapsed", label: "Collapsed" },
+  { value: "expanded", label: "Expanded" },
+];
+
+const ASSISTANT_ROUNDS: Array<{ value: AssistantRoundDisplayPreference; label: string }> = [
+  { value: "divider", label: "Divider" },
+  { value: "details", label: "Details" },
 ];
 
 const PROJECT_DISPLAYS: Array<{ value: ProjectDisplayPreference; label: string }> = [
@@ -108,8 +122,8 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
         </section>
 
-        <section className="settings__section" aria-label="Cards">
-          <h3 className="settings__section-title">Cards</h3>
+        <section className="settings__section" aria-label="Transcript">
+          <h3 className="settings__section-title">Transcript</h3>
           <div className="settings__field">
             <span className="settings__field-label">Thinking cards</span>
             <Dropdown
@@ -126,8 +140,18 @@ export function Settings({ onClose }: { onClose: () => void }) {
               label="Tool cards"
               className="dropdown--field"
               value={state.prefs.toolVisibility}
-              options={VISIBILITIES}
-              onChange={(value) => store.setToolVisibility(value as VisibilityPreference)}
+              options={TOOL_VISIBILITIES}
+              onChange={(value) => store.setToolVisibility(value as ToolVisibilityPreference)}
+            />
+          </div>
+          <div className="settings__field">
+            <span className="settings__field-label">Assistant rounds</span>
+            <Dropdown
+              label="Assistant rounds"
+              className="dropdown--field"
+              value={state.prefs.assistantRoundDisplay}
+              options={ASSISTANT_ROUNDS}
+              onChange={(value) => store.setAssistantRoundDisplay(value as AssistantRoundDisplayPreference)}
             />
           </div>
         </section>

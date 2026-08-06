@@ -8,19 +8,28 @@ covers:
   - server/model-catalog.ts
   - server/project-files.ts
   - server/runtime.ts
+  - server/session-projection.ts
+  - shared/resource-references.ts
   - src/api.ts
   - src/store.ts
   - src/App.tsx
+  - src/clipboard-files.ts
   - src/composer-completion.ts
   - src/model-options.ts
+  - src/components/AttachmentList.tsx
   - src/components/Composer.tsx
+  - src/components/ImagePreview.tsx
+  - src/components/Transcript.tsx
   - src/components/Welcome.tsx
   - tests/server/app.test.ts
   - tests/server/model-catalog.test.ts
+  - tests/server/session-projection.test.ts
   - tests/web/composer-completion.test.ts
   - tests/web/composer-sessions.test.tsx
   - tests/web/composer.test.tsx
   - tests/web/model-options.test.ts
+  - tests/web/store.test.ts
+  - tests/web/transcript-inspection.test.tsx
   - tests/web/welcome-new-session.test.tsx
 ---
 
@@ -36,12 +45,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - Project files can be found through the session-addressed project index, either in the explicit picker or from the textarea’s active caret token. `@` completion never treats other mentions as file authority: choosing a returned canonical path removes only the active token, preserves the surrounding draft and caret, and stages one deduplicated removable file-reference chip.
 - Leading `/` completion is offered only while the caret remains inside the command token Pi would parse. Once the user types a query, Pi TUI’s public `fuzzyFilter` ranks command names globally across sources; descriptions explain results but never admit unrelated commands, while the unfiltered inventory remains grouped by source. The browser build resolves that matcher to Pi TUI’s pure fuzzy module rather than bundling its terminal-only dependencies. Pi’s runtime commands retain source attribution and first wire ownership so extension-before-prompt/skill collision behavior matches Pi dispatch; inspire then explicitly overrides `/compact` from the same descriptor/parser authority as its execution boundary. Choosing a result inserts the exact command plus a trailing space without executing it.
 - Both completion lists expose loading, empty, and failure states, support pointer and arrow/Enter/Tab/Escape interaction with combobox/listbox semantics, suppress stale session results, and defer to IME composition, multiline input, steering, and follow-up behavior. The multiline textbox keeps DOM focus and owns `aria-controls`, `aria-activedescendant`, and autocomplete state inside its named ARIA 1.1 combobox composite.
-- Images can be pasted, dropped, or selected and previewed before submission.
-- Ordinary files can be selected or dropped, with their name, type, size, and submission meaning visible before sending. A browser paste reads both `clipboardData.files` and file-kind `clipboardData.items`, deduplicates the two projections, and stages pasted images through this same attachment path; the trusted host still materializes the Pi-readable path.
+- Images can be pasted, dropped, or selected. Staged images are distinct thumbnail tiles rather than metadata chips: name, MIME, and size stay hidden, removal remains an overlay action, and activating a tile opens a focus-contained full-image preview. The viewer places a crisp, shadowless image above one viewport-sized blurred scrim; image activation toggles fit/2× zoom, movement must cross a threshold before a zoomed image pans, and only the backdrop, close control, or Escape dismisses it. Native image dragging is disabled throughout, so inspecting an image can never restage it into the composer. After delivery the owning user turn retains the same inspectable image evidence across refreshes: Pi's canonical JSONL keeps the bytes, the bounded transcript projection carries only MIME plus stable message/part coordinates, and the session/view-bound resource adapter serves the mounted thumbnail without duplicating image bytes into the browser snapshot.
+- Ordinary files can be selected or dropped, with their name, type, size, and submission meaning visible before sending. A browser paste uses `clipboardData.files` as its one complete source when non-empty and falls back to file-kind `clipboardData.items` only when `files` is empty. It never combines the two browser projections (which can manufacture two `File` objects for one paste), and it never content-deduplicates genuinely distinct files merely because their name, size, type, and timestamp coincide.
 - Input submitted while Pi is active is explicitly sent as steering input or queued as a follow-up. `running`, `retrying`, `compacting`, and `queued` are one shared browser/host busy-state authority, so queued work exposes steer, follow-up, and abort controls without drifting into a fresh prompt; conflict recovery remains abortable but is not part of active busy ownership.
 - A typed `/compact [instructions]` is routed at the host prompt boundary to Pi's compact control, because the runtime does not parse built-in commands out of prompt text.
 - The composer displays the selected model, thinking level, and context occupancy as quiet controls that do not crowd the writing surface; project identity lives in the topbar per [[workbench]]. The model picker groups Pi-provided models by canonical provider identity, searches provider/id/display fields locally, labels active/recent/capability state, restores trigger focus after Enter, click, or Escape without waiting for asynchronous model ownership, retains that focus through a later mutation-error rerender, and uses only successful model changes to maintain a bounded global MRU ordering within each provider. Unavailable MRU identities stay harmless preference history and are omitted from the current projection. A rejected model change never updates active truth or recency; a rejected thinking-level change rolls back its optimistic value while its session remains visible. Both report a non-blocking warning notice rather than a global error banner.
-- The start surface accepts the first message together with an optional project directory, so a new session can begin in a chosen workspace. Its writing area grows with the draft up to a bounded viewport height. Model choices are the credential-available models from Pi's own registry; `Pi default` omits a startup override, while an explicit provider/id and supported effort level are passed to the creating Pi worker before the first prompt. A model that does not support reasoning disables effort instead of inventing a value.
+- The start surface uses the ordinary composer anatomy and accepts text-only, image-only, or mixed first messages together with an optional project directory. Files remain browser-local until Pi returns the new session identity, then move through the same bounded upload/attachment owner and prompt lifecycle as an existing session. Its writing area grows with the draft up to a bounded viewport height. Model and thinking controls inherit the currently visible choice when one exists, use the same searchable picker/dropdown presentation as the ordinary composer, and do not expose synthetic `Pi default` options; an explicit provider/id and supported thinking level are passed to the creating Pi worker before the first prompt. A model that does not support reasoning disables thinking instead of inventing a value.
 - Submission errors preserve the draft and attachments. Project-file chips are frozen while delivery is in flight, remain partitioned with other composer artifacts by session, and clear only from the owning partition after the host accepts the exact delivery that included them. Attachment uploads still in flight, failed attachment chips, and attachment/project-reference caps prevent submission or staging with non-blocking warning notices rather than replacing the session-wide error banner. A delayed completion may update its originating session's draft/attachment/status partition, but it sets or clears the visible global error only when that session still owns the visible surface.
 - Attachment data crosses the trusted host only through bounded, validated operations and is not silently uploaded elsewhere by inspire.
 - Uploaded attachments have a bounded host-side lifetime: withdrawing a staged attachment deletes its host cache copy, image bytes are reclaimed once a delivered prompt has consumed them, and ordinary files persist for the host’s lifetime because their host paths are referenced by the conversation text.

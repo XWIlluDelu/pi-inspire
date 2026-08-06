@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Welcome } from "../../src/components/Welcome";
 import { store } from "../../src/store";
 import {
@@ -19,6 +19,8 @@ beforeAll(async () => {
   newSessionBody = null;
   promptBody = null;
   installFakeWebSocket();
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:welcome-image") });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({
       availableModels: [
@@ -38,6 +40,9 @@ beforeAll(async () => {
         ],
       }) };
     }
+    if (url.startsWith("/api/attachments")) return { body: {
+      attachments: [{ id: "3a5f1d6c-420d-48ef-a9df-8ae77db183ca", fileName: "image.png", mimeType: "image/png", size: 3, kind: "image" }],
+    } };
     if (url.startsWith("/api/prompt")) {
       promptBody = jsonBody(init);
       return { status: 202, body: { accepted: true } };
@@ -59,17 +64,24 @@ describe("new-session start surface", () => {
     fireEvent.change(message, { target: { value: "Investigate the runtime" } });
     await waitFor(() => expect(message.style.height).toBe("180px"));
 
-    fireEvent.click(screen.getByRole("combobox", { name: "New session model" }));
-    let models = screen.getByRole("listbox", { name: "New session model" });
-    fireEvent.click(within(models).getByRole("option", { name: "Text only · plain" }));
-    expect(screen.getByRole("combobox", { name: "New session effort" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "New session effort" })).toHaveTextContent("Not supported");
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    let models = screen.getByRole("listbox", { name: "Available models" });
+    fireEvent.click(within(models).getByRole("option", { name: /Text only.*No thinking/ }));
+    expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Thinking level" })).toHaveTextContent("thinking unavailable");
 
-    fireEvent.click(screen.getByRole("combobox", { name: "New session model" }));
-    models = screen.getByRole("listbox", { name: "New session model" });
-    fireEvent.click(within(models).getByRole("option", { name: "Claude Sonnet 4 · anthropic" }));
-    fireEvent.click(screen.getByRole("combobox", { name: "New session effort" }));
-    fireEvent.click(within(screen.getByRole("listbox", { name: "New session effort" })).getByRole("option", { name: "high" }));
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    models = screen.getByRole("listbox", { name: "Available models" });
+    fireEvent.click(within(models).getByRole("option", { name: /Claude Sonnet 4/ }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
+    fireEvent.click(within(screen.getByRole("listbox", { name: "Thinking level" })).getByRole("option", { name: "high" }));
+
+    const pasted = new File(["png"], "image.png", { type: "image/png" });
+    fireEvent.paste(message, {
+      clipboardData: { files: [pasted], items: [{ kind: "file", getAsFile: () => pasted }] },
+    });
+    expect(screen.getByRole("button", { name: "Preview attached image" })).toBeInTheDocument();
+    expect(screen.queryByText("image.png")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Project directory"), { target: { value: "/proj" } });
     fireEvent.click(screen.getByRole("button", { name: "Start session" }));
@@ -82,6 +94,7 @@ describe("new-session start surface", () => {
     await waitFor(() => expect(promptBody).toMatchObject({
       sessionId: "new-session",
       message: "Investigate the runtime",
+      attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
     }));
   });
 });

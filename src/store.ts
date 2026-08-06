@@ -10,6 +10,7 @@ import {
   projectNameFromCwd,
   THINKING_LEVELS,
   type ActiveSnapshot,
+  type AssistantRoundDisplayPreference,
   type BranchTreeResponse,
   type CompletionAttentionPreference,
   type GitDiffResponse,
@@ -35,6 +36,7 @@ import {
   type SessionRuntimeStatus,
   type SessionSummary,
   type ThemePreference,
+  type ToolVisibilityPreference,
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
@@ -553,6 +555,13 @@ export class AppStore {
   }
 
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
+
+  /** Replace the visible composer's text through the same nonce channel used
+   * by branch editing. The welcome flow uses this only after Pi assigns the
+   * new session identity, preserving its first message if upload/send fails. */
+  replaceComposerText = (text: string): void => {
+    this.set({ editorText: { text, nonce: (this.state.editorText?.nonce ?? 0) + 1 } });
+  };
 
   private handleAuthFailure(): void {
     // Null the owned socket first so its close handler cannot schedule a
@@ -1184,7 +1193,7 @@ export class AppStore {
     return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
   }
 
-  private hydrationFailure(kind: "session ids" | "pinned folders", error: unknown): Error {
+  private hydrationFailure(kind: "session ids" | "curated folders", error: unknown): Error {
     const message = error instanceof Error ? error.message : "Unknown hydration failure";
     if (error instanceof ApiError) {
       return new ApiError(error.status, `Failed to hydrate ${kind}: ${message}`, error.matches);
@@ -1206,7 +1215,12 @@ export class AppStore {
     for (const id of this.curationIds(this.confirmedPrefs)) ids.add(id);
     if (this.state.sessionId) ids.add(this.state.sessionId);
     for (const id of Object.keys(this.state.sessionStatuses)) ids.add(id);
-    const cwds = new Set([...prefs.pinnedProjectCwds, ...this.confirmedPrefs.pinnedProjectCwds]);
+    const cwds = new Set([
+      ...prefs.pinnedProjectCwds,
+      ...prefs.hiddenProjectCwds,
+      ...this.confirmedPrefs.pinnedProjectCwds,
+      ...this.confirmedPrefs.hiddenProjectCwds,
+    ]);
     const baseIds = new Set(base.map((session) => session.id));
     const hydration = new Map<string, SessionSummary>();
     for (const session of this.sessionHydration.values()) {
@@ -1241,7 +1255,7 @@ export class AppStore {
           if (!baseIds.has(session.id)) hydration.set(session.id, session);
         }
       } catch (error) {
-        throw this.hydrationFailure("pinned folders", error);
+        throw this.hydrationFailure("curated folders", error);
       }
     }
     return hydration;
@@ -2111,7 +2125,7 @@ export class AppStore {
   private confirmedPrefs: InspirePreferences = defaultPreferences;
 
   private isCurationPatch(patch: Partial<InspirePreferences>): boolean {
-    return "pinnedSessionIds" in patch || "hiddenSessionIds" in patch || "pinnedProjectCwds" in patch;
+    return "pinnedSessionIds" in patch || "hiddenSessionIds" in patch || "pinnedProjectCwds" in patch || "hiddenProjectCwds" in patch;
   }
 
   private curationChanged(): void {
@@ -2186,7 +2200,9 @@ export class AppStore {
   setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void => this.savePrefs({ projectDisplay });
   setThinkingVisibility = (thinkingVisibility: VisibilityPreference): void =>
     this.savePrefs({ thinkingVisibility });
-  setToolVisibility = (toolVisibility: VisibilityPreference): void => this.savePrefs({ toolVisibility });
+  setToolVisibility = (toolVisibility: ToolVisibilityPreference): void => this.savePrefs({ toolVisibility });
+  setAssistantRoundDisplay = (assistantRoundDisplay: AssistantRoundDisplayPreference): void =>
+    this.savePrefs({ assistantRoundDisplay });
 
   toggleNavGroup = (cwd: string): void => {
     const current = this.state.prefs.navCollapsedGroups;
@@ -2223,11 +2239,32 @@ export class AppStore {
     });
   };
 
-  /** Folder pins use the exact cwd identity navigation already groups by. */
+  /** Folder pin/Hidden state uses the exact cwd identity navigation already
+   * groups by. The two states are mutually exclusive without touching any
+   * per-session curation. */
   toggleProjectPin = (cwd: string): void => {
-    const current = this.state.prefs.pinnedProjectCwds;
+    const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
+    const pinned = pinnedProjectCwds.includes(cwd);
     this.savePrefs({
-      pinnedProjectCwds: current.includes(cwd) ? current.filter((item) => item !== cwd) : [cwd, ...current],
+      pinnedProjectCwds: pinned
+        ? pinnedProjectCwds.filter((item) => item !== cwd)
+        : [cwd, ...pinnedProjectCwds],
+      ...(!pinned && hiddenProjectCwds.includes(cwd)
+        ? { hiddenProjectCwds: hiddenProjectCwds.filter((item) => item !== cwd) }
+        : {}),
+    });
+  };
+
+  toggleProjectHidden = (cwd: string): void => {
+    const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
+    const hidden = hiddenProjectCwds.includes(cwd);
+    this.savePrefs({
+      hiddenProjectCwds: hidden
+        ? hiddenProjectCwds.filter((item) => item !== cwd)
+        : [cwd, ...hiddenProjectCwds],
+      ...(!hidden && pinnedProjectCwds.includes(cwd)
+        ? { pinnedProjectCwds: pinnedProjectCwds.filter((item) => item !== cwd) }
+        : {}),
     });
   };
 
@@ -2641,6 +2678,36 @@ export class AppStore {
   ): Promise<ResourceDescriptor> {
     return this.api!.resolveResource(sessionId, reference, signal);
   }
+
+  /** Load one Pi-persisted embedded image without selecting the Files pane.
+   * The session and branch-view identity are rechecked across both authenticated
+   * requests so a late thumbnail can never cross a navigation boundary. */
+  loadEmbeddedImage = async (
+    sessionId: string,
+    viewId: string,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<Blob> => {
+    if (!this.api || !/^pi-embedded:\/\/\d+\/\d+$/.test(reference)) {
+      throw new Error("The embedded image reference is invalid");
+    }
+    const stale = () => signal.aborted || this.state.sessionId !== sessionId || this.state.transcriptViewId !== viewId;
+    const descriptor = await this.api.resolveResource(sessionId, reference, signal);
+    if (stale()) throw Object.assign(new Error("The image request is no longer current"), { name: "AbortError" });
+    if (descriptor.kind !== "image" || (descriptor.viewId !== undefined && descriptor.viewId !== viewId)) {
+      throw new Error("The embedded image is unavailable in this conversation view");
+    }
+    if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES) throw new Error("The image is too large to preview");
+    const content = await this.api.resourceContent(descriptor.id, sessionId, {
+      byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
+      signal,
+    });
+    if (stale()) throw Object.assign(new Error("The image request is no longer current"), { name: "AbortError" });
+    if (content.totalSize > MAX_MEDIA_PREVIEW_BYTES || content.blob.size > MAX_MEDIA_PREVIEW_BYTES) {
+      throw new Error("The image is too large to preview");
+    }
+    return content.blob;
+  };
 
   /** Resolve a conversation reference through the authenticated host endpoint
    * and load its preview. Replaces any current preview and revokes its URL. */

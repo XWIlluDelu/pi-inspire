@@ -11,7 +11,8 @@ const preferenceFields = {
   theme: z.enum(["system", "light", "dark"]),
   launch: z.enum(["welcome", "continue"]),
   thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
-  toolVisibility: z.enum(["hidden", "collapsed", "expanded"]),
+  toolVisibility: z.enum(["hidden", "compact", "collapsed", "expanded"]),
+  assistantRoundDisplay: z.enum(["details", "divider"]),
   projectDisplay: z.enum(["folder", "path"]),
   completionAttention: z.enum(["off", "title", "desktop"]),
   recentModelIds: z.array(z.object({
@@ -20,6 +21,7 @@ const preferenceFields = {
   }).strict()).max(8),
   pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100),
   pinnedProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
+  hiddenProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
   hiddenSessionIds: z.array(z.string().min(1).max(128)).max(500),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
 };
@@ -28,11 +30,13 @@ const preferenceFields = {
 // still parse.
 const preferencesSchema = z.object({
   ...preferenceFields,
+  assistantRoundDisplay: preferenceFields.assistantRoundDisplay.default("divider"),
   projectDisplay: preferenceFields.projectDisplay.default("folder"),
   completionAttention: preferenceFields.completionAttention.default("off"),
   recentModelIds: preferenceFields.recentModelIds.default([]),
   pinnedSessionIds: preferenceFields.pinnedSessionIds.default([]),
   pinnedProjectCwds: preferenceFields.pinnedProjectCwds.default([]),
+  hiddenProjectCwds: preferenceFields.hiddenProjectCwds.default([]),
   hiddenSessionIds: preferenceFields.hiddenSessionIds.default([]),
   navCollapsedGroups: preferenceFields.navCollapsedGroups.default([]),
 });

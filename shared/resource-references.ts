@@ -125,7 +125,10 @@ export function collectSessionResourceReferences(
     const parts = contentParts(message);
     for (let partIndex = parts.length - 1; partIndex >= 0 && resources.length < limit; partIndex -= 1) {
       const part = parts[partIndex]!;
-      if (part.type === "image" && typeof part.data === "string") {
+      if (
+        part.type === "image" &&
+        (typeof part.data === "string" || Number.isSafeInteger(message.__inspireMessageIndex))
+      ) {
         const mimeType = typeof part.mimeType === "string" ? part.mimeType : "image/unknown";
         const reference = `pi-embedded://${persistedIndex}/${partIndex}`;
         add({
