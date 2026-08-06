@@ -1,7 +1,10 @@
 import { ChevronRight, FolderOpen, Loader2, Send } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { modelIdentityKey } from "../../shared/contracts";
+import { supportedThinkingLevels } from "../model-options";
 import { store, useAppState } from "../store";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { Dropdown } from "./Dropdown";
 import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
@@ -18,7 +21,25 @@ export function Welcome() {
   const [starting, setStarting] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
+  const [modelKey, setModelKey] = useState("");
+  const [thinkingLevel, setThinkingLevel] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recent = state.sessions.slice(0, 6);
+  const selectedModel = state.availableModels.find((model) => modelIdentityKey(model) === modelKey) ?? null;
+  const thinkingLevels = useMemo(() => supportedThinkingLevels(selectedModel), [selectedModel]);
+
+  useEffect(() => {
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * 0.45))}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    if (thinkingLevel && !thinkingLevels.includes(thinkingLevel as (typeof thinkingLevels)[number])) {
+      setThinkingLevel("");
+    }
+  }, [thinkingLevel, thinkingLevels]);
 
   // A typed directory wins over the current project; empty means current.
   const canStart = Boolean(draft.trim() && (directory.trim() || state.cwd) && !starting);
@@ -29,14 +50,16 @@ export function Welcome() {
     const target = directory.trim();
     setStarting(true);
     try {
-      // newSession resolves once the runtime is ready to accept a prompt. A
-      // failed creation keeps the previous session selected (the store maps
-      // the error into this start surface), so the draft only fires into a session
-      // this submission actually created.
-      const before = store.getState().sessionId;
-      await store.newSession(target || undefined);
-      const opened = store.getState().sessionId;
-      if (opened && opened !== before) {
+      // newSession resolves once the runtime is ready to accept a prompt and
+      // returns only the identity owned by this selection request. A failed or
+      // superseded creation cannot redirect the draft into another session.
+      const opened = await store.newSession(target || undefined, {
+        ...(selectedModel ? { model: { provider: selectedModel.provider, id: selectedModel.id } } : {}),
+        ...(selectedModel?.reasoning !== false && thinkingLevel
+          ? { thinkingLevel: thinkingLevel as (typeof thinkingLevels)[number] }
+          : {}),
+      });
+      if (opened) {
         const sent = await store.sendPrompt(message);
         if (sent) setDraft("");
       }
@@ -62,6 +85,7 @@ export function Welcome() {
         }}
       >
         <textarea
+          ref={textareaRef}
           className="composer__input"
           rows={3}
           value={draft}
@@ -76,6 +100,38 @@ export function Welcome() {
             }
           }}
         />
+        <div className="welcome__session-controls">
+          <div className="welcome__session-field">
+            <span>Model</span>
+            <Dropdown
+              label="New session model"
+              value={modelKey}
+              disabled={starting}
+              options={[
+                { value: "", label: "Pi default" },
+                ...state.availableModels.map((model) => ({
+                  value: modelIdentityKey(model),
+                  label: `${model.name ?? model.id} · ${model.provider}`,
+                })),
+              ]}
+              onChange={setModelKey}
+            />
+          </div>
+          <div className="welcome__session-field">
+            <span>Effort</span>
+            <Dropdown
+              label="New session effort"
+              value={thinkingLevel}
+              display={selectedModel?.reasoning === false ? "Not supported" : undefined}
+              disabled={starting || selectedModel?.reasoning === false}
+              options={[
+                { value: "", label: "Pi default" },
+                ...thinkingLevels.map((level) => ({ value: level, label: level })),
+              ]}
+              onChange={setThinkingLevel}
+            />
+          </div>
+        </div>
         <div className="composer__meta">
           <input
             className="welcome__dir"

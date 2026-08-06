@@ -1,9 +1,15 @@
 ---
 purpose: The product opens as a conversation-centered, collapsible workbench whose surrounding regions can grow without replacing the initial interface.
 covers:
+  - index.html
+  - public/manifest.webmanifest
+  - public/service-worker.js
+  - public/app-icon.svg
+  - public/app-icon-maskable.svg
   - shared/contracts.ts
   - server/app.ts
   - src/api.ts
+  - src/main.tsx
   - src/store.ts
   - src/App.tsx
   - src/components/Nav.tsx
@@ -45,7 +51,7 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
 - The navigation and contextual regions can collapse so the conversation can use the available width. Below 900px, an open navigation drawer begins below the center topbar, leaving its single toggle hit-testable by mouse, touch, and keyboard without horizontal overflow; the same state controls the drawer and collapsed rail.
 - Both side regions' widths are adjustable by dragging their boundary with the conversation (zero-width handles riding the shared edges), persist across reloads, and reset to the default on double-click; each boundary's scroll thumb keeps grab priority where the two overlap. A saved width is clamped live as the window narrows without overwriting the user's preference, then restored when space returns.
 - The contextual region primarily hosts files and artifacts referenced by the conversation, while retaining the structure needed for later changes, session trees, subagents, and timelines. Files, Changes, and Branches use equal-width mode controls wide enough to preserve every label at the pane's minimum width. The region remains in the three-column layout while that layout can preserve a usable conversation; below that floor it becomes a drawer starting under the center topbar, so it never covers its own open/close control.
-- Opening the product follows a remembered user choice: resume the previous session or show a welcome page. Bootstrap or socket loss keeps the last confirmed surface where one exists, presents a yellow reconnect chip and banner, and retries automatically instead of presenting the interruption as a red operation error.
+- Opening the product follows a remembered user choice: resume the previous session or show a welcome page. Bootstrap or socket loss keeps the last confirmed surface where one exists, presents a yellow reconnect chip and banner, and retries automatically instead of presenting the interruption as a red operation error. The production origin is installable as a standalone PWA: its service worker caches only the versioned application shell and same-origin static assets, never API, event, attachment, or resource responses. The cached shell can explain an offline host, but Pi/session capability still requires the loopback host and its authenticated API.
 - The welcome page starts a session from a first message with an optional project directory and offers a collapsible recent-sessions list as the route back to previous work. A missing project directory produces a non-blocking warning notice. Failed open/create operations remain in the navigation and start surfaces, preserve the previously usable session, and never replace a transcript integrity error.
 - The project directory can be typed or chosen through a host-side directory picker: the host process lists its own filesystem (`GET /api/host/dirs`, bearer-token guarded, session-independent), so over SSH forwards or remote deployments the browsed tree is always the machine sessions run on, and entry paths arrive joined with the host's own separators. Root discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent. A missing or relative starting point falls back to the host home.
 - Persistent interface preferences live in a floating settings overlay opened from the topbar rather than consuming the session-navigation column. Settings fields remain inside their section at every supported width; explanatory copy yields space to its control and stacks above it on a narrow phone. Every modal overlay owns keyboard focus while open, cycles Tab within its surface, composes correctly when a newer modal appears above it, and restores the exact opener on close even when nested modals close out of order.

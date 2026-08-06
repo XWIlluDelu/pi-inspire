@@ -71,6 +71,31 @@ describe("branch request view ownership", () => {
     expect(store.getState().branchActionId).toBeNull();
   });
 
+  it("forks a transcript input only after refreshing tree capability and revision", async () => {
+    let treeReads = 0;
+    let forks = 0;
+    const store = await setup((url) => {
+      if (url.startsWith("/api/branches/tree")) {
+        treeReads += 1;
+        return { body: branchTree() };
+      }
+      if (url.startsWith("/api/branches/fork")) {
+        forks += 1;
+        return { body: {
+          sessionId: "forked",
+          snapshot: activeSnapshot({ sessionId: "forked" }),
+          editorText: "user",
+        } };
+      }
+      return undefined;
+    });
+
+    await expect(store.forkFromEntry("u1")).resolves.toBe(true);
+    expect(treeReads).toBe(1);
+    expect(forks).toBe(1);
+    expect(store.getState().sessionId).toBe("forked");
+  });
+
   it("ignores delayed fork success after reconnect invalidates ownership", async () => {
     const fork = deferred<RouteResponse | undefined>();
     const store = await setup((url) => {

@@ -980,6 +980,47 @@ describe("RuntimeController concurrent sessions", () => {
     }
   });
 
+  it("starts a new Pi worker with the selected model and thinking level", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        const request = worker.request.bind(worker);
+        worker.request = async <T,>(command: Record<string, unknown>): Promise<T> => {
+          const result = await request<T>(command);
+          return command.type === "get_state"
+            ? { ...(result as object), thinkingLevel: "high", model: { provider: "anthropic", id: "claude-sonnet-4" } } as T
+            : result;
+        };
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      const snapshot = await runtime.newSession("/tmp", {
+        name: "  Tuned session  ",
+        model: { provider: "anthropic", id: "claude-sonnet-4" },
+        thinkingLevel: "high",
+      });
+      expect(worker?.options.args).toEqual(expect.arrayContaining([
+        "--name", "Tuned session",
+        "--model", "anthropic/claude-sonnet-4",
+        "--thinking", "high",
+      ]));
+      expect(worker?.options.args?.at(-2)).toBe("--extension");
+      expect(snapshot.active).toMatchObject({
+        model: { provider: "anthropic", id: "claude-sonnet-4" },
+        thinkingLevel: "high",
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("publishes running and unseen completion state, then acknowledges it when viewed", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -1395,12 +1436,14 @@ describe("RuntimeController concurrent sessions", () => {
     const store = new AttachmentStore();
     attachments.push(store);
     const source = catalog([record("a", "/tmp")]);
+    source.refresh = vi.fn(source.refresh);
     source.invalidate = vi.fn();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(source, store, undefined, preview, 15_000, undefined, remove);
 
     await expect(runtime.deleteSession("a")).resolves.toEqual({ sessionId: "a", disposition: "trashed" });
     expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: "a", path: "/sessions/a.jsonl" }));
+    expect(source.refresh).toHaveBeenCalledOnce();
     expect(source.invalidate).toHaveBeenCalledOnce();
     await runtime.close();
   });

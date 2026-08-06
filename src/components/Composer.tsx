@@ -236,6 +236,28 @@ function CompletionMenu({
   );
 }
 
+/** Clipboard implementations differ on whether pasted images appear in
+ * `files`, `items`, or both. Normalize both surfaces without double-uploading
+ * the same browser File. */
+export function clipboardFiles(data: Pick<DataTransfer, "files" | "items"> | null | undefined): File[] {
+  if (!data) return [];
+  const candidates = [
+    ...Array.from(data.files ?? []),
+    ...Array.from(data.items ?? []).flatMap((item) => {
+      if (item.kind !== "file") return [];
+      const file = item.getAsFile();
+      return file ? [file] : [];
+    }),
+  ];
+  const keys = new Set<string>();
+  return candidates.filter((file) => {
+    const key = JSON.stringify([file.name, file.type, file.size, file.lastModified]);
+    if (keys.has(key)) return false;
+    keys.add(key);
+    return true;
+  });
+}
+
 export function Composer() {
   const state = useAppState();
   const sessionId = state.sessionId;
@@ -428,7 +450,7 @@ export function Composer() {
   };
 
   const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(event.clipboardData?.files ?? []);
+    const files = clipboardFiles(event.clipboardData);
     if (files.length === 0) return;
     event.preventDefault();
     void store.addFiles(files);
