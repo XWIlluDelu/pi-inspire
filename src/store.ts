@@ -23,6 +23,7 @@ import {
   type LaunchPreference,
   type ModelIdentity,
   type ModelOption,
+  type NewSessionDefaults,
   type NewSessionOptions,
   type ProjectDirEntry,
   type ProjectDisplayPreference,
@@ -2048,6 +2049,17 @@ export class AppStore {
     if (!this.api || !sessionId) return [];
     const result = await this.api.searchFiles(sessionId, query);
     return result.files;
+  };
+
+  resolveNewSessionDefaults = async (cwd: string): Promise<NewSessionDefaults> => {
+    if (!this.api) throw new Error("Not connected to the insπre host");
+    return this.api.newSessionDefaults(cwd);
+  };
+
+  searchNewSessionProjectFiles = async (cwd: string, query: string): Promise<ProjectFileResult[]> => {
+    if (!this.api) return [];
+    const result = await this.api.searchNewSessionFiles(cwd, query);
+    return result.files.map((file) => ({ ...file, workspaceCwd: result.cwd }));
   };
 
   /** One level of the workspace explorer; failures read as an empty level. */

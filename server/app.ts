@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
-import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
@@ -15,6 +16,7 @@ import {
   THINKING_LEVELS,
   type BootstrapResponse,
   type GitDiffSide,
+  type NewSessionDefaults,
 } from "../shared/contracts.js";
 import type { AttachmentStore } from "./attachments.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
@@ -64,6 +66,14 @@ const sessionQuerySchema = z.object({
 });
 const fileQuerySchema = z.object({
   sessionId: sessionIdField,
+  q: z.string().max(200).default(""),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const newSessionDefaultsQuerySchema = z.object({
+  cwd: z.string().min(1).max(4_096),
+});
+const newSessionFileQuerySchema = z.object({
+  cwd: z.string().min(1).max(4_096),
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -137,7 +147,24 @@ export interface AppDependencies {
   piVersion: string;
   /** Browser-safe configured model metadata, available without a live worker. */
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
+  /** Read-only Pi startup resolution for a canonical prospective workspace. */
+  newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
+}
+
+async function prospectiveWorkspaceRoot(cwd: string): Promise<string> {
+  let root: string;
+  let details;
+  try {
+    root = await realpath(resolve(cwd));
+    details = await stat(root);
+  } catch {
+    throw Object.assign(new Error("Project path does not exist"), { status: 400 });
+  }
+  if (!details.isDirectory()) {
+    throw Object.assign(new Error("Project path is not a directory"), { status: 400 });
+  }
+  return root;
 }
 
 function bearerToken(request: Request): string | undefined {
@@ -334,6 +361,22 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   app.post("/api/sessions/new", async (request, response) => {
     const { cwd, name, model, thinkingLevel } = newSchema.parse(request.body);
     response.json(await deps.runtime.newSession(cwd, { name, model, thinkingLevel }));
+  });
+  // These endpoints are read-only previews for the start surface. They neither
+  // create a session nor authorize later file reads; the resulting session
+  // worker and prompt boundary re-resolve the workspace and file references.
+  app.get("/api/new-session/defaults", async (request, response) => {
+    const { cwd } = newSessionDefaultsQuerySchema.parse(request.query);
+    const root = await prospectiveWorkspaceRoot(cwd);
+    if (!deps.newSessionDefaults) {
+      return response.status(503).json({ error: "New-session model resolution is unavailable" });
+    }
+    response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
+  });
+  app.get("/api/new-session/files", async (request, response) => {
+    const { cwd, q, limit } = newSessionFileQuerySchema.parse(request.query);
+    const root = await prospectiveWorkspaceRoot(cwd);
+    response.json({ cwd: root, files: await searchProjectFiles(root, q, limit) });
   });
   app.post("/api/sessions/rename", async (request, response) => {
     const { sessionId, name } = renameSchema.parse(request.body);
