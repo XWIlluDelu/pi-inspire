@@ -49,6 +49,11 @@ describe("local host API", () => {
       availableModels: async () => [{
         provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true,
       }],
+      newSessionDefaults: async (cwd) => ({
+        cwd,
+        model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+        thinkingLevel: "high",
+      }),
       distDir: join(temporary, "missing-dist"),
     });
     await new Promise<void>((resolve) => application.server.listen(0, "127.0.0.1", resolve));
@@ -62,6 +67,34 @@ describe("local host API", () => {
   });
 
   const api = () => request(application.server).get("/api/bootstrap").set("Authorization", `Bearer ${token}`);
+
+  it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
+    await writeFile(join(temporary, "app.ts"), "export {};\n");
+
+    const defaults = await request(application.server)
+      .get("/api/new-session/defaults")
+      .query({ cwd: join(temporary, ".") })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(defaults.body).toEqual({
+      cwd: temporary,
+      model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+      thinkingLevel: "high",
+    });
+
+    const files = await request(application.server)
+      .get("/api/new-session/files")
+      .query({ cwd: join(temporary, "."), q: "app" })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(files.body).toEqual({ cwd: temporary, files: [{ path: "app.ts", name: "app.ts" }] });
+
+    await request(application.server)
+      .get("/api/new-session/defaults")
+      .query({ cwd: join(temporary, "missing") })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400, { error: "Project path does not exist" });
+  });
 
   it("stops accepting work before runtime teardown and drains an active request without deadlock", async () => {
     const originalSnapshot = runtime.snapshot.bind(runtime);

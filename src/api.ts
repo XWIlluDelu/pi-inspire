@@ -12,6 +12,7 @@ import type {
   HostDirListing,
   HostRootsResponse,
   InspirePreferences,
+  NewSessionDefaults,
   NewSessionOptions,
   ProjectDirEntry,
   PromptRequest,
@@ -26,6 +27,9 @@ import type {
 export interface ProjectFileResult {
   path: string;
   name: string;
+  /** Canonical workspace identity for pre-session results. Session-bound
+   * results omit it because their runtime slot already owns the root. */
+  workspaceCwd?: string;
 }
 
 // Deterministic development-only token, matched by the dev:host script.
@@ -175,6 +179,13 @@ export function createApi(token: string | null = null) {
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
     newSession: (cwd: string, options: NewSessionOptions = {}) =>
       post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, ...options }),
+    newSessionDefaults: (cwd: string) =>
+      request<NewSessionDefaults>(token, `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`),
+    searchNewSessionFiles: (cwd: string, query: string, limit = 50) =>
+      request<{ cwd: string; files: ProjectFileResult[] }>(
+        token,
+        `/api/new-session/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}&limit=${limit}`,
+      ),
     renameSession: (sessionId: string, name: string) =>
       post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
     deleteSession: (sessionId: string) =>

@@ -1,20 +1,24 @@
-import { ChevronRight, FolderOpen, Loader2, Paperclip, Send } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, FolderOpen, FolderSearch, Loader2, Paperclip, Send } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_ATTACHMENTS,
+  MAX_PROJECT_FILES,
   THINKING_LEVELS,
   modelIdentityKey,
   type ModelOption,
   type ThinkingLevel,
 } from "../../shared/contracts";
+import type { ProjectFileResult } from "../api";
 import { clipboardFiles } from "../clipboard-files";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
 import { store, useAppState, type PendingAttachment } from "../store";
 import { AttachmentList } from "./AttachmentList";
+import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
+import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 import { relativeTime } from "./Transcript";
 import { Wordmark } from "./Wordmark";
 
@@ -44,27 +48,42 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
   const [draft, setDraft] = useState("");
   const [directory, setDirectory] = useState("");
   const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  const [projectFileRoot, setProjectFileRoot] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
   const [modelKey, setModelKey] = useState(() => state.model ? modelIdentityKey(state.model) : "");
+  const [resolvedDefaultModel, setResolvedDefaultModel] = useState<ModelOption | null>(null);
+  const [modelTouched, setModelTouched] = useState(false);
+  const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready" | "error">(
+    state.model ? "ready" : "idle",
+  );
+  const [thinkingTouched, setThinkingTouched] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
     THINKING_LEVELS.includes(state.thinkingLevel as ThinkingLevel)
       ? state.thinkingLevel as ThinkingLevel
       : "off",
   );
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
+  const effectiveDirectory = directory.trim() || state.cwd || "";
+  const availableModels = useMemo(() => {
+    if (!resolvedDefaultModel || state.availableModels.some((model) => modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel))) {
+      return state.availableModels;
+    }
+    return [...state.availableModels, resolvedDefaultModel];
+  }, [resolvedDefaultModel, state.availableModels]);
   const selectedModel = useMemo<ModelOption | null>(() => {
-    const catalogModel = state.availableModels.find((model) => modelIdentityKey(model) === modelKey);
+    const catalogModel = availableModels.find((model) => modelIdentityKey(model) === modelKey);
     if (catalogModel) return catalogModel;
     return state.model && modelIdentityKey(state.model) === modelKey ? state.model : null;
-  }, [modelKey, state.availableModels, state.model]);
+  }, [availableModels, modelKey, state.model]);
   const thinkingLevels = useMemo(() => supportedThinkingLevels(selectedModel), [selectedModel]);
 
   useEffect(() => () => {
@@ -74,15 +93,52 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
   }, []);
 
   useEffect(() => {
-    const element = textareaRef.current;
-    if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * 0.45))}px`;
-  }, [draft]);
-
-  useEffect(() => {
     if (!thinkingLevels.includes(thinkingLevel)) setThinkingLevel(thinkingLevels[0] ?? "off");
   }, [thinkingLevel, thinkingLevels]);
+
+  // Until the user chooses explicitly, a live session model is the preferred
+  // inheritance source. This effect also closes the snapshot-arrival race that
+  // previously left the start surface at "Select model".
+  useEffect(() => {
+    if (modelTouched || !state.model) return;
+    setModelKey(modelIdentityKey(state.model));
+    setModelStatus("ready");
+    if (!thinkingTouched && THINKING_LEVELS.includes(state.thinkingLevel as ThinkingLevel)) {
+      setThinkingLevel(state.thinkingLevel as ThinkingLevel);
+    }
+  }, [modelTouched, state.model, state.thinkingLevel, thinkingTouched]);
+
+  // With no session model to inherit, ask the host for Pi's actual startup
+  // choice in the prospective workspace. A stale path response cannot replace
+  // a later path or an explicit user selection.
+  useEffect(() => {
+    if (modelTouched || state.model || !effectiveDirectory) {
+      if (!effectiveDirectory && !state.model && !modelTouched) setModelStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setModelKey("");
+    setResolvedDefaultModel(null);
+    setModelStatus("loading");
+    const timer = setTimeout(() => {
+      store.resolveNewSessionDefaults(effectiveDirectory).then(
+        (defaults) => {
+          if (cancelled) return;
+          setResolvedDefaultModel(defaults.model);
+          setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
+          if (!thinkingTouched) setThinkingLevel(defaults.thinkingLevel);
+          setModelStatus("ready");
+        },
+        () => {
+          if (!cancelled) setModelStatus("error");
+        },
+      );
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [effectiveDirectory, modelTouched, state.model, thinkingTouched]);
 
   const addFiles = (files: File[]) => {
     if (starting || files.length === 0) return;
@@ -101,19 +157,63 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
     setAttachmentError(null);
   };
 
+  const addProjectFile = (file: ProjectFileResult) => {
+    const nextRoot = file.workspaceCwd ?? projectFileRoot;
+    const sameWorkspace = projectFileRoot && nextRoot && projectFileRoot !== nextRoot ? [] : projectFiles;
+    if (!file.path || sameWorkspace.includes(file.path)) {
+      if (sameWorkspace !== projectFiles) setProjectFiles(sameWorkspace);
+      if (nextRoot) setProjectFileRoot(nextRoot);
+      return;
+    }
+    if (sameWorkspace.length >= MAX_PROJECT_FILES) {
+      setAttachmentError(`At most ${MAX_PROJECT_FILES} project files per message`);
+      return;
+    }
+    setAttachmentError(null);
+    setProjectFiles([...sameWorkspace, file.path]);
+    if (nextRoot) setProjectFileRoot(nextRoot);
+  };
+
+  const removeProjectFile = (path: string) => {
+    const next = projectFiles.filter((item) => item !== path);
+    setProjectFiles(next);
+    if (next.length === 0) setProjectFileRoot(null);
+  };
+
+  const searchProjectFiles = useCallback(
+    (query: string) => effectiveDirectory
+      ? store.searchNewSessionProjectFiles(effectiveDirectory, query)
+      : Promise.resolve([]),
+    [effectiveDirectory],
+  );
+
+  const changeDirectory = (value: string) => {
+    setDirectory(value);
+    setProjectFiles([]);
+    setProjectFileRoot(null);
+    setPickerOpen(false);
+  };
+
   // A typed directory wins over the current project; empty means current.
-  const canStart = Boolean((draft.trim() || attachments.length > 0) && (directory.trim() || state.cwd) && !starting);
+  const commandScopeMatches = Boolean(state.cwd && (!directory.trim() || directory.trim() === state.cwd));
+  const hasInput = Boolean(draft.trim() || attachments.length > 0 || projectFiles.length > 0);
+  const canStart = Boolean(hasInput && effectiveDirectory && selectedModel && !starting);
 
   const start = async () => {
     if (!canStart) return;
     const message = draft;
     const files = attachments.map((attachment) => attachment.file);
-    const target = directory.trim();
+    const referencedProjectFiles = [...projectFiles];
+    // A selected pre-session file binds creation to the canonical workspace
+    // that produced it, so a symlink retarget cannot reinterpret the path.
+    const target = projectFileRoot || directory.trim();
+    const model = selectedModel;
+    if (!model) return;
     setStarting(true);
     try {
       const opened = await store.newSession(target || undefined, {
-        ...(selectedModel ? { model: { provider: selectedModel.provider, id: selectedModel.id } } : {}),
-        ...(selectedModel && selectedModel.reasoning !== false ? { thinkingLevel } : {}),
+        model: { provider: model.provider, id: model.id },
+        ...(model.reasoning !== false ? { thinkingLevel } : {}),
       });
       if (!opened) return;
 
@@ -122,6 +222,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
       // normal upload/send path own all host attachment state.
       setSessionDraft(opened, message);
       store.replaceComposerText(message);
+      for (const path of referencedProjectFiles) store.addProjectFile(path);
       if (files.length > 0) await store.addFiles(files);
       const sent = await store.sendPrompt(message);
       if (sent) {
@@ -170,15 +271,25 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
           }}
         />
         <AttachmentList items={attachments} disabled={starting} onRemove={removeAttachment} />
-        <textarea
-          ref={textareaRef}
-          className="composer__input"
-          rows={3}
+        <ProjectFileChips
+          paths={projectFiles}
+          disabled={starting}
+          onRemove={removeProjectFile}
+        />
+        <ComposerInput
           value={draft}
+          onChange={setDraft}
+          commands={commandScopeMatches ? state.commands : []}
+          completionDisabled={starting}
+          completionScope={`new-session:${effectiveDirectory}`}
+          searchProjectFiles={effectiveDirectory ? searchProjectFiles : undefined}
+          onPickProjectFile={addProjectFile}
+          rows={3}
+          maxHeightRatio={0.45}
           placeholder="What do you want to work on?"
-          aria-label="First message"
+          label="First message"
+          completionLabel="First message completion"
           autoFocus
-          onChange={(event) => setDraft(event.target.value)}
           onPaste={(event) => {
             const files = clipboardFiles(event.clipboardData);
             if (files.length === 0) return;
@@ -193,6 +304,44 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
           }}
         />
         <div className="composer__meta">
+          <ModelSelector
+            value={selectedModel}
+            models={availableModels}
+            recent={state.prefs.recentModelIds}
+            emptyLabel={modelStatus === "loading" || (modelStatus === "idle" && effectiveDirectory && !modelTouched)
+              ? "Resolving model…"
+              : "Select model"}
+            disabled={starting}
+            onChange={(provider, id) => {
+              setModelTouched(true);
+              setModelStatus("ready");
+              setModelKey(modelIdentityKey({ provider, id }));
+            }}
+          />
+          <Dropdown
+            label="Thinking level"
+            title={selectedModel?.reasoning === false ? "The selected model does not support thinking" : "Thinking level"}
+            direction="up"
+            value={thinkingLevel}
+            display={selectedModel?.reasoning === false ? "thinking unavailable" : thinkingLevel}
+            disabled={starting || !selectedModel || selectedModel.reasoning === false}
+            options={thinkingLevels.map((level) => ({ value: level, label: level }))}
+            onChange={(value) => {
+              setThinkingTouched(true);
+              setThinkingLevel(value as ThinkingLevel);
+            }}
+          />
+          <button
+            type="button"
+            className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
+            onClick={() => setPickerOpen((value) => !value)}
+            disabled={starting || !effectiveDirectory}
+            aria-label="Add project files"
+            aria-expanded={pickerOpen}
+            title="Reference project files"
+          >
+            <FolderSearch size={14} aria-hidden />
+          </button>
           <button
             type="button"
             className="icon-button"
@@ -203,43 +352,6 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
           >
             <Paperclip size={14} aria-hidden />
           </button>
-          <input
-            className="welcome__dir"
-            value={directory}
-            onChange={(event) => setDirectory(event.target.value)}
-            placeholder={state.cwd ?? "/path/to/project"}
-            aria-label="Project directory"
-            spellCheck={false}
-            disabled={starting}
-          />
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Browse host directories"
-            title="Browse host directories"
-            disabled={starting}
-            onClick={() => setBrowsing(true)}
-          >
-            <FolderOpen size={14} aria-hidden />
-          </button>
-          <ModelSelector
-            value={selectedModel}
-            models={state.availableModels}
-            recent={state.prefs.recentModelIds}
-            emptyLabel="Select model"
-            disabled={starting}
-            onChange={(provider, id) => setModelKey(modelIdentityKey({ provider, id }))}
-          />
-          <Dropdown
-            label="Thinking level"
-            title={selectedModel?.reasoning === false ? "The selected model does not support thinking" : "Thinking level"}
-            direction="up"
-            value={thinkingLevel}
-            display={selectedModel?.reasoning === false ? "thinking unavailable" : thinkingLevel}
-            disabled={starting || selectedModel?.reasoning === false}
-            options={thinkingLevels.map((level) => ({ value: level, label: level }))}
-            onChange={(value) => setThinkingLevel(value as ThinkingLevel)}
-          />
           <span className="composer__spacer" />
           <button
             type="submit"
@@ -251,6 +363,37 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
             {starting ? <Loader2 size={14} className="spin" aria-hidden /> : <Send size={14} aria-hidden />}
           </button>
         </div>
+        <div className="welcome__directory">
+          <button
+            type="button"
+            className="icon-button welcome__directory-browse"
+            aria-label="Browse host directories"
+            title="Browse host directories"
+            disabled={starting}
+            onClick={() => setBrowsing(true)}
+          >
+            <FolderOpen size={14} aria-hidden />
+          </button>
+          <input
+            className="welcome__dir"
+            value={directory}
+            onChange={(event) => changeDirectory(event.target.value)}
+            placeholder={state.cwd ?? "/path/to/project"}
+            aria-label="Project directory"
+            spellCheck={false}
+            disabled={starting}
+          />
+        </div>
+        {pickerOpen && effectiveDirectory ? (
+          <ProjectFilePicker
+            scope={effectiveDirectory}
+            selected={projectFiles}
+            disabled={starting}
+            search={searchProjectFiles}
+            onAdd={addProjectFile}
+            onClose={() => setPickerOpen(false)}
+          />
+        ) : null}
       </form>
       {attachmentError ? <p className="welcome__error" role="alert">{attachmentError}</p> : null}
       {state.sessionActionError ? (
@@ -262,7 +405,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
           initial={directory.trim() || state.cwd || undefined}
           onCancel={() => setBrowsing(false)}
           onPick={(path) => {
-            setDirectory(path);
+            changeDirectory(path);
             setBrowsing(false);
           }}
         />

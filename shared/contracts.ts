@@ -38,6 +38,14 @@ export interface NewSessionOptions {
   thinkingLevel?: ThinkingLevel;
 }
 
+/** Pi's resolved startup choice for a new session in one canonical workspace.
+ * This is a preflight projection; the creating worker remains authoritative. */
+export interface NewSessionDefaults {
+  cwd: string;
+  model: ModelOption | null;
+  thinkingLevel: ThinkingLevel;
+}
+
 export function modelIdentityKey(model: Pick<ModelIdentity, "provider" | "id">): string {
   return JSON.stringify([model.provider, model.id]);
 }
