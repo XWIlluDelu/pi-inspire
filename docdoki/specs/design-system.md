@@ -386,8 +386,11 @@ warning capsule surface.
   prior runtime's explorer rather than presenting its workspace as current.
 - The nav column begins with one brand/new-session target: the transparent
   22px reticle favicon + wordmark align to the same left content axis as Search,
-  while `New session` occupies the trailing side until the column becomes too
-  narrow. The collapsed rail carries the same reticle alone at 26px. The rail
+  while `New session` occupies the trailing side. The untouched default column
+  width scales continuously from 272px to its 220px floor; neither the brand
+  action's typography nor the adjacent topbar toggle changes its anchor at the
+  1280/1100px content breakpoints. The collapsed rail carries the same reticle
+  alone at 26px. The rail
   already supplies product identity, so the topbar continues to show the
   visible session title and shows no duplicate wordmark on the welcome surface.
   It follows the favicon's theme colors (teal in light, white in dark) and opens

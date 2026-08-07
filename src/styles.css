@@ -157,7 +157,9 @@
   --dur-standard: 180ms;
   --dur-panel: 240ms;
   --ease-standard: ease-out;
-  --nav-w: 272px;
+  /* Fluid only for the untouched default. A user-resized inline value remains
+     fixed; the handle still clamps it safely against the viewport. */
+  --nav-w: clamp(220px, calc(18.6667vw + 33.0667px), 272px);
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 48px;
@@ -4769,7 +4771,6 @@ body.srail-dragging {
 
 @media (max-width: 1280px) {
   :root {
-    --nav-w: 216px;
     --content-max: 800px;
     --composer-max: 800px;
   }
@@ -4778,26 +4779,12 @@ body.srail-dragging {
   .nav__mock {
     display: none;
   }
-
-  .topbar {
-    gap: 5px;
-    padding-inline: var(--space-2) var(--space-3);
-  }
-
-  .nav__brand-action {
-    font-size: var(--text-xs);
-  }
 }
 
 @media (max-width: 1100px) {
   :root {
-    --nav-w: 200px;
     --content-max: 740px;
     --composer-max: 740px;
-  }
-
-  .nav__brand-action {
-    display: none;
   }
 
   .topbar__project {
