@@ -1,4 +1,5 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
+import { INSPIRE_COMMANDS } from "../shared/commands";
 import type { ProjectFileResult } from "./api";
 import type { PiCommand } from "./store";
 
@@ -81,6 +82,19 @@ export function rankProjectFiles(files: readonly ProjectFileResult[], query: str
     })
     .sort((left, right) => left.score - right.score || left.file.path.localeCompare(right.file.path))
     .map(({ file }) => file);
+}
+
+export function resolveCommandInventory(commands: readonly PiCommand[]): PiCommand[] {
+  const byName = new Map<string, PiCommand>();
+  // Pi dispatches the first matching extension command before prompt/skill
+  // resources, so the first wire occurrence owns every runtime collision.
+  for (const command of commands) {
+    if (!byName.has(command.name)) byName.set(command.name, command);
+  }
+  // The host intercepts `/compact` before Pi dispatch, so its descriptor is
+  // authoritative even if an extension or prompt registers the same name.
+  for (const command of INSPIRE_COMMANDS) byName.set(command.name, command);
+  return [...byName.values()];
 }
 
 export function rankCommands(commands: readonly PiCommand[], query: string): PiCommand[] {

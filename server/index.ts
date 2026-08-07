@@ -15,7 +15,7 @@ import {
   type InstanceState,
 } from "./instance-state.mjs";
 import { GitInspectionService } from "./git-inspection.js";
-import { availableModelOptions } from "./model-catalog.js";
+import { availableModelOptions, resolveNewSessionDefaults } from "./model-catalog.js";
 import { MOCK_AVAILABLE_MODELS, MockCatalog, MockGitInspection, MockRuntime } from "./mock.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
@@ -66,6 +66,13 @@ const readAvailableModels = async () => {
     return [];
   }
 };
+const readNewSessionDefaults = async (cwd: string) => {
+  if (mock) {
+    return { cwd, model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null), thinkingLevel: "medium" as const };
+  }
+  if (!modelRuntime) throw Object.assign(new Error("Pi's model catalog is unavailable"), { status: 503 });
+  return resolveNewSessionDefaults(modelRuntime, cwd);
+};
 const application = createInspireServer({
   token,
   runtime,
@@ -78,6 +85,7 @@ const application = createInspireServer({
   version: packageJson.version,
   piVersion: piPackage.version,
   availableModels: readAvailableModels,
+  newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),
 });
 

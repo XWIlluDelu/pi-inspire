@@ -1,5 +1,18 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { THINKING_LEVELS, type ModelOption, type ThinkingLevel } from "../shared/contracts.js";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRuntime,
+  resolveModelScopeWithDiagnostics,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  THINKING_LEVELS,
+  type ModelOption,
+  type NewSessionDefaults,
+  type ThinkingLevel,
+} from "../shared/contracts.js";
 
 function thinkingLevelMap(value: unknown): ModelOption["thinkingLevelMap"] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -13,17 +26,80 @@ function thinkingLevelMap(value: unknown): ModelOption["thinkingLevelMap"] {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+function modelOption(model: {
+  provider: string;
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  thinkingLevelMap?: unknown;
+}): ModelOption {
+  const map = thinkingLevelMap(model.thinkingLevelMap);
+  return {
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    ...(map ? { thinkingLevelMap: map } : {}),
+  };
+}
+
 /** Read Pi's configured model authority and expose only picker metadata. */
 export async function availableModelOptions(runtime: Pick<ModelRuntime, "getAvailable">): Promise<ModelOption[]> {
-  const models = await runtime.getAvailable();
-  return models.map((model) => {
-    const map = thinkingLevelMap(model.thinkingLevelMap);
-    return {
-      provider: model.provider,
-      id: model.id,
-      name: model.name,
-      reasoning: model.reasoning,
-      ...(map ? { thinkingLevelMap: map } : {}),
-    };
+  return (await runtime.getAvailable()).map(modelOption);
+}
+
+/** Resolve the model Pi will choose when Inspire omits `--model` for this
+ * workspace. Pi's public SDK owns saved-default, auth, provider-default, and
+ * first-available fallback behavior; the host only applies Pi CLI's public
+ * enabled-model scope before asking the SDK for the final startup state. */
+export async function resolveNewSessionDefaults(
+  runtime: ModelRuntime,
+  cwd: string,
+): Promise<NewSessionDefaults> {
+  const agentDir = getAgentDir();
+  const settings = SettingsManager.create(cwd, agentDir);
+  const patterns = settings.getEnabledModels() ?? [];
+  const scoped = patterns.length > 0
+    ? (await resolveModelScopeWithDiagnostics(patterns, runtime)).scopedModels
+    : [];
+  const savedProvider = settings.getDefaultProvider();
+  const savedModelId = settings.getDefaultModel();
+  const selectedScope = scoped.length > 0
+    ? scoped.find(({ model }) => model.provider === savedProvider && model.id === savedModelId) ?? scoped[0]
+    : undefined;
+
+  // The resolver needs no project resources or persistent session. Suppressing
+  // them keeps this read-only preflight from loading extensions twice or
+  // creating a session file while retaining Pi's actual model resolver.
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager: settings,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
   });
+  await resourceLoader.reload();
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir,
+    modelRuntime: runtime,
+    settingsManager: settings,
+    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader,
+    noTools: "all",
+    ...(selectedScope ? { model: selectedScope.model } : {}),
+    ...(selectedScope?.thinkingLevel ? { thinkingLevel: selectedScope.thinkingLevel } : {}),
+  });
+  const model = session.model;
+  const thinkingLevel = THINKING_LEVELS.includes(session.thinkingLevel as ThinkingLevel)
+    ? session.thinkingLevel as ThinkingLevel
+    : "off";
+  return {
+    cwd,
+    model: model ? modelOption(model) : null,
+    thinkingLevel,
+  };
 }

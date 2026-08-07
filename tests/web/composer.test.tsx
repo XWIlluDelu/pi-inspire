@@ -387,6 +387,29 @@ describe("caret completion", () => {
     fileSearchFails = false;
   });
 
+  it("closes completion when an extension replaces the controlled draft", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("/com");
+    textarea.setSelectionRange(4, 4);
+    fireEvent.select(textarea);
+    await screen.findByRole("listbox", { name: "Slash command completions" });
+
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "extension_ui_request",
+        sessionId: "s1",
+        id: "editor-replacement",
+        method: "set_editor_text",
+        text: "replacement draft",
+      });
+    });
+
+    expect(textarea).toHaveValue("replacement draft");
+    expect(screen.queryByRole("listbox", { name: "Slash command completions" })).not.toBeInTheDocument();
+  });
+
   it("closes completion on Escape without reaching the global shortcut", async () => {
     clearLeftovers();
     render(<Composer />);
@@ -401,6 +424,19 @@ describe("caret completion", () => {
 });
 
 describe("project file picker", () => {
+  it("orders message tools as model, effort, project files, then attachments", () => {
+    clearLeftovers();
+    const { container } = render(<Composer />);
+    const meta = container.querySelector(".composer__meta")!;
+    const controls = Array.from(meta.querySelectorAll("button"));
+    expect([
+      controls.indexOf(screen.getByRole("button", { name: "Model" })),
+      controls.indexOf(screen.getByRole("combobox", { name: "Thinking level" })),
+      controls.indexOf(screen.getByRole("button", { name: "Add project files" })),
+      controls.indexOf(screen.getByRole("button", { name: "Attach files" })),
+    ]).toEqual([0, 1, 2, 3]);
+  });
+
   it("adds a searched project file and sends it with the prompt", async () => {
     clearLeftovers();
     render(<Composer />);

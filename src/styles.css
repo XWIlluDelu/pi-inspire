@@ -2552,9 +2552,9 @@ a {
     box-shadow var(--dur-micro) var(--ease-standard);
 }
 
-/* Focus lights the surface being typed into — the project-directory field
-   carries its own halo, so the wrapper stays quiet while it is focused. */
-.composer:focus-within:not(:has(.welcome__dir:focus)) {
+/* Focus lights the surface being typed into — the project-directory address
+   owns its own halo, so the composer stays quiet while that row is focused. */
+.composer:focus-within:not(:has(.welcome__directory:focus-within)) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
@@ -3965,29 +3965,44 @@ body.pane-resizing .nav {
   text-align: left;
 }
 
-.welcome__dir {
-  flex: 1;
+.welcome__directory {
+  display: flex;
+  width: 100%;
   min-width: 0;
+  align-items: center;
+  gap: 2px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--bg-canvas);
-  padding: var(--space-1) var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  padding: 2px;
   transition:
     border-color var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.welcome__directory:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.welcome__directory-browse {
+  flex: none;
+}
+
+.welcome__dir {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
   color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 
 .welcome__dir::placeholder {
   color: var(--faint);
-}
-
-.welcome__dir:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 .welcome__recent {

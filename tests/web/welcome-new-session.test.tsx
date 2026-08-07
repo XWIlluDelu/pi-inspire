@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Welcome } from "../../src/components/Welcome";
 import { store } from "../../src/store";
 import {
@@ -14,10 +14,17 @@ import {
 
 let newSessionBody: Record<string, unknown> | null;
 let promptBody: Record<string, unknown> | null;
+const canonicalProjectCwd = "/canonical/proj";
+let defaultModelCwd: string | null;
+let defaultModelAvailable: boolean;
+let projectFileCwd: string | null;
 
 beforeAll(async () => {
   newSessionBody = null;
   promptBody = null;
+  defaultModelCwd = null;
+  defaultModelAvailable = true;
+  projectFileCwd = null;
   installFakeWebSocket();
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:welcome-image") });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
@@ -28,6 +35,22 @@ beforeAll(async () => {
         { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
       ],
     }) };
+    if (url.startsWith("/api/new-session/defaults")) {
+      const parsed = new URL(url, "http://local");
+      defaultModelCwd = parsed.searchParams.get("cwd");
+      return { body: {
+        cwd: defaultModelCwd,
+        model: defaultModelAvailable
+          ? { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true }
+          : null,
+        thinkingLevel: "high",
+      } };
+    }
+    if (url.startsWith("/api/new-session/files")) {
+      const parsed = new URL(url, "http://local");
+      projectFileCwd = parsed.searchParams.get("cwd");
+      return { body: { cwd: canonicalProjectCwd, files: [{ path: "src/index.ts", name: "index.ts" }] } };
+    }
     if (url.startsWith("/api/sessions/new")) {
       newSessionBody = jsonBody(init);
       return { body: activeSnapshot({
@@ -54,6 +77,10 @@ beforeAll(async () => {
   });
   await store.init("token");
   FakeWebSocket.instances.at(-1)?.open();
+});
+
+afterEach(() => {
+  defaultModelAvailable = true;
 });
 
 describe("new-session start surface", () => {
@@ -96,5 +123,131 @@ describe("new-session start surface", () => {
       message: "Investigate the runtime",
       attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
     }));
+  });
+
+  it("resolves Pi's default model and searches project files from the typed workspace", async () => {
+    newSessionBody = null;
+    promptBody = null;
+    defaultModelCwd = null;
+    projectFileCwd = null;
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+
+    const { container } = render(<Welcome />);
+    const directory = screen.getByLabelText("Project directory");
+    fireEvent.change(directory, { target: { value: "/proj" } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Claude Sonnet 4"));
+    expect(defaultModelCwd).toBe("/proj");
+
+    const meta = container.querySelector(".composer__meta")!;
+    const controls = Array.from(meta.querySelectorAll("button"));
+    expect([
+      controls.indexOf(screen.getByRole("button", { name: "Model" })),
+      controls.indexOf(screen.getByRole("combobox", { name: "Thinking level" })),
+      controls.indexOf(screen.getByRole("button", { name: "Add project files" })),
+      controls.indexOf(screen.getByRole("button", { name: "Attach files" })),
+    ]).toEqual([0, 1, 2, 3]);
+    const browse = screen.getByRole("button", { name: "Browse host directories" });
+    expect(browse.parentElement).toBe(directory.parentElement);
+    expect(meta.nextElementSibling).toBe(directory.parentElement);
+    expect(directory.parentElement?.firstElementChild).toBe(browse);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    const projectFile = await screen.findByRole("option", { name: /index\.ts.*src\/index\.ts/ });
+    expect(projectFileCwd).toBe("/proj");
+    fireEvent.click(projectFile);
+    expect(within(screen.getByRole("list", { name: "Referenced project files" })).getByText("src/index.ts")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("First message"), { target: { value: "Use this file" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(newSessionBody).toEqual({
+      cwd: canonicalProjectCwd,
+      model: { provider: "anthropic", id: "claude-sonnet-4" },
+      thinkingLevel: "high",
+    }));
+    await waitFor(() => expect(promptBody).toMatchObject({
+      sessionId: "new-session",
+      message: "Use this file",
+      projectFiles: ["src/index.ts"],
+    }));
+  });
+
+  it("never submits an unexplained Pi fallback when no model can be resolved", async () => {
+    defaultModelAvailable = false;
+    defaultModelCwd = null;
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    render(<Welcome />);
+    fireEvent.change(screen.getByLabelText("Project directory"), { target: { value: "/no-model" } });
+    fireEvent.change(screen.getByLabelText("First message"), { target: { value: "Do not guess" } });
+
+    await waitFor(() => expect(defaultModelCwd).toBe("/no-model"));
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Select model");
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  });
+
+  it("adopts a session model that arrives after the start surface mounts", async () => {
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    render(<Welcome />);
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Select model");
+
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({ model: { provider: "anthropic", id: "claude-sonnet-4" } }),
+      });
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Claude Sonnet 4"));
+  });
+
+  it("reuses the session command completion control without leaking commands across projects", async () => {
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          cwd: "/proj",
+          commands: [
+            { name: "pi-tools", description: "Inspect Pi tools", source: "extension" },
+            { name: "review", description: "Run review prompt", source: "prompt" },
+          ],
+        }),
+      });
+    });
+
+    render(<Welcome />);
+    const message = screen.getByLabelText("First message") as HTMLTextAreaElement;
+    fireEvent.change(message, { target: { value: "/pi", selectionStart: 3 } });
+    message.setSelectionRange(3, 3);
+    fireEvent.select(message);
+
+    const list = await screen.findByRole("listbox", { name: "Slash command completions" });
+    const option = within(list).getByRole("option", { name: /\/pi-tools.*Inspect Pi tools/ });
+    expect(message.closest("[role='combobox']")).toHaveAttribute("aria-owns", list.id);
+    expect(message).toHaveAttribute("aria-activedescendant", option.id);
+    fireEvent.keyDown(message, { key: "Tab" });
+    expect(message).toHaveValue("/pi-tools ");
+
+    fireEvent.change(screen.getByLabelText("Project directory"), { target: { value: "/other-project" } });
+    fireEvent.change(message, { target: { value: "/", selectionStart: 1 } });
+    message.setSelectionRange(1, 1);
+    fireEvent.select(message);
+
+    const otherProjectList = await screen.findByRole("listbox", { name: "Slash command completions" });
+    expect(within(otherProjectList).getByRole("option", { name: /\/compact.*Compact the current context/ })).toBeInTheDocument();
+    expect(within(otherProjectList).queryByRole("option", { name: /\/pi-tools/ })).not.toBeInTheDocument();
   });
 });
