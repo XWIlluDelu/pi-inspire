@@ -250,6 +250,22 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
+  it("clears host selection when the browser opens New session", async () => {
+    await request(application.server)
+      .post("/api/sessions/open")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active" })
+      .expect(200);
+    expect(runtime.activeSessionId).toBe("mock-active");
+
+    const deselected = await request(application.server)
+      .post("/api/sessions/deselect")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
+    expect(runtime.activeSessionId).toBeNull();
+  });
+
   it("creates a session with an explicitly selected model and thinking level", async () => {
     const created = await request(application.server)
       .post("/api/sessions/new")

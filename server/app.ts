@@ -358,6 +358,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     const { id } = openSchema.parse(request.body);
     response.json(await deps.runtime.openSession(id));
   });
+  app.post("/api/sessions/deselect", async (_request, response) => {
+    response.json(await deps.runtime.deselectSession());
+  });
   app.post("/api/sessions/new", async (request, response) => {
     const { cwd, name, model, thinkingLevel } = newSchema.parse(request.body);
     response.json(await deps.runtime.newSession(cwd, { name, model, thinkingLevel }));

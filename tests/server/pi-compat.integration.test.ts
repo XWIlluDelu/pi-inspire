@@ -73,6 +73,12 @@ export default function (pi) {
       ctx.ui.setStatus("compat-result", JSON.stringify({ selected, confirmed, input, edited }));
     },
   });
+  pi.registerCommand("compat-append", {
+    description: "Persist extension state through the official event boundary",
+    handler: async () => {
+      pi.appendEntry("compat-provenance", { count: 2 });
+    },
+  });
   pi.on("session_before_compact", async (event) => ({
     compaction: {
       summary: "offline compatibility summary",
@@ -94,7 +100,7 @@ export default function (pi) {
   return { directory, sessionDir, sessionFile, extension, entries, create };
 }
 
-describe("installed Pi 0.83 compatibility boundary", () => {
+describe("installed Pi compatibility boundary", () => {
   it("keeps existing-session preview byte-preserving and checks RPC state/cursor/tree/model/command/stats", async () => {
     const { sessionFile, entries, create } = await fixture();
     const before = await readFile(sessionFile);
@@ -136,8 +142,10 @@ describe("installed Pi 0.83 compatibility boundary", () => {
     const rpc = create();
     const uiEvents: Array<Record<string, unknown>> = [];
     let result: Record<string, unknown> | null = null;
+    const appendedEvents: Array<Record<string, unknown>> = [];
     rpc.on("event", (event) => {
       const record = event as Record<string, unknown>;
+      if (record.type === "entry_appended") appendedEvents.push(record);
       if (record.type !== "extension_ui_request") return;
       uiEvents.push(record);
       if (record.method === "select") rpc.sendExtensionUiResponse({ id: record.id, value: "beta" });
@@ -159,6 +167,12 @@ describe("installed Pi 0.83 compatibility boundary", () => {
       expect(new Set(uiEvents.map((event) => event.method))).toEqual(new Set([
         "select", "confirm", "input", "editor", "notify", "setStatus", "setWidget", "setTitle", "set_editor_text",
       ]));
+
+      await rpc.request({ type: "prompt", message: "/compat-append" });
+      expect(appendedEvents).toHaveLength(1);
+      expect(appendedEvents[0]?.entry).toMatchObject({ type: "custom", customType: "compat-provenance", data: { count: 2 } });
+      const afterAppend = await rpc.request<{ entries: Array<Record<string, unknown>> }>({ type: "get_entries" });
+      expect(afterAppend.entries.some((entry) => entry.type === "custom" && entry.customType === "compat-provenance")).toBe(true);
 
       const compacted = await rpc.request<Record<string, unknown>>({ type: "compact" }, 60_000);
       expect(compacted).toMatchObject({ summary: "offline compatibility summary" });
