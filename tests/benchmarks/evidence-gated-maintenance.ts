@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -32,8 +33,14 @@ import { SessionCatalog, type SessionCatalogLike, type SessionRecord } from "../
 import { SessionProjection } from "../../server/session-projection.js";
 import { projectSessionTree } from "../../server/session-tree.js";
 
-const HOST_PORT = 4587;
-const WEB_PORT = 5173;
+function benchmarkPort(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] ?? String(fallback), 10);
+  if (!Number.isInteger(value) || value < 1 || value > 65_535) throw new Error(`${name} must be a valid TCP port`);
+  return value;
+}
+
+const HOST_PORT = benchmarkPort("INSPIRE_BENCHMARK_HOST_PORT", 14_587);
+const WEB_PORT = benchmarkPort("INSPIRE_BENCHMARK_WEB_PORT", 15_173);
 const TOKEN = "maintenance-evaluator-token";
 const SESSION_ID = "44444444-4444-4444-8444-444444444444";
 const ACCEPTED_BROWSER_SAMPLES = 21;
@@ -659,8 +666,76 @@ class CdpClient {
   async close() { this.socket.close(); }
 }
 
+async function chromeExecutable(): Promise<string> {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter((value): value is string => Boolean(value));
+  const cache = join(process.env.HOME ?? "", ".cache", "ms-playwright");
+  try {
+    const releases = (await readdir(cache, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("chromium-"))
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+    for (const release of releases) {
+      candidates.push(
+        join(cache, release, "chrome-linux64", "chrome"),
+        join(cache, release, "chrome-linux", "chrome"),
+      );
+    }
+  } catch {}
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  throw new Error("No executable Chromium was found; set CHROME_PATH to a compatible browser binary");
+}
+
+async function terminateProcess(child: ChildProcess | null, timeoutMs = 5_000): Promise<void> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolveExit) => {
+    let settled = false;
+    let forceTimer: NodeJS.Timeout | undefined;
+    let hardTimer: NodeJS.Timeout | undefined;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (forceTimer) clearTimeout(forceTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      resolveExit();
+    };
+    child.once("exit", settle);
+    child.once("close", settle);
+    child.once("error", settle);
+    // The child may have exited between the caller's guard and listener
+    // attachment, so inspect terminal state again before signalling it.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      settle();
+      return;
+    }
+    child.kill("SIGTERM");
+    forceTimer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        settle();
+        return;
+      }
+      child.kill("SIGKILL");
+      // If the terminal event raced listener attachment, do not leave cleanup
+      // hanging forever; a killed child is no longer useful to the evaluator.
+      hardTimer = setTimeout(settle, 1_000);
+      hardTimer.unref?.();
+    }, timeoutMs);
+    forceTimer.unref?.();
+  });
+}
+
 async function launchChrome(root: string): Promise<{ process: ChildProcess; client: CdpClient }> {
-  const executable = process.env.CHROME_PATH ?? join(process.env.HOME ?? "", ".cache/ms-playwright/chromium-1232/chrome-linux64/chrome");
+  const executable = await chromeExecutable();
   const userData = join(root, "chrome-profile");
   await mkdir(userData, { recursive: true });
   const child = spawn(executable, [
@@ -670,13 +745,22 @@ async function launchChrome(root: string): Promise<{ process: ChildProcess; clie
   const activePortPath = join(userData, "DevToolsActivePort");
   let port = 0;
   for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (child.exitCode !== null || child.signalCode !== null) break;
     try { port = Number((await readFile(activePortPath, "utf8")).split("\n")[0]); if (port) break; } catch {}
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
-  if (!port) throw new Error("Chromium did not publish a DevTools port");
-  const targetResponse = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
-  const target = await targetResponse.json() as { webSocketDebuggerUrl: string };
-  return { process: child, client: await CdpClient.connect(target.webSocketDebuggerUrl) };
+  if (!port) {
+    await terminateProcess(child);
+    throw new Error("Chromium did not publish a DevTools port");
+  }
+  try {
+    const targetResponse = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
+    const target = await targetResponse.json() as { webSocketDebuggerUrl: string };
+    return { process: child, client: await CdpClient.connect(target.webSocketDebuggerUrl) };
+  } catch (error) {
+    await terminateProcess(child);
+    throw error;
+  }
 }
 
 async function waitFor(client: CdpClient, expression: string, timeoutMs = 15_000) {
@@ -711,6 +795,12 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
   });
   try {
     await Promise.all([client.send("Page.enable"), client.send("Runtime.enable"), client.send("Network.enable")]);
+    await client.send("Emulation.setDeviceMetricsOverride", {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     await client.send("Page.addScriptToEvaluateOnNewDocument", { source: `
       window.__INSPIRE_BROWSER_PERF__ = { longTasks: [], events: [], scrollDelays: [], frameGaps: [], eventLoopDelays: [] };
       try { new PerformanceObserver(list => { for (const e of list.getEntries()) window.__INSPIRE_BROWSER_PERF__.longTasks.push(e.duration); }).observe({ type: 'longtask', buffered: true }); } catch {}
@@ -942,7 +1032,7 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
     };
   } finally {
     await client.close().catch(() => undefined);
-    chrome.process.kill("SIGTERM");
+    await terminateProcess(chrome.process);
   }
 }
 
@@ -1008,14 +1098,31 @@ async function main() {
       git,
       mock: true,
       version: "0.1.0-benchmark",
-      piVersion: "0.83.0",
+      piVersion: "benchmark",
       distDir: join(root, "absent-dist"),
     });
     await new Promise<void>((resolveListen, reject) => {
       application!.server.once("error", reject);
       application!.server.listen(HOST_PORT, "127.0.0.1", resolveListen);
     });
-    vite = spawn(resolve("node_modules/.bin/vite"), ["--mode", "maintenance-benchmark", "--host", "127.0.0.1", "--port", String(WEB_PORT), "--strictPort"], {
+    const viteConfig = join(root, "vite-maintenance.config.ts");
+    await writeFile(viteConfig, `
+import base from ${JSON.stringify(resolve("vite.config.ts"))};
+export default {
+  ...base,
+  server: {
+    ...(base.server ?? {}),
+    host: "127.0.0.1",
+    port: ${WEB_PORT},
+    strictPort: true,
+    proxy: {
+      "/api": { target: "http://127.0.0.1:${HOST_PORT}", changeOrigin: false },
+      "/events": { target: "ws://127.0.0.1:${HOST_PORT}", ws: true },
+    },
+  },
+};
+`);
+    vite = spawn(resolve("node_modules/.bin/vite"), ["--config", viteConfig, "--mode", "maintenance-benchmark", "--host", "127.0.0.1", "--port", String(WEB_PORT), "--strictPort"], {
       cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "ignore", "pipe"],
     });
     await waitForUrl(`http://127.0.0.1:${WEB_PORT}`);
@@ -1179,7 +1286,7 @@ async function main() {
     console.log(JSON.stringify(report, null, 2));
     if (activated.length > 0) process.exitCode = 2;
   } finally {
-    vite?.kill("SIGTERM");
+    await terminateProcess(vite);
     await application?.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }

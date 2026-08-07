@@ -1481,6 +1481,23 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("makes the prior idle session deletable after New session deselects host ownership", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, (options) => (
+      new FakeRpc(options) as unknown as PiRpcProcess
+    ), preview, 15_000, undefined, remove);
+
+    await runtime.openSession("a");
+    const deselected = await runtime.deselectSession();
+    expect(deselected.active).toBeNull();
+    expect(runtime.activeSessionId).toBeNull();
+    await expect(runtime.deleteSession("a")).resolves.toEqual({ sessionId: "a", disposition: "trashed" });
+    expect(remove).toHaveBeenCalledOnce();
+    await runtime.close();
+  });
+
   it("refuses to delete an unselected session while its agent is still running", async () => {
     const store = new AttachmentStore();
     attachments.push(store);

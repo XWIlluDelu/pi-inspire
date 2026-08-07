@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
+import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import { PiRpcOutcomeUnknownError, type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, PARTIAL_PERSISTENCE_TIMEOUT_MS, RuntimeController } from "../../server/runtime.js";
 import { TRANSCRIPT_PAGE_MAX_BYTES, TRANSIENT_OVERLAY_MAX_BYTES } from "../../server/session-projection.js";
@@ -192,6 +193,7 @@ async function setup(
   includeUser = true,
   trailingBytes = "",
   expectWorker = true,
+  diagnostics?: DiagnosticLogger,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-runtime-projection-"));
   directories.push(directory);
@@ -215,12 +217,21 @@ async function setup(
   stores.push(attachments);
   const workers: ProjectionRpc[] = [];
   const sequence: string[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new ProjectionRpc(options, sequence);
-    configure?.(worker);
-    workers.push(worker);
-    return worker as unknown as PiRpcProcess;
-  });
+  const runtime = new RuntimeController(
+    catalog,
+    attachments,
+    (options) => {
+      const worker = new ProjectionRpc(options, sequence);
+      configure?.(worker);
+      workers.push(worker);
+      return worker as unknown as PiRpcProcess;
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    diagnostics,
+  );
   await runtime.openSession("session-a");
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));
   return { runtime, workers, sequence, path };
@@ -721,6 +732,173 @@ describe("RuntimeController projection ownership gate", () => {
       expect((await second.runtime.snapshot()).runState).toBe("conflict");
     } finally {
       await second.runtime.close();
+    }
+  });
+
+  it("accepts an extension custom entry claimed by the owning worker before reconciliation", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      const entry = {
+        type: "custom", id: "extension-entry", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results", data: { resultCount: 3, opaque: "payload stays server-side" },
+      };
+      worker.startupEntries = [entry];
+      worker.startupLeafId = entry.id;
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", { type: "entry_appended", entry: structuredClone(entry) });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await appendFile(path, `${JSON.stringify(entry)}\n`);
+
+      await expect(runtime.rename("session-a", "after extension append")).resolves.toBeUndefined();
+      const snapshot = await runtime.snapshot();
+      expect(snapshot.active?.projectionConflict).toBeNull();
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("accepts a large extension entry interleaved with tool-call and tool-result persistence", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      const assistant = {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tool-1", name: "web_search", arguments: { query: "bounded" } }],
+        timestamp: 2,
+        stopReason: "toolUse",
+      };
+      const toolResult = {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "web_search",
+        content: [{ type: "text", text: "done" }],
+        isError: false,
+        timestamp: 3,
+      };
+      const entries = [
+        {
+          type: "message", id: "assistant-tool", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z",
+          message: assistant,
+        },
+        {
+          type: "custom", id: "extension-large", parentId: "assistant-tool", timestamp: "2026-08-01T00:00:02.500Z",
+          customType: "web-search-results", data: { encoded: "x".repeat(150_000) },
+        },
+        {
+          type: "custom", id: "extension-metadata", parentId: "extension-large", timestamp: "2026-08-01T00:00:02.750Z",
+          customType: "web-search-metadata", data: { resultCount: 3 },
+        },
+        {
+          type: "message", id: "tool-result", parentId: "extension-metadata", timestamp: "2026-08-01T00:00:03.000Z",
+          message: toolResult,
+        },
+      ];
+      worker.startupEntries = entries;
+      worker.startupLeafId = "tool-result";
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", { type: "message_end", message: structuredClone(assistant) });
+      worker.emit("event", { type: "entry_appended", entry: structuredClone(entries[1]) });
+      worker.emit("event", { type: "entry_appended", entry: structuredClone(entries[2]) });
+      worker.emit("event", { type: "message_end", message: structuredClone(toolResult) });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await appendFile(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+      await expect(runtime.rename("session-a", "after interleaved extension append")).resolves.toBeUndefined();
+      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("attests an owning extension append from get_entries when reconciliation wins the event race", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      const entry = {
+        type: "custom", id: "extension-race", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results", data: { resultCount: 1 },
+      };
+      worker.startupEntries = [entry];
+      worker.startupLeafId = entry.id;
+      worker.emit("event", { type: "agent_start" });
+      await appendFile(path, `${JSON.stringify(entry)}\n`);
+
+      await expect(runtime.rename("session-a", "after watcher race")).resolves.toBeUndefined();
+      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
+      expect(worker.commands).toContainEqual({ type: "get_entries", since: "u1" });
+
+      // Pi can emit entry_appended after the watcher callback. It must consume
+      // the attested append instead of manufacturing a future claim.
+      worker.emit("event", { type: "entry_appended", entry: structuredClone(entry) });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("rejects a worker witness whose final leaf includes an unowned trailing entry", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      const owned = {
+        type: "custom", id: "extension-owned", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results", data: { resultCount: 1 },
+      };
+      const trailing = {
+        type: "message", id: "external-trailing", parentId: "extension-owned", timestamp: "2026-08-01T00:00:03.000Z",
+        message: { role: "assistant", content: "external", timestamp: 3 },
+      };
+      worker.startupEntries = [owned, trailing];
+      worker.startupLeafId = trailing.id;
+      worker.emit("event", { type: "agent_start" });
+      await appendFile(path, `${JSON.stringify(owned)}\n`);
+
+      await expect(runtime.rename("session-a", "must reject trailing witness")).rejects.toThrow(/changed on disk/);
+      expect((await runtime.snapshot()).active?.projectionConflict?.kind).toBe("external-change");
+      expect(worker.stops).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("still rejects a custom entry that the active worker cannot attest", async () => {
+    const records: Array<{ level: string; event: string; fields?: Record<string, unknown> }> = [];
+    const diagnostics: DiagnosticLogger = {
+      hostId: "host-test",
+      record: (level, event, fields) => records.push({ level, event, fields }),
+      flush: async () => undefined,
+      close: async () => undefined,
+    };
+    const { runtime, workers, path } = await setup([], undefined, true, "", true, diagnostics);
+    try {
+      const worker = workers[0]!;
+      worker.emit("event", { type: "agent_start" });
+      await appendFile(path, `${JSON.stringify({
+        type: "custom", id: "external-custom", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results", data: { external: true },
+      })}\n`);
+
+      await expect(runtime.rename("session-a", "must not write")).rejects.toThrow(/changed on disk/);
+      const conflict = (await runtime.snapshot()).active?.projectionConflict;
+      expect(conflict).toMatchObject({ kind: "external-change" });
+      expect(conflict?.incidentId).toMatch(/^inc_[A-Za-z0-9_-]+$/);
+      const decision = records.find((record) => record.event === "persistence_ownership_decision" && record.fields?.owned === false);
+      expect(decision?.fields).toMatchObject({ ownershipRejection: "worker-entry-mismatch" });
+      const incident = records.find((record) => record.event === "projection_conflict");
+      expect(incident?.fields).toMatchObject({
+        incidentId: conflict?.incidentId,
+        sessionId: "session-a",
+        conflictKind: "external-change",
+        ownershipRejection: "worker-entry-mismatch",
+      });
+      expect(JSON.stringify(records)).not.toContain("\"external\":true");
+      expect(worker.stops).toBe(1);
+    } finally {
+      await runtime.close();
     }
   });
 

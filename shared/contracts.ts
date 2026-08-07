@@ -502,6 +502,8 @@ export interface ProjectionConflict {
   kind: ProjectionConflictKind;
   message: string;
   revision: number;
+  /** Privacy-safe correlation for the host's bounded diagnostic records. */
+  incidentId: string;
 }
 
 export interface ActiveSnapshot {

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import type { DiagnosticLevel } from "./diagnostics.js";
 
 interface PendingRequest {
   resolve: (response: RpcResponse) => void;
@@ -48,6 +49,8 @@ export interface PiRpcOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   cliPath?: string;
+  workerId?: string;
+  diagnostic?: (level: DiagnosticLevel, event: string, fields?: Record<string, unknown>) => void;
 }
 
 function resolvePiCliPath(): string {
@@ -67,6 +70,18 @@ export class PiRpcProcess extends EventEmitter {
     super();
   }
 
+  get pid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
+  private diagnostic(level: DiagnosticLevel, event: string, fields: Record<string, unknown> = {}): void {
+    this.options.diagnostic?.(level, event, {
+      workerId: this.options.workerId,
+      childPid: this.pid,
+      ...fields,
+    });
+  }
+
   async start(): Promise<void> {
     if (this.child) throw new Error("Pi RPC process is already running");
 
@@ -83,6 +98,7 @@ export class PiRpcProcess extends EventEmitter {
     this.child = child;
     this.stopping = false;
     this.stopPromise = null;
+    this.diagnostic("info", "worker_spawn", { childPid: child.pid });
 
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-65_536);
@@ -174,6 +190,11 @@ export class PiRpcProcess extends EventEmitter {
         if (pending) {
           clearTimeout(pending.timer);
           this.pending.delete(record.id);
+          this.diagnostic(record.success === false ? "warning" : "debug", "rpc_response", {
+            requestId: record.id,
+            command: pending.command,
+            success: record.success !== false,
+          });
           pending.resolve(record as unknown as RpcResponse);
         }
       }
@@ -184,6 +205,11 @@ export class PiRpcProcess extends EventEmitter {
 
   private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
     if (this.child !== child) return;
+    this.diagnostic("error", "worker_exit", {
+      errorName: error.name,
+      pendingRequests: this.pending.size,
+      expected: this.stopping,
+    });
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(pending.written
@@ -212,6 +238,7 @@ export class PiRpcProcess extends EventEmitter {
 
     const id = `inspire_${++this.requestSequence}`;
     const commandName = String(command.type);
+    this.diagnostic("debug", "rpc_request", { requestId: id, command: commandName });
     const response = await new Promise<RpcResponse>((resolve, reject) => {
       const pending: PendingRequest = {
         resolve,
@@ -223,6 +250,12 @@ export class PiRpcProcess extends EventEmitter {
       pending.timer = setTimeout(() => {
         if (this.pending.get(id) !== pending) return;
         this.pending.delete(id);
+        this.diagnostic("error", "rpc_timeout", {
+          requestId: id,
+          command: commandName,
+          written: pending.written,
+          timeoutMs,
+        });
         if (!pending.written) {
           reject(this.withStderr(new Error(`Timed out before writing Pi command ${commandName}`)));
           return;
@@ -242,6 +275,7 @@ export class PiRpcProcess extends EventEmitter {
           if (current !== pending) return;
           clearTimeout(pending.timer);
           this.pending.delete(id);
+          this.diagnostic("error", "rpc_write_failed", { requestId: id, command: commandName });
           const unknown = this.withStderr(new PiRpcOutcomeUnknownError(
             commandName,
             `Pi command ${commandName} outcome is unknown after its stdin write failed`,
@@ -268,6 +302,10 @@ export class PiRpcProcess extends EventEmitter {
     if (!child || child.exitCode !== null || !child.stdin.writable) {
       throw new Error("Pi RPC process is not available");
     }
+    this.diagnostic("debug", "rpc_extension_response", {
+      requestId: typeof response.id === "string" ? response.id : undefined,
+      command: "extension_ui_response",
+    });
     await new Promise<void>((resolve, reject) => {
       try {
         child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", ...response })}\n`, (error) => {
@@ -303,16 +341,39 @@ export class PiRpcProcess extends EventEmitter {
     if (this.stopPromise) return this.stopPromise;
     const child = this.child;
     if (!child) return;
+    this.diagnostic("info", "worker_stop_requested", { childPid: child.pid, pendingRequests: this.pending.size });
     this.stopping = true;
     this.child = null;
 
     const stopped = new Promise<void>((resolve) => {
-      const force = setTimeout(() => child.kill("SIGKILL"), 1_500);
-      child.once("exit", () => {
-        clearTimeout(force);
+      let settled = false;
+      let force: NodeJS.Timeout | undefined;
+      let hard: NodeJS.Timeout | undefined;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (force) clearTimeout(force);
+        if (hard) clearTimeout(hard);
         resolve();
-      });
+      };
+      child.once("exit", settle);
+      child.once("close", settle);
+      child.once("error", settle);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        settle();
+        return;
+      }
       child.kill("SIGTERM");
+      force = setTimeout(() => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          settle();
+          return;
+        }
+        child.kill("SIGKILL");
+        hard = setTimeout(settle, 1_000);
+        hard.unref?.();
+      }, 1_500);
+      force.unref?.();
     });
     this.stopPromise = stopped;
     for (const pending of this.pending.values()) {
@@ -326,5 +387,6 @@ export class PiRpcProcess extends EventEmitter {
     }
     this.pending.clear();
     await stopped;
+    this.diagnostic("info", "worker_stopped", { childPid: child.pid });
   }
 }
