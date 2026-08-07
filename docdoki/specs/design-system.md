@@ -365,10 +365,12 @@ warning capsule surface.
 ### Navigation
 
 - Folder-first hierarchy: group headers are a quiet semibold tier above their rows — `{typography.size-sm}`/600 `muted` with `0.04em` tracking on a 28px line. The entire header row toggles the folder, not just its label. The chevron is 13px and the folder glyph is 14px; folder curation uses the same two 22px trailing action targets as session rows. Session rows remain single-line at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column at `{typography.size-xs}`, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
-- Groups collapse freely — including the active session's group; a collapsed
-  folder that hides the active session takes the `accent-tint` highlight and
-  2px `accent` left edge itself. Active search overrides collapse.
-- Row hover shows `surface-inset`; the active row pairs the 2px `accent`
+- Groups collapse freely — including the visible session's group; a collapsed
+  folder that hides the visible session takes the `accent-tint` highlight and
+  2px `accent` left edge itself. Active search overrides collapse. Opening the
+  New session surface leaves any Pi runtime running but clears navigation
+  selection; no session row or folder then claims current-page styling.
+- Row hover shows `surface-inset`; the visible row pairs the 2px `accent`
   inset edge with an `accent-tint` wash that fades toward the right, so the
   highlight points back at the edge. Running/attention dots use `accent`,
   `success`, `warning`, and `error`; the running dot breathes
@@ -376,15 +378,18 @@ warning capsule surface.
   of their hue.
 - Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age/count column, which fades as they appear on hover or focus, so no text moves. Ordinary session and folder rows expose Pin + Hide; Hidden sessions expose Restore + Delete, while Hidden folders expose Restore without inventing folder deletion. Delete uses `error` only on hover/focus. Folder Hidden is independent metadata keyed by exact cwd: restoring a folder preserves any sessions hidden individually, and Pin/Hidden are mutually exclusive at the folder level. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden (sessions and whole folders) — separate by a spacing step, never by a rule.
 - Session pagination is a compact bordered text control below the chronological groups. It appears only while loading, on failure, or while older sessions remain; a fully loaded list emits no redundant `Showing N of N` or completion message. Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and the touch layout raises the target to 40px.
-- The **workspace explorer** sits at the nav's bottom edge: collapsed it is a
-  single header bar (folder icon + project name + chevron); expanded it takes
-  up to half the column with a lazily loaded tree derived from the host's
-  project index (directories first), and clicking a file opens the
-  session-bound preview pane.
+- The **workspace explorer** sits at the nav's bottom edge while a session is
+  visible: collapsed it is a single header bar (folder icon + project name +
+  chevron); expanded it takes up to half the column with a lazily loaded tree
+  derived from the host's project index (directories first), and clicking a
+  file opens the session-bound preview pane. The New session surface hides the
+  prior runtime's explorer rather than presenting its workspace as current.
 - The nav column begins with one brand/new-session target: the transparent
-  22px reticle favicon + wordmark + `New session` optically centered in the
-  full column (font ink, not only line boxes), and the same reticle at 26px alone in the collapsed rail,
-  where the topbar then carries the wordmark instead of a session title.
+  22px reticle favicon + wordmark align to the same left content axis as Search,
+  while `New session` occupies the trailing side until the column becomes too
+  narrow. The collapsed rail carries the same reticle alone at 26px. The rail
+  already supplies product identity, so the topbar continues to show the
+  visible session title and shows no duplicate wordmark on the welcome surface.
   It follows the favicon's theme colors (teal in light, white in dark) and opens
   the welcome/new-session surface without creating a session. It remains an
   action button even while that surface is open: no selected/current-page state

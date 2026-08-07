@@ -131,9 +131,9 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
  * single bar at the bottom of the nav; expanded it takes the lower half.
  * Levels come from the host's project index (same source as the composer's
  * file search), and clicking a file opens the session-bound preview. */
-function WorkspaceExplorer() {
+function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | null }) {
   const state = useAppState();
-  const cwd = state.sessionId ? state.cwd : null;
+  const cwd = selectedSessionId === state.sessionId ? state.cwd : null;
   const [open, setOpen] = useState(false);
   const [levels, setLevels] = useState<Map<string, ProjectDirEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -246,17 +246,20 @@ function WorkspaceExplorer() {
  * for the same edge. */
 function SessionRow({
   session,
+  selectedSessionId,
   showProject = false,
   onSelect,
   onDelete,
 }: {
   session: SessionSummary;
+  selectedSessionId: string | null;
   showProject?: boolean;
   onSelect: (id: string) => void;
   onDelete?: (session: SessionSummary) => void;
 }) {
   const state = useAppState();
   const active = session.id === state.sessionId;
+  const selected = session.id === selectedSessionId;
   const opening = state.openingSessionId === session.id;
   const pinned = state.prefs.pinnedSessionIds.includes(session.id);
   const individuallyHidden = state.prefs.hiddenSessionIds.includes(session.id);
@@ -280,16 +283,17 @@ function SessionRow({
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
   const attention =
-    indicator === "completed" || indicator === "failed" ? (active ? null : indicator) : (indicator ?? null);
+    indicator === "completed" || indicator === "failed" ? (selected ? null : indicator) : (indicator ?? null);
   const title = session.title || "New session";
   return (
-    <div className={`nav__row ${active ? "nav__row--active" : ""}`}>
+    <div className={`nav__row ${selected ? "nav__row--active" : ""}`}>
       <button
         type="button"
         className="nav__row-main"
         onClick={() => onSelect(session.id)}
         disabled={opening}
         aria-busy={opening}
+        aria-current={selected ? "page" : undefined}
         title={`${title} · ${session.messageCount} messages`}
       >
         <span className="nav__row-title">
@@ -374,6 +378,7 @@ function ProjectGroup({
   headingId,
   searching,
   showContext,
+  selectedSessionId,
   hidden = false,
   onSelectSession,
   onDeleteSession,
@@ -382,6 +387,7 @@ function ProjectGroup({
   headingId: string;
   searching: boolean;
   showContext: boolean;
+  selectedSessionId: string | null;
   hidden?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (session: SessionSummary) => void;
@@ -392,7 +398,7 @@ function ProjectGroup({
   const pinned = state.prefs.pinnedProjectCwds.includes(group.cwd);
   // A collapsed folder that hides the active session carries the active
   // highlight itself.
-  const activeInside = group.sessions.some((session) => session.id === state.sessionId);
+  const activeInside = group.sessions.some((session) => session.id === selectedSessionId);
   return (
     <section
       className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
@@ -460,6 +466,7 @@ function ProjectGroup({
             <SessionRow
               key={session.id}
               session={session}
+              selectedSessionId={selectedSessionId}
               onSelect={onSelectSession}
               onDelete={hidden ? onDeleteSession : undefined}
             />
@@ -471,14 +478,17 @@ function ProjectGroup({
 
 export function Nav({
   collapsed,
+  selectedSessionId,
   onNewSession,
   onSelectSession,
 }: {
   collapsed: boolean;
+  selectedSessionId?: string | null;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
 }) {
   const state = useAppState();
+  const visibleSessionId = selectedSessionId === undefined ? state.sessionId : selectedSessionId;
   const navRef = useRef<HTMLElement>(null);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(null);
@@ -573,7 +583,13 @@ export function Nav({
               </span>
             </h2>
             {pinned.map((session) => (
-              <SessionRow key={session.id} session={session} showProject onSelect={onSelectSession} />
+              <SessionRow
+                key={session.id}
+                session={session}
+                selectedSessionId={visibleSessionId}
+                showProject
+                onSelect={onSelectSession}
+              />
             ))}
           </section>
         ) : null}
@@ -584,6 +600,7 @@ export function Nav({
             headingId={`nav-group-title-${groupIndex}`}
             searching={searching}
             showContext={(nameCounts.get(group.name) ?? 0) > 1}
+            selectedSessionId={visibleSessionId}
             onSelectSession={onSelectSession}
           />
         ))}
@@ -636,6 +653,7 @@ export function Nav({
                     headingId={`nav-hidden-group-title-${groupIndex}`}
                     searching={searching}
                     showContext={(nameCounts.get(group.name) ?? 0) > 1}
+                    selectedSessionId={visibleSessionId}
                     hidden
                     onSelectSession={onSelectSession}
                     onDeleteSession={setDeleteCandidate}
@@ -645,6 +663,7 @@ export function Nav({
                   <SessionRow
                     key={session.id}
                     session={session}
+                    selectedSessionId={visibleSessionId}
                     showProject
                     onSelect={onSelectSession}
                     onDelete={setDeleteCandidate}
@@ -668,7 +687,7 @@ export function Nav({
           </div>
         ) : null}
       </div>
-      <WorkspaceExplorer />
+      <WorkspaceExplorer selectedSessionId={visibleSessionId} />
       <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
       <ScrollRail container={navRef} scroller=".explorer__tree" variant="nav" />
       {deleteCandidate ? (

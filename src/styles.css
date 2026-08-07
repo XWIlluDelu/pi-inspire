@@ -1349,10 +1349,6 @@ a {
   overflow: hidden;
 }
 
-.topbar__ident--brand {
-  align-items: center;
-}
-
 .topbar__title {
   flex: 1 1 auto;
   margin: 0;
@@ -4778,12 +4774,6 @@ body.srail-dragging {
     --composer-max: 800px;
   }
 
-  .nav__brand-new {
-    justify-content: center;
-    gap: 5px;
-    padding-inline: var(--space-1);
-  }
-
   /* The environment marker yields to the fused brand target, not vice versa. */
   .nav__mock {
     display: none;
@@ -4796,7 +4786,6 @@ body.srail-dragging {
 
   .nav__brand-action {
     font-size: var(--text-xs);
-    margin-left: 0;
   }
 }
 

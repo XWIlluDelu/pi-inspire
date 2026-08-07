@@ -132,23 +132,30 @@ describe("welcome flow", () => {
     expect(screen.queryByText("Continue previous")).not.toBeInTheDocument();
 
     const nav = screen.getByRole("navigation", { name: "Sessions" });
-    fireEvent.click(within(nav).getByText("Previous work"));
+    const previous = within(nav).getByText("Previous work").closest("button") as HTMLButtonElement;
+    fireEvent.click(previous);
     expect(await screen.findByText("hello world")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toBeInTheDocument();
+    expect(previous).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(within(nav).getByRole("button", { name: "New session" }));
+    expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
+    expect(previous).not.toHaveAttribute("aria-current");
+    expect(previous.closest(".nav__row")).not.toHaveClass("nav__row--active");
+    expect(within(nav).queryByRole("region", { name: "Workspace files" })).not.toBeInTheDocument();
   });
 
-  it("shows the wordmark in the topbar exactly while the navigation is a rail", async () => {
+  it("keeps the session identity in the topbar while the navigation is a rail", async () => {
     render(<App />);
     const navToggle = screen.getByRole("button", { name: "Toggle navigation" });
     fireEvent.click(navToggle);
     const topbar = document.querySelector(".topbar") as HTMLElement;
-    expect(topbar.querySelector(".wordmark")).not.toBeNull();
+    expect(topbar.querySelector(".wordmark")).toBeNull();
     expect(document.querySelector(".nav--rail .wordmark")).toBeNull();
-    expect(within(topbar).queryByRole("button", { name: "Rename session" })).not.toBeInTheDocument();
-    expect(within(topbar).queryByRole("button", { name: "Copy project path" })).not.toBeInTheDocument();
+    expect(within(topbar).getByRole("button", { name: "Rename session" })).toBeInTheDocument();
+    expect(within(topbar).getByRole("button", { name: "Copy project path" })).toBeInTheDocument();
 
     fireEvent.click(within(topbar).getByRole("button", { name: "Toggle navigation" }));
-    expect(topbar.querySelector(".wordmark")).toBeNull();
     expect(within(topbar).getByRole("button", { name: "Rename session" })).toBeInTheDocument();
   });
 
