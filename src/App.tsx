@@ -451,6 +451,8 @@ export function App() {
     <Transcript
       messages={state.messages}
       streaming={state.streaming}
+      activeAssistantMessageKey={state.activeAssistantMessageKey}
+      toolActivity={state.tools}
       sessionId={state.sessionId}
       viewId={state.transcriptViewId ?? ""}
       queue={state.queue}

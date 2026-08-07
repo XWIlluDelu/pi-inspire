@@ -33,6 +33,7 @@ describe("message reconciliation", () => {
     expect(update.slice.messages).toHaveLength(1);
     expect(update.slice.messages[0]!.content).toEqual([{ type: "text", text: "ab" }]);
     expect(start.slice.streaming).toBe(true);
+    expect(start.slice.activeAssistantMessageKey).toBe("assistant:2");
     expect(start.slice.runState).toBe("running");
   });
 
@@ -52,6 +53,24 @@ describe("message reconciliation", () => {
     });
     expect(duplicate.slice.messages).toHaveLength(1);
     expect(duplicate.changed).toBe(false);
+  });
+
+  it("keeps the current assistant key through its tool batch and replaces it at the next LLM call", () => {
+    const firstStart = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: { role: "assistant", content: [], timestamp: 2, __inspireLiveId: "call-1" },
+    });
+    const firstEnd = reduce(firstStart.slice, new Set(), {
+      type: "message_end",
+      message: { role: "assistant", content: [], timestamp: 2, __inspireLiveId: "call-1" },
+    });
+    expect(firstEnd.slice.activeAssistantMessageKey).toBe("live:call-1");
+
+    const secondStart = reduce(firstEnd.slice, new Set(firstEnd.settle), {
+      type: "message_start",
+      message: { role: "assistant", content: [], timestamp: 3, __inspireLiveId: "call-2" },
+    });
+    expect(secondStart.slice.activeAssistantMessageKey).toBe("live:call-2");
   });
 
   it("keeps same-role same-timestamp ordinary lifecycles distinct by host live identity", () => {
@@ -101,12 +120,14 @@ describe("message reconciliation", () => {
 
   it("requests an authoritative resync on settle and clears transient activity", () => {
     const slice = emptyEventSlice();
+    slice.activeAssistantMessageKey = "live:active-assistant";
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
     slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
     slice.queue = { steering: ["steer"], followUp: ["later one", "later two"] };
     const { slice: next, resync } = reduce(slice, new Set(), { type: "agent_settled" });
     expect(resync).toBe(true);
     expect(next.streaming).toBe(false);
+    expect(next.activeAssistantMessageKey).toBeNull();
     expect(next.tools).toEqual({});
     expect(next.retry).toBeNull();
     expect(next.queue).toEqual({ steering: [], followUp: [] });

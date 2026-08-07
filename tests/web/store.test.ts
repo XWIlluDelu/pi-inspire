@@ -125,6 +125,7 @@ describe("multi-session event routing", () => {
       s1: { runState: "idle" },
       s2: { runState: "idle", indicator: "completed" },
     };
+    if (snapshot.active) snapshot.active.activeAssistantMessageKey = "persisted:a1:0";
     snapshot.pendingExtensionUiRequests = [{ sessionId: "s1", id: "question-1", method: "confirm", title: "Proceed?" }];
     snapshot.pendingQueues = { steering: ["correct the current answer"], followUp: ["then add tests", "then summarize"] };
     snapshot.extensionDisplays = [{ id: "setWidget:plan", method: "setWidget", attribution: "plan.ts · plan", payload: { widgetLines: ["step"] } }];
@@ -139,7 +140,9 @@ describe("multi-session event routing", () => {
       followUp: ["then add tests", "then summarize"],
     });
     expect(store.getState().extensionDisplays).toHaveLength(1);
+    expect(store.getState().activeAssistantMessageKey).toBe("persisted:a1:0");
 
+    if (snapshot.active) snapshot.active.activeAssistantMessageKey = null;
     snapshot.pendingExtensionUiRequests = [];
     snapshot.pendingQueues = { steering: [], followUp: [] };
     snapshot.extensionDisplays = [];
@@ -147,6 +150,7 @@ describe("multi-session event routing", () => {
     expect(store.getState().extensionUiRequests).toEqual([]);
     expect(store.getState().queue).toEqual({ steering: [], followUp: [] });
     expect(store.getState().extensionDisplays).toEqual([]);
+    expect(store.getState().activeAssistantMessageKey).toBeNull();
   });
 
   it("clears selected-only extension presentation when switching sessions", async () => {

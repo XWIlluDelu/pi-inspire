@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { parseCompactCommand } from "../shared/commands.js";
-import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { messageFallbackCorrelation, structuralMessageIdentity } from "../shared/message-identity.js";
 import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
@@ -418,6 +418,10 @@ interface RuntimeSlot {
   overlay: unknown[];
   overlayBytes: number;
   nextOverlayId: number;
+  /** Fallback correlation of the assistant message whose tool batch is live.
+   * It survives live-overlay absorption without treating an older assistant
+   * as active when the current message falls outside a bounded page. */
+  activeAssistantCorrelation: string | null;
   activeOverlayIds: Map<string, string>;
   conflict: ProjectionConflict | null;
   persistenceExpectations: PersistenceExpectation[];
@@ -641,6 +645,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.overlay = next;
     slot.overlayBytes = Buffer.byteLength(JSON.stringify(next));
     return projected;
+  }
+
+  private activeAssistantSnapshotKey(slot: RuntimeSlot, messages: unknown[]): string | null {
+    const correlation = slot.activeAssistantCorrelation;
+    if (!correlation) return null;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        !message || typeof message !== "object" ||
+        (message as Record<string, unknown>).role !== "assistant" ||
+        messageFallbackCorrelation(message) !== correlation
+      ) continue;
+      return structuralMessageIdentity(message);
+    }
+    return null;
   }
 
   private reconcileOverlay(slot: RuntimeSlot): void {
@@ -1394,6 +1413,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (record.message !== undefined) {
         const phase = record.type === "message_start" ? "start" : record.type === "message_end" ? "end" : "update";
         const projectedMessage = this.updateOverlay(slot, record.message, phase);
+        if (
+          record.type === "message_start" && projectedMessage && typeof projectedMessage === "object" &&
+          (projectedMessage as Record<string, unknown>).role === "assistant"
+        ) slot.activeAssistantCorrelation = messageFallbackCorrelation(projectedMessage);
         forwardedEvent = { ...record, message: projectedMessage };
       }
     }
@@ -1417,6 +1440,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         break;
       case "agent_start":
         slot.runState = "running";
+        slot.activeAssistantCorrelation = null;
         slot.attention = null;
         break;
       case "compaction_start":
@@ -1438,6 +1462,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       case "agent_settled": {
         const outcome = slot.runState === "failed" || slot.runState === "conflict" ? "failed" : slot.runState === "aborted" ? null : "completed";
         slot.runState = slot.conflict ? "conflict" : slot.runState === "failed" ? "failed" : slot.runState === "aborted" ? "aborted" : "idle";
+        slot.activeAssistantCorrelation = null;
         slot.attention = this.selectedSessionId === slot.id ? null : outcome;
         slot.pendingQueues = emptyPendingQueues();
         this.clearPendingExtensionUi(slot, "settled");
@@ -1554,6 +1579,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.processOwners.delete(rpc);
       owner.process = null;
       owner.ready = false;
+      owner.activeAssistantCorrelation = null;
       this.clearWriterProjectionBaseline(owner);
       owner.bridge = null;
       this.renewView(owner);
@@ -1602,6 +1628,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         effectiveLeafId,
         navigationLeased: Boolean(slot.navigationLease),
         isStreaming: isBusyRunState(slot.runState),
+        activeAssistantMessageKey: this.activeAssistantSnapshotKey(slot, page.messages),
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
@@ -1716,6 +1743,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.clearWriterProjectionBaseline(current);
         current.overlay = [];
         current.overlayBytes = 0;
+        current.activeAssistantCorrelation = null;
         current.activeOverlayIds.clear();
         current.conflict = retainedConflict;
         current.branchRevision = projection.revision;
@@ -1756,6 +1784,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         overlay: [],
         overlayBytes: 0,
         nextOverlayId: 0,
+        activeAssistantCorrelation: null,
         activeOverlayIds: new Map(),
         conflict: null,
         persistenceExpectations: [],
@@ -2179,6 +2208,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       overlay: [],
       overlayBytes: 0,
       nextOverlayId: 0,
+      activeAssistantCorrelation: null,
       activeOverlayIds: new Map(),
       conflict: null,
       persistenceExpectations: [],
@@ -2740,6 +2770,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           overlay: [],
           overlayBytes: 0,
           nextOverlayId: source.nextOverlayId,
+          activeAssistantCorrelation: null,
           activeOverlayIds: new Map(),
           conflict: null,
           persistenceExpectations: [],
@@ -3017,6 +3048,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           model: slot.projection.model ?? state.model,
           thinkingLevel: slot.projection.thinkingLevel,
           isStreaming: Boolean(state.isStreaming),
+          activeAssistantMessageKey: this.activeAssistantSnapshotKey(slot, page.messages),
           isCompacting: Boolean(state.isCompacting),
           messages: page.messages,
           transcriptPage: page,

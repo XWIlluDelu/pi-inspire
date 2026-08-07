@@ -10,8 +10,8 @@ import { defaultPreferences, type InspirePreferences } from "../shared/contracts
 const preferenceFields = {
   theme: z.enum(["system", "light", "dark"]),
   launch: z.enum(["welcome", "continue"]),
-  thinkingVisibility: z.enum(["hidden", "collapsed", "expanded"]),
-  toolVisibility: z.enum(["hidden", "compact", "collapsed", "expanded"]),
+  thinkingVisibility: z.enum(["dynamic", "expanded", "collapsed", "hidden"]),
+  toolVisibility: z.enum(["dynamic", "expanded", "collapsed", "compact", "hidden"]),
   assistantRoundDisplay: z.enum(["details", "divider"]),
   projectDisplay: z.enum(["folder", "path"]),
   completionAttention: z.enum(["off", "title", "desktop"]),
@@ -30,6 +30,8 @@ const preferenceFields = {
 // still parse.
 const preferencesSchema = z.object({
   ...preferenceFields,
+  thinkingVisibility: preferenceFields.thinkingVisibility.default("dynamic"),
+  toolVisibility: preferenceFields.toolVisibility.default("dynamic"),
   assistantRoundDisplay: preferenceFields.assistantRoundDisplay.default("divider"),
   projectDisplay: preferenceFields.projectDisplay.default("folder"),
   completionAttention: preferenceFields.completionAttention.default("off"),
