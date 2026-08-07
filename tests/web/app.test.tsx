@@ -16,11 +16,13 @@ import {
 
 let renamedTo: string | null = null;
 let abortCalls = 0;
+let deselectCalls = 0;
 let modelFailureGate: Promise<void> | null = null;
 
 beforeAll(async () => {
   renamedTo = null;
   abortCalls = 0;
+  deselectCalls = 0;
   modelFailureGate = null;
   const summary = sessionSummary();
   const older = sessionSummary({ id: "s0", title: "Older work" });
@@ -47,6 +49,10 @@ beforeAll(async () => {
           ],
         }),
       };
+    }
+    if (url.startsWith("/api/sessions/deselect")) {
+      deselectCalls += 1;
+      return { body: { active: null, runState: "idle", sessionStatuses: store.getState().sessionStatuses } };
     }
     if (url.startsWith("/api/sessions/rename")) {
       renamedTo = String(jsonBody(init).name ?? "");
@@ -140,9 +146,43 @@ describe("welcome flow", () => {
 
     fireEvent.click(within(nav).getByRole("button", { name: "New session" }));
     expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
+    expect(deselectCalls).toBe(1);
+    expect(store.getState().sessionId).toBeNull();
     expect(previous).not.toHaveAttribute("aria-current");
     expect(previous.closest(".nav__row")).not.toHaveClass("nav__row--active");
     expect(within(nav).queryByRole("region", { name: "Workspace files" })).not.toBeInTheDocument();
+    await store.openSession("s1");
+  });
+
+  it("uses an off-canvas navigation drawer instead of squeezing the phone viewport", async () => {
+    const media = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query === "(max-width: 900px)",
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+    try {
+      render(<App />);
+      await waitFor(() => expect(screen.queryByRole("navigation", { name: "Sessions" })).not.toBeInTheDocument());
+      const toggle = screen.getByRole("button", { name: "Toggle navigation" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(toggle);
+      expect(await screen.findByRole("navigation", { name: "Sessions" })).toBeInTheDocument();
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
+      await waitFor(() => expect(screen.queryByRole("navigation", { name: "Sessions" })).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Toggle resources panel" }));
+      expect(await screen.findByRole("complementary", { name: "Files and resources" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Close resources panel" }));
+      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Files and resources" })).not.toBeInTheDocument());
+    } finally {
+      media.mockRestore();
+    }
   });
 
   it("keeps the session identity in the topbar while the navigation is a rail", async () => {
@@ -287,6 +327,7 @@ describe("welcome flow", () => {
     fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
     expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
     expect(screen.getByLabelText("First message")).toBeInTheDocument();
+    await store.openSession("s1");
   });
 
   it("picks a project directory by browsing the host filesystem", async () => {
@@ -302,6 +343,7 @@ describe("welcome flow", () => {
 
     expect(screen.queryByRole("dialog", { name: "Choose project directory" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Project directory")).toHaveValue("/home/demo/research");
+    await store.openSession("s1");
   });
 
   it("switches between Windows drive roots in the project directory picker", async () => {
@@ -318,6 +360,7 @@ describe("welcome flow", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Use this directory" }));
 
     expect(screen.getByLabelText("Project directory")).toHaveValue("D:\\projects");
+    await store.openSession("s1");
   });
 
   it("keeps the existing attribution row intact in Details mode", async () => {
@@ -447,12 +490,13 @@ describe("welcome flow", () => {
     expect(store.getState().extensionUiRequests[0]?.id).toBe("blocked");
     act(() => ws.emit({
       type: "session_projection_conflict", sessionId: "s1",
-      conflict: { kind: "external-change", message: "external writer conflict", revision: 2 },
+      conflict: { kind: "external-change", message: "external writer conflict", revision: 2, incidentId: "inc_test_owner" },
       sessionStatus: { runState: "conflict" },
     }));
     const warning = await screen.findByText("external writer conflict");
     expect(warning.closest(".banner")).toHaveClass("banner--warning");
     expect(screen.getByText("Needs recovery")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnostic incident")).toHaveTextContent("inc_test_owner");
     expect(screen.getByRole("button", { name: "Recover" })).toBeInTheDocument();
     const before = abortCalls;
     fireEvent.keyDown(window, { key: "Escape" });

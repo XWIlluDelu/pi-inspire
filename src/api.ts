@@ -177,6 +177,7 @@ export function createApi(token: string | null = null) {
     sessionsByCwds: (cwds: string[]) =>
       post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-cwd", { cwds }),
     openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
+    deselectSession: () => post<ActiveSnapshot>(token, "/api/sessions/deselect"),
     newSession: (cwd: string, options: NewSessionOptions = {}) =>
       post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, ...options }),
     newSessionDefaults: (cwd: string) =>

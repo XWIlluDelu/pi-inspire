@@ -293,7 +293,7 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(239));
+    act(() => vi.advanceTimersByTime(599));
     for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
 
     act(() => vi.advanceTimersByTime(1));
@@ -323,13 +323,17 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(0));
+    act(() => vi.advanceTimersByTime(99));
+    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("next call").closest(".card")?.querySelector(".card__header"))
       .toHaveAttribute("aria-expanded", "true");
     expect(toolHeader("read")).toHaveAttribute("aria-expanded", "false");
 
-    act(() => vi.advanceTimersByTime(580));
+    act(() => vi.advanceTimersByTime(878));
+    expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
     expect(container.querySelector(".tool-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
@@ -367,13 +371,15 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(239));
+    act(() => vi.advanceTimersByTime(599));
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".tool-strip")).toBeNull();
 
-    act(() => vi.advanceTimersByTime(580));
+    act(() => vi.advanceTimersByTime(879));
+    expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
     expect(container.querySelector(".tool-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
@@ -402,7 +408,7 @@ describe("transcript density preferences", () => {
       />,
     );
     const header = container.querySelector(".card--tool .card__header") as HTMLButtonElement;
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(600));
     expect(header).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(header);
     expect(header).toHaveAttribute("aria-expanded", "true");
@@ -419,7 +425,7 @@ describe("transcript density preferences", () => {
     expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
   });
 
-  it("keeps semantic dwell but removes motion when reduced motion is requested", () => {
+  it("switches Dynamic density immediately when reduced motion is requested", () => {
     vi.useFakeTimers();
     vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
       matches: query === "(prefers-reduced-motion: reduce)",
@@ -453,14 +459,10 @@ describe("transcript density preferences", () => {
     const header = container.querySelector(".card--tool .card__header");
     rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
 
-    act(() => vi.advanceTimersByTime(239));
-    expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1));
+    act(() => vi.runOnlyPendingTimers());
+    act(() => vi.runOnlyPendingTimers());
+    act(() => vi.runOnlyPendingTimers());
     expect(header).toHaveAttribute("aria-expanded", "false");
-    act(() => vi.advanceTimersByTime(399));
-    expect(container.querySelector(".tool-strip")).toBeNull();
-    act(() => vi.advanceTimersByTime(1));
-    act(() => vi.advanceTimersByTime(0));
     expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
   });
 
@@ -606,6 +608,70 @@ describe("transient conversation projections", () => {
     expect(within(steering).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["steer first", "steer second"]);
     expect(within(followUp).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["follow first", "follow second"]);
     expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+  });
+
+  it("renders attributable extension content and hides anonymous extension plumbing", () => {
+    const { rerender, container } = render(
+      <Transcript
+        messages={[{
+          role: "assistant",
+          content: [{ type: "custom", title: "Extension content", extensionName: "Web search", payload: { hidden: true } }],
+        }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(screen.getByText("Web search")).toHaveClass("card__generic-title");
+    expect(screen.queryByText("Extension content")).not.toBeInTheDocument();
+    expect(screen.queryByText("custom")).not.toBeInTheDocument();
+
+    rerender(
+      <Transcript
+        messages={[{
+          role: "assistant",
+          content: [null, "internal", 7, { title: "Extension content" }, { type: "CUSTOM" }],
+        }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(screen.queryByText("Extension")).not.toBeInTheDocument();
+    expect(container.querySelector(".card--generic")).toBeNull();
+  });
+
+  it("honors Pi's display flag for custom context messages", () => {
+    const { rerender } = render(
+      <Transcript
+        messages={[{
+          role: "custom",
+          customType: "magic-context:ceiling-nudge",
+          content: "context-only",
+          display: false,
+        }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(screen.queryByText(/Magic Context/)).not.toBeInTheDocument();
+    expect(screen.queryByText("context-only")).not.toBeInTheDocument();
+
+    rerender(
+      <Transcript
+        messages={[{
+          role: "custom",
+          customType: "intercom_message",
+          content: "visible extension message",
+          display: true,
+        }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(screen.getByText("Intercom message")).toHaveClass("card__generic-title");
   });
 
   it("renders one attributable inspectable generic extension surface", () => {

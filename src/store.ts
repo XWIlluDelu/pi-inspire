@@ -1670,6 +1670,28 @@ export class AppStore {
     }
   };
 
+  deselectSession = async (): Promise<boolean> => {
+    if (!this.api) return false;
+    this.invalidateBranchForSelectionIntent();
+    this.set({ sessionActionError: null });
+    const ticket = ++this.selectionRequest;
+    this.claimOpening(ticket, null);
+    try {
+      const snapshot = await this.api.deselectSession();
+      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return false;
+      this.applySnapshot(snapshot);
+      this.set({ sessionActionError: null });
+      return snapshot.active === null;
+    } catch (error) {
+      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
+        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to open New session" });
+      }
+      return false;
+    } finally {
+      this.releaseOpening(ticket);
+    }
+  };
+
   /** Creates a session. Never falls back to "/": without an active or explicit
    * project directory the caller must collect one (the welcome page does). */
   newSession = async (cwd?: string, nameOrOptions: string | NewSessionOptions = {}): Promise<string | null> => {

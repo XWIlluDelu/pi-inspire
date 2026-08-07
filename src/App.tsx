@@ -12,7 +12,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { Profiler, useEffect, useState } from "react";
+import { Profiler, useCallback, useEffect, useState } from "react";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   projectionConflictSeverity,
@@ -344,31 +344,60 @@ function Notices() {
   );
 }
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia(query).matches
+  ));
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+  return matches;
+}
+
 export function App() {
   const state = useAppState();
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // "New session" opens the start surface (message + project directory)
-  // instead of immediately creating a session in the current project.
-  const [draftingNew, setDraftingNew] = useState(false);
 
   const openSession = (id: string) => {
     setSettingsOpen(false);
-    setDraftingNew(false);
+    setMobileNavOpen(false);
     void store.openSession(id);
   };
 
   const newSession = () => {
     setSettingsOpen(false);
-    setDraftingNew(true);
+    setMobileNavOpen(false);
+    void store.deselectSession().then((deselected) => {
+      if (!deselected) return;
+      store.setResourcesOpen(false);
+    });
   };
 
-  const activeSessionId = state.sessionId;
+  const toggleNavigation = useCallback(() => {
+    if (narrowViewport) {
+      if (!mobileNavOpen) store.setResourcesOpen(false);
+      setMobileNavOpen(!mobileNavOpen);
+    } else {
+      setNavCollapsed((value) => !value);
+    }
+  }, [mobileNavOpen, narrowViewport]);
+
+  const toggleResources = useCallback(() => {
+    if (narrowViewport) setMobileNavOpen(false);
+    store.setResourcesOpen(!store.getState().resourcesOpen);
+  }, [narrowViewport]);
+
   useEffect(() => {
-    // A session opened from the start surface (or anywhere else) ends the draft.
-    if (activeSessionId) setDraftingNew(false);
-  }, [activeSessionId]);
+    if (!narrowViewport) setMobileNavOpen(false);
+  }, [narrowViewport]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -405,10 +434,13 @@ export function App() {
         setPaletteOpen((value) => !value);
       } else if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
-        setNavCollapsed((value) => !value);
+        toggleNavigation();
       } else if (mod && event.key === ".") {
         event.preventDefault();
-        store.setResourcesOpen(!store.getState().resourcesOpen);
+        toggleResources();
+      } else if (event.key === "Escape" && narrowViewport && mobileNavOpen) {
+        event.preventDefault();
+        setMobileNavOpen(false);
       } else if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
@@ -421,7 +453,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.runState, state.extensionUiRequests.length, paletteOpen]);
+  }, [state.runState, state.extensionUiRequests.length, paletteOpen, narrowViewport, mobileNavOpen, toggleNavigation, toggleResources]);
 
   if (state.needsToken) return <TokenGate />;
   if (!state.bootstrapped && state.connection === "offline" && state.connectionProblem) {
@@ -429,15 +461,15 @@ export function App() {
   }
 
   const statuses = Object.entries(state.statuses);
-  const navigationContent = (
+  const navigationContent = narrowViewport && !mobileNavOpen ? null : (
     <Nav
-      collapsed={navCollapsed}
-      selectedSessionId={draftingNew ? null : state.sessionId}
+      collapsed={narrowViewport ? false : navCollapsed}
+      selectedSessionId={state.sessionId}
       onNewSession={newSession}
       onSelectSession={openSession}
     />
   );
-  const transcriptContent = state.sessionId && !draftingNew ? (
+  const transcriptContent = state.sessionId ? (
     <Transcript
       messages={state.messages}
       streaming={state.streaming}
@@ -455,7 +487,7 @@ export function App() {
       olderError={state.olderMessagesError}
     />
   ) : null;
-  const composerContent = state.sessionId && !draftingNew ? (
+  const composerContent = state.sessionId ? (
     <div className="composer-dock">
       <ActivityBar />
       <Composer />
@@ -464,11 +496,19 @@ export function App() {
   const resourcesContent = state.resourcesOpen ? <ResourcesPane /> : null;
 
   return (
-    <div className="app">
+    <div className={`app ${narrowViewport ? "app--narrow" : ""}`}>
+      {narrowViewport && mobileNavOpen ? (
+        <button
+          type="button"
+          className="pane-scrim pane-scrim--nav"
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="Close navigation"
+        />
+      ) : null}
       {MAINTENANCE_BENCHMARK ? (
         <Profiler id="navigation" onRender={recordBenchmarkCommit}>{navigationContent}</Profiler>
       ) : navigationContent}
-      {!navCollapsed ? (
+      {!narrowViewport && !navCollapsed ? (
         <PaneResizeHandle
           cssVar="--nav-w"
           storageKey="inspire.nav-width"
@@ -485,13 +525,14 @@ export function App() {
           <button
             type="button"
             className="icon-button"
-            onClick={() => setNavCollapsed((value) => !value)}
+            onClick={toggleNavigation}
             aria-label="Toggle navigation"
+            aria-expanded={narrowViewport ? mobileNavOpen : undefined}
             title="Toggle navigation (Ctrl+B)"
           >
             <PanelLeft size={15} aria-hidden />
           </button>
-          <SessionIdent show={!draftingNew} />
+          <SessionIdent show={Boolean(state.sessionId)} />
           <div className="topbar__status" aria-live="polite">
             <StateChip runState={state.runState} conflict={state.projectionConflict} />
             {statuses.map(([key, text]) => (
@@ -534,7 +575,7 @@ export function App() {
             <button
               type="button"
               className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
-              onClick={() => store.setResourcesOpen(!state.resourcesOpen)}
+              onClick={toggleResources}
               aria-label="Toggle resources panel"
               title="Toggle resources panel (Ctrl+.)"
             >
@@ -544,7 +585,18 @@ export function App() {
         </header>
         {state.error ? (
           <div className={`banner banner--${state.errorSeverity}`} role={state.errorSeverity === "warning" ? "status" : "alert"}>
-            <span>{state.error}</span>
+            <span className="banner__message">
+              {state.error}
+              {state.projectionConflict?.incidentId ? (
+                <code
+                  className="banner__incident"
+                  title="Diagnostic incident ID"
+                  aria-label="Diagnostic incident"
+                >
+                  {state.projectionConflict.incidentId}
+                </code>
+              ) : null}
+            </span>
             {state.projectionConflict ? (
               <button type="button" onClick={() => void store.abort()}>
                 Recover
@@ -569,7 +621,7 @@ export function App() {
           </div>
         ) : null}
         {settingsOpen ? <Settings onClose={() => setSettingsOpen(false)} /> : null}
-        {state.sessionId && !draftingNew ? (
+        {state.sessionId ? (
           <>
             {MAINTENANCE_BENCHMARK ? (
               <Profiler id="transcript" onRender={recordBenchmarkCommit}>{transcriptContent}</Profiler>
@@ -579,21 +631,30 @@ export function App() {
             ) : composerContent}
           </>
         ) : (
-          <Welcome showRecent={navCollapsed} />
+          <Welcome showRecent={narrowViewport ? !mobileNavOpen : navCollapsed} />
         )}
       </main>
       {state.resourcesOpen ? (
         <>
-          <PaneResizeHandle
-            cssVar="--ctx-w"
-            storageKey="inspire.ctx-width"
-            paneSelector=".ctx"
-            edge="start"
-            min={320}
-            max={(viewport) => Math.min(920, viewport - 640)}
-            label="Resize files panel"
-            variant="ctx"
-          />
+          {narrowViewport ? (
+            <button
+              type="button"
+              className="pane-scrim pane-scrim--resources"
+              onClick={() => store.setResourcesOpen(false)}
+              aria-label="Dismiss resources panel"
+            />
+          ) : (
+            <PaneResizeHandle
+              cssVar="--ctx-w"
+              storageKey="inspire.ctx-width"
+              paneSelector=".ctx"
+              edge="start"
+              min={320}
+              max={(viewport) => Math.min(920, viewport - 640)}
+              label="Resize files panel"
+              variant="ctx"
+            />
+          )}
           {MAINTENANCE_BENCHMARK ? (
             <Profiler id="resources" onRender={recordBenchmarkCommit}>{resourcesContent}</Profiler>
           ) : resourcesContent}
@@ -602,8 +663,8 @@ export function App() {
       {paletteOpen ? (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
-          onToggleNav={() => setNavCollapsed((value) => !value)}
-          onToggleCtx={() => store.setResourcesOpen(!store.getState().resourcesOpen)}
+          onToggleNav={toggleNavigation}
+          onToggleCtx={toggleResources}
           onNewSession={newSession}
           onOpenSession={openSession}
         />

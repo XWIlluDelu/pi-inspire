@@ -294,6 +294,8 @@ export function ComposerInput({
           onKeyDown={handleKeyDown}
           onPaste={onPaste}
           aria-label={label}
+          spellCheck={false}
+          autoCorrect="off"
           autoFocus={autoFocus}
         />
       </div>
