@@ -22,7 +22,7 @@ tokens:
     ink: "#1c2321"
     body: "#2e3634"
     muted: "#5d6664"
-    faint: "#6d7873"          # weakest text that is still text: ≥4.5:1 on surface
+    faint: "#68736f"          # weakest text that is still text: ≥4.5:1 on surface
     accent: "#00928c"          # teal-500, brand anchor (borders, icons, selection, focus)
     accent-hover: "#00a29b"
     accent-fill: "#00827c"     # teal-600, filled controls with on-accent text (≥4.5:1)
@@ -31,11 +31,11 @@ tokens:
     accent-tint: "rgba(0, 146, 140, 0.08)"
     on-accent: "#ffffff"
     success: "#2f7d4f"
-    warning: "#9a6b00"
+    warning: "#946600"
     error: "#b3403c"
     on-status: "#ffffff"        # foreground on filled warning/error controls
     error-tint: "rgba(179, 64, 60, 0.08)"
-    warning-tint: "rgba(154, 107, 0, 0.08)"
+    warning-tint: "rgba(148, 102, 0, 0.08)"
     info: "#33649e"            # annotation: tool activity
     think: "#7b5fc0"           # annotation: reasoning blocks
     think-tint: "rgba(123, 95, 192, 0.06)"
@@ -49,7 +49,7 @@ tokens:
     ink: "#ecefee"
     body: "#ccd2d0"
     muted: "#939d99"
-    faint: "#7f8983"
+    faint: "#89938f"
     accent: "#4dd8cd"          # teal-300: the light anchor's hue, raised for dark
     accent-hover: "#71e3d9"
     accent-fill: "#3fcfc4"     # filled controls carry near-black on-accent text
@@ -346,8 +346,8 @@ warning capsule surface.
   is no compact button: users type `/compact [instructions]`, which the
   host routes to Pi's RPC compact command. Below 900px, the open navigation
   drawer begins beneath the 48px center topbar, so this one toggle remains
-  above it and hit-testable by pointer, touch, and keyboard; no second close
-  control or navigation state is introduced.
+  above it and hit-testable by pointer, touch, and keyboard; the drawer adds
+  one trailing close target inside its own header and a click-to-dismiss scrim.
 - **Context modes** — the right pane keeps Files, Changes, and Branches in one
   compact mode switch rather than adding another workbench column. Branches
   uses a bounded, vertically scrollable entry tree: role chips and one-line
@@ -368,8 +368,10 @@ warning capsule surface.
 - Groups collapse freely — including the visible session's group; a collapsed
   folder that hides the visible session takes the `accent-tint` highlight and
   2px `accent` left edge itself. Active search overrides collapse. Opening the
-  New session surface leaves any Pi runtime running but clears navigation
-  selection; no session row or folder then claims current-page styling.
+  New session surface host-deselects the prior session: its worker may remain
+  only as an unselected idle cache entry, while navigation selection, topbar
+  status, resources, attention acknowledgement, and Escape targeting all clear.
+  No session row or folder then claims current-page styling.
 - Row hover shows `surface-inset`; the visible row pairs the 2px `accent`
   inset edge with an `accent-tint` wash that fades toward the right, so the
   highlight points back at the edge. Running/attention dots use `accent`,
@@ -403,14 +405,14 @@ warning capsule surface.
 
 ### Transcript
 
-- **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. Its empty, unfocused idle state rests at 62% opacity without a shadow; hover, focus-within (including the scope menu), or a nonempty query restores full opacity and the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
+- **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. Its empty, unfocused idle state keeps full text/icon opacity and no shadow; hover, focus-within (including the scope menu), or a nonempty query adds only the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
 - **Earlier history** — approaching the transcript top loads the next page without a normal-state control. A quiet centered status appears only while loading; failure replaces it with a compact retry action and pauses automatic loading until the user retries. Prepending history preserves the visible reading position.
 - **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra
   spacing before each user turn groups a prompt with its response.
 - **Assistant flow** — no container. The `Assistant rounds` preference is a pure presentation choice: `Details` preserves the existing attribution head line ("Pi" at `{typography.size-sm}`/600 with model, time, and any unusual end reason in `{typography.size-xs}` `faint`/`warning`), while `Divider` replaces that whole line with one 24px neutral hairline centered in the ordinary turn gap, adding no exception text, inferred state, semantic color, or replacement line height. There is no footer meta line.
-- **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are inline-rendered sans prose (emphasis, inline code, and math survive within the one-line ellipsis); tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Dynamic is the recommended and default density: every Thinking block in the current LLM call requests collapse at the next call or settlement, while each tool card requests collapse at its own execution end and its assistant-message batch requests compaction together at the next call or settlement. Very fast boundaries still honor a short minimum visible residency for each live expanded state and for the completed collapsed tool cards. Result outcome affects status color/glyph only, never this lifecycle. Tool cards also expose fixed `Compact`: each uninterrupted adjacent run becomes a wrapping row of quiet 30px tiles — a 3px semantic left edge, tool icon, status glyph, and restrained padding/spacing. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. The outer hairline remains neutral; failure turns the short semantic edge, tool icon, and status glyph red in both resting and selected states. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries. Dynamic closes each full card in place, briefly fades the settled batch, then introduces its Compact tiles with only a 4px upward fade; it never flies full-width cards across the transcript or interpolates their geometry into tiles. Initial history and reduced-motion rendering switch directly without replay.
+- **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are inline-rendered sans prose (emphasis, inline code, and math survive within the one-line ellipsis); tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Generic extension cards instead use an attributable normal-sans title and suppress raw `custom`/`Extension content` labels; anonymous custom parts and Pi custom messages marked `display: false` are omitted rather than rendered as repetitive placeholders. Meaningfully typed or attributed content keeps its implementation type and payload in the expanded body. Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Dynamic is the recommended and default density: Thinking remains Expanded for at least 700 ms, each completed tool for at least 600 ms, and a closed batch remains visibly Collapsed for at least 700 ms after its 180 ms body transition before Compact may begin. Result outcome affects status color/glyph only, never this lifecycle. Tool cards also expose fixed `Compact`: each uninterrupted adjacent run becomes a wrapping row of quiet 30px tiles — a 3px semantic left edge, tool icon, status glyph, and restrained padding/spacing. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. The outer hairline remains neutral; failure turns the short semantic edge, tool icon, and status glyph red in both resting and selected states. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries. Dynamic closes each full card in place, briefly fades the settled batch, then introduces its Compact tiles with only a 4px upward fade; it never flies full-width cards across the transcript or interpolates their geometry into tiles. Initial history and reduced-motion rendering switch directly without replay.
 - **Code block** — `surface` (dark: `surface-inset`) background, hairline
   border, `{rounded.md}`, header bar with language label
   (`{typography.size-xs}` `faint`) and copy action; code at
@@ -457,7 +459,11 @@ occupancy from Pi's session stats: calm `muted`/`accent` below 60%,
 `/compact` reminder in the tooltip; it hides when Pi has no fresh usage
 data (right after compaction). Focus shows a 2px `accent` ring on the whole
 composer. Drop targeting tints the composer with `accent-tint` and a dashed
-`accent` border.
+`accent` border. Browser spelling/grammar proofing is disabled on the shared
+textarea so technical mixed-language input receives no browser-owned correction
+underlines. Below 520px the meta row wraps: model and thinking controls keep
+legible labels and at least 32px targets, while context/send owns a full trailing
+row rather than shrinking controls into overlap.
 
 ### Command palette, settings & dialogs
 
@@ -468,10 +474,12 @@ surface pops in — 97%→100% scale with a hint of spring
 wide, `{rounded.lg}`, input row + grouped result list (group label
 `{typography.size-xs}` uppercase tracked `faint`); active row `accent-tint`
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
-within 80dvh), not a page: sectioned cards for appearance (theme, project
+within 80dvh on ordinary viewports), not a page: sectioned cards for appearance (theme, project
 location), card visibility, startup, and about; Escape and the scrim close
-it, and Escape never leaks to the global abort shortcut. Preference selects
-render as the composer's dropdown in a bordered field variant — hairline
+it, and Escape never leaks to the global abort shortcut. Below 520px the overlay
+uses the full available viewport height and preference rows stack their labels
+above controls, so no horizontal overflow or clipped last section remains.
+Preference selects render as the composer's dropdown in a bordered field variant — hairline
 border on the canvas background, opening downward, focused/open state
 following the text-field grammar (accent border + tint halo). Extension
 dialogs share the same surface with title at `{typography.size-lg}`
@@ -518,6 +526,11 @@ prompt, abort, and extension-response failures without a narrower recovery
 surface use red. Blocking integrity and acceptance-unknown states stay red and
 actionable. A verified external source move is instead a persistent yellow
 attention banner with recovery, never an auto-dismissing notice.
+
+An unexpected React render failure replaces the workbench with one centered,
+privacy-safe recovery card and a Reload page action. It never exposes the error
+message, session content, or implementation stack in the page, and it must not
+leave an unexplained blank viewport.
 
 ### Focus & keyboard
 

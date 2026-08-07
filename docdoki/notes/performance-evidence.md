@@ -6,7 +6,7 @@ purpose: Frozen long-session evaluator, activation thresholds, and current evide
 
 ## Reproducible evaluator
 
-Run from the repository root with loopback ports 4587 and 5173 free, with no build, check, test, or other intentional CPU workload running concurrently:
+Run from the repository root with its isolated loopback ports free (defaults: host 14587, web 15173), with no build, check, test, or other intentional CPU workload running concurrently. Override them with `INSPIRE_BENCHMARK_HOST_PORT` and `INSPIRE_BENCHMARK_WEB_PORT` when needed:
 
 ```sh
 INSPIRE_BENCHMARK_ISOLATED=1 npx tsx tests/benchmarks/evidence-gated-maintenance.ts
@@ -14,7 +14,7 @@ INSPIRE_BENCHMARK_ISOLATED=1 npx tsx tests/benchmarks/evidence-gated-maintenance
 
 The environment flag is an explicit assertion that this isolation precondition has been met; without it the evaluator refuses to start. Run `npm run check` and `npm run build` only after all benchmark batches finish.
 
-The executable evaluator creates and removes its own temporary Pi session, workspace, preferences, Chrome profile, and host, then writes the complete machine-readable result to stdout without retaining a profiling artifact. The fixture persists 11,830,406 bytes of valid Pi JSONL, with a large abandoned branch and a bounded 100-message/39,324-byte active projection. It keeps Files, Changes, and Branches available, session and transcript search populated, pending steer/follow-up queues visible, and branch navigation controls present while delivering 36 text deltas, a tool lifecycle, and four background settlements.
+The executable evaluator creates and removes its own temporary Pi session, workspace, preferences, Chrome profile, Vite proxy configuration, and host, then writes the complete machine-readable result to stdout without retaining a profiling artifact. It discovers `CHROME_PATH`, system Chromium/Chrome, or the newest Playwright Chromium cache entry instead of hard-coding one browser release; teardown terminates Chrome before removing its profile. The browser viewport is fixed at 1440×900 so desktop-surface performance is not reinterpreted by responsive drawer behavior. The fixture persists 11,830,406 bytes of valid Pi JSONL, with a large abandoned branch and a bounded 100-message active projection. It keeps Files, Changes, and Branches available, session and transcript search populated, pending steer/follow-up queues visible, and branch navigation controls present while delivering 36 text deltas, a tool lifecycle, and four background settlements.
 
 Twenty-one accepted fresh browser samples characterize frontend noise; 21 fresh opens or forced reads characterize each host operation. With 21 samples, nearest-rank p95 is the second-highest sample rather than the maximum. The observation window starts before Changes: every iteration selects the concrete changed row, then observes the explicit refresh button/loading cycle, a changed rendered Git-status revision, a changed selected-diff revision, the settled controls, and retained selection before stopping that interaction timer. It then opens four real branch rows, proves current/edit/fork/refresh control state, executes edit-from-here and observes the composer prefill, returns to referenced Files, and runs text/tool streaming with pending queues and four background settlements. Settlement success is derived from the four rendered Completed session rows after the authoritative snapshot resync, not from fixture intent. The evaluator records these end-to-end Changes/Branches durations, React Profiler commits and actual durations by navigation/transcript/composer/resources surface, Long Task and Event Timing observations, wheel-to-animation-frame delay, exact CDP request/WebSocket accounting, and real `SessionProjection`, `SessionCatalog`, and `GitInspectionService` timings.
 
@@ -31,6 +31,12 @@ The frozen activation thresholds are:
 - host Git status p95 >= 100 ms.
 
 Counts and aggregate React work remain diagnostic. Every activation uses independent-sample witnesses: p95 must reach its threshold **and** at least `max(3, ceil(samples * 0.10))` samples must individually cross it. At 21 samples this requires three crossings, so neither one spike nor the two samples that determine nearest-rank p95 can activate work alone. React uses each iteration's surface p95 as its independent value. A Vite chunk-size warning or an isolated microbenchmark never activates maintenance by itself.
+
+## 2026-08-07 current evidence
+
+Environment: Node 26.5.0, Chromium 145.0.7632.6, Pi 0.84.1. One isolated full batch accepted 21 samples in 26 attempts, discarded five frame-gap/event-loop-contaminated attempts at 33.20–33.30 ms frame-gap p95 or 25.10–30.90 ms event-loop p95 against the 25 ms control bound, and returned `no-performance-change` with zero activated suspects. Host p95 was 17.95 ms for projection, 13.22 ms for catalog, and 10.86 ms for Git status. Browser p95 was 11.20 ms for navigation commits, 2.40 ms for transcript commits, 0.50 ms for composer commits, 0.70 ms for resources commits, 0.80 ms for input delay, and 11.90 ms for scroll delay; no long task was observed. The Changes and Branches interactions measured 175.50 ms and 114.90 ms p95 respectively, both below their 200 ms gate. The active projection serialized to 43,174 bytes. The evaluator therefore authorizes no speculative application performance change.
+
+This run also witnesses the maintenance fixes themselves: the benchmark uses isolated ports without editing `vite.config.ts`, targets its own host rather than the normal 4587 instance, selects the newest available Playwright Chromium instead of `chromium-1232`, holds a deterministic desktop viewport, and terminates Chrome before profile cleanup.
 
 ## 2026-08-01 baseline
 
