@@ -761,6 +761,9 @@ export class AppStore {
         ? { error: projectionError, errorSeverity: projectionSeverity }
         : clearedProjectionError ? { error: null, errorSeverity: "error" } : {}),
       streaming: Boolean(active?.isStreaming),
+      activeAssistantMessageKey: typeof active?.activeAssistantMessageKey === "string"
+        ? active.activeAssistantMessageKey
+        : null,
       runState: active?.projectionConflict ? "conflict" : snapshot.runState,
       // Wholesale replace: the host clears completion attention for the
       // session that was just viewed, so stale client state must not linger.
@@ -831,6 +834,7 @@ export class AppStore {
     return {
       messages: s.messages,
       streaming: s.streaming,
+      activeAssistantMessageKey: s.activeAssistantMessageKey,
       runState: s.runState,
       tools: s.tools,
       retry: s.retry,

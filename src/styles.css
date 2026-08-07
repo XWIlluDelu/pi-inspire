@@ -2155,6 +2155,35 @@ a {
   }
 }
 
+/* Dynamic density is a local fade/scale change: cards never fly across the
+   transcript to become compact tiles. */
+.dynamic-tool-batch {
+  display: contents;
+}
+
+.dynamic-tool-batch--compacting .card--tool {
+  opacity: 0;
+  transform: scale(0.985);
+  transition: opacity var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+.dynamic-tool-batch--compact .tool-strip {
+  animation: dynamic-strip-in var(--dur-standard) var(--ease-standard);
+}
+
+@keyframes dynamic-strip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Thinking summaries are prose, not machine data. Inline Markdown keeps its
    emphasis and math inside the one-line ellipsis contract. */
 .card__summary--prose {
@@ -2185,6 +2214,24 @@ a {
 .card__chevron {
   display: inline-flex;
   color: var(--faint);
+}
+
+.card__reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--dur-standard) var(--ease-standard),
+    opacity var(--dur-standard) var(--ease-standard);
+}
+
+.card__reveal--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.card__reveal-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .card__body {

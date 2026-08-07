@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Transcript, findLiteralMatches } from "../../src/components/Transcript";
 import { store } from "../../src/store";
 
@@ -9,6 +9,11 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("settled transcript search", () => {
@@ -208,6 +213,255 @@ describe("transcript density preferences", () => {
     expect(strips[0]!.querySelector(".tool-strip__reveal")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("alpha result")).toBeInTheDocument();
     return waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
+  });
+
+  it("loads historical Dynamic content directly at its final density", () => {
+    const historical = {
+      role: "assistant",
+      timestamp: 10,
+      content: [
+        { type: "thinking", thinking: "settled reasoning\nmore detail" },
+        { type: "toolCall", id: "history-a", name: "read", arguments: { path: "a.ts" } },
+        { type: "toolCall", id: "history-b", name: "bash", arguments: { command: "npm test" } },
+      ],
+    };
+    const { container } = render(
+      <Transcript
+        messages={[
+          historical,
+          { role: "toolResult", toolCallId: "history-a", content: "read", timestamp: 11 },
+          { role: "toolResult", toolCallId: "history-b", content: "tested", timestamp: 12 },
+        ]}
+        streaming={false}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Thinking/i })).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(0);
+    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(2);
+  });
+
+  it("holds fast parallel tools independently, then compacts only at the next Pi boundary", () => {
+    vi.useFakeTimers();
+    const active = {
+      role: "assistant",
+      timestamp: 20,
+      __inspireLiveId: "call-1",
+      content: [
+        { type: "thinking", thinking: "first thought" },
+        { type: "thinking", thinking: "second thought" },
+        { type: "toolCall", id: "parallel-a", name: "read", arguments: { path: "a.ts" } },
+        { type: "toolCall", id: "parallel-b", name: "bash", arguments: { command: "npm test" } },
+        { type: "toolCall", id: "parallel-c", name: "edit", arguments: { path: "b.ts" } },
+      ],
+    };
+    const running = {
+      "parallel-a": { id: "parallel-a", name: "read", phase: "running" as const },
+      "parallel-b": { id: "parallel-b", name: "bash", phase: "running" as const },
+      "parallel-c": { id: "parallel-c", name: "edit", phase: "running" as const },
+    };
+    const { container, rerender } = render(
+      <Transcript
+        messages={[active]}
+        streaming={false}
+        activeAssistantMessageKey="live:call-1"
+        toolActivity={running}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+
+    const thinkingHeaders = screen.getAllByRole("button", { name: /Thinking/i });
+    const toolHeader = (name: string) => screen.getByText(name, { selector: ".card__tool-name" })
+      .closest(".card")?.querySelector(".card__header") as HTMLElement;
+    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+
+    rerender(
+      <Transcript
+        messages={[active]}
+        streaming={false}
+        activeAssistantMessageKey="live:call-1"
+        toolActivity={{
+          ...running,
+          "parallel-b": { id: "parallel-b", name: "bash", phase: "done" },
+          "parallel-c": { id: "parallel-c", name: "edit", phase: "error" },
+        }}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(239));
+    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(toolHeader("read")).toHaveAttribute("aria-expanded", "true");
+    expect(toolHeader("bash")).toHaveAttribute("aria-expanded", "false");
+    expect(toolHeader("edit")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".tool-strip")).toBeNull();
+
+    const next = {
+      role: "assistant",
+      timestamp: 21,
+      __inspireLiveId: "call-2",
+      content: [{ type: "thinking", thinking: "next call" }],
+    };
+    rerender(
+      <Transcript
+        messages={[active, next]}
+        streaming
+        activeAssistantMessageKey="live:call-2"
+        toolActivity={{
+          ...running,
+          "parallel-a": { id: "parallel-a", name: "read", phase: "done" },
+          "parallel-b": { id: "parallel-b", name: "bash", phase: "done" },
+          "parallel-c": { id: "parallel-c", name: "edit", phase: "error" },
+        }}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(0));
+    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("next call").closest(".card")?.querySelector(".card__header"))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(toolHeader("read")).toHaveAttribute("aria-expanded", "false");
+
+    act(() => vi.advanceTimersByTime(580));
+    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".tool-strip")).toBeNull();
+    act(() => vi.advanceTimersByTime(180));
+    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(3);
+  });
+
+  it("gives a fast final tool perceptible Expanded and Collapsed dwell before Compact", () => {
+    vi.useFakeTimers();
+    const active = {
+      role: "assistant",
+      timestamp: 30,
+      __inspireLiveId: "last-call",
+      content: [{ type: "toolCall", id: "last-tool", name: "read", arguments: { path: "last.ts" } }],
+    };
+    const result = { role: "toolResult", toolCallId: "last-tool", content: "done", timestamp: 31 };
+    const { container, rerender } = render(
+      <Transcript
+        messages={[active, result]}
+        streaming={false}
+        activeAssistantMessageKey="live:last-call"
+        toolActivity={{ "last-tool": { id: "last-tool", name: "read", phase: "done" } }}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    const header = container.querySelector(".card--tool .card__header");
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    rerender(
+      <Transcript
+        messages={[active, result]}
+        streaming={false}
+        activeAssistantMessageKey={null}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(239));
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".tool-strip")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(580));
+    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".tool-strip")).toBeNull();
+    act(() => vi.advanceTimersByTime(180));
+    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+  });
+
+  it("pauses Dynamic batch compaction while a completed tool is manually inspected", () => {
+    vi.useFakeTimers();
+    const active = {
+      role: "assistant",
+      timestamp: 40,
+      __inspireLiveId: "held-call",
+      content: [{ type: "toolCall", id: "held-tool", name: "read", arguments: { path: "held.ts" } }],
+    };
+    const props = {
+      messages: [active],
+      streaming: false,
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { container, rerender } = render(
+      <Transcript
+        {...props}
+        activeAssistantMessageKey="live:held-call"
+        toolActivity={{ "held-tool": { id: "held-tool", name: "read", phase: "done" } }}
+      />,
+    );
+    const header = container.querySelector(".card--tool .card__header") as HTMLButtonElement;
+    act(() => vi.advanceTimersByTime(240));
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(container.querySelector(".tool-strip")).toBeNull();
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(header);
+    act(() => vi.advanceTimersByTime(0));
+    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(180));
+    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+  });
+
+  it("keeps semantic dwell but removes motion when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    const pending = {
+      role: "assistant",
+      timestamp: 41,
+      __inspireLiveId: "reduced-call",
+      content: [{ type: "toolCall", id: "reduced-tool", name: "bash", arguments: { command: "check" } }],
+    };
+    const props = {
+      messages: [pending],
+      streaming: false,
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { container, rerender } = render(
+      <Transcript
+        {...props}
+        activeAssistantMessageKey="live:reduced-call"
+        toolActivity={{ "reduced-tool": { id: "reduced-tool", name: "bash", phase: "running" } }}
+      />,
+    );
+    const header = container.querySelector(".card--tool .card__header");
+    rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
+
+    act(() => vi.advanceTimersByTime(239));
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    act(() => vi.advanceTimersByTime(399));
+    expect(container.querySelector(".tool-strip")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    act(() => vi.advanceTimersByTime(0));
+    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
   });
 
   it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", () => {

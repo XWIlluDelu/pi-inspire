@@ -1,5 +1,5 @@
-export const VISIBILITY_PREFERENCES = ["expanded", "collapsed", "hidden"] as const;
-export const TOOL_VISIBILITY_PREFERENCES = ["expanded", "collapsed", "compact", "hidden"] as const;
+export const VISIBILITY_PREFERENCES = ["dynamic", "expanded", "collapsed", "hidden"] as const;
+export const TOOL_VISIBILITY_PREFERENCES = ["dynamic", "expanded", "collapsed", "compact", "hidden"] as const;
 export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MAX_ATTACHMENTS = 8;
@@ -117,8 +117,8 @@ export interface InspirePreferences {
 export const defaultPreferences: InspirePreferences = {
   theme: "system",
   launch: "welcome",
-  thinkingVisibility: "collapsed",
-  toolVisibility: "collapsed",
+  thinkingVisibility: "dynamic",
+  toolVisibility: "dynamic",
   assistantRoundDisplay: "divider",
   projectDisplay: "folder",
   completionAttention: "off",
@@ -513,6 +513,10 @@ export interface ActiveSnapshot {
     model: unknown;
     thinkingLevel: string;
     isStreaming: boolean;
+    /** Stable identity of the assistant message whose Pi turn is currently
+     * executing, including its tool batch. Null before the next LLM call and
+     * after agent settlement. */
+    activeAssistantMessageKey?: string | null;
     isCompacting: boolean;
     /** Compatibility view of transcriptPage.messages; never a full history. */
     messages: unknown[];
