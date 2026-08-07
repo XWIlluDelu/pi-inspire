@@ -80,6 +80,14 @@ function clearLeftovers() {
 }
 
 describe("composer attachments", () => {
+  it("keeps browser proofing marks out of technical and mixed-language prompts", () => {
+    clearLeftovers();
+    render(<Composer />);
+    const input = screen.getByLabelText("Message");
+    expect(input).toHaveAttribute("spellcheck", "false");
+    expect(input).toHaveAttribute("autocorrect", "off");
+  });
+
   it("uses one clipboard projection without duplicating one paste or merging distinct files", () => {
     const primary = new File(["png"], "image.png", { type: "image/png", lastModified: 7 });
     const duplicateProjection = new File(["png"], "image.png", { type: "image/png", lastModified: 8 });

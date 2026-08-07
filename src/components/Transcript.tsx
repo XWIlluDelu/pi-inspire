@@ -65,8 +65,9 @@ function clockTime(timestamp?: number): string {
 type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
 const CARD_TRANSITION_MS = 180;
-const DYNAMIC_EXPAND_MIN_MS = 240;
-const DYNAMIC_COLLAPSED_MIN_MS = 400;
+const DYNAMIC_THINKING_EXPANDED_MIN_MS = 700;
+const DYNAMIC_TOOL_EXPANDED_MIN_MS = 600;
+const DYNAMIC_TOOL_COLLAPSED_MIN_MS = 700;
 
 interface CardProps {
   defaultVisibility: StaticVisibility;
@@ -175,7 +176,12 @@ function ThinkingCard({
   // the display boundary, for both the summary line and the card body.
   const clean = stripTerminalSequences(text);
   const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
-  const dynamicOpen = useDynamicCardOpen(visibility === "dynamic", dynamicActive, !dynamicActive);
+  const dynamicOpen = useDynamicCardOpen(
+    visibility === "dynamic",
+    dynamicActive,
+    !dynamicActive,
+    DYNAMIC_THINKING_EXPANDED_MIN_MS,
+  );
   const resolvedVisibility: StaticVisibility = visibility === "dynamic"
     ? (dynamicOpen ? "expanded" : "collapsed")
     : visibility;
@@ -385,7 +391,13 @@ function ToolCard({
 }) {
   const status = toolStatus(result, activity, live);
   const complete = toolComplete(result, activity) || dynamicActive === false;
-  const dynamicOpen = useDynamicCardOpen(Boolean(dynamic), Boolean(dynamicActive), complete, onDynamicClosed);
+  const dynamicOpen = useDynamicCardOpen(
+    Boolean(dynamic),
+    Boolean(dynamicActive),
+    complete,
+    DYNAMIC_TOOL_EXPANDED_MIN_MS,
+    onDynamicClosed,
+  );
   return (
     <CollapsibleCard
       defaultVisibility={dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility}
@@ -504,14 +516,64 @@ function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean
   );
 }
 
-function GenericCard({ item, visibility }: { item: AssistantContent & { type: string }; visibility: StaticVisibility }) {
+function humanizeGenericType(value: string): string {
+  const label = value
+    .trim()
+    .slice(0, 80)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_:]+/g, " ")
+    .trim();
+  return label ? label.replace(/^./, (character) => character.toUpperCase()) : "Content";
+}
+
+function genericContentTitle(item: object): string | null {
+  const record = item as Record<string, unknown>;
+  const value = [
+    record.extensionName,
+    record.attribution,
+    record.name,
+    record.title,
+    record.customType,
+    record.method,
+  ].find((candidate) => {
+    if (typeof candidate !== "string" || candidate.trim().length === 0) return false;
+    return !/^(?:custom|custom content|extension content)$/i.test(candidate.trim());
+  });
+  // A bare custom part has no user-facing identity. Rendering one generic
+  // "Extension" card per part exposes plumbing and can flood a transcript
+  // without conveying any information.
+  if (typeof value !== "string") {
+    const type = typeof record.type === "string" ? record.type.trim() : "";
+    return !type || type.toLowerCase() === "custom" ? null : humanizeGenericType(type);
+  }
+  const bounded = value.trim().slice(0, 80);
+  return /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/i.test(bounded)
+    ? bounded.replace(/[-_]+/g, " ").replace(/^./, (character) => character.toUpperCase())
+    : bounded;
+}
+
+function GenericCard({
+  item,
+  visibility,
+  title: suppliedTitle,
+}: {
+  item: object;
+  visibility: StaticVisibility;
+  title?: string;
+}) {
+  const title = suppliedTitle ?? genericContentTitle(item);
+  if (!title) return null;
+  const record = item as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
       className="card--generic"
       icon={<Package size={14} aria-hidden />}
-      label={<code className="card__tool-name">{item.type}</code>}
-      summary="Extension content"
+      label={<span className="card__generic-title">{title}</span>}
+      summary={type && type !== "custom" && type !== title
+        ? <code className="card__generic-kind">{type}</code>
+        : undefined}
     >
       <pre className="card__mono">{JSON.stringify(item, null, 2)}</pre>
     </CollapsibleCard>
@@ -531,6 +593,7 @@ function useDynamicCardOpen(
   dynamic: boolean,
   lifecycleActive: boolean,
   closeRequested: boolean,
+  minimumOpenMs: number,
   onClosed?: () => void,
 ): boolean {
   const [open, setOpen] = useState(dynamic && lifecycleActive);
@@ -565,10 +628,11 @@ function useDynamicCardOpen(
 
     const entered = enteredAt.current ?? performance.now();
     enteredAt.current = entered;
-    const remaining = Math.max(0, DYNAMIC_EXPAND_MIN_MS - (performance.now() - entered));
+    const minimum = prefersReducedMotion() ? 0 : minimumOpenMs;
+    const remaining = Math.max(0, minimum - (performance.now() - entered));
     const timer = window.setTimeout(() => setOpen(false), remaining);
     return () => window.clearTimeout(timer);
-  }, [closeRequested, dynamic, lifecycleActive, open]);
+  }, [closeRequested, dynamic, lifecycleActive, minimumOpenMs, open]);
 
   return open;
 }
@@ -634,7 +698,8 @@ function useDynamicToolBatch(
 
     const closedAt = allClosedAt.current ?? performance.now();
     const collapseTime = prefersReducedMotion() ? 0 : CARD_TRANSITION_MS;
-    const remaining = Math.max(0, collapseTime + DYNAMIC_COLLAPSED_MIN_MS - (performance.now() - closedAt));
+    const minimumCollapsed = prefersReducedMotion() ? 0 : DYNAMIC_TOOL_COLLAPSED_MIN_MS;
+    const remaining = Math.max(0, collapseTime + minimumCollapsed - (performance.now() - closedAt));
     const timer = window.setTimeout(() => {
       if (phaseRef.current === "cards") setPhase("compacting");
     }, remaining);
@@ -851,9 +916,12 @@ const AssistantTurn = memo(function AssistantTurn({
         />,
       );
     } else {
-      renderedItems.push(
-        <GenericCard key={index} item={item as AssistantContent & { type: string }} visibility={ordinaryToolVisibility} />,
-      );
+      const title = genericContentTitle(item);
+      if (title) {
+        renderedItems.push(
+          <GenericCard key={index} item={item} visibility={ordinaryToolVisibility} title={title} />,
+        );
+      }
     }
     index += 1;
   }
@@ -907,7 +975,7 @@ const UnknownRoleRow = memo(function UnknownRoleRow({
 }) {
   return (
     <div className="turn">
-      <GenericCard item={{ type: message.role, ...message }} visibility={visibility} />
+      <GenericCard item={{ ...message, type: message.role }} visibility={visibility} />
     </div>
   );
 });
@@ -1196,7 +1264,9 @@ export function Transcript({
             searchScope: null,
           });
         }
-      } else {
+      } else if (message.role !== "custom" || message.display !== false) {
+        // Pi custom messages with display:false remain in model context but are
+        // explicitly hidden from the transcript.
         built.push({
           key,
           node: <UnknownRoleRow
@@ -1226,6 +1296,7 @@ export function Transcript({
   const virtualize = rows.length >= VIRTUALIZE_AT;
   const getRowKey = useCallback((index: number) => rows[index]?.key ?? index, [rows]);
   const virtualizer = useVirtualizer({
+    enabled: virtualize,
     count: virtualize ? rows.length : 0,
     getScrollElement: () => scrollRef.current,
     getItemKey: getRowKey,
