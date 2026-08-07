@@ -299,6 +299,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return snapshot;
   }
 
+  async deselectSession(): Promise<ActiveSnapshot> {
+    this.state.active = null;
+    this.state.runState = "idle";
+    return this.state;
+  }
+
   async deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
     if (this.activeSessionId === sessionId) {
       throw Object.assign(new Error("Switch to another session before deleting this one"), { status: 409 });

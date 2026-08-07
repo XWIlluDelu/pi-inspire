@@ -6,6 +6,11 @@ import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
 import {
+  defaultDiagnosticLogPath,
+  nullDiagnosticLogger,
+  openDiagnosticLogger,
+} from "./diagnostics.js";
+import {
   INSTANCE_STATE_VERSION,
   consumeStopRequest,
   instanceUrl,
@@ -36,6 +41,24 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("INSPI
 const tokenPath = process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
 const mock = process.env.INSPIRE_MOCK === "1";
+const configuredLogPath = process.env.INSPIRE_LOG_PATH;
+const diagnosticLogPath = configuredLogPath || defaultDiagnosticLogPath(root, host, port);
+const diagnostics = await openDiagnosticLogger({
+  path: diagnosticLogPath,
+  createPrivateDirectory: !configuredLogPath,
+  base: {
+    processId: process.pid,
+    version: packageJson.version,
+    piVersion: piPackage.version,
+    mock,
+    host,
+    port,
+  },
+}).catch((error) => {
+  console.error("Unable to initialize private diagnostic logging", error instanceof Error ? error.message : String(error));
+  return nullDiagnosticLogger();
+});
+diagnostics.record("info", "host_starting", { processId: process.pid });
 
 const attachments = new AttachmentStore();
 let catalog: SessionCatalogLike;
@@ -45,7 +68,16 @@ if (mock) {
   runtime = new MockRuntime();
 } else {
   catalog = new SessionCatalog(process.cwd());
-  runtime = new RuntimeController(catalog, attachments);
+  runtime = new RuntimeController(
+    catalog,
+    attachments,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    diagnostics,
+  );
 }
 const preferences = new PreferencesStore(
   process.env.INSPIRE_PREFERENCES_PATH || undefined,
@@ -99,6 +131,7 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   shuttingDown = true;
   let exitCode = requestedExitCode;
   console.log(`Shutting down after ${reason}…`);
+  diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
   try {
     await application.close();
     if (statePublication) await statePublication;
@@ -106,6 +139,12 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
     console.error("Failed to shut down cleanly", error);
     exitCode = 1;
   } finally {
+    try {
+      await diagnostics.close();
+    } catch (error) {
+      console.error("Failed to close diagnostic logging", error);
+      exitCode = 1;
+    }
     try {
       if (statePath) await removeInstanceState(statePath, process.pid);
     } catch (error) {
@@ -156,6 +195,7 @@ async function announceStarted(): Promise<void> {
     }
   }
   if (shuttingDown) return;
+  diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = instanceUrl(instanceState);
   console.log(`\n  insπre ${packageJson.version}${mock ? " (mock)" : ""}`);
   console.log(`  ${url}\n`);
@@ -180,5 +220,8 @@ if (stopRequestPath && await consumeStopRequest(stopRequestPath)) {
   application.server.listen(port, host, () => void announceStarted());
 }
 process.on("unhandledRejection", (error) => {
+  diagnostics.record("error", "unhandled_rejection", {
+    errorName: error instanceof Error ? error.name : typeof error,
+  });
   console.error("Unhandled rejection", error);
 });
