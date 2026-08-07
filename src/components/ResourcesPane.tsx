@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   Loader2,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GitDiffSide, GitFileChange, GitStatusResponse, ResourceKind, ResourceProbeResult } from "../../shared/contracts";
@@ -474,6 +475,15 @@ export function ResourcesPane() {
             <RefreshCw size={14} className={state.gitStatusLoading || state.gitStatusRefreshing ? "spin" : ""} aria-hidden />
           </button>
         </> : null}
+        <button
+          type="button"
+          className="icon-button ctx__close"
+          aria-label="Close resources panel"
+          title="Close resources panel"
+          onClick={() => store.setResourcesOpen(false)}
+        >
+          <X size={15} aria-hidden />
+        </button>
       </div>
       {state.contextMode !== "branches" && state.gitStatusError && state.gitStatus ? <div className="changes__stale" role="status">Status is stale — {state.gitStatusError}</div> : null}
       {state.contextMode === "files" ? (

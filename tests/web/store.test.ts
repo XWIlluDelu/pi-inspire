@@ -2078,6 +2078,50 @@ describe("async completion ownership", () => {
 describe("selection race ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("deselects the authoritative active session for the New session surface", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/sessions/deselect")) {
+        return { body: { active: null, runState: "idle", sessionStatuses: { s1: { runState: "idle" } } } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().sessionId).toBe("s1");
+
+    await expect(store.deselectSession()).resolves.toBe(true);
+    expect(store.getState()).toMatchObject({
+      sessionId: null,
+      sessionName: "",
+      cwd: null,
+      runState: "idle",
+      messages: [],
+      statuses: {},
+      extensionDisplays: [],
+    });
+  });
+
+  it("does not let a delayed deselect override a newer session selection", async () => {
+    let releaseDeselect!: () => void;
+    const deselectGate = new Promise<void>((resolveGate) => { releaseDeselect = resolveGate; });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/sessions/deselect")) {
+        await deselectGate;
+        return { body: { active: null, runState: "idle", sessionStatuses: {} } };
+      }
+      if (url.startsWith("/api/sessions/open")) {
+        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const deselecting = store.deselectSession();
+    await store.openSession("s-B");
+    releaseDeselect();
+    await expect(deselecting).resolves.toBe(false);
+    expect(store.getState().sessionId).toBe("s-B");
+  });
+
   it("a late open response cannot override a newer session selection", async () => {
     let releaseOpen!: () => void;
     const openGate = new Promise<void>((resolve) => (releaseOpen = resolve));

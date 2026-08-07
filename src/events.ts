@@ -27,7 +27,7 @@ export interface ToolCallContent {
   name: string;
   arguments?: unknown;
 }
-export type AssistantContent = TextContent | ThinkingContent | ToolCallContent | ({ type: string } & Record<string, unknown>);
+export type AssistantContent = TextContent | ThinkingContent | ToolCallContent | Record<string, unknown>;
 
 export interface ChatMessage {
   role: string;
@@ -45,6 +45,11 @@ export interface ChatMessage {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Pi custom-message metadata. display:false is context-only and must not
+   * appear in the transcript. */
+  customType?: string;
+  display?: boolean;
+  details?: unknown;
 }
 
 export function asMessage(value: unknown): ChatMessage {
@@ -52,7 +57,10 @@ export function asMessage(value: unknown): ChatMessage {
 }
 
 export function contentItems(message: ChatMessage): AssistantContent[] {
-  return Array.isArray(message.content) ? (message.content as AssistantContent[]) : [];
+  if (!Array.isArray(message.content)) return [];
+  return message.content.filter(
+    (item): item is AssistantContent => item !== null && typeof item === "object" && !Array.isArray(item),
+  );
 }
 
 export function messageText(message: ChatMessage): string {

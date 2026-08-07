@@ -11,7 +11,7 @@ A Linux-first local web workbench for [Pi Coding Agent](https://github.com/earen
 
 - **Pi underneath, unchanged.** Sessions are real Pi sessions running under Pi's own runtime. insπre creates no parallel conversation database: refresh or reconnect and the visible state is rebuilt from Pi's session records.
 - **Rich defensive rendering.** One Markdown pipeline covers both streaming and settled text — headings, tables, task lists, links, syntax-highlighted code, and KaTeX inline and display mathematics — rendered defensively, so untrusted model output cannot inject markup or fire network requests.
-- **Session navigation that respects running work.** Find, open, continue, rename, and switch sessions; pin the important ones to a persistent top section; collapse project folders; hide sessions into a reversible Hidden group. Multiple sessions run concurrently under independent Pi runtimes, and navigating away never stops background work — the navigation distinguishes running, unseen success, and unseen error.
+- **Session navigation that respects running work.** Find, open, continue, rename, and switch sessions; pin or hide both sessions and project folders; restore hidden work from one reversible group. Multiple sessions run concurrently under independent Pi runtimes, and navigating away never stops background work — the navigation distinguishes running, unseen success, and unseen error. On narrow screens the same navigation becomes an off-canvas drawer instead of compressing the conversation.
 - **A complete composer.** Text, searchable project-file references, pasted or dropped images, and ordinary file attachments, plus steering messages and follow-ups while a run is active. Model and thinking-level pickers use your existing Pi configuration.
 - **Adaptive activity cards.** Thinking and tool activity render as distinguishable, inspectable cards with file links and status. The default Dynamic mode keeps the current work expanded, collapses each completed tool, and compacts a completed tool batch at the next model call; fixed expanded, collapsed, Compact, and hidden choices remain available independently.
 - **Session-bound file previews.** Files referenced by Pi messages or tool activity open beside the conversation as defensive previews — images, HTML, PDF, and text/code — without granting the browser arbitrary filesystem access.
@@ -53,7 +53,7 @@ That installs dependencies if needed, builds the client when missing, starts the
 
 The launcher never kills an arbitrary process merely because it owns the configured port. Reuse requires the private state plus an authenticated constant-size health response. An unrelated or legacy occupant is reported with an inspection command; `stop`/`restart` may signal only the exact private-state process whose PID owner, process-start identity, working directory, and command line identify it as this checkout, including when that exact process is too unhealthy to answer the health probe.
 
-Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). The browser removes the token from the visible URL and keeps it only for the current browser tab.
+Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript.
 
 ## Development
 
@@ -61,7 +61,11 @@ Equivalent npm entry points remain available (`npm start`, `npm run start:mock`,
 ./inspire dev
 ```
 
-Or `npm run dev`. Development uses a fixed loopback-only token; production generates a fresh token on every launch.
+Or `npm run dev`. Development uses a fixed loopback-only token. Production reuses a private checkout/host/port-scoped token unless `INSPIRE_TOKEN` is supplied explicitly; every browser origin must still complete the one-time cookie exchange.
+
+## Diagnostics
+
+The host writes metadata-only structured JSONL diagnostics to its private user-state directory (normally `~/.local/state/inspire/logs/<installation-key>.jsonl`). Projection-conflict banners include an incident ID that can be matched to these records. Logs correlate the host, slot incarnation, Pi worker/PID, RPC request, projection revision/fingerprint, persistence expectation, and ownership decision; they do not record prompts, tool output, extension payloads, credentials, or raw child stderr. Files are mode `0600`, directories are `0700`, and rotation retains five 5 MiB files by default. `INSPIRE_LOG_PATH` may select another file only inside an existing private directory.
 
 ## Checks
 
