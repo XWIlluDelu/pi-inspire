@@ -137,7 +137,7 @@ function StateChip({
   }
 }
 
-function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boolean }) {
+function SessionIdent({ show }: { show: boolean }) {
   const state = useAppState();
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [value, setValue] = useState("");
@@ -190,19 +190,8 @@ function SessionIdent({ show, navCollapsed }: { show: boolean; navCollapsed: boo
     );
   }
 
-  // A rail has no wordmark of its own, so the serif mark steps into the
-  // topbar there; the selected session stays inside the center surface.
-  if (navCollapsed && !editing) {
-    return (
-      <div className="topbar__ident topbar__ident--brand">
-        <h1 className="topbar__title">
-          <Wordmark />
-        </h1>
-      </div>
-    );
-  }
-
-  // Without a session the expanded nav brand already identifies the product.
+  // The rail already carries the product icon. The topbar belongs to the
+  // visible session; the welcome surface needs no duplicate wordmark.
   if (!show || !state.sessionId) return null;
 
   const catalogTitle = state.sessions.find((session) => session.id === state.sessionId)?.title;
@@ -443,6 +432,7 @@ export function App() {
   const navigationContent = (
     <Nav
       collapsed={navCollapsed}
+      selectedSessionId={draftingNew ? null : state.sessionId}
       onNewSession={newSession}
       onSelectSession={openSession}
     />
@@ -501,9 +491,7 @@ export function App() {
           >
             <PanelLeft size={15} aria-hidden />
           </button>
-          {/* The rail owns no wordmark; while it is visible, the topbar carries
-              only the brand and leaves the selected session inside the center. */}
-          <SessionIdent show={!navCollapsed && !draftingNew} navCollapsed={navCollapsed} />
+          <SessionIdent show={!draftingNew} />
           <div className="topbar__status" aria-live="polite">
             <StateChip runState={state.runState} conflict={state.projectionConflict} />
             {statuses.map(([key, text]) => (

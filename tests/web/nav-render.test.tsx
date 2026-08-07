@@ -101,6 +101,21 @@ describe("session navigation controls", () => {
     expect(railBrand).not.toHaveTextContent("π");
   });
 
+  it("keeps the runtime owner unselected while the New session surface is visible", () => {
+    render(
+      <Nav
+        collapsed={false}
+        selectedSessionId={null}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+    const alphaRow = list().getByText("Alpha session").closest(".nav__row") as HTMLElement;
+    expect(alphaRow).not.toHaveClass("nav__row--active");
+    expect(alphaRow.querySelector(".nav__row-main")).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("region", { name: "Workspace files" })).not.toBeInTheDocument();
+  });
+
   it("collapses folders, exposes search matches, and pins without selecting", async () => {
     const onSelect = vi.fn();
     render(<Nav collapsed={false} onNewSession={() => undefined} onSelectSession={onSelect} />);
