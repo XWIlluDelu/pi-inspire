@@ -115,6 +115,10 @@ export interface Notice {
 export interface EventSlice {
   messages: ChatMessage[];
   streaming: boolean;
+  /** Stable key of the assistant message that owns the current Pi turn. It
+   * survives that message's end event through tool execution and is replaced
+   * only when the next LLM call starts. */
+  activeAssistantMessageKey: string | null;
   runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
@@ -133,6 +137,7 @@ export function emptyEventSlice(): EventSlice {
   return {
     messages: [],
     streaming: false,
+    activeAssistantMessageKey: null,
     runState: "idle",
     tools: {},
     retry: null,
@@ -258,6 +263,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       changed = true;
       if (message.role === "assistant") {
         slice.streaming = true;
+        slice.activeAssistantMessageKey = key;
         slice.runState = "running";
       }
       break;
@@ -278,12 +284,14 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "agent_start": {
       slice.streaming = true;
+      slice.activeAssistantMessageKey = null;
       slice.runState = "running";
       changed = true;
       break;
     }
     case "agent_settled": {
       slice.streaming = false;
+      slice.activeAssistantMessageKey = null;
       if (slice.runState !== "failed" && slice.runState !== "aborted") slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;

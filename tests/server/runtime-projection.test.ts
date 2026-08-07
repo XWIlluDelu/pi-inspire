@@ -803,10 +803,12 @@ describe("RuntimeController projection ownership gate", () => {
       expect(new Set(ids.slice(0, 3)).size).toBe(1);
       expect(ids[3]).toBe(ids[4]);
       expect(ids[3]).not.toBe(ids[0]);
-      expect((await runtime.snapshot()).active?.messages.filter(
+      const snapshot = await runtime.snapshot();
+      expect(snapshot.active?.messages.filter(
         (value) => (value as { role?: string; timestamp?: number }).role === "assistant" &&
           (value as { timestamp?: number }).timestamp === 2,
       )).toHaveLength(2);
+      expect(snapshot.active?.activeAssistantMessageKey).toBe(`live:${ids[3]}`);
     } finally {
       await runtime.close();
     }
@@ -1098,6 +1100,10 @@ describe("RuntimeController projection ownership gate", () => {
         type: "message", id: "a1", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z", message: live,
       })}\n`);
       workers[0]!.emit("event", { type: "message_end", message: live });
+      await vi.waitFor(async () => {
+        snapshot = await runtime.snapshot();
+        expect(snapshot.active?.activeAssistantMessageKey).toBe("persisted:a1:0");
+      });
       workers[0]!.emit("event", { type: "agent_settled" });
       await vi.waitFor(async () => {
         snapshot = await runtime.snapshot();

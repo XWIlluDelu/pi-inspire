@@ -618,10 +618,10 @@ describe("folder grouping and settings page", () => {
       .getAllByRole("option")
       .map((option) => option.textContent);
     fireEvent.click(thinkingCards);
-    expect(optionLabels("Thinking cards")).toEqual(["Expanded", "Collapsed", "Hidden"]);
+    expect(optionLabels("Thinking cards")).toEqual(["Dynamic", "Expanded", "Collapsed", "Hidden"]);
     fireEvent.click(thinkingCards);
     fireEvent.click(toolCards);
-    expect(optionLabels("Tool cards")).toEqual(["Expanded", "Collapsed", "Compact", "Hidden"]);
+    expect(optionLabels("Tool cards")).toEqual(["Dynamic", "Expanded", "Collapsed", "Compact", "Hidden"]);
     fireEvent.click(toolCards);
     fireEvent.click(assistantRounds);
     expect(optionLabels("Assistant rounds")).toEqual(["Details", "Divider"]);

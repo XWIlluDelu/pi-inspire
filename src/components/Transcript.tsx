@@ -29,6 +29,7 @@ import {
   messageText,
   store,
   toolResultText,
+  type ActivityTool,
   type AssistantContent,
   type ChatMessage,
   type ToolCallContent,
@@ -61,27 +62,80 @@ function clockTime(timestamp?: number): string {
 
 // --- Collapsible cards (thinking / tool / generic) ---
 
+type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
+
+const CARD_TRANSITION_MS = 180;
+const DYNAMIC_EXPAND_MIN_MS = 240;
+const DYNAMIC_COLLAPSED_MIN_MS = 400;
+
 interface CardProps {
-  defaultVisibility: VisibilityPreference;
+  defaultVisibility: StaticVisibility;
   className: string;
   icon: React.ReactNode;
   label: React.ReactNode;
   summary?: React.ReactNode;
   status?: React.ReactNode;
   children: React.ReactNode;
+  forceClosed?: boolean;
+  onManualOpenChange?: (open: boolean) => void;
 }
 
-function CollapsibleCard({ defaultVisibility, className, icon, label, summary, status, children }: CardProps) {
+function CollapsibleCard({
+  defaultVisibility,
+  className,
+  icon,
+  label,
+  summary,
+  status,
+  children,
+  forceClosed = false,
+  onManualOpenChange,
+}: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
   const [override, setOverride] = useState<"open" | "closed" | null>(null);
-  if (defaultVisibility === "hidden") return null;
-  const open = override !== null ? override === "open" : defaultVisibility === "expanded";
+  const hidden = defaultVisibility === "hidden";
+  const open = !hidden && !forceClosed && (override !== null ? override === "open" : defaultVisibility === "expanded");
+  // Closing content stays mounted only for the height transition. Collapsed
+  // history therefore does not retain every tool payload in the DOM.
+  const [bodyMounted, setBodyMounted] = useState(open);
+  const [bodyOpen, setBodyOpen] = useState(open);
+
+  useEffect(() => {
+    if (open) {
+      if (!bodyMounted) setBodyMounted(true);
+      if (prefersReducedMotion()) {
+        setBodyOpen(true);
+        return;
+      }
+      let openFrame = 0;
+      const mountFrame = window.requestAnimationFrame(() => {
+        openFrame = window.requestAnimationFrame(() => setBodyOpen(true));
+      });
+      return () => {
+        window.cancelAnimationFrame(mountFrame);
+        if (openFrame) window.cancelAnimationFrame(openFrame);
+      };
+    }
+    setBodyOpen(false);
+    if (!bodyMounted) return;
+    const timer = window.setTimeout(
+      () => setBodyMounted(false),
+      prefersReducedMotion() ? 0 : CARD_TRANSITION_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [bodyMounted, open]);
+
+  if (hidden) return null;
   return (
     <section className={`card ${className}`}>
       <button
         type="button"
         className="card__header"
-        onClick={() => setOverride(open ? "closed" : "open")}
+        onClick={() => {
+          const nextOpen = !open;
+          setOverride(nextOpen ? "open" : "closed");
+          onManualOpenChange?.(nextOpen);
+        }}
         aria-expanded={open}
       >
         <span className="card__icon">{icon}</span>
@@ -93,19 +147,41 @@ function CollapsibleCard({ defaultVisibility, className, icon, label, summary, s
           <ChevronRight size={14} className={`chev ${open ? "chev--open" : ""}`} aria-hidden />
         </span>
       </button>
-      {open ? <div className="card__body">{children}</div> : null}
+      {bodyMounted ? (
+        <div
+          className={`card__reveal ${bodyOpen ? "card__reveal--open" : ""}`}
+          aria-hidden={!bodyOpen}
+          inert={!bodyOpen}
+        >
+          <div className="card__reveal-inner">
+            <div className="card__body">{children}</div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function ThinkingCard({ text, visibility }: { text: string; visibility: VisibilityPreference }) {
+function ThinkingCard({
+  text,
+  visibility,
+  dynamicActive,
+}: {
+  text: string;
+  visibility: VisibilityPreference;
+  dynamicActive: boolean;
+}) {
   // Stored thinking can carry terminal color sequences; clean only here, at
   // the display boundary, for both the summary line and the card body.
   const clean = stripTerminalSequences(text);
   const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
+  const dynamicOpen = useDynamicCardOpen(visibility === "dynamic", dynamicActive, !dynamicActive);
+  const resolvedVisibility: StaticVisibility = visibility === "dynamic"
+    ? (dynamicOpen ? "expanded" : "collapsed")
+    : visibility;
   return (
     <CollapsibleCard
-      defaultVisibility={visibility}
+      defaultVisibility={resolvedVisibility}
       className="card--thinking"
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
@@ -192,8 +268,20 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
   );
 }
 
-function toolStatus(result: ChatMessage | undefined, streaming: boolean): ToolStatus {
-  return result ? (result.isError ? "failure" : "success") : streaming ? "running" : "unknown";
+function toolComplete(result: ChatMessage | undefined, activity: ActivityTool | undefined): boolean {
+  return Boolean(result) || activity?.phase === "done" || activity?.phase === "error";
+}
+
+function toolStatus(
+  result: ChatMessage | undefined,
+  activity: ActivityTool | undefined,
+  liveFallback: boolean,
+): ToolStatus {
+  if (result) return result.isError ? "failure" : "success";
+  if (activity?.phase === "error") return "failure";
+  if (activity?.phase === "done") return "success";
+  if (activity?.phase === "running" || liveFallback) return "running";
+  return "unknown";
 }
 
 function statusIcon(status: ToolStatus) {
@@ -227,11 +315,11 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
 function ToolDetails({
   call,
   result,
-  streaming,
+  status,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
-  streaming: boolean;
+  status: ToolStatus;
 }) {
   const [showAll, setShowAll] = useState(false);
   const output = result ? toolResultText(result) : "";
@@ -264,7 +352,9 @@ function ToolDetails({
           ) : null}
         </>
       ) : (
-        <div className="card__pending">{streaming ? "Running…" : "No result recorded"}</div>
+        <div className="card__pending">
+          {status === "running" ? "Running…" : status === "success" || status === "failure" ? "Finalizing result…" : "No result recorded"}
+        </div>
       )}
     </>
   );
@@ -273,25 +363,41 @@ function ToolDetails({
 function ToolCard({
   call,
   result,
-  streaming,
+  activity,
+  live,
   visibility,
+  dynamic,
+  dynamicActive,
+  forceClosed = false,
+  onDynamicClosed,
+  onManualOpenChange,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
-  streaming: boolean;
-  visibility: VisibilityPreference;
+  activity: ActivityTool | undefined;
+  live: boolean;
+  visibility: StaticVisibility;
+  dynamic?: boolean;
+  dynamicActive?: boolean;
+  forceClosed?: boolean;
+  onDynamicClosed?: () => void;
+  onManualOpenChange?: (open: boolean) => void;
 }) {
-  const status = toolStatus(result, streaming);
+  const status = toolStatus(result, activity, live);
+  const complete = toolComplete(result, activity) || dynamicActive === false;
+  const dynamicOpen = useDynamicCardOpen(Boolean(dynamic), Boolean(dynamicActive), complete, onDynamicClosed);
   return (
     <CollapsibleCard
-      defaultVisibility={visibility}
+      defaultVisibility={dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility}
+      forceClosed={forceClosed}
+      onManualOpenChange={onManualOpenChange}
       className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
       icon={<Wrench size={14} aria-hidden />}
       label={<code className="card__tool-name">{call.name}</code>}
       summary={<ToolSummary call={call} />}
       status={statusIcon(status)}
     >
-      <ToolDetails call={call} result={result} streaming={streaming} />
+      <ToolDetails call={call} result={result} status={status} />
     </CollapsibleCard>
   );
 }
@@ -299,6 +405,7 @@ function ToolCard({
 interface CompactTool {
   call: ToolCallContent;
   result: ChatMessage | undefined;
+  activity?: ActivityTool;
 }
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
@@ -311,7 +418,7 @@ const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
 /** Compact mode changes only the geometry of an adjacent run of tool calls:
  * icons wrap horizontally, while one selected call reveals its ordinary
  * details directly below that row without reordering transcript content. */
-function CompactToolStrip({ tools, streaming }: { tools: CompactTool[]; streaming: boolean }) {
+function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [renderedIndex, setRenderedIndex] = useState<number | null>(null);
   const [origin, setOrigin] = useState(22);
@@ -334,7 +441,7 @@ function CompactToolStrip({ tools, streaming }: { tools: CompactTool[]; streamin
     >
       <div ref={itemsRef} className="tool-strip__items" aria-label="Tool calls">
         {tools.map((tool, index) => {
-          const status = toolStatus(tool.result, streaming);
+          const status = toolStatus(tool.result, tool.activity, live);
           const summary = toolSummary(tool.call);
           const active = selectedIndex === index;
           return (
@@ -374,16 +481,20 @@ function CompactToolStrip({ tools, streaming }: { tools: CompactTool[]; streamin
             <section
               key={rendered.call.id ?? renderedIndex}
               id={panelId}
-              className={`card card--tool tool-strip__detail ${toolStatus(rendered.result, streaming) === "failure" ? "card--failed" : ""}`}
+              className={`card card--tool tool-strip__detail ${toolStatus(rendered.result, rendered.activity, live) === "failure" ? "card--failed" : ""}`}
             >
               <div className="tool-strip__detail-head">
                 <span className="card__icon"><Wrench size={14} aria-hidden /></span>
                 <code className="card__tool-name">{rendered.call.name}</code>
                 <ToolSummary call={rendered.call} />
-                <span className="card__status">{statusIcon(toolStatus(rendered.result, streaming))}</span>
+                <span className="card__status">{statusIcon(toolStatus(rendered.result, rendered.activity, live))}</span>
               </div>
               <div className="card__body">
-                <ToolDetails call={rendered.call} result={rendered.result} streaming={streaming} />
+                <ToolDetails
+                  call={rendered.call}
+                  result={rendered.result}
+                  status={toolStatus(rendered.result, rendered.activity, live)}
+                />
               </div>
             </section>
           ) : null}
@@ -393,7 +504,7 @@ function CompactToolStrip({ tools, streaming }: { tools: CompactTool[]; streamin
   );
 }
 
-function GenericCard({ item, visibility }: { item: AssistantContent & { type: string }; visibility: VisibilityPreference }) {
+function GenericCard({ item, visibility }: { item: AssistantContent & { type: string }; visibility: StaticVisibility }) {
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
@@ -405,6 +516,132 @@ function GenericCard({ item, visibility }: { item: AssistantContent & { type: st
       <pre className="card__mono">{JSON.stringify(item, null, 2)}</pre>
     </CollapsibleCard>
   );
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+}
+
+type DynamicToolPhase = "cards" | "compacting" | "compact";
+
+/** A card that the browser actually observes stays expanded long enough to be
+ * perceived. Settled history starts closed and never replays old lifecycle
+ * animation. */
+function useDynamicCardOpen(
+  dynamic: boolean,
+  lifecycleActive: boolean,
+  closeRequested: boolean,
+  onClosed?: () => void,
+): boolean {
+  const [open, setOpen] = useState(dynamic && lifecycleActive);
+  const enteredAt = useRef<number | null>(dynamic && lifecycleActive ? performance.now() : null);
+  const closedNotified = useRef(false);
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
+
+  useEffect(() => {
+    if (!dynamic) {
+      enteredAt.current = null;
+      closedNotified.current = false;
+      return;
+    }
+
+    if (lifecycleActive && !closeRequested) {
+      if (!open) {
+        enteredAt.current = performance.now();
+        closedNotified.current = false;
+        setOpen(true);
+      }
+      return;
+    }
+
+    if (!open) {
+      if (!closedNotified.current) {
+        closedNotified.current = true;
+        onClosedRef.current?.();
+      }
+      return;
+    }
+
+    const entered = enteredAt.current ?? performance.now();
+    enteredAt.current = entered;
+    const remaining = Math.max(0, DYNAMIC_EXPAND_MIN_MS - (performance.now() - entered));
+    const timer = window.setTimeout(() => setOpen(false), remaining);
+    return () => window.clearTimeout(timer);
+  }, [closeRequested, dynamic, lifecycleActive, open]);
+
+  return open;
+}
+
+/** One assistant message owns one Pi tool batch. Cards collapse independently;
+ * the batch only changes geometry after every card has completed its collapse,
+ * the collapsed state has remained perceptible, and the next Pi boundary has
+ * arrived. */
+function useDynamicToolBatch(
+  dynamic: boolean,
+  active: boolean,
+  hasTools: boolean,
+  inspectionHeld: boolean,
+  allCardsClosed: boolean,
+) {
+  const [phase, setPhase] = useState<DynamicToolPhase>(dynamic && !active ? "compact" : "cards");
+  const phaseRef = useRef(phase);
+  const observedActive = useRef(active);
+  const allClosedAt = useRef<number | null>(allCardsClosed ? performance.now() : null);
+
+  phaseRef.current = phase;
+
+  useEffect(() => {
+    if (allCardsClosed) {
+      if (allClosedAt.current === null) allClosedAt.current = performance.now();
+    } else {
+      allClosedAt.current = null;
+    }
+  }, [allCardsClosed]);
+
+  useEffect(() => {
+    if (!dynamic || !hasTools) {
+      observedActive.current = active;
+      setPhase("cards");
+      return;
+    }
+
+    if (active) {
+      observedActive.current = true;
+      if (phase !== "cards") setPhase("cards");
+      return;
+    }
+
+    if (!observedActive.current) {
+      // Settled history chooses final density without replaying unseen stages.
+      if (phase !== "compact") setPhase("compact");
+      return;
+    }
+
+    if (inspectionHeld) {
+      if (phase === "compacting") setPhase("cards");
+      return;
+    }
+    if (!allCardsClosed || phase === "compact") return;
+
+    if (phase === "compacting") {
+      const timer = window.setTimeout(
+        () => setPhase("compact"),
+        prefersReducedMotion() ? 0 : CARD_TRANSITION_MS,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    const closedAt = allClosedAt.current ?? performance.now();
+    const collapseTime = prefersReducedMotion() ? 0 : CARD_TRANSITION_MS;
+    const remaining = Math.max(0, collapseTime + DYNAMIC_COLLAPSED_MIN_MS - (performance.now() - closedAt));
+    const timer = window.setTimeout(() => {
+      if (phaseRef.current === "cards") setPhase("compacting");
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [active, allCardsClosed, dynamic, hasTools, inspectionHeld, phase]);
+
+  return { compact: phase === "compact", closing: phase === "compacting", phase };
 }
 
 // --- Turns ---
@@ -498,33 +735,77 @@ const UserBubble = memo(function UserBubble({
 const AssistantTurn = memo(function AssistantTurn({
   message,
   toolResults,
+  toolActivity,
   streaming,
+  dynamicActive,
   thinkingVisibility,
   toolVisibility,
   assistantRoundDisplay,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
+  toolActivity: Record<string, ActivityTool>;
   streaming: boolean;
+  dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   assistantRoundDisplay: AssistantRoundDisplayPreference;
 }) {
   const items = contentItems(message);
+  const dynamicTools = toolVisibility === "dynamic";
+  const toolKeys = items.flatMap((item, index) => item.type === "toolCall"
+    ? [((item as ToolCallContent).id || `tool:${index}`)]
+    : []);
+  const hasTools = toolKeys.length > 0;
+  const toolKeySignature = toolKeys.join("\u0000");
+  const currentToolKeys = new Set(toolKeys);
+  const [heldToolIds, setHeldToolIds] = useState<Set<string>>(() => new Set());
+  const [closedToolIds, setClosedToolIds] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    const retainCurrent = (current: Set<string>) => {
+      const next = new Set([...current].filter((id) => currentToolKeys.has(id)));
+      return next.size === current.size ? current : next;
+    };
+    setHeldToolIds(retainCurrent);
+    setClosedToolIds(retainCurrent);
+    // toolKeySignature is the stable membership boundary for this Pi batch.
+  }, [toolKeySignature]);
+
+  const inspectionHeld = [...heldToolIds].some((id) => currentToolKeys.has(id));
+  const allCardsClosed = hasTools && toolKeys.every((id) => closedToolIds.has(id));
+  const dynamicBatch = useDynamicToolBatch(
+    dynamicTools,
+    dynamicActive,
+    hasTools,
+    inspectionHeld,
+    allCardsClosed,
+  );
   const renderedItems: React.ReactNode[] = [];
-  const ordinaryToolVisibility: VisibilityPreference = toolVisibility === "compact" ? "collapsed" : toolVisibility;
+  const ordinaryToolVisibility: StaticVisibility = toolVisibility === "compact" || dynamicTools
+    ? "collapsed"
+    : toolVisibility;
+  const compactTools = toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact);
+  // Execution events, not membership in the current batch, own the running
+  // status. After reconnect an unobserved call stays expanded but unknown.
+  const live = streaming;
+
   for (let index = 0; index < items.length;) {
     const item = items[index]!;
-    if (item.type === "toolCall" && toolVisibility === "compact") {
+    if (item.type === "toolCall" && compactTools) {
       const tools: CompactTool[] = [];
       const start = index;
       while (index < items.length && items[index]?.type === "toolCall") {
         const call = items[index] as ToolCallContent;
-        tools.push({ call, result: toolResults.get(call.id) });
+        tools.push({
+          call,
+          result: toolResults.get(call.id),
+          activity: toolActivity[call.id],
+        });
         index += 1;
       }
       renderedItems.push(
-        <CompactToolStrip key={`tools:${(tools[0]?.call.id ?? start)}`} tools={tools} streaming={streaming} />,
+        <CompactToolStrip key={`tools:${(tools[0]?.call.id ?? start)}`} tools={tools} live={live} />,
       );
       continue;
     }
@@ -533,17 +814,40 @@ const AssistantTurn = memo(function AssistantTurn({
       if (text) renderedItems.push(<RichText key={index} text={text} variant="assistant" />);
     } else if (item.type === "thinking") {
       renderedItems.push(
-        <ThinkingCard key={index} text={(item as { thinking?: string }).thinking ?? ""} visibility={thinkingVisibility} />,
+        <ThinkingCard
+          key={index}
+          text={(item as { thinking?: string }).thinking ?? ""}
+          visibility={thinkingVisibility}
+          dynamicActive={dynamicActive}
+        />,
       );
     } else if (item.type === "toolCall") {
       const call = item as ToolCallContent;
+      const result = toolResults.get(call.id);
+      const activity = toolActivity[call.id];
+      const toolKey = call.id || `tool:${index}`;
       renderedItems.push(
         <ToolCard
-          key={call.id ?? index}
+          key={toolKey}
           call={call}
-          result={toolResults.get(call.id)}
-          streaming={streaming}
+          result={result}
+          activity={activity}
+          live={live}
           visibility={ordinaryToolVisibility}
+          dynamic={dynamicTools}
+          dynamicActive={dynamicActive}
+          forceClosed={dynamicTools && dynamicBatch.closing}
+          onDynamicClosed={dynamicTools ? () => {
+            setClosedToolIds((current) => current.has(toolKey) ? current : new Set(current).add(toolKey));
+          } : undefined}
+          onManualOpenChange={dynamicTools ? (open) => {
+            setHeldToolIds((current) => {
+              const next = new Set(current);
+              if (open) next.add(toolKey);
+              else next.delete(toolKey);
+              return next;
+            });
+          } : undefined}
         />,
       );
     } else {
@@ -569,7 +873,13 @@ const AssistantTurn = memo(function AssistantTurn({
           <MessageActions text={messageText(message)} />
         </div>
       )}
-      <div className="assistant-doc">{renderedItems}</div>
+      <div className="assistant-doc">
+        {dynamicTools && hasTools ? (
+          <div className={`dynamic-tool-batch dynamic-tool-batch--${dynamicBatch.phase}`}>
+            {renderedItems}
+          </div>
+        ) : renderedItems}
+      </div>
     </div>
   );
 });
@@ -579,7 +889,7 @@ const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
   visibility,
 }: {
   toolName?: string;
-  visibility: VisibilityPreference;
+  visibility: StaticVisibility;
 }) {
   return (
     <div className="turn">
@@ -593,7 +903,7 @@ const UnknownRoleRow = memo(function UnknownRoleRow({
   visibility,
 }: {
   message: ChatMessage;
-  visibility: VisibilityPreference;
+  visibility: StaticVisibility;
 }) {
   return (
     <div className="turn">
@@ -682,6 +992,7 @@ export function findLiteralMatches(text: string, query: string, rowIndex: number
 // tests and screen-reader browsing straightforward).
 const VIRTUALIZE_AT = 60;
 const OLDER_PRELOAD_PX = 320;
+const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 
 interface TranscriptScrollAnchor {
   key: string;
@@ -711,6 +1022,8 @@ function restoreScrollAnchor(root: HTMLElement, anchor: TranscriptScrollAnchor):
 export function Transcript({
   messages,
   streaming,
+  activeAssistantMessageKey = null,
+  toolActivity = EMPTY_TOOL_ACTIVITY,
   thinkingVisibility,
   toolVisibility,
   assistantRoundDisplay = "details",
@@ -725,6 +1038,8 @@ export function Transcript({
 }: {
   messages: ChatMessage[];
   streaming: boolean;
+  activeAssistantMessageKey?: string | null;
+  toolActivity?: Record<string, ActivityTool>;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   assistantRoundDisplay?: AssistantRoundDisplayPreference;
@@ -857,7 +1172,9 @@ export function Transcript({
             <AssistantTurn
               message={message}
               toolResults={toolResults}
+              toolActivity={toolActivity}
               streaming={index === activeStreamingIndex}
+              dynamicActive={key === activeAssistantMessageKey}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
               assistantRoundDisplay={assistantRoundDisplay}
@@ -873,7 +1190,7 @@ export function Transcript({
             key,
             node: <UnpairedToolResultRow
             toolName={message.toolName}
-            visibility={toolVisibility === "compact" ? "collapsed" : toolVisibility}
+            visibility={toolVisibility === "compact" || toolVisibility === "dynamic" ? "collapsed" : toolVisibility}
           />,
             searchText: "",
             searchScope: null,
@@ -884,7 +1201,7 @@ export function Transcript({
           key,
           node: <UnknownRoleRow
             message={message}
-            visibility={toolVisibility === "compact" ? "collapsed" : toolVisibility}
+            visibility={toolVisibility === "compact" || toolVisibility === "dynamic" ? "collapsed" : toolVisibility}
           />,
           searchText: "",
           searchScope: null,
@@ -892,7 +1209,19 @@ export function Transcript({
       }
     });
     return built;
-  }, [messages, activeStreamingIndex, thinkingVisibility, toolVisibility, assistantRoundDisplay, toolResults, toolCallIds, sessionId, viewId]);
+  }, [
+    messages,
+    activeAssistantMessageKey,
+    activeStreamingIndex,
+    thinkingVisibility,
+    toolVisibility,
+    assistantRoundDisplay,
+    toolResults,
+    toolCallIds,
+    toolActivity,
+    sessionId,
+    viewId,
+  ]);
 
   const virtualize = rows.length >= VIRTUALIZE_AT;
   const getRowKey = useCallback((index: number) => rows[index]?.key ?? index, [rows]);

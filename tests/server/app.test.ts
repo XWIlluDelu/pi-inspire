@@ -367,7 +367,7 @@ describe("local host API", () => {
     expect(stored.body).toEqual({
       theme: "dark",
       launch: "welcome",
-      thinkingVisibility: "collapsed",
+      thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
       assistantRoundDisplay: "divider",
       projectDisplay: "folder",
@@ -403,6 +403,18 @@ describe("local host API", () => {
       projectDisplay: "path",
       pinnedSessionIds: ["session-a"],
       navCollapsedGroups: ["/project/a"],
+    });
+  });
+
+  it("defaults missing card-density fields to Dynamic", async () => {
+    await writeFile(join(temporary, "preferences.json"), JSON.stringify({ theme: "light", launch: "welcome" }));
+    const response = await request(application.server)
+      .get("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(response.body).toMatchObject({
+      thinkingVisibility: "dynamic",
+      toolVisibility: "dynamic",
     });
   });
 
