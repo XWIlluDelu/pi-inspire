@@ -27,7 +27,7 @@ function tree(sessionId = "s1", effectiveLeafId = "a2") {
   };
 }
 
-describe("Branches contextual mode", () => {
+describe("History contextual mode", () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   beforeEach(async () => {
@@ -66,9 +66,9 @@ describe("Branches contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Branches" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversation history" }));
 
-    const history = await screen.findByLabelText("Session branch history");
+    const history = await screen.findByLabelText("Conversation history and branches");
     expect(history).toBeInTheDocument();
     expect(screen.getByText(/cannot edit from the root user message/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Current branch: assistant: latest" })).toBeDisabled();
@@ -94,8 +94,8 @@ describe("Branches contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Branches" }));
-    await screen.findByLabelText("Session branch history");
+    fireEvent.click(screen.getByRole("button", { name: "Conversation history" }));
+    await screen.findByLabelText("Conversation history and branches");
 
     // A projection update makes actions visibly stale until refresh.
     const socket = (globalThis as unknown as { __unused?: unknown }).__unused;

@@ -30,6 +30,22 @@ beforeAll(async () => {
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload() };
     if (url.startsWith("/api/snapshot")) return { body: { active: null, runState: "idle" } };
+    if (url.startsWith("/api/git/status")) {
+      return {
+        body: {
+          kind: "repository",
+          head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
+          files: [
+            { path: { id: "readme", display: "README.md", utf8Path: "README.md", workspacePath: "README.md" }, unstaged: { kind: "modified" }, untracked: false },
+            { path: { id: "src", display: "src/App.tsx", utf8Path: "src/App.tsx", workspacePath: "src/App.tsx" }, unstaged: { kind: "modified" }, untracked: false },
+            { path: { id: "new", display: "notes.md", utf8Path: "notes.md", workspacePath: "notes.md" }, untracked: true },
+          ],
+          total: 3,
+          truncated: false,
+          groups: { conflicted: [], staged: [], unstaged: ["readme", "src"], untracked: ["new"] },
+        },
+      };
+    }
     if (url.startsWith("/api/sessions/open")) {
       const requested = String(jsonBody(init).id ?? summary.id);
       return {
@@ -319,6 +335,44 @@ describe("welcome flow", () => {
     expect(project).toHaveAttribute("title", expect.stringContaining("/demo"));
     fireEvent.click(project);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("/demo"));
+  });
+
+  it("keeps a compact Git summary beside workspace identity and opens Changes", async () => {
+    render(<App />);
+    const topbar = document.querySelector(".topbar") as HTMLElement;
+    const git = await within(topbar).findByRole("button", { name: "Open Git changes: main, 3 changes" });
+    expect(git).toHaveTextContent("main");
+    expect(git).toHaveTextContent("3 changes");
+    expect(git).toHaveAttribute("title", expect.stringContaining("open Changes"));
+    expect(git.parentElement).toHaveClass("topbar__workspace-meta");
+    expect(within(git.parentElement as HTMLElement).getByRole("button", { name: "Copy project path" })).toBeInTheDocument();
+
+    fireEvent.click(git);
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    expect(within(pane).getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reserves Git color semantics for conflicts and stale status", async () => {
+    render(<App />);
+    const git = await screen.findByRole("button", { name: "Open Git changes: main, 3 changes" });
+    const setState = store as unknown as { set(partial: Record<string, unknown>): void };
+    setState.set({
+      gitStatus: {
+        kind: "repository",
+        head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
+        files: [],
+        total: 3,
+        truncated: false,
+        groups: { conflicted: ["conflict"], staged: [], unstaged: [], untracked: [] },
+      },
+      gitStatusError: null,
+    });
+    await waitFor(() => expect(git).toHaveClass("topbar__git--conflict"));
+    expect(git).toHaveAccessibleName("Open Git changes: main, 3 changes, 1 conflict");
+
+    setState.set({ gitStatusError: "Git timed out" });
+    await waitFor(() => expect(git).toHaveClass("topbar__git--stale"));
+    expect(git).not.toHaveClass("topbar__git--conflict");
   });
 
   it("New session opens the start surface with a project directory field", async () => {
