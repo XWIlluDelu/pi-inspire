@@ -4539,10 +4539,20 @@ body.pane-resizing .nav {
   background: var(--accent);
 }
 
+.palette__section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.palette__section + .palette__section {
+  margin-top: var(--space-2);
+}
+
 .palette__group {
-  flex: 0 0 92px;
+  padding: var(--space-1) var(--space-3);
   font-size: var(--text-xs);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--faint);
 }

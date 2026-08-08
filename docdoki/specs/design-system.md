@@ -488,8 +488,10 @@ Centered modal surfaces at the Overlay level: the scrim dims at 40% alpha
 and blurs the workbench behind it (7px + 15% saturation lift), and the
 surface pops in — 97%→100% scale with a hint of spring
 (`cubic-bezier(0.2, 0.9, 0.25, 1)`) over `{motion.standard}`. Palette 560px
-wide, `{rounded.lg}`, input row + grouped result list (group label
-`{typography.size-xs}` uppercase tracked `faint`); active row `accent-tint`
+wide, `{rounded.lg}`, input row + result list grouped under one
+`{typography.size-xs}` uppercase tracked `faint` label per group — the same
+single-header grammar as the model selector and the composer completion;
+active row `accent-tint`
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
 within 80dvh on ordinary viewports), not a page: sectioned cards for appearance (theme, project
 location), card visibility, startup, and about; Escape and the scrim close
