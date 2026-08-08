@@ -1200,10 +1200,11 @@ export class AppStore {
 
   private hydrationFailure(kind: "session ids" | "curated folders", error: unknown): Error {
     const message = error instanceof Error ? error.message : "Unknown hydration failure";
+    const label = kind === "session ids" ? "active sessions" : "curated folders";
     if (error instanceof ApiError) {
-      return new ApiError(error.status, `Failed to hydrate ${kind}: ${message}`, error.matches);
+      return new ApiError(error.status, `Failed to load ${label}: ${message}`, error.matches);
     }
-    return new Error(`Failed to hydrate ${kind}: ${message}`);
+    return new Error(`Failed to load ${label}: ${message}`);
   }
 
   /** Hydration is a separate atomic union. During an optimistic preference

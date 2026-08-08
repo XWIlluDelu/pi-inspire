@@ -97,7 +97,7 @@ describe("session pagination control", () => {
       sessionId: "background",
       sessionStatus: { runState: "idle" },
     });
-    const preserveRetry = await within(nav).findByRole("button", { name: "Retry refreshing loaded sessions" });
+    const preserveRetry = await within(nav).findByRole("button", { name: "Retry refreshing the list" });
     expect(within(nav).getByRole("status")).toHaveTextContent("Showing 3 of 3 · Could not preserve loaded sessions");
     expect(store.getState().sessions).toHaveLength(3);
 
@@ -111,8 +111,8 @@ describe("session pagination control", () => {
       sessionId: "ui-live",
       sessionStatus: { runState: "running" },
     });
-    const hydrationRetry = await within(nav).findByRole("button", { name: "Retry session hydration" });
-    expect(within(nav).getByRole("status")).toHaveTextContent("Showing 3 of 3 · Failed to hydrate session ids: Visible hydration failed");
+    const hydrationRetry = await within(nav).findByRole("button", { name: "Retry loading active sessions" });
+    expect(within(nav).getByRole("status")).toHaveTextContent("Showing 3 of 3 · Failed to load active sessions: Visible hydration failed");
 
     failVisibleHydration = false;
     await user.click(hydrationRetry);

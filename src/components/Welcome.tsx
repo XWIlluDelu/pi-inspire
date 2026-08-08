@@ -239,7 +239,10 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
     <div className="welcome">
       <span className="welcome__mark" aria-hidden />
       <div className="welcome__hero">
-        <Wordmark large />
+        <div className="welcome__lockup">
+          <span className="welcome__hero-icon" aria-hidden />
+          <Wordmark large />
+        </div>
         <p className="welcome__tagline">A workbench for Pi</p>
       </div>
 

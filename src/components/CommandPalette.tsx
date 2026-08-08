@@ -161,6 +161,17 @@ export function CommandPalette({
   const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
 
+  // Rows render under one header per group — the same grammar the model
+  // selector and the composer completion use — rather than repeating the
+  // group label on every row. Keyboard navigation still indexes the flat
+  // filtered list, so headers are never selectable.
+  const sections: Array<{ group: string; rows: Array<{ item: PaletteItem; index: number }> }> = [];
+  filtered.forEach((item, itemIndex) => {
+    const last = sections[sections.length - 1];
+    if (last && last.group === item.group) last.rows.push({ item, index: itemIndex });
+    else sections.push({ group: item.group, rows: [{ item, index: itemIndex }] });
+  });
+
   // Keyboard navigation must keep the active row visible (jsdom has no
   // scrollIntoView, hence the guard).
   useEffect(() => {
@@ -230,20 +241,26 @@ export function CommandPalette({
           <div className="palette__hint">Enter a new name and press Enter — Esc goes back.</div>
         ) : (
           <div className="palette__list" role="listbox" aria-label="Commands" ref={listRef}>
-            {filtered.map((item, itemIndex) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={itemIndex === clamped}
-                key={item.id}
-                className={`palette__row ${itemIndex === clamped ? "palette__row--active" : ""}`}
-                onMouseEnter={() => setIndex(itemIndex)}
-                onClick={() => runItem(item)}
-              >
-                <span className="palette__group">{item.group}</span>
-                <span className="palette__title">{item.title}</span>
-                {item.hint ? <span className="palette__hint-inline">{item.hint}</span> : null}
-              </button>
+            {sections.map((section) => (
+              <div className="palette__section" key={section.group} role="group" aria-label={section.group}>
+                <div className="palette__group" aria-hidden="true">
+                  {section.group}
+                </div>
+                {section.rows.map(({ item, index: itemIndex }) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={itemIndex === clamped}
+                    key={item.id}
+                    className={`palette__row ${itemIndex === clamped ? "palette__row--active" : ""}`}
+                    onMouseEnter={() => setIndex(itemIndex)}
+                    onClick={() => runItem(item)}
+                  >
+                    <span className="palette__title">{item.title}</span>
+                    {item.hint ? <span className="palette__hint-inline">{item.hint}</span> : null}
+                  </button>
+                ))}
+              </div>
             ))}
             {filtered.length === 0 ? (
               <div className="empty-state">
