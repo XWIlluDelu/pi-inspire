@@ -500,7 +500,9 @@ single-header grammar as the model selector and the composer completion;
 active row `accent-tint`
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
 within 80dvh on ordinary viewports), not a page: sectioned cards for appearance (theme, project
-location), card visibility, startup, and about; Escape and the scrim close
+location), card visibility, completion attention, startup, install (the PWA
+install action when the browser offers it, otherwise the installed state or
+the path to it), and about; Escape and the scrim close
 it, and Escape never leaks to the global abort shortcut. Below 520px the overlay
 uses the full available viewport height and preference rows stack their labels
 above controls, so no horizontal overflow or clipped last section remains.

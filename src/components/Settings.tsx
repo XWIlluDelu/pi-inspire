@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import {
   ASSISTANT_ROUND_DISPLAYS,
   TOOL_VISIBILITY_PREFERENCES,
@@ -12,6 +12,7 @@ import {
   type ToolVisibilityPreference,
   type VisibilityPreference,
 } from "../../shared/contracts";
+import { installAvailability, requestInstall, subscribeInstallAvailability } from "../install-app";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
@@ -56,6 +57,7 @@ const COMPLETION_ATTENTION: Array<{ value: CompletionAttentionPreference; label:
  * thinking-level controls stay in the composer. */
 export function Settings({ onClose }: { onClose: () => void }) {
   const state = useAppState();
+  const install = useSyncExternalStore(subscribeInstallAvailability, installAvailability);
   const dialogRef = useModalFocus<HTMLDivElement>();
 
   useEffect(() => {
@@ -195,6 +197,29 @@ export function Settings({ onClose }: { onClose: () => void }) {
               onChange={(value) => store.setLaunch(value as LaunchPreference)}
             />
           </div>
+        </section>
+
+        <section className="settings__section" aria-label="Install">
+          <h3 className="settings__section-title">Install</h3>
+          {install === "available" ? (
+            <div className="settings__field">
+              <span className="settings__field-label">Install as an app</span>
+              <button type="button" className="button" onClick={() => void requestInstall()}>
+                Install insπre
+              </button>
+            </div>
+          ) : (
+            <div className="settings__field settings__field--stacked">
+              <div>
+                <span className="settings__field-label">Install as an app</span>
+                <p className="settings__field-help">
+                  {install === "installed"
+                    ? "insπre is installed and running in its own window."
+                    : "insπre can run installed in its own window, without browser chrome. Your browser will offer installation from its menu once it considers the app engaged."}
+                </p>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="settings__section" aria-label="About">
