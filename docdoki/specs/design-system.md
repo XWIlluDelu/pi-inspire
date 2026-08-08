@@ -472,7 +472,9 @@ arrows/Home/End move, Enter picks, Escape closes without reaching the
 global abort. The model control expands this anatomy with a focused local
 search field, non-selectable canonical-provider headings, and compact Active,
 Recent, and No thinking labels; its active descendant indexes options rather
-than headings. Thinking levels read lowercase (`medium`, `xhigh`) and the
+than headings. The closed trigger carries the model name alone — the provider
+lives in its tooltip and in the menu's provider headings, not in a second
+trigger line. Thinking levels read lowercase (`medium`, `xhigh`) and the
 control states when the active model cannot use them. The caret completion
 surface uses the same Level-2 grammar above the writing area, with source
 headings in its unfiltered inventory, a mono path/description column, and an

@@ -207,7 +207,6 @@ export function ModelSelector({
       >
         <span className="model-picker__trigger-copy">
           <span className="dropdown__value">{display}</span>
-          {value ? <span className="model-picker__provider">{value.provider}</span> : null}
         </span>
         <ChevronDown size={11} aria-hidden />
       </button>
