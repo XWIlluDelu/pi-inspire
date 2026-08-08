@@ -1329,6 +1329,14 @@ describe("resource previews", () => {
 
   function resourceRoutes(): RouteHandler {
     return (url, init) => {
+      if (url.startsWith("/api/resources/list")) {
+        expect(jsonBody(init)).toEqual({ sessionId: "s1" });
+        return { body: {
+          sessionId: "s1",
+          viewId: "view-s1",
+          resources: [{ key: "file:notes/result.md", reference: "notes/result.md", label: "notes/result.md", source: "link" }],
+        } };
+      }
       if (url.startsWith("/api/resources/probe")) {
         const body = jsonBody(init) as { references: string[] };
         return {
@@ -1380,6 +1388,17 @@ describe("resource previews", () => {
       }),
     );
   }
+
+  it("loads the complete reference projection for the current branch view", async () => {
+    installFetch(resourceRoutes());
+    const { store } = await initStore();
+
+    await expect(store.loadSessionResources()).resolves.toMatchObject({
+      sessionId: "s1",
+      viewId: "view-s1",
+      resources: [{ reference: "notes/result.md" }],
+    });
+  });
 
   it("preflights a bounded reference set without selecting or loading content", async () => {
     installFetch(resourceRoutes());

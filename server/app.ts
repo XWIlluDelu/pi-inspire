@@ -97,6 +97,7 @@ const sessionCwdsSchema = z.object({
   cwds: z.array(z.string().min(1).max(4_096)).max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const attachmentIdSchema = z.string().uuid();
+const resourceListSchema = z.object({ sessionId: sessionIdField });
 const resourceResolveSchema = z.object({
   sessionId: sessionIdField,
   reference: z.string().min(1).max(8_192),
@@ -483,6 +484,15 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     }
   });
 
+  app.post("/api/resources/list", async (request, response) => {
+    const { sessionId } = resourceListSchema.parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    response.json({
+      sessionId,
+      viewId: context.viewId ?? `legacy-view:${sessionId}`,
+      resources: await deps.resources.list(context),
+    });
+  });
   app.post("/api/resources/probe", async (request, response) => {
     const { sessionId, references } = resourceProbeSchema.parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);

@@ -28,6 +28,30 @@ describe("ResourceStore", () => {
     resources = new ResourceStore();
   });
 
+  it("lists the complete recent-first branch projection without retaining message content", async () => {
+    const { project } = await workspace();
+    let messageLoads = 0;
+    const messages = Array.from({ length: 20 }, (_, index) => ({
+      role: "assistant",
+      content: [{ type: "text", text: `See \`file-${index}.md\`.` }],
+    }));
+
+    const listed = await resources.list({
+      sessionId: "s1",
+      viewId: "view-s1",
+      cwd: project,
+      loadMessages: async () => {
+        messageLoads += 1;
+        return messages;
+      },
+    });
+
+    expect(listed).toHaveLength(20);
+    expect(listed[0]?.reference).toBe("file-19.md");
+    expect(listed.at(-1)?.reference).toBe("file-0.md");
+    expect(messageLoads).toBe(1);
+  });
+
   it("opens project-local files without granting a different session the handle", async () => {
     const { project } = await workspace();
     await writeFile(join(project, "report.md"), "# Result\n");

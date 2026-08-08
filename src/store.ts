@@ -41,6 +41,7 @@ import {
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
+import type { SessionResourceListResponse } from "../shared/resource-references";
 import { deleteSessionDraft } from "./session-drafts";
 import { ApiError, createApi, eventsUrl, type Api, type ProjectFileResult } from "./api";
 import {
@@ -2651,7 +2652,24 @@ export class AppStore {
     this.set({ resourceAvailability });
   }
 
-  /** Preflight only the bounded Files-pane projection. The host returns
+  /** Load the complete reference projection for the currently visible branch.
+   * The host returns labels and references only, never message content. */
+  loadSessionResources = async (signal?: AbortSignal): Promise<SessionResourceListResponse | null> => {
+    const sessionId = this.state.sessionId;
+    const viewId = this.state.transcriptViewId;
+    const revision = this.state.transcriptRevision;
+    if (!this.api || !sessionId || !viewId) return null;
+    const response = await this.api.listResources(sessionId, signal);
+    if (
+      signal?.aborted || this.state.sessionId !== sessionId ||
+      this.state.transcriptViewId !== viewId || this.state.transcriptRevision !== revision ||
+      response.sessionId !== sessionId ||
+      response.viewId !== viewId
+    ) return null;
+    return response;
+  };
+
+  /** Preflight only the Files-pane's visible prefix. The host returns
    * standing, not content handles; repeated message updates with the same
    * reference set reuse the completed result. */
   probeResources = async (references: string[]): Promise<void> => {
