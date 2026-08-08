@@ -17,6 +17,42 @@ vi.mock("@tanstack/react-virtual", () => ({
 import { Transcript } from "../../src/components/Transcript";
 
 describe("virtualized transcript search navigation", () => {
+  it("mounts and follows the virtual tail across the threshold and same-message tool growth", () => {
+    const messages = Array.from({ length: 60 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: index === 59 ? [] : `settled row ${index}`,
+      timestamp: index,
+      ...(index === 59 ? { __inspireLiveId: "virtual-tail", __inspireSettled: false } : {}),
+    }));
+    const props = {
+      streaming: true,
+      activeAssistantMessageKey: "live:virtual-tail",
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { rerender } = render(<Transcript sessionId="virtual-follow" messages={messages.slice(0, 59)} {...props} />);
+
+    virtual.scrollToIndex.mockClear();
+    rerender(<Transcript sessionId="virtual-follow" messages={messages} {...props} />);
+    expect(virtual.scrollToIndex).toHaveBeenLastCalledWith(59, { align: "end" });
+
+    virtual.scrollToIndex.mockClear();
+    rerender(
+      <Transcript
+        sessionId="virtual-follow"
+        messages={messages.map((message, index) => index === 59 ? {
+          ...message,
+          content: [
+            { type: "thinking", thinking: "continuing reasoning" },
+            { type: "toolCall", id: "long-tool", name: "write", arguments: { path: "theory.md" } },
+          ],
+        } : message)}
+        {...props}
+      />,
+    );
+    expect(virtual.scrollToIndex).toHaveBeenLastCalledWith(59, { align: "end" });
+  });
+
   it("navigates by transcript row index and disables pinned latest-follow", () => {
     const messages = Array.from({ length: 60 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",

@@ -14,6 +14,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("settled transcript search", () => {
@@ -128,6 +129,123 @@ describe("settled transcript search", () => {
       />,
     );
     expect(screen.getByRole("searchbox", { name: "Search conversation" })).toHaveValue("");
+  });
+});
+
+describe("transcript live follow", () => {
+  it("omits settled empty retry artifacts but represents the active empty call", () => {
+    const settled = [
+      { role: "user", content: "question", timestamp: 1 },
+      { role: "assistant", content: [], stopReason: "error", timestamp: 2 },
+      { role: "assistant", content: [{ type: "text", text: "recovered answer" }], timestamp: 3 },
+    ];
+    const { container, rerender } = render(
+      <Transcript messages={settled} streaming={false} thinkingVisibility="dynamic" toolVisibility="dynamic" />,
+    );
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
+    expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
+
+    const settledRetry = {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      timestamp: 4,
+      __inspireLiveId: "settled-retry",
+      __inspireSettled: true,
+    };
+    rerender(
+      <Transcript
+        messages={[...settled, settledRetry]}
+        streaming
+        activeAssistantMessageKey="live:settled-retry"
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
+
+    const activeRetry = { role: "assistant", content: [], timestamp: 5, __inspireLiveId: "retry-call" };
+    rerender(
+      <Transcript
+        messages={[...settled, activeRetry]}
+        streaming
+        activeAssistantMessageKey="live:retry-call"
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
+    expect(screen.getByText("Working…")).toBeInTheDocument();
+  });
+
+  it("follows thinking and tool growth until the user deliberately scrolls away", () => {
+    const observed = new Map<Element, ResizeObserverCallback>();
+    class TestResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) { observed.set(target, this.callback); }
+      unobserve(target: Element) { observed.delete(target); }
+      disconnect() { observed.clear(); }
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
+    const active = {
+      role: "assistant",
+      timestamp: 2,
+      __inspireLiveId: "growing-call",
+      content: [] as Array<Record<string, unknown>>,
+    };
+    const props = {
+      streaming: true,
+      activeAssistantMessageKey: "live:growing-call",
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { container, rerender } = render(
+      <Transcript messages={[{ role: "user", content: "question", timestamp: 1 }, active]} {...props} />,
+    );
+    const log = screen.getByRole("log");
+    expect(screen.getByText("Working…").closest(".assistant-activity")).toHaveAttribute("role", "status");
+    let scrollHeight = 1_000;
+    Object.defineProperties(log, {
+      clientHeight: { configurable: true, get: () => 300 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: { configurable: true, writable: true, value: 700 },
+    });
+
+    rerender(
+      <Transcript
+        messages={[
+          { role: "user", content: "question", timestamp: 1 },
+          {
+            ...active,
+            content: [
+              { type: "thinking", thinking: "live reasoning" },
+              { type: "toolCall", id: "live-tool", name: "read", arguments: { path: "notes.md" } },
+            ],
+          },
+        ]}
+        {...props}
+      />,
+    );
+    expect(log.scrollTop).toBe(700);
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    expect(container.querySelector(".card--thinking")).not.toBeNull();
+    expect(container.querySelector(".card--tool")).not.toBeNull();
+
+    // A delayed Markdown/card/virtual-row measurement must not turn the
+    // programmatic follow scroll into apparent user intent.
+    scrollHeight = 1_400;
+    fireEvent.scroll(log);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
+    const content = container.querySelector(".transcript__content")!;
+    act(() => observed.get(content)?.([], {} as ResizeObserver));
+    expect(log.scrollTop).toBe(1_100);
+
+    fireEvent.wheel(log, { deltaY: -200 });
+    log.scrollTop = 400;
+    fireEvent.scroll(log);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
   });
 });
 

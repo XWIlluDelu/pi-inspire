@@ -5,8 +5,10 @@ covers:
   - src/App.tsx
   - src/events.ts
   - src/store.ts
+  - shared/assistant-stream.ts
   - shared/contracts.ts
   - src/components/RichText.tsx
+  - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
   - src/components/ActivityBar.tsx
   - src/components/BranchTree.tsx
@@ -19,6 +21,8 @@ covers:
   - tests/web/branch-store.test.ts
   - tests/web/transcript-inspection.test.tsx
   - tests/web/transcript-paging.test.tsx
+  - tests/web/transcript-virtual-search.test.tsx
+  - tests/server/runtime-projection.test.ts
 ---
 
 # Conversation experience
@@ -34,7 +38,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 - Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source projection. Formula bodies use canonical `$…$` inline or `$$…$$` display delimiters, including partial selections whose original formula wrapper determines display identity; surrounding selected text and multiple formulas are preserved. Every user and assistant turn also has a message-level copy action: user turns copy their exact source, while assistant turns concatenate their visible text blocks and exclude hidden reasoning and tool payloads.
 - View-local search performs case-insensitive literal matching over settled conversation text and can scope results to all searchable turns, user input only, or model output only. It wraps previous/next navigation and jumps by transcript row through virtualization. The streaming tail and hidden thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow across prepends and live appends until search is cleared or the user explicitly jumps to latest.
 - User turns appear as compact bubbles while assistant answers use an open, left-aligned document flow suitable for long Markdown, mathematical notation, code, and structured activity.
-- Assistant text streams smoothly without visually rebuilding the entire transcript for every fragment.
+- Assistant text streams smoothly without visually rebuilding the entire transcript for every fragment. Pi 0.84 JSON/RPC `message_update` frames intentionally carry only `assistantMessageEvent`; the host reconstructs the active assistant from those typed thinking/text/tool-call deltas for both live events and reconnect snapshots, while the browser uses the same pure reducer only as a compatibility path and resyncs rather than guessing against settled history. Pi may emit an empty assistant `message_start` before the provider yields its first visible thinking, text, or tool delta; that truthful waiting state renders a quiet `Working…` indicator and replaces it immediately when content arrives. A settled empty error/retry artifact remains in authoritative Pi history but allocates no Divider-only transcript row; retry and failure state stay visible through their dedicated status surfaces. While latest-follow remains active, the viewport follows actual rendered-content growth—not only message-count or ordinary-text changes—so thinking/tool deltas, Markdown reflow, card transitions, and virtual-row measurement cannot strand new content below the fold. Only an explicit wheel, touch, keyboard, or custom-rail gesture releases latest-follow; transcript search retains its separate viewport lock, and Jump to latest reacquires follow.
 - Thinking appears separately from answer text and follows the user’s independent Dynamic, expanded, collapsed, or hidden preference. Dynamic keeps every Thinking block from the current LLM call expanded through its tool batch, then requests collapse when the next assistant message starts or the agent settles; a fast boundary still preserves at least 700 ms of expanded residency. Historical loading starts collapsed and never replays lifecycle motion. Terminal-only control formatting is dropped at the display boundary without rewriting Pi history.
 - Each tool call is correlated with its live status, partial output, final result, and failure state.
 - Assistant round boundaries have two presentation-only styles: Divider replaces the existing Pi/model/time/stop-reason row with a quiet neutral rule centered in the ordinary inter-turn gap, while Details preserves that row unchanged. Divider color never implies hidden status.

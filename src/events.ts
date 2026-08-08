@@ -8,6 +8,7 @@ import {
   type RunState,
 } from "../shared/contracts";
 export { isAbortableRunState, isBusyRunState } from "../shared/contracts";
+import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import { structuralMessageIdentity } from "../shared/message-identity";
 export type { ExtensionUiRequest } from "../shared/contracts";
 
@@ -277,7 +278,37 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       break;
     }
     case "message_update": {
-      slice.messages = upsert(current.messages, asMessage(event.message), settledKeys);
+      const supplied = event.message && typeof event.message === "object" && !Array.isArray(event.message)
+        ? asMessage(event.message)
+        : null;
+      if (supplied && typeof supplied.role === "string") {
+        // Pi <=0.83 RPC and Inspire's reconstructed host projection supply the
+        // complete partial message directly.
+        slice.messages = upsert(current.messages, supplied, settledKeys);
+        changed = true;
+        break;
+      }
+
+      // Pi 0.84 JSON/RPC intentionally sends only AssistantMessageEvent here:
+      // its mutable `partial` and the outer `message` are removed. Rebuild the
+      // current assistant from the public delta protocol instead of appending
+      // one keyless empty transcript row per token.
+      const index = current.activeAssistantMessageKey
+        ? indexOfKey(current.messages, current.activeAssistantMessageKey)
+        : -1;
+      if (index < 0) {
+        // Never guess against settled history. A missing active identity means
+        // this browser missed lifecycle state and needs the host snapshot.
+        resync = true;
+        break;
+      }
+      const reconstructed = applyAssistantMessageDelta(
+        current.messages[index],
+        event.assistantMessageEvent,
+      );
+      if (!reconstructed) break;
+      slice.messages = [...current.messages];
+      slice.messages[index] = reconstructed as unknown as ChatMessage;
       changed = true;
       break;
     }

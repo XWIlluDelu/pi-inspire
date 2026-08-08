@@ -552,6 +552,20 @@ function genericContentTitle(item: object): string | null {
     : bounded;
 }
 
+function hasRenderableAssistantContent(
+  message: ChatMessage,
+  thinkingVisibility: VisibilityPreference,
+  toolVisibility: ToolVisibilityPreference,
+): boolean {
+  if (typeof message.content === "string") return message.content.length > 0;
+  return contentItems(message).some((item) => {
+    if (item.type === "text") return typeof item.text === "string" && item.text.length > 0;
+    if (item.type === "thinking") return thinkingVisibility !== "hidden";
+    if (item.type === "toolCall") return toolVisibility !== "hidden";
+    return toolVisibility !== "hidden" && genericContentTitle(item) !== null;
+  });
+}
+
 function GenericCard({
   item,
   visibility,
@@ -817,6 +831,7 @@ const AssistantTurn = memo(function AssistantTurn({
   assistantRoundDisplay: AssistantRoundDisplayPreference;
 }) {
   const items = contentItems(message);
+  const hasVisibleContent = hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility);
   const dynamicTools = toolVisibility === "dynamic";
   const toolKeys = items.flatMap((item, index) => item.type === "toolCall"
     ? [((item as ToolCallContent).id || `tool:${index}`)]
@@ -846,7 +861,9 @@ const AssistantTurn = memo(function AssistantTurn({
     inspectionHeld,
     allCardsClosed,
   );
-  const renderedItems: React.ReactNode[] = [];
+  const renderedItems: React.ReactNode[] = typeof message.content === "string" && message.content.length > 0
+    ? [<RichText key="text" text={message.content} variant="assistant" />]
+    : [];
   const ordinaryToolVisibility: StaticVisibility = toolVisibility === "compact" || dynamicTools
     ? "collapsed"
     : toolVisibility;
@@ -942,7 +959,12 @@ const AssistantTurn = memo(function AssistantTurn({
         </div>
       )}
       <div className="assistant-doc">
-        {dynamicTools && hasTools ? (
+        {streaming && !hasVisibleContent ? (
+          <div className="assistant-activity" role="status">
+            <Loader2 size={14} className="spin" aria-hidden />
+            <span>Working…</span>
+          </div>
+        ) : dynamicTools && hasTools ? (
           <div className={`dynamic-tool-batch dynamic-tool-batch--${dynamicBatch.phase}`}>
             {renderedItems}
           </div>
@@ -1121,6 +1143,11 @@ export function Transcript({
   extensionDisplays?: GenericExtensionDisplay[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const latestRowIndexRef = useRef(-1);
+  const virtualizedFollowRef = useRef<((index: number) => void) | null>(null);
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimerRef = useRef<number | null>(null);
   const olderLoadInFlightRef = useRef(false);
   const onLoadOlderRef = useRef(onLoadOlder);
   const sessionIdRef = useRef(sessionId);
@@ -1140,6 +1167,7 @@ export function Transcript({
     setSearchQuery("");
     setCurrentMatch(-1);
     pinnedRef.current = true;
+    userScrollIntentRef.current = false;
     olderLoadInFlightRef.current = false;
     setPinned(true);
   }, [sessionId]);
@@ -1161,32 +1189,67 @@ export function Transcript({
     return { toolResults: results, toolCallIds: callIds };
   }, [messages]);
 
-  const lastMessage = messages[messages.length - 1];
-  const lastText = lastMessage ? messageText(lastMessage) : "";
   let activeStreamingIndex = -1;
-  if (streaming) {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const candidate = messages[index] as ChatMessage & { __inspireLiveId?: unknown; __inspireSettled?: unknown };
-      if (candidate.role === "assistant" && typeof candidate.__inspireLiveId === "string" && candidate.__inspireSettled !== true) {
-        activeStreamingIndex = index;
-        break;
-      }
-    }
-    // Preview/mock projections may not carry host lifecycle metadata. Only the
-    // literal tail is a safe fallback; never hide an earlier settled answer
-    // merely because a newer user turn has started.
-    if (activeStreamingIndex < 0 && messages.at(-1)?.role === "assistant") activeStreamingIndex = messages.length - 1;
+  if (streaming && activeAssistantMessageKey) {
+    const index = messages.findIndex((message) => messageKey(message) === activeAssistantMessageKey);
+    const candidate = index >= 0
+      ? messages[index] as ChatMessage & { __inspireSettled?: unknown }
+      : null;
+    if (candidate?.role === "assistant" && candidate.__inspireSettled !== true) activeStreamingIndex = index;
   }
+  // Preview/mock projections may not carry an active lifecycle identity. Only
+  // their literal unsettled tail is safe; never reinterpret settled history as
+  // the current retry merely because the host run is busy.
+  if (streaming && !activeAssistantMessageKey) {
+    const tail = messages.at(-1) as ChatMessage & { __inspireSettled?: unknown } | undefined;
+    if (tail?.role === "assistant" && tail.__inspireSettled !== true) activeStreamingIndex = messages.length - 1;
+  }
+
+  const markUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = true;
+    if (userScrollIntentTimerRef.current !== null) window.clearTimeout(userScrollIntentTimerRef.current);
+    userScrollIntentTimerRef.current = window.setTimeout(() => {
+      userScrollIntentTimerRef.current = null;
+      userScrollIntentRef.current = false;
+    }, 400);
+  }, []);
+
+  const followLatest = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element || !pinnedRef.current) return;
+    const virtualizedFollow = virtualizedFollowRef.current;
+    if (virtualizedFollow && latestRowIndexRef.current >= 0) {
+      virtualizedFollow(latestRowIndexRef.current);
+      return;
+    }
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  }, []);
+
+  useEffect(() => () => {
+    if (userScrollIntentTimerRef.current !== null) window.clearTimeout(userScrollIntentTimerRef.current);
+  }, []);
 
   const onScroll = () => {
     const element = scrollRef.current;
     if (!element) return;
-    const isPinned = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    const searchOwnsViewport = searchQuery.length > 0 && currentMatch >= 0;
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+    // Virtual-row measurement and browser scroll anchoring can keep moving the
+    // scroller after our requested target. Only an actual wheel/touch/key/rail
+    // gesture transfers ownership away from latest; scroll events alone cannot
+    // distinguish those layout corrections from user input.
+    if (pinnedRef.current && !searchOwnsViewport && !userScrollIntentRef.current) {
+      setPinned(true);
+      if (remaining >= 80) followLatest();
+      return;
+    }
+    const isPinned = remaining < 80;
     // A search jump owns the viewport until the user explicitly clears it or
     // chooses latest. Virtualizer geometry near the bottom must not silently
     // reinstate live-follow and pull the selected match away on append.
-    const nextPinned = searchQuery.length > 0 && currentMatch >= 0 ? false : isPinned;
+    const nextPinned = searchOwnsViewport ? false : isPinned;
     pinnedRef.current = nextPinned;
+    if (nextPinned) userScrollIntentRef.current = false;
     setPinned(nextPinned);
     if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlder();
   };
@@ -1205,11 +1268,11 @@ export function Transcript({
   };
 
   const jumpToLatest = () => {
-    const element = scrollRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
     setCurrentMatch(-1);
+    userScrollIntentRef.current = false;
     pinnedRef.current = true;
     setPinned(true);
+    followLatest();
   };
 
   // Row descriptors rebuild only when a dependency changes; memoized row
@@ -1234,6 +1297,11 @@ export function Transcript({
           searchScope: "user",
         });
       } else if (message.role === "assistant") {
+        const assistantStreaming = index === activeStreamingIndex;
+        // Pi can persist an empty error response before automatically retrying.
+        // It remains authoritative history, but must not become a phantom
+        // Divider-only transcript row with an estimated virtual-list height.
+        if (!assistantStreaming && !hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility)) return;
         built.push({
           key,
           node: (
@@ -1241,7 +1309,7 @@ export function Transcript({
               message={message}
               toolResults={toolResults}
               toolActivity={toolActivity}
-              streaming={index === activeStreamingIndex}
+              streaming={assistantStreaming}
               dynamicActive={key === activeAssistantMessageKey}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
@@ -1303,6 +1371,10 @@ export function Transcript({
     estimateSize: () => 180,
     overscan: 6,
   });
+  latestRowIndexRef.current = rows.length - 1;
+  virtualizedFollowRef.current = virtualize
+    ? (index) => virtualizer.scrollToIndex(index, { align: "end" })
+    : null;
   const rowsRef = useRef(rows);
   const virtualizeRef = useRef(virtualize);
   const virtualizerRef = useRef(virtualizer);
@@ -1386,12 +1458,23 @@ export function Transcript({
     }
   };
 
+  // A Pi stream mutates one assistant message in place semantically: thinking
+  // and tool-call updates often change neither message count nor ordinary text.
+  // Follow every new message projection while latest is still user-owned.
   useEffect(() => {
-    const element = scrollRef.current;
-    if (!element || !pinnedRef.current) return;
-    if (virtualize) virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
-    else element.scrollTop = element.scrollHeight;
-  }, [messages.length, lastText, virtualize, rows.length, virtualizer]);
+    followLatest();
+  }, [messages, followLatest]);
+
+  // Markdown layout, card animation, font loading, and virtualizer measurement
+  // can increase the transcript after React's message effect. Preserve latest
+  // through those real geometry changes without moving a user-owned viewport.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => followLatest());
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [followLatest, sessionId]);
 
   // The existing scroll handler is the single proximity authority. This runs
   // after initial latest-follow so a short transcript can fill its viewport,
@@ -1414,7 +1497,17 @@ export function Transcript({
   };
 
   return (
-    <div className="transcript-wrap">
+    <div
+      className="transcript-wrap"
+      onKeyDownCapture={(event) => {
+        if (
+          scrollRef.current?.contains(event.target as Node) &&
+          ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)
+        ) {
+          markUserScrollIntent();
+        }
+      }}
+    >
       <div
         className={`transcript-search ${searchQuery ? "transcript-search--active" : ""}`}
         role="search"
@@ -1459,7 +1552,19 @@ export function Transcript({
         <button type="button" aria-label="Previous transcript match" disabled={searchMatches.length === 0} onClick={() => navigateSearch(-1)}>↑</button>
         <button type="button" aria-label="Next transcript match" disabled={searchMatches.length === 0} onClick={() => navigateSearch(1)}>↓</button>
       </div>
-      <div className="transcript" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll} onClick={onClick} onCopy={handleRichTextCopy}>
+      <div
+        className="transcript"
+        role="log"
+        aria-live="polite"
+        ref={scrollRef}
+        onScroll={onScroll}
+        onWheel={markUserScrollIntent}
+        onTouchStart={markUserScrollIntent}
+        onTouchMove={markUserScrollIntent}
+        onClick={onClick}
+        onCopy={handleRichTextCopy}
+      >
+        <div className="transcript__content" ref={contentRef}>
         {hasOlder ? (
           <div className="transcript__older-sentinel">
             {loadingOlder ? (
@@ -1518,8 +1623,9 @@ export function Transcript({
             <ExtensionDisplaySurface displays={extensionDisplays} />
           </div>
         ) : null}
+        </div>
       </div>
-      <ScrollRail container={scrollRef} variant="reading" />
+      <ScrollRail container={scrollRef} variant="reading" onUserScroll={markUserScrollIntent} />
       {!pinned ? (
         <button type="button" className="jump-to-latest" onClick={jumpToLatest}>
           Jump to latest

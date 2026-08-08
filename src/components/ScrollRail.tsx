@@ -12,6 +12,7 @@ export function ScrollRail({
   container,
   scroller,
   variant,
+  onUserScroll,
 }: {
   /** Stable ancestor that defines the boundary and hosts the scroller. */
   container: React.RefObject<HTMLElement | null>;
@@ -20,6 +21,8 @@ export function ScrollRail({
    * elements (preview kinds) rebind automatically. */
   scroller?: string;
   variant: "nav" | "ctx" | "reading";
+  /** Called before this overlay directly moves the scroller. */
+  onUserScroll?: () => void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
@@ -121,12 +124,14 @@ export function ScrollRail({
     const onThumbDown = (event: MouseEvent) => {
       if (event.button !== 0 || !geo || geo.maxTop <= 0) return;
       event.preventDefault();
+      onUserScroll?.();
       drag = { y: event.clientY, top: thumb.offsetTop, maxTop: geo.maxTop, range: geo.range };
       rail.classList.add("srail--drag");
       document.body.classList.add("srail-dragging");
     };
     const onMove = (event: MouseEvent) => {
       if (!drag || !el) return;
+      onUserScroll?.();
       const top = Math.max(0, Math.min(drag.maxTop, drag.top + event.clientY - drag.y));
       el.scrollTop = (top / drag.maxTop) * drag.range;
     };
@@ -141,6 +146,7 @@ export function ScrollRail({
     const onWheel = (event: WheelEvent) => {
       if (!el) return;
       event.preventDefault();
+      onUserScroll?.();
       el.scrollTop += event.deltaY;
     };
 
@@ -169,7 +175,7 @@ export function ScrollRail({
       if (frame !== null) cancelAnimationFrame(frame);
       document.body.classList.remove("srail-dragging");
     };
-  }, [container, scroller, variant]);
+  }, [container, scroller, variant, onUserScroll]);
 
   return (
     <div className="srail" ref={railRef} aria-hidden="true">
