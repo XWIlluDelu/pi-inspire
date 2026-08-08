@@ -24,3 +24,39 @@ export function presentGitFacet(change: GitFileChange | undefined): GitFacetPres
   if (change.unstaged) return { mark: "M", label: `unstaged ${change.unstaged.kind}` };
   return null;
 }
+
+/** State color for identifier lists (file trees). Kept separate from the
+ * facet mark so the two channels stay independent: the letter says which
+ * state, the hue only says how severe. `ignored` never decorates — an
+ * ignored file is intentionally invisible, not a state to act on. */
+export type GitDecoration = "conflict" | "modified" | "untracked";
+
+export function gitDecorationForChange(change: GitFileChange | undefined): GitDecoration | null {
+  if (!change) return null;
+  if (change.conflict) return "conflict";
+  if (change.untracked) return "untracked";
+  if (change.staged || change.unstaged) return "modified";
+  return null;
+}
+
+/** Directory rollup: the most severe decoration among changed descendants,
+ * conflict > modified > untracked (the VS Code precedence). Files without a
+ * safe workspace projection cannot be attributed to the tree and are skipped
+ * rather than guessed. */
+export function gitDecorationForDirectory(
+  status: GitStatusResponse | null | undefined,
+  dirPath: string,
+): GitDecoration | null {
+  if (!status || status.kind !== "repository") return null;
+  const prefix = `${dirPath}/`;
+  let best: GitDecoration | null = null;
+  for (const file of status.files) {
+    const workspacePath = file.path.workspacePath;
+    if (!workspacePath || (workspacePath !== dirPath && !workspacePath.startsWith(prefix))) continue;
+    const decoration = gitDecorationForChange(file);
+    if (decoration === "conflict") return "conflict";
+    if (decoration === "modified") best = "modified";
+    else if (decoration === "untracked" && best === null) best = "untracked";
+  }
+  return best;
+}

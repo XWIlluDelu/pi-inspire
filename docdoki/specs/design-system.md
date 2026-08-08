@@ -39,6 +39,9 @@ tokens:
     info: "#33649e"            # annotation: tool activity
     think: "#7b5fc0"           # annotation: reasoning blocks
     think-tint: "rgba(123, 95, 192, 0.06)"
+    git-modified: "= warning"   # identifier-list git text, ≥4.5:1 on surface
+    git-untracked: "= success"
+    git-conflict: "= error"
   colors-dark:
     canvas: "#111413"
     surface: "#191e1d"
@@ -66,6 +69,9 @@ tokens:
     info: "#7ea9dd"
     think: "#b9a7ee"
     think-tint: "rgba(185, 167, 238, 0.10)"
+    git-modified: "= warning"   # identifier-list git text, ≥4.5:1 on surface
+    git-untracked: "= success"
+    git-conflict: "= error"
   typography:
     sans: "'Noto Sans SC', 'IBM Plex Sans', sans-serif"
     serif: "'IBM Plex Serif', serif"          # wordmark only
@@ -168,12 +174,14 @@ intermediate values:
 
 Conversation block types are color-coded by a 3px left edge plus a matching
 icon — the same grammar toast notices already use. The hues are semantic,
-theme-tuned, and graphics-only (edges and 14px icons, ≥3:1; never text,
-never fills):
+theme-tuned, and graphics-only (edges and 14px icons, ≥3:1; never prose or
+chrome text, never fills). One scoped exception: identifier lists (file
+trees) may carry git state color on the name itself, through the text-tuned
+`git-*` role tokens, because there the name is data, not reading text:
 
 - **`think`** (violet) — thinking cards; the expanded body also takes a
   ~4% violet-tinted inset.
-`- **`info`** (blue) — tool cards and live tool-activity chips. The 14px tool
+- **`info`** (blue) — tool cards and live tool-activity chips. The 14px tool
   icon carries the tool type (read FileText, edit FilePen, write FilePlus2,
   bash SquareTerminal, grep Search, find FileSearch, ls List, unknown Wrench)
   in both the card header and the compact tile, so a settled batch scans by
@@ -182,6 +190,20 @@ never fills):
 - **`hairline-strong`** (neutral) — unknown/extension content: uncommitted.
 - `success`/`warning` keep their status meanings (result icons, run states,
   the context gauge's caution tones).
+
+Git state decorates identifier lists (workspace explorer, referenced-files
+list) the way editor trees do: a changed file's name carries
+`git-modified` / `git-untracked` / `git-conflict` — text-tuned role aliases of the
+warning/success/error families, each ≥4.5:1 on `surface` — while the letter
+mark shares that hue and stays as the second channel naming the exact state.
+Directories roll up
+the most severe descendant state (conflict > modified > untracked) through
+name color plus a same-hue generic dot, so a dirty subtree reads from the root
+without expansion and without relying on color alone; dots and letters occupy
+the same centered 15px trailing slot, and a mixed state never invents a letter. Unresolvable (missing) references keep
+their strikethrough style instead of a git color, and the Changes pane stays
+uncolored — every row there is dirty by definition, so color would not
+discriminate within the list.
 
 ### Discipline
 
@@ -407,7 +429,10 @@ warning capsule surface.
   visible: collapsed it is a single header bar (folder icon + project name +
   chevron); expanded it takes up to half the column with a lazily loaded tree
   derived from the host's project index (directories first), and clicking a
-  file opens the session-bound preview pane. The New session surface hides the
+  file opens the session-bound preview pane. Names carry the git decoration
+  grammar — changed files color and keep their letter mark, while directories
+  roll up descendant state through name color plus a generic dot — so a dirty
+  subtree reads from the root. The New session surface hides the
   prior runtime's explorer rather than presenting its workspace as current.
 - The nav column begins with one brand/new-session target: the transparent
   22px reticle favicon + wordmark align to the same left content axis as Search,

@@ -23,7 +23,7 @@ import {
   type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
-import { presentGitFacet } from "../git-presentation";
+import { gitDecorationForChange, gitDecorationForDirectory, presentGitFacet } from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
@@ -187,6 +187,7 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
       const path = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.type === "dir") {
         const isOpen = expanded.has(path);
+        const rollup = gitDecorationForDirectory(state.gitStatus, path);
         return (
           <Fragment key={path}>
             <button
@@ -198,13 +199,22 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
             >
               <ChevronRight size={11} className={`chev ${isOpen ? "chev--open" : ""}`} aria-hidden />
               <Folder size={12} aria-hidden />
-              <span className="explorer__name">{entry.name}</span>
+              <span className={`explorer__name ${rollup ? `git-deco--${rollup}` : ""}`}>{entry.name}</span>
+              {rollup ? (
+                <span
+                  className={`git-rollup git-deco--${rollup}`}
+                  aria-label={rollup === "conflict" ? "Contains conflicts" : `Contains ${rollup} files`}
+                  title={rollup === "conflict" ? "Contains conflicts" : `Contains ${rollup} files`}
+                />
+              ) : null}
             </button>
             {isOpen ? renderLevel(path, depth + 1) : null}
           </Fragment>
         );
       }
-      const change = presentGitFacet(gitChangeForWorkspacePath(state.gitStatus, path));
+      const change = gitChangeForWorkspacePath(state.gitStatus, path);
+      const facet = presentGitFacet(change);
+      const decoration = gitDecorationForChange(change);
       return (
         <button
           key={path}
@@ -215,8 +225,14 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
           onClick={() => void store.openResource(path)}
         >
           <FileText size={12} aria-hidden />
-          <span className="explorer__name">{entry.name}</span>
-          {change ? <span className="git-mark" aria-label={change.label} title={change.label}>{change.mark}</span> : null}
+          <span className={`explorer__name ${decoration ? `git-deco--${decoration}` : ""}`}>{entry.name}</span>
+          {facet ? (
+            <span
+              className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
+              aria-label={facet.label}
+              title={facet.label}
+            >{facet.mark}</span>
+          ) : null}
         </button>
       );
     });
