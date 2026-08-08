@@ -375,8 +375,11 @@ warning capsule surface.
   effective leaf is the only `aria-current` row. Switch uses the row itself;
   edit-from-here and fork are quiet trailing icon actions with confirmation.
   Host truncation and stale/error state remain visible above or below the tree.
-- **Start surface** — the welcome canvas carries the one piece of brand
-  ornament: a huge KaTeX math-italic π watermark at 4% ink (5% in dark)
+- **Start surface** — the welcome canvas carries the brand at its one full
+  scale: the hero composes the reticle mark at 32px beside the large
+  wordmark, the same pair the nav header carries at 22px, over the tagline;
+  and the one piece of brand ornament — a huge KaTeX math-italic π watermark
+  at 4% ink (5% in dark)
   receding into the lower-right corner, clipped by its own layer so it
   never scrolls or intercepts input. Its recent-session list appears only
   when navigation is collapsed; the expanded navigation already owns the same
