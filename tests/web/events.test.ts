@@ -37,6 +37,73 @@ describe("message reconciliation", () => {
     expect(start.slice.runState).toBe("running");
   });
 
+  it("reconstructs Pi 0.84 message_update deltas without creating phantom rows", () => {
+    let result = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        provider: "openai-codex",
+        model: "gpt-5.6",
+        __inspireLiveId: "call-1",
+      },
+    });
+
+    const updates: WireEvent[] = [
+      { type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } },
+      { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "check " } },
+      { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "state" } },
+      { type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "check state" } },
+      { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } },
+      { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "hel" } },
+      { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "lo" } },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, id: "tool-1", toolName: "read" },
+      },
+      { type: "message_update", assistantMessageEvent: { type: "toolcall_delta", contentIndex: 2, delta: "{\"path\":" } },
+    ];
+    for (const update of updates) result = reduce(result.slice, new Set(), update);
+
+    expect(result.slice.messages[0]!.content).toMatchObject([
+      { type: "thinking", thinking: "check state" },
+      { type: "text", text: "hello" },
+      { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+    ]);
+
+    result = reduce(result.slice, new Set(), {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 2,
+        toolCall: { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "README.md" } },
+      },
+    });
+    expect(result.slice.messages).toHaveLength(1);
+    expect(result.slice.messages[0]).toMatchObject({
+      role: "assistant",
+      __inspireLiveId: "call-1",
+      content: [
+        { type: "thinking", thinking: "check state" },
+        { type: "text", text: "hello" },
+        { type: "toolCall", id: "tool-1", name: "read" },
+      ],
+    });
+  });
+
+  it("resyncs rather than applying a delta when no assistant call is active", () => {
+    const slice = emptyEventSlice();
+    slice.messages = [{ role: "assistant", content: [{ type: "text", text: "settled" }], timestamp: 1 }];
+    const result = reduce(slice, new Set(["assistant:1"]), {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "orphan" },
+    });
+    expect(result.resync).toBe(true);
+    expect(result.slice.messages).toBe(slice.messages);
+    expect(result.slice.messages[0]!.content).toEqual([{ type: "text", text: "settled" }]);
+  });
+
   it("settles message keys on message_end so later duplicates are dropped", () => {
     const slice = emptyEventSlice();
     const end = reduce(slice, new Set(), {
