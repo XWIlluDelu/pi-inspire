@@ -334,8 +334,17 @@ warning capsule surface.
   its full bounded value remains in the hover title. Beside it the project
   location renders in mono `{typography.size-xs}` `faint` — folder name or full
   path per the `projectDisplay` preference — and clicking it copies the absolute
-  path. The model is never shown here. Identity owns the flexible width and
-  yields through ellipsis before neighboring chrome can collide.
+  path. A quiet Git control follows the project and deliberately reuses that
+  exact mono metadata grammar: branch (or detached/unborn identity) is always
+  shown at ordinary widths, a same-style `· N changes` suffix appears only when
+  non-clean, and activation opens detailed Git Changes in the context pane.
+  Ordinary changes remain neutral; a conflicted count is `error`, while an
+  otherwise stale status is `warning`, without changing the shared typography
+  or spacing. It is contextual identity rather than a runtime-status capsule.
+  On a phone the branch text yields to the session title and fixed actions, leaving
+  the Git glyph and any change count with the full state in its accessible name
+  and tooltip. The model is never shown here. Identity owns the flexible width
+  and yields through ellipsis before neighboring chrome can collide.
 - **Topbar status and actions** — runtime and extension status capsules remain
   in the leading cluster, immediately after session identity, while the action
   targets stay fixed at the right. Status is vertically centered; long extension
@@ -348,9 +357,10 @@ warning capsule surface.
   drawer begins beneath the 48px center topbar, so this one toggle remains
   above it and hit-testable by pointer, touch, and keyboard; the drawer adds
   one trailing close target inside its own header and a click-to-dismiss scrim.
-- **Context modes** — the right pane keeps Files, Changes, and Branches in one
-  compact mode switch rather than adding another workbench column. Branches
-  uses a bounded, vertically scrollable entry tree: role chips and one-line
+- **Context modes** — the right pane keeps Files, Changes, and History in one
+  compact mode switch rather than adding another workbench column. Changes is
+  Git working-tree inspection; History is Pi conversation history and branch
+  navigation, never Git branch selection. History uses a bounded, vertically scrollable entry tree: role chips and one-line
   snippets form the main row, active ancestry uses the accent rail, and the
   effective leaf is the only `aria-current` row. Switch uses the row itself;
   edit-from-here and fork are quiet trailing icon actions with confirmation.
@@ -405,12 +415,15 @@ warning capsule surface.
 
 ### Transcript
 
-- **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. Its empty, unfocused idle state keeps full text/icon opacity and no shadow; hover, focus-within (including the scope menu), or a nonempty query adds only the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
+- **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. The pill is an **opaque** `surface` — it floats over scrolling content, and a translucent one lets text read through and collide with the controls; the transcript's `scroll-padding-top` keeps search jumps and anchored rows below the pill zone. Its empty, unfocused idle state keeps full text/icon opacity and no shadow; hover, focus-within (including the scope menu), or a nonempty query adds only the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
 - **Earlier history** — approaching the transcript top loads the next page without a normal-state control. A quiet centered status appears only while loading; failure replaces it with a compact retry action and pauses automatic loading until the user retries. Prepending history preserves the visible reading position.
 - **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra
-  spacing before each user turn groups a prompt with its response.
+  spacing before each user turn groups a prompt with its response. Per-turn
+  actions (copy, fork) stay out of the reading flow: hidden at rest, revealed
+  on turn hover or focus-within; touch devices without hover keep them
+  faintly visible so the affordance stays discoverable.
 - **Assistant flow** — no container. The `Assistant rounds` preference is a pure presentation choice: `Details` preserves the existing attribution head line ("Pi" at `{typography.size-sm}`/600 with model, time, and any unusual end reason in `{typography.size-xs}` `faint`/`warning`), while `Divider` replaces that whole line with one 24px neutral hairline centered in the ordinary turn gap, adding no exception text, inferred state, semantic color, or replacement line height. There is no footer meta line.
 - **Thinking card / tool card / generic card** — one collapsible card anatomy: ~34px header row (icon 14px, label, one-line summary, status icon, chevron), `{rounded.md}`, `surface` background, hairline border, and a 3px annotation-colored left edge (`think` violet / `info` blue / `error` when failed / `hairline-strong` unknown) with the icon in the same hue. Thinking summaries are inline-rendered sans prose (emphasis, inline code, and math survive within the one-line ellipsis); tool summaries are mono; labels sit at `{typography.size-sm}` 600 (tool names mono 500). Generic extension cards instead use an attributable normal-sans title and suppress raw `custom`/`Extension content` labels; anonymous custom parts and Pi custom messages marked `display: false` are omitted rather than rendered as repetitive placeholders. Meaningfully typed or attributed content keeps its implementation type and payload in the expanded body. Expanded bodies are inset with a hairline top; thinking bodies take a faint violet tint. Dynamic is the recommended and default density: Thinking remains Expanded for at least 700 ms, each completed tool for at least 600 ms, and a closed batch remains visibly Collapsed for at least 700 ms after its 180 ms body transition before Compact may begin. Result outcome affects status color/glyph only, never this lifecycle. Tool cards also expose fixed `Compact`: each uninterrupted adjacent run becomes a wrapping row of quiet 30px tiles — a 3px semantic left edge, tool icon, status glyph, and restrained padding/spacing. Clicking one animates its ordinary detail panel downward immediately beneath that row; selecting another replaces the panel in place. The outer hairline remains neutral; failure turns the short semantic edge, tool icon, and status glyph red in both resting and selected states. Compact grouping never crosses text, thinking, generic content, or assistant-message boundaries. Dynamic closes each full card in place, briefly fades the settled batch, then introduces its Compact tiles with only a 4px upward fade; it never flies full-width cards across the transcript or interpolates their geometry into tiles. Initial history and reduced-motion rendering switch directly without replay.
 - **Code block** — `surface` (dark: `surface-inset`) background, hairline
@@ -420,6 +433,9 @@ warning capsule surface.
   from the theme palette: accent for keywords, warning-adjacent for
   strings, `muted` for comments — max five hue roles.
 - **Tables** — hairline row separators only, semibold header row, no zebra.
+- **Task lists** — GFM checkboxes are pulled into the control language:
+  `accent-color: accent-fill` at 13px, aligned to the reading baseline; never
+  the browser-default grey.
 - **KaTeX** — display math gets 12px vertical margin, inner padding so tall
   glyphs clear the scroll container's clip edge, and horizontal scroll
   containment; never restyled glyphs.
@@ -461,9 +477,10 @@ data (right after compaction). Focus shows a 2px `accent` ring on the whole
 composer. Drop targeting tints the composer with `accent-tint` and a dashed
 `accent` border. Browser spelling/grammar proofing is disabled on the shared
 textarea so technical mixed-language input receives no browser-owned correction
-underlines. Below 520px the meta row wraps: model and thinking controls keep
+underlines. Below 600px the meta row wraps: model and thinking controls keep
 legible labels and at least 32px targets, while context/send owns a full trailing
-row rather than shrinking controls into overlap.
+row rather than shrinking controls into overlap. The welcome composer follows the
+same wrap; lacking the gauge, its send owns the trailing edge.
 
 ### Command palette, settings & dialogs
 
@@ -517,7 +534,7 @@ project directory, attachment/reference limits, model/thinking/rename changes,
 preference persistence, and desktop-notification permission — use the warning
 variant rather than the session-wide error banner. Errors with their own retry
 surface remain there: open/create in navigation and the start surface, deletion
-in its confirmation dialog, and branch failures in the Branches pane.
+in its confirmation dialog, and branch failures in the History pane.
 
 Global banners sit under the topbar at Level 1 with `error-tint`/warning-tint
 backgrounds and a full-width hairline. Automatic reconnect and a snapshot

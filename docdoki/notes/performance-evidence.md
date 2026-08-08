@@ -25,7 +25,7 @@ The frozen activation thresholds are:
 - browser long task p95 >= 50 ms;
 - input event delay p95 >= 50 ms;
 - wheel-to-animation-frame delay p95 >= 50 ms;
-- either two-action Changes or Branches flow p95 >= 200 ms (two 100 ms response budgets);
+- either two-action Changes or History flow p95 >= 200 ms (two 100 ms response budgets);
 - any React surface commit p95 >= 16.7 ms;
 - host projection or catalog p95 >= 150 ms;
 - host Git status p95 >= 100 ms.
@@ -48,7 +48,7 @@ Environment: Node 26.5.0, npm 11.17.0, Chromium 145.0.7632.6, Pi 0.83.0. Two iso
 | catalog forced list | 11.78 | 11.78 |
 | real Git status | 11.60 | 12.93 |
 | Changes two-action flow | 173.00 | 176.80 |
-| Branches two-action flow | 117.40 | 113.20 |
+| History two-action flow | 117.40 | 113.20 |
 | Files plus fixed stream | 1,014.40 | 1,012.80 |
 | navigation commit (aggregate) | 9.50 | 9.70 |
 | transcript commit (aggregate) | 2.40 | 2.50 |
@@ -60,7 +60,7 @@ Environment: Node 26.5.0, npm 11.17.0, Chromium 145.0.7632.6, Pi 0.83.0. Two iso
 | frame-gap control | 16.80 | 16.80 |
 | event-loop-delay control | 15.10 | 16.00 |
 
-All activation witnesses had 21 independent values, required three crossings, and observed zero. In particular, per-sample Changes p95 was 173.00/176.80 ms with maxima 175.40/177.10 ms, and Branches p95 was 117.40/113.20 ms with maxima 117.60/120.90 ms. Per-sample React witness p95 values remained at most 10.00/10.10 ms. Thus both the percentile gate and repeatability gate independently remain below activation.
+All activation witnesses had 21 independent values, required three crossings, and observed zero. In particular, per-sample Changes p95 was 173.00/176.80 ms with maxima 175.40/177.10 ms, and History p95 was 117.40/113.20 ms with maxima 117.60/120.90 ms. Per-sample React witness p95 values remained at most 10.00/10.10 ms. Thus both the percentile gate and repeatability gate independently remain below activation.
 
 The counters reset at the observation boundary after bootstrap/search/initial status settles. Every iteration then receives exactly 52 WebSocket frames/71,218 bytes: 5 prompt-start frames + 36 text deltas + 1 tool end + 8 background lifecycle frames + 2 selected-session settlement frames. Each payload must parse as JSON and the complete ordered sequence must exactly match the expected `{type, sessionId, outcome}` witnesses: roles for message boundaries, running/completed status for agent boundaries, queue counts, tool name/result, and `text_delta` updates. Startup failure probes prove rejection of malformed JSON, a missing typed address, missing/extra frames, wrong order/type, wrong session address, and wrong outcome. HTTP is also exact per iteration: 1 branch navigate, 2 branch trees (initial plus post-navigation), 2 diffs (selection plus explicit-status selected-diff reload), 3 Git statuses (Changes entry, explicit refresh, settled tool refresh), 1 prompt, 4 session-list refreshes (one per rendered background completion), and 1 selected-session snapshot resync. Any missing, extra, reordered, mistyped, differently addressed, or wrong-outcome request/frame fails the evaluator.
 
