@@ -273,11 +273,17 @@ describe("session navigation controls", () => {
     fireEvent.click(document.querySelector(".explorer__header") as HTMLButtonElement);
     const rootFile = await screen.findByRole("button", { name: "changed.ts" });
     expect(within(rootFile).queryByLabelText(/unstaged/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "other" }));
+    expect(rootFile.querySelector(".explorer__name")).not.toHaveClass("git-deco--modified");
+    const dirtyDirectory = screen.getByRole("button", { name: /other.*contains modified files/i });
+    expect(dirtyDirectory.querySelector(".explorer__name")).toHaveClass("git-deco--modified");
+    expect(within(dirtyDirectory).getByLabelText("Contains modified files")).toHaveClass("git-rollup", "git-deco--modified");
+    fireEvent.click(dirtyDirectory);
     await waitFor(() => expect(screen.getAllByRole("button", { name: /changed\.ts/ })).toHaveLength(2));
     const files = screen.getAllByRole("button", { name: /changed\.ts/ });
     const nested = files.find((button) => button !== rootFile)!;
     expect(within(nested).getByLabelText("unstaged modified")).toHaveTextContent("M");
+    expect(within(nested).getByLabelText("unstaged modified")).toHaveClass("git-deco--modified");
+    expect(nested.querySelector(".explorer__name")).toHaveClass("git-deco--modified");
   });
 
   it("curates the visible session without changing what is selected", async () => {
