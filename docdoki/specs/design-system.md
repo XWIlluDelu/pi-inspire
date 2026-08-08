@@ -173,7 +173,11 @@ never fills):
 
 - **`think`** (violet) — thinking cards; the expanded body also takes a
   ~4% violet-tinted inset.
-- **`info`** (blue) — tool cards and live tool-activity chips.
+`- **`info`** (blue) — tool cards and live tool-activity chips. The 14px tool
+  icon carries the tool type (read FileText, edit FilePen, write FilePlus2,
+  bash SquareTerminal, grep Search, find FileSearch, ls List, unknown Wrench)
+  in both the card header and the compact tile, so a settled batch scans by
+  glyph before a single label is read.
 - **`error`** — failed tool cards and error notices.
 - **`hairline-strong`** (neutral) — unknown/extension content: uncommitted.
 - `success`/`warning` keep their status meanings (result icons, run states,
@@ -343,8 +347,14 @@ warning capsule surface.
   or spacing. It is contextual identity rather than a runtime-status capsule.
   On a phone the branch text yields to the session title and fixed actions, leaving
   the Git glyph and any change count with the full state in its accessible name
-  and tooltip. The model is never shown here. Identity owns the flexible width
-  and yields through ellipsis before neighboring chrome can collide.
+  and tooltip. The model is never shown here. Identity degrades in named
+  discard tiers keyed to the bar's own width (container queries), never by
+  proportional truncation of everything at once: below 820px the project
+  location yields first (navigation and the workspace explorer already carry
+  it), below 600px the Git branch text yields to the glyph plus any change
+  count (the full state stays in the accessible name and tooltip), and only
+  then may the session title ellipsize. The phone tier applies the same
+  grammar by viewport.
 - **Topbar status and actions** — runtime and extension status capsules remain
   in the leading cluster, immediately after session identity, while the action
   targets stay fixed at the right. Status is vertically centered; long extension
@@ -365,8 +375,11 @@ warning capsule surface.
   effective leaf is the only `aria-current` row. Switch uses the row itself;
   edit-from-here and fork are quiet trailing icon actions with confirmation.
   Host truncation and stale/error state remain visible above or below the tree.
-- **Start surface** — the welcome canvas carries the one piece of brand
-  ornament: a huge KaTeX math-italic π watermark at 4% ink (5% in dark)
+- **Start surface** — the welcome canvas carries the brand at its one full
+  scale: the hero composes the reticle mark at 32px beside the large
+  wordmark, the same pair the nav header carries at 22px, over the tagline;
+  and the one piece of brand ornament — a huge KaTeX math-italic π watermark
+  at 4% ink (5% in dark)
   receding into the lower-right corner, clipped by its own layer so it
   never scrolls or intercepts input. Its recent-session list appears only
   when navigation is collapsed; the expanded navigation already owns the same
@@ -462,7 +475,9 @@ arrows/Home/End move, Enter picks, Escape closes without reaching the
 global abort. The model control expands this anatomy with a focused local
 search field, non-selectable canonical-provider headings, and compact Active,
 Recent, and No thinking labels; its active descendant indexes options rather
-than headings. Thinking levels read lowercase (`medium`, `xhigh`) and the
+than headings. The closed trigger carries the model name alone — the provider
+lives in its tooltip and in the menu's provider headings, not in a second
+trigger line. Thinking levels read lowercase (`medium`, `xhigh`) and the
 control states when the active model cannot use them. The caret completion
 surface uses the same Level-2 grammar above the writing area, with source
 headings in its unfiltered inventory, a mono path/description column, and an
@@ -488,11 +503,15 @@ Centered modal surfaces at the Overlay level: the scrim dims at 40% alpha
 and blurs the workbench behind it (7px + 15% saturation lift), and the
 surface pops in — 97%→100% scale with a hint of spring
 (`cubic-bezier(0.2, 0.9, 0.25, 1)`) over `{motion.standard}`. Palette 560px
-wide, `{rounded.lg}`, input row + grouped result list (group label
-`{typography.size-xs}` uppercase tracked `faint`); active row `accent-tint`
+wide, `{rounded.lg}`, input row + result list grouped under one
+`{typography.size-xs}` uppercase tracked `faint` label per group — the same
+single-header grammar as the model selector and the composer completion;
+active row `accent-tint`
 with `accent` left edge. **Settings is an overlay dialog** (600px, scrolling
 within 80dvh on ordinary viewports), not a page: sectioned cards for appearance (theme, project
-location), card visibility, startup, and about; Escape and the scrim close
+location), card visibility, completion attention, startup, install (the PWA
+install action when the browser offers it, otherwise the installed state or
+the path to it), and about; Escape and the scrim close
 it, and Escape never leaks to the global abort shortcut. Below 520px the overlay
 uses the full available viewport height and preference rows stack their labels
 above controls, so no horizontal overflow or clipped last section remains.

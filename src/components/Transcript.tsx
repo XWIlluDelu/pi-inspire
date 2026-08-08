@@ -5,10 +5,16 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  FilePen,
+  FilePlus2,
+  FileSearch,
+  FileText,
   GitFork,
+  List,
   Loader2,
   Package,
   Search,
+  SquareTerminal,
   Wrench,
   XCircle,
 } from "lucide-react";
@@ -404,7 +410,7 @@ function ToolCard({
       forceClosed={forceClosed}
       onManualOpenChange={onManualOpenChange}
       className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
-      icon={<Wrench size={14} aria-hidden />}
+      icon={toolIcon(call.name)}
       label={<code className="card__tool-name">{call.name}</code>}
       summary={<ToolSummary call={call} />}
       status={statusIcon(status)}
@@ -477,7 +483,7 @@ function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean
                 }
               }}
             >
-              <Wrench size={14} aria-hidden />
+              {toolIcon(tool.call.name)}
               {statusIcon(status)}
             </button>
           );
@@ -496,7 +502,7 @@ function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean
               className={`card card--tool tool-strip__detail ${toolStatus(rendered.result, rendered.activity, live) === "failure" ? "card--failed" : ""}`}
             >
               <div className="tool-strip__detail-head">
-                <span className="card__icon"><Wrench size={14} aria-hidden /></span>
+                <span className="card__icon">{toolIcon(rendered.call.name)}</span>
                 <code className="card__tool-name">{rendered.call.name}</code>
                 <ToolSummary call={rendered.call} />
                 <span className="card__status">{statusIcon(toolStatus(rendered.result, rendered.activity, live))}</span>
@@ -724,6 +730,29 @@ function useDynamicToolBatch(
 }
 
 // --- Turns ---
+
+/** Tool identity is part of the annotation grammar: the glyph carries the
+ * tool type so a settled batch of cards or tiles scans without reading. */
+function toolIcon(name: string): React.ReactNode {
+  switch (name.toLowerCase()) {
+    case "read":
+      return <FileText size={14} aria-hidden />;
+    case "edit":
+      return <FilePen size={14} aria-hidden />;
+    case "write":
+      return <FilePlus2 size={14} aria-hidden />;
+    case "bash":
+      return <SquareTerminal size={14} aria-hidden />;
+    case "grep":
+      return <Search size={14} aria-hidden />;
+    case "find":
+      return <FileSearch size={14} aria-hidden />;
+    case "ls":
+      return <List size={14} aria-hidden />;
+    default:
+      return <Wrench size={14} aria-hidden />;
+  }
+}
 
 function MessageActions({ text, forkEntryId }: { text: string; forkEntryId?: string }) {
   const { copied, copy } = useCopied();
