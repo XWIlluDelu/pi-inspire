@@ -1391,6 +1391,9 @@ a {
   padding: 0 var(--space-3) 0 var(--space-4);
   overflow: hidden;
   background: var(--bg-canvas);
+  /* Identity degradation is keyed to the bar's own width — the nav/context
+     panes and window size all change it — not to the viewport. */
+  container-type: inline-size;
 }
 
 /* Session identity stays in the leading cluster with status. It yields through
@@ -1513,6 +1516,34 @@ a {
   content: "·";
   margin-right: var(--space-1);
   color: inherit;
+}
+
+/* Identity degradation tiers, in discard order: the project location yields
+   first (navigation and the workspace explorer already carry it), the Git
+   branch text yields next (glyph + count keep the state, the accessible name
+   and tooltip keep the branch), and only then may the session title
+   ellipsize. Proportional truncation of everything at once produced useless
+   fragments. The phone tier applies the same grammar by viewport below. */
+@container (max-width: 820px) {
+  .topbar__project {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .topbar__git {
+    flex: 0 0 auto;
+    max-width: none;
+    padding-inline: 3px;
+  }
+
+  .topbar__git-branch {
+    display: none;
+  }
+
+  .topbar__git-count::before {
+    display: none;
+  }
 }
 
 /* Ordinary changes remain location context. Color is reserved for the two

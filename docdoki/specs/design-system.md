@@ -343,8 +343,14 @@ warning capsule surface.
   or spacing. It is contextual identity rather than a runtime-status capsule.
   On a phone the branch text yields to the session title and fixed actions, leaving
   the Git glyph and any change count with the full state in its accessible name
-  and tooltip. The model is never shown here. Identity owns the flexible width
-  and yields through ellipsis before neighboring chrome can collide.
+  and tooltip. The model is never shown here. Identity degrades in named
+  discard tiers keyed to the bar's own width (container queries), never by
+  proportional truncation of everything at once: below 820px the project
+  location yields first (navigation and the workspace explorer already carry
+  it), below 600px the Git branch text yields to the glyph plus any change
+  count (the full state stays in the accessible name and tooltip), and only
+  then may the session title ellipsize. The phone tier applies the same
+  grammar by viewport.
 - **Topbar status and actions** — runtime and extension status capsules remain
   in the leading cluster, immediately after session identity, while the action
   targets stay fixed at the right. Status is vertically centered; long extension
