@@ -23,6 +23,7 @@ import type {
   TranscriptPage,
   UploadedAttachment,
 } from "../shared/contracts";
+import type { SessionResourceListResponse } from "../shared/resource-references";
 
 export interface ProjectFileResult {
   path: string;
@@ -221,6 +222,8 @@ export function createApi(token: string | null = null) {
     browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
     browseHostDirs: (path?: string) =>
       request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
+    listResources: (sessionId: string, signal?: AbortSignal) =>
+      post<SessionResourceListResponse>(token, "/api/resources/list", { sessionId }, { signal }),
     probeResources: (sessionId: string, references: string[], signal?: AbortSignal) =>
       post<ResourceProbeResponse>(token, "/api/resources/probe", { sessionId, references }, { signal }),
     resolveResource: (sessionId: string, reference: string, signal?: AbortSignal) =>

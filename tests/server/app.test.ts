@@ -755,6 +755,18 @@ describe("local host API", () => {
       .send({ sessionId, message: "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`." })
       .expect(202);
 
+    const listed = await request(application.server)
+      .post("/api/resources/list")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId })
+      .expect(200);
+    expect(listed.body).toMatchObject({ sessionId });
+    expect(listed.body.resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reference: "preview.md" }),
+      expect.objectContaining({ reference: "node_modules/mentioned.txt" }),
+      expect.objectContaining({ reference: "missing.md" }),
+    ]));
+
     const probed = await request(application.server)
       .post("/api/resources/probe")
       .set("Authorization", `Bearer ${token}`)
