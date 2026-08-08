@@ -2633,6 +2633,8 @@ a {
   border-collapse: collapse;
   margin: var(--space-3) 0;
   font-size: var(--text-sm);
+  /* Numeric columns compare down the row rule; proportional figures wobble. */
+  font-variant-numeric: tabular-nums;
   /* Wide tables scroll inside the column instead of breaking it. */
   display: block;
   max-width: 100%;

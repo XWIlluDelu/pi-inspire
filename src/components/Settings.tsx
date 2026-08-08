@@ -215,7 +215,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 <p className="settings__field-help">
                   {install === "installed"
                     ? "insπre is installed and running in its own window."
-                    : "insπre can run installed in its own window, without browser chrome. Your browser will offer installation from its menu once it considers the app engaged."}
+                    : "insπre can run installed in its own window, without browser chrome. Your browser offers installation from its address bar or menu."}
                 </p>
               </div>
             </div>

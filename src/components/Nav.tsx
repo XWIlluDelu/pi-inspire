@@ -519,16 +519,16 @@ export function Nav({
   const hasOlderSessions = state.sessionListNextOffset < state.sessionListTotal;
   const sessionListBusy = state.sessionListLoading || state.sessionListLoadingOlder || state.sessionListHydrating;
   const retrySessionLabel = state.sessionListOperation === "hydrate"
-    ? "Retry session hydration"
+    ? "Retry loading active sessions"
     : state.sessionListOperation === "preserve"
-      ? "Retry refreshing loaded sessions"
+      ? "Retry refreshing the list"
       : state.sessionListOperation === "refresh"
         ? "Retry refreshing sessions"
         : state.sessionListOperation === "older"
           ? "Retry loading older sessions"
           : "Retry loading sessions";
   const loadingSessionLabel = state.sessionListOperation === "hydrate"
-    ? "Hydrating session…"
+    ? "Loading active sessions…"
     : state.sessionListOperation === "preserve"
       ? "Refreshing loaded sessions…"
       : state.sessionListOperation === "refresh"
