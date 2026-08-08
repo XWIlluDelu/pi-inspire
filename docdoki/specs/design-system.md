@@ -173,7 +173,11 @@ never fills):
 
 - **`think`** (violet) — thinking cards; the expanded body also takes a
   ~4% violet-tinted inset.
-- **`info`** (blue) — tool cards and live tool-activity chips.
+`- **`info`** (blue) — tool cards and live tool-activity chips. The 14px tool
+  icon carries the tool type (read FileText, edit FilePen, write FilePlus2,
+  bash SquareTerminal, grep Search, find FileSearch, ls List, unknown Wrench)
+  in both the card header and the compact tile, so a settled batch scans by
+  glyph before a single label is read.
 - **`error`** — failed tool cards and error notices.
 - **`hairline-strong`** (neutral) — unknown/extension content: uncommitted.
 - `success`/`warning` keep their status meanings (result icons, run states,
