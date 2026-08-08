@@ -1,7 +1,7 @@
 /* insπre — restrained scientific workbench.
    Implements the design-system contract (docdoki/specs/design-system.md):
    paper-not-cream neutrals, hairline boundaries, one accent per theme
-   (teal in light, industrial chartreuse in dark), IBM Plex type voices. */
+   (teal in light, the same hue raised luminous in dark), IBM Plex type voices. */
 
 /* --- Self-hosted fonts (SIL OFL, see src/assets/licenses) --- */
 
@@ -1669,6 +1669,9 @@ a {
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-16) var(--space-6) var(--space-16);
+  /* Search jumps and row anchors land below the floating search pill zone
+     (top 12 + pill 32 + breathing room) instead of sliding underneath it. */
+  scroll-padding-top: calc(var(--space-3) + 44px);
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
   mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
@@ -1693,11 +1696,12 @@ a {
   padding: 3px 5px 3px var(--space-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  /* Opaque surface: the pill floats over scrolling content, and a translucent
+     one let text read through and collide with the search controls. */
+  background: var(--bg-surface);
   box-shadow: none;
   color: var(--faint);
   opacity: 1;
-  backdrop-filter: blur(8px);
   transition: box-shadow var(--dur-micro) var(--ease-standard);
 }
 
@@ -1839,12 +1843,14 @@ a {
   color: var(--warning);
 }
 
+/* Message actions stay out of the reading flow until the turn is pointed
+   or keyboard-focused; touch devices (no hover) keep them faintly visible. */
 .turn__actions {
   display: inline-flex;
   align-items: center;
   gap: 1px;
   margin-left: auto;
-  opacity: 0.75;
+  opacity: 0;
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
@@ -1855,6 +1861,12 @@ a {
 .turn:hover .turn__actions,
 .turn:focus-within .turn__actions {
   opacity: 1;
+}
+
+@media (hover: none) {
+  .turn__actions {
+    opacity: 0.75;
+  }
 }
 
 .turn__action.icon-button {
@@ -2626,6 +2638,16 @@ a {
 .rich-text .contains-task-list {
   list-style: none;
   padding-left: var(--space-2);
+}
+
+/* GFM task lists render disabled native checkboxes; pull them into the
+   control language instead of leaving the browser default. */
+.rich-text .contains-task-list input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0 var(--space-2) 0 var(--space-1);
+  vertical-align: -0.15em;
+  accent-color: var(--accent-fill);
 }
 
 .inline-code {
@@ -3757,6 +3779,7 @@ body.pane-resizing .nav {
   font-size: var(--text-xs);
   color: var(--muted);
   padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
   background: var(--bg-inset);
 }
@@ -3809,13 +3832,6 @@ body.pane-resizing .nav {
   overflow: hidden;
   color: var(--faint);
   font: 400 var(--text-xs)/var(--leading-ui) var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.changes__row .res__row-source {
-  max-width: 105px;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4250,7 +4266,7 @@ body.pane-resizing .nav {
   border-radius: var(--radius-sm);
   font: inherit;
   color: inherit;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
   transition: color var(--dur-micro) var(--ease-standard);
@@ -4635,7 +4651,7 @@ body.pane-resizing .nav {
   background: var(--bg-inset);
   color: var(--ink);
   font-size: var(--text-base);
-  font-weight: 550;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5138,6 +5154,12 @@ body.srail-dragging {
   }
 
   .composer__meta .meter {
+    margin-left: auto;
+  }
+
+  /* The welcome composer has no meter; its send owns the trailing edge of the
+     wrapped meta row, matching the session composer. */
+  .welcome__composer .composer__send {
     margin-left: auto;
   }
 

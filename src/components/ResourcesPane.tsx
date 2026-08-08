@@ -202,6 +202,8 @@ function PreviewRegion() {
   if (!preview) {
     return (
       <div className="res__state" aria-live="polite">
+        <FileSearch size={18} aria-hidden />
+        <p className="res__state-title">No file selected</p>
         <p className="res__state-hint">Select a file above to preview it here.</p>
       </div>
     );
