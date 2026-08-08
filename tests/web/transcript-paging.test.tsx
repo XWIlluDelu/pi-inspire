@@ -17,6 +17,7 @@ describe("Transcript older-page anchor", () => {
     Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1_000 });
     Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 300 });
     transcript.scrollTop = 200;
+    fireEvent.wheel(transcript, { deltaY: -200 });
     fireEvent.scroll(transcript);
     rerender(
       <Transcript
@@ -59,6 +60,7 @@ describe("Transcript older-page anchor", () => {
       clientHeight: { configurable: true, value: 300 },
     });
     transcript.scrollTop = 400;
+    fireEvent.wheel(transcript, { deltaY: -200 });
     fireEvent.scroll(transcript); // leave latest-follow before paging becomes available
     rerender(renderTranscript(true));
     expect(onLoadOlder).not.toHaveBeenCalled();
@@ -121,6 +123,7 @@ describe("Transcript older-page anchor", () => {
       clientHeight: { configurable: true, value: 300 },
     });
     transcript.scrollTop = 400;
+    fireEvent.wheel(transcript, { deltaY: -200 });
     fireEvent.scroll(transcript);
     rerender(<Harness enabled />);
 

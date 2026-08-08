@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
 import { parseCompactCommand } from "../shared/commands.js";
 import { messageFallbackCorrelation, structuralMessageIdentity } from "../shared/message-identity.js";
 import {
@@ -721,6 +722,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.overlay = next;
     slot.overlayBytes = Buffer.byteLength(JSON.stringify(next));
     return projected;
+  }
+
+  private activeAssistantOverlayMessage(slot: RuntimeSlot): unknown {
+    const correlation = slot.activeAssistantCorrelation;
+    if (!correlation) return null;
+    const liveId = slot.activeOverlayIds.get(correlation);
+    if (!liveId) return null;
+    return slot.overlay.find((message) => this.overlayIdentity(message) === liveId) ?? null;
   }
 
   private activeAssistantSnapshotKey(slot: RuntimeSlot, messages: unknown[]): string | null {
@@ -1705,9 +1714,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const record = event && typeof event === "object" ? event as Record<string, unknown> : {};
     let forwardedEvent: unknown = event;
     if (record.type === "message_start" || record.type === "message_update" || record.type === "message_end") {
-      if (record.message !== undefined) {
+      let message = record.message;
+      if (record.type === "message_update" && (!message || typeof message !== "object" || Array.isArray(message))) {
+        message = applyAssistantMessageDelta(
+          this.activeAssistantOverlayMessage(slot),
+          record.assistantMessageEvent,
+        );
+      }
+      if (message && typeof message === "object" && !Array.isArray(message)) {
         const phase = record.type === "message_start" ? "start" : record.type === "message_end" ? "end" : "update";
-        const projectedMessage = this.updateOverlay(slot, record.message, phase);
+        const projectedMessage = this.updateOverlay(slot, message, phase);
         if (
           record.type === "message_start" && projectedMessage && typeof projectedMessage === "object" &&
           (projectedMessage as Record<string, unknown>).role === "assistant"

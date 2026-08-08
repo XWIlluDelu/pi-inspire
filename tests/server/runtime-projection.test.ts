@@ -992,6 +992,69 @@ describe("RuntimeController projection ownership gate", () => {
     }
   });
 
+  it("reconstructs Pi 0.84 delta-only assistant updates in events and snapshots", async () => {
+    const { runtime, workers } = await setup();
+    try {
+      const forwarded: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => {
+        const record = event as Record<string, unknown>;
+        if (record.type === "message_update") forwarded.push(record);
+      });
+      workers[0]!.emit("event", {
+        type: "message_start",
+        message: {
+          role: "assistant",
+          content: [],
+          timestamp: 20,
+          provider: "openai-codex",
+          model: "gpt-5.6",
+        },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "live thought" },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "live answer" },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, id: "tool-1", toolName: "read" },
+      });
+
+      const snapshot = await runtime.snapshot();
+      expect(forwarded).toHaveLength(5);
+      const identities = forwarded.map((event) =>
+        (event.message as Record<string, unknown>).__inspireLiveId,
+      );
+      expect(new Set(identities)).toHaveLength(1);
+      expect((forwarded.at(-1)!.message as Record<string, unknown>).content).toEqual([
+        { type: "thinking", thinking: "live thought" },
+        { type: "text", text: "live answer" },
+        { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+      ]);
+      expect(snapshot.active?.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "live thought" },
+          { type: "text", text: "live answer" },
+          { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+        ],
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps equal-timestamp tool-result overlay messages distinct and reconciles both", async () => {
     const { runtime, workers, path } = await setup();
     try {
