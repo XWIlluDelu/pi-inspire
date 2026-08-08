@@ -11,9 +11,9 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GitDiffSide, GitFileChange, GitStatusResponse, ResourceKind, ResourceProbeResult } from "../../shared/contracts";
+import type { GitDiffSide, GitFileChange, ResourceKind, ResourceProbeResult } from "../../shared/contracts";
 import { formatBytes } from "../format";
-import { presentGitFacet } from "../git-presentation";
+import { gitHeadLabel, presentGitFacet } from "../git-presentation";
 import { collectResources, MAX_RESOURCE_ROWS, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
 import {
   gitChangeForWorkspacePath,
@@ -259,13 +259,6 @@ function PreviewRegion() {
   );
 }
 
-function headLabel(status: GitStatusResponse | null): string {
-  if (!status || status.kind !== "repository") return "";
-  if (status.head.kind === "branch") return status.head.name;
-  if (status.head.kind === "unborn") return `${status.head.name} · unborn`;
-  return `${status.head.oid.slice(0, 8)} · detached`;
-}
-
 const CHANGE_GROUPS = [
   ["conflicted", "Conflicts"],
   ["staged", "Staged"],
@@ -460,10 +453,16 @@ export function ResourcesPane() {
         <div className="ctx__modes" aria-label="Resource mode">
           <button type="button" aria-pressed={state.contextMode === "files"} onClick={() => store.setContextMode("files")}>Files</button>
           <button type="button" aria-pressed={state.contextMode === "changes"} onClick={() => store.setContextMode("changes")}>Changes</button>
-          <button type="button" aria-pressed={state.contextMode === "branches"} onClick={() => store.setContextMode("branches")}>Branches</button>
+          <button
+            type="button"
+            aria-label="Conversation history"
+            aria-pressed={state.contextMode === "branches"}
+            title="Conversation history and branches"
+            onClick={() => store.setContextMode("branches")}
+          >History</button>
         </div>
         {state.contextMode !== "branches" ? <>
-          <span className="ctx__branch" title={headLabel(state.gitStatus)}>{headLabel(state.gitStatus)}</span>
+          <span className="ctx__branch" title={gitHeadLabel(state.gitStatus) ?? undefined}>{gitHeadLabel(state.gitStatus)}</span>
           <button
             type="button"
             className="icon-button"

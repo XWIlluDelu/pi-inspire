@@ -334,8 +334,17 @@ warning capsule surface.
   its full bounded value remains in the hover title. Beside it the project
   location renders in mono `{typography.size-xs}` `faint` — folder name or full
   path per the `projectDisplay` preference — and clicking it copies the absolute
-  path. The model is never shown here. Identity owns the flexible width and
-  yields through ellipsis before neighboring chrome can collide.
+  path. A quiet Git control follows the project and deliberately reuses that
+  exact mono metadata grammar: branch (or detached/unborn identity) is always
+  shown at ordinary widths, a same-style `· N changes` suffix appears only when
+  non-clean, and activation opens detailed Git Changes in the context pane.
+  Ordinary changes remain neutral; a conflicted count is `error`, while an
+  otherwise stale status is `warning`, without changing the shared typography
+  or spacing. It is contextual identity rather than a runtime-status capsule.
+  On a phone the branch text yields to the session title and fixed actions, leaving
+  the Git glyph and any change count with the full state in its accessible name
+  and tooltip. The model is never shown here. Identity owns the flexible width
+  and yields through ellipsis before neighboring chrome can collide.
 - **Topbar status and actions** — runtime and extension status capsules remain
   in the leading cluster, immediately after session identity, while the action
   targets stay fixed at the right. Status is vertically centered; long extension
@@ -348,9 +357,10 @@ warning capsule surface.
   drawer begins beneath the 48px center topbar, so this one toggle remains
   above it and hit-testable by pointer, touch, and keyboard; the drawer adds
   one trailing close target inside its own header and a click-to-dismiss scrim.
-- **Context modes** — the right pane keeps Files, Changes, and Branches in one
-  compact mode switch rather than adding another workbench column. Branches
-  uses a bounded, vertically scrollable entry tree: role chips and one-line
+- **Context modes** — the right pane keeps Files, Changes, and History in one
+  compact mode switch rather than adding another workbench column. Changes is
+  Git working-tree inspection; History is Pi conversation history and branch
+  navigation, never Git branch selection. History uses a bounded, vertically scrollable entry tree: role chips and one-line
   snippets form the main row, active ancestry uses the accent rail, and the
   effective leaf is the only `aria-current` row. Switch uses the row itself;
   edit-from-here and fork are quiet trailing icon actions with confirmation.
@@ -517,7 +527,7 @@ project directory, attachment/reference limits, model/thinking/rename changes,
 preference persistence, and desktop-notification permission — use the warning
 variant rather than the session-wide error banner. Errors with their own retry
 surface remain there: open/create in navigation and the start surface, deletion
-in its confirmation dialog, and branch failures in the Branches pane.
+in its confirmation dialog, and branch failures in the History pane.
 
 Global banners sit under the topbar at Level 1 with `error-tint`/warning-tint
 backgrounds and a full-width hairline. Automatic reconnect and a snapshot

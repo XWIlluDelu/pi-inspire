@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitPathIdentity } from "../../shared/contracts";
 import { App } from "../../src/App";
@@ -113,7 +113,8 @@ describe("Files pane", () => {
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
     fireEvent.click(await screen.findByRole("button", { name: "Changes" }));
 
-    expect(await screen.findByText("feature/git")).toBeInTheDocument();
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    expect(within(pane).getByText("feature/git")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Conflicts/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Staged/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Unstaged/ })).toBeInTheDocument();
@@ -157,13 +158,14 @@ describe("Files pane", () => {
   it("keeps the last good branch visibly stale when refresh fails", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-    expect(await screen.findByText("feature/git")).toBeInTheDocument();
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    expect(within(pane).getByText("feature/git")).toBeInTheDocument();
     gitStatusFails = true;
     const refresh = screen.getByRole("button", { name: "Refresh Git status" });
     await waitFor(() => expect(refresh).not.toBeDisabled());
     fireEvent.click(refresh);
     expect(await screen.findByText(/Status is stale — Git timed out/)).toBeInTheDocument();
-    expect(screen.getByText("feature/git")).toBeInTheDocument();
+    expect(within(pane).getByText("feature/git")).toBeInTheDocument();
   });
 
   it("marks a missing reference from preflight before the row is selected", async () => {

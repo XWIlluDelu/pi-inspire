@@ -75,7 +75,7 @@ export function BranchTree() {
     return <div className="res__state" role="alert"><AlertTriangle size={16} aria-hidden /><p className="res__state-title">Branch history unavailable</p><p className="res__state-hint">{state.branchTreeError}</p><button type="button" className="button" onClick={() => void store.loadBranchTree()}>Retry</button></div>;
   }
   if (!tree) {
-    return <div className="res__state"><GitBranch size={18} aria-hidden /><p className="res__state-hint">Open a session to inspect its branches.</p></div>;
+    return <div className="res__state"><GitBranch size={18} aria-hidden /><p className="res__state-hint">Open a session to inspect its conversation history.</p></div>;
   }
   const blockedReason = state.branchActionId
     ? "Another branch action is in progress"
@@ -85,7 +85,7 @@ export function BranchTree() {
       ? "Resolve the session projection before acting"
       : null;
   return (
-    <div className="branch-tree" aria-label="Session branch history" aria-busy={state.branchTreeLoading || undefined}>
+    <div className="branch-tree" aria-label="Conversation history and branches" aria-busy={state.branchTreeLoading || undefined}>
       {state.branchTreeError ? <div className="branches__stale" role="status">{state.branchTreeError}</div> : null}
       {tree.health.status === "error" ? <div className="branches__stale" role="alert">{tree.health.message ?? "Projection failed"}</div> : null}
       <div className="branch-tree__toolbar">

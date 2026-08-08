@@ -4,6 +4,7 @@ import {
   Check,
   Clock,
   Command,
+  GitBranch,
   Loader2,
   PanelLeft,
   PanelRight,
@@ -33,6 +34,7 @@ import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { Wordmark } from "./components/Wordmark";
+import { gitChangeCount, gitHeadLabel } from "./git-presentation";
 import { isAbortableRunState, messageText, store, type ChatMessage, useAppState } from "./store";
 import { useCopied } from "./use-copied";
 
@@ -137,6 +139,47 @@ function StateChip({
   }
 }
 
+function GitSummary({ sessionId }: { sessionId: string }) {
+  const state = useAppState();
+  const observesRepository = state.gitStatus === null || state.gitStatus.kind === "repository";
+  useEffect(() => {
+    // The compact topbar indicator is a first-class Git surface, so its branch
+    // and dirty count remain current even while the detailed Changes pane is closed.
+    // Once Git has authoritatively said this workspace is not a repository, do
+    // not leave a background poll running for an indicator that cannot render.
+    if (!observesRepository) return;
+    store.setGitSurfaceVisible("topbar-git", true);
+    return () => store.setGitSurfaceVisible("topbar-git", false);
+  }, [observesRepository, sessionId]);
+
+  const branch = gitHeadLabel(state.gitStatus);
+  const changes = gitChangeCount(state.gitStatus);
+  if (!branch || changes === null) return null;
+
+  const conflictCount = state.gitStatus?.kind === "repository" ? state.gitStatus.groups.conflicted.length : 0;
+  const changeLabel = changes === 1 ? "1 change" : `${changes} changes`;
+  const conflictLabel = conflictCount === 1 ? "1 conflict" : `${conflictCount} conflicts`;
+  const statusLabel = changes > 0 ? [changeLabel, ...(conflictCount > 0 ? [conflictLabel] : [])].join(", ") : "Working tree clean";
+  const tone = state.gitStatusError ? "topbar__git--stale" : conflictCount > 0 ? "topbar__git--conflict" : "";
+  const staleLabel = state.gitStatusError ? " Status may be stale." : "";
+  return (
+    <button
+      type="button"
+      className={tone ? `topbar__git ${tone}` : "topbar__git"}
+      onClick={() => {
+        store.setResourcesOpen(true);
+        store.setContextMode("changes");
+      }}
+      aria-label={`Open Git changes: ${branch}, ${statusLabel}${state.gitStatusError ? ", status may be stale" : ""}`}
+      title={`${branch} · ${statusLabel} — open Changes.${staleLabel}`}
+    >
+      <GitBranch size={13} className="topbar__git-icon" aria-hidden />
+      <span className="topbar__git-branch">{branch}</span>
+      {changes > 0 ? <span className="topbar__git-count">{changeLabel}</span> : null}
+    </button>
+  );
+}
+
 function SessionIdent({ show }: { show: boolean }) {
   const state = useAppState();
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -218,26 +261,29 @@ function SessionIdent({ show }: { show: boolean }) {
           {heading}
         </button>
       </h1>
-      {state.cwd ? (
-        <button
-          type="button"
-          className="topbar__project"
-          onClick={() => void copy(state.cwd ?? "")}
-          title={copied ? "Copied" : `Copy path — ${state.cwd}`}
-          aria-label="Copy project path"
-        >
-          {/* The normal label remains the sole width authority. Copy feedback
-              overlays it, so a wider hidden message cannot extend hover chrome. */}
-          <span className={`topbar__project-label ${copied ? "topbar__project-label--copied" : ""}`}>
-            {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
-          </span>
-          <Check
-            size={11}
-            className={`topbar__project-feedback ${copied ? "topbar__project-feedback--visible" : ""}`}
-            aria-hidden
-          />
-        </button>
-      ) : null}
+      <div className="topbar__workspace-meta">
+        {state.cwd ? (
+          <button
+            type="button"
+            className="topbar__project"
+            onClick={() => void copy(state.cwd ?? "")}
+            title={copied ? "Copied" : `Copy path — ${state.cwd}`}
+            aria-label="Copy project path"
+          >
+            {/* The normal label remains the sole width authority. Copy feedback
+                overlays it, so a wider hidden message cannot extend hover chrome. */}
+            <span className={`topbar__project-label ${copied ? "topbar__project-label--copied" : ""}`}>
+              {state.prefs.projectDisplay === "path" ? state.cwd : state.project}
+            </span>
+            <Check
+              size={11}
+              className={`topbar__project-feedback ${copied ? "topbar__project-feedback--visible" : ""}`}
+              aria-hidden
+            />
+          </button>
+        ) : null}
+        <GitSummary sessionId={state.sessionId} />
+      </div>
     </div>
   );
 }

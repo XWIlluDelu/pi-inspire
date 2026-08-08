@@ -835,7 +835,7 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
     await waitFor(client, `document.querySelector('[aria-label="Files and resources"]') && document.querySelector('.ctx__branch')?.textContent.includes('benchmark/maintenance')`);
     const chromeAssertions = await client.evaluate<string[]>(`(() => {
       const result = [];
-      for (const label of ['Files', 'Changes', 'Branches']) {
+      for (const label of ['Files', 'Changes', 'History']) {
         const button = [...document.querySelectorAll('.ctx__modes button')].find(node => node.textContent === label);
         if (!button) throw new Error(label + ' tab absent');
         result.push(label);
@@ -938,8 +938,8 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
     const changesMs = (await client.evaluate<number>(`performance.now()`)) - changesStarted;
 
     const branchesStarted = await client.evaluate<number>(`performance.now()`);
-    await client.evaluate(`([...document.querySelectorAll('.ctx__modes button')].find(node => node.textContent === 'Branches')).click()`);
-    await waitFor(client, `document.querySelector('[aria-label="Session branch history"]')`);
+    await client.evaluate(`([...document.querySelectorAll('.ctx__modes button')].find(node => node.textContent === 'History')).click()`);
+    await waitFor(client, `document.querySelector('[aria-label="Conversation history and branches"]')`);
     const branchAssertions = await client.evaluate<string[]>(`(() => {
       window.confirm = () => true;
       const rows = [...document.querySelectorAll('.branch-row')];
@@ -1196,7 +1196,7 @@ export default {
         persistedMinimumBytes: PERSISTED_TARGET_BYTES,
         streamDeltas: STREAM_DELTAS,
         backgroundSettlements: BACKGROUND_SETTLEMENTS,
-        visibleSurfaces: ["Files", "Changes", "Branches", "session search", "transcript search", "pending queues", "branch navigation"],
+        visibleSurfaces: ["Files", "Changes", "History", "session search", "transcript search", "pending queues", "branch navigation"],
       },
       thresholds,
       decisionRule: {
@@ -1249,7 +1249,7 @@ export default {
           expectedRequests: EXPECTED_SCENARIO_REQUESTS,
           requestDerivation: {
             branchNavigate: "one edit-from-here action",
-            branchTree: "initial Branches load plus post-navigation reload",
+            branchTree: "initial History load plus post-navigation reload",
             gitDiff: "changed-row selection plus selected-diff reload after explicit status refresh",
             gitStatus: "Changes entry plus explicit refresh plus settled tool refresh",
             prompt: "one submitted streaming prompt",

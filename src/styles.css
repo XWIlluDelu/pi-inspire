@@ -1405,6 +1405,14 @@ a {
   overflow: hidden;
 }
 
+.topbar__workspace-meta {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .topbar__title {
   flex: 1 1 auto;
   margin: 0;
@@ -1416,14 +1424,14 @@ a {
   white-space: nowrap;
 }
 
-.topbar__project {
-  flex: 0 1 auto;
-  position: relative;
+/* Project and Git are peer workspace identifiers. Keep one visual grammar so
+   Git state reads as location context, not a second runtime-status system. */
+.topbar__project,
+.topbar__git {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
-  max-width: 360px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -1433,6 +1441,12 @@ a {
   color: var(--faint);
   transition: color var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__project {
+  flex: 0 1 auto;
+  position: relative;
+  max-width: 360px;
 }
 
 .topbar__project-label {
@@ -1464,9 +1478,51 @@ a {
   transform: translate(-50%, -50%) scale(1);
 }
 
-.topbar__project:hover {
+.topbar__project:hover,
+.topbar__git:hover {
   color: var(--muted);
   background: var(--bg-inset);
+}
+
+.topbar__git {
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  max-width: 180px;
+  cursor: pointer;
+}
+
+.topbar__git-icon {
+  flex: 0 0 auto;
+}
+
+.topbar__git-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__git-count {
+  flex: 0 0 auto;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar__git-count::before {
+  content: "·";
+  margin-right: var(--space-1);
+  color: inherit;
+}
+
+/* Ordinary changes remain location context. Color is reserved for the two
+   exceptional states that need recognition before opening the Changes pane. */
+.topbar__git--conflict .topbar__git-count {
+  color: var(--error);
+}
+
+.topbar__git--stale {
+  color: var(--warning);
 }
 
 .topbar__title-button {
@@ -4912,6 +4968,10 @@ body.srail-dragging {
   .topbar__project {
     max-width: 240px;
   }
+
+  .topbar__git {
+    max-width: 140px;
+  }
 }
 
 @media (max-width: 900px) {
@@ -5010,6 +5070,22 @@ body.srail-dragging {
 
   .topbar__project,
   .topbar__extension-status {
+    display: none;
+  }
+
+  /* Preserve workspace-change awareness without competing with the session
+     title and fixed topbar actions on a phone-sized bar. */
+  .topbar__git {
+    flex: 0 0 auto;
+    max-width: none;
+    padding-inline: 3px;
+  }
+
+  .topbar__git-branch {
+    display: none;
+  }
+
+  .topbar__git-count::before {
     display: none;
   }
 
