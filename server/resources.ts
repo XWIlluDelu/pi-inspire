@@ -195,6 +195,13 @@ function referencedBySession(context: ResourceContext, messages: unknown[], requ
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
 
+  /** Project every reference in the visible branch without exposing message
+   * content. This is the Files pane's complete-list authority; transcript
+   * pagination must not silently truncate the disclosure result. */
+  async list(context: ResourceContext) {
+    return collectSessionResourceReferences(await contextMessages(context));
+  }
+
   /** Check the bounded Files-pane projection without retaining opaque content
    * handles. Citation-backed references share one lazy transcript load. */
   async probe(context: ResourceContext, references: string[]): Promise<ResourceProbeResult[]> {

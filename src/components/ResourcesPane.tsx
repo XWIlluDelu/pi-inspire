@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ChevronDown,
   File,
   FileCode,
   FileSearch,
@@ -13,8 +14,16 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GitDiffSide, GitFileChange, ResourceKind, ResourceProbeResult } from "../../shared/contracts";
 import { formatBytes } from "../format";
-import { gitHeadLabel, presentGitFacet } from "../git-presentation";
-import { collectResources, MAX_RESOURCE_ROWS, resourceIcon, type ResourceIcon, type ResourceRow } from "../resources";
+import { gitDecorationForChange, gitHeadLabel, presentGitFacet } from "../git-presentation";
+import {
+  collectResources,
+  MAX_RESOURCE_ROWS,
+  mergeResourceRows,
+  resourceIcon,
+  resourceRows,
+  type ResourceIcon,
+  type ResourceRow,
+} from "../resources";
 import {
   gitChangeForWorkspacePath,
   MAX_MEDIA_PREVIEW_BYTES,
@@ -36,7 +45,14 @@ const ICONS: Record<ResourceIcon, typeof File> = {
 
 function GitMark({ change }: { change: GitFileChange | undefined }) {
   const status = presentGitFacet(change);
-  return status ? <span className="git-mark" aria-label={status.label} title={status.label}>{status.mark}</span> : null;
+  const decoration = gitDecorationForChange(change);
+  return status ? (
+    <span
+      className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
+      aria-label={status.label}
+      title={status.label}
+    >{status.mark}</span>
+  ) : null;
 }
 
 function availabilityLabel(availability: ResourceProbeResult | undefined): string | null {
@@ -67,6 +83,9 @@ function ResourceListRow({ row }: { row: ResourceRow }) {
     availability?.availability === "unavailable" || availability?.availability === "invalid";
   const Icon = ICONS[resourceIcon(row)];
   const change = gitChangeForWorkspacePath(state.gitStatus, reference);
+  // An unresolvable reference keeps the missing style; git state is moot for
+  // a file that cannot be opened.
+  const decoration = unavailable ? null : gitDecorationForChange(change);
   return (
     <button
       type="button"
@@ -76,7 +95,7 @@ function ResourceListRow({ row }: { row: ResourceRow }) {
       onClick={() => void store.openResource(reference)}
     >
       <Icon size={13} aria-hidden />
-      <span className="res__row-name">{row.name}</span>
+      <span className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}>{row.name}</span>
       <GitMark change={change} />
       <span className="res__row-source">
         {availabilitySource ?? (row.source === "tool" ? (row.toolName ?? "tool") : row.source)}
@@ -434,10 +453,49 @@ export function ResourcesPane() {
     store.setGitSurfaceVisible("resources-pane", true);
     return () => store.setGitSurfaceVisible("resources-pane", false);
   }, []);
-  // Extraction is a pure pass over the visible messages; recompute only when
-  // the message list itself changes. The pane presents the most recent
-  // references, never an unbounded list.
-  const resources = useMemo(() => collectResources(state.messages, MAX_RESOURCE_ROWS), [state.messages]);
+  // Recent messages update immediately while the host projects the complete
+  // visible branch independently of transcript pagination. Matching view ids
+  // prevent an old request from leaking rows across navigation.
+  const recentResources = useMemo(() => collectResources(state.messages), [state.messages]);
+  const [completeList, setCompleteList] = useState<{
+    revision: number;
+    response: NonNullable<Awaited<ReturnType<typeof store.loadSessionResources>>>;
+  } | null>(null);
+  const [failedViewKey, setFailedViewKey] = useState<string | null>(null);
+  const [listRetry, setListRetry] = useState(0);
+  const viewKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}`;
+  useEffect(() => {
+    if (state.contextMode !== "files") return;
+    const request = new AbortController();
+    const revision = state.transcriptRevision;
+    void store.loadSessionResources(request.signal).then((response) => {
+      if (!response || request.signal.aborted) return;
+      setCompleteList({ revision, response });
+      setFailedViewKey(null);
+    }).catch(() => {
+      if (!request.signal.aborted) setFailedViewKey(viewKey);
+    });
+    return () => request.abort();
+  }, [state.contextMode, state.sessionId, state.transcriptViewId, state.transcriptRevision, listRetry, viewKey]);
+  const completeMatches = Boolean(
+    completeList && completeList.revision === state.transcriptRevision &&
+    completeList.response.sessionId === state.sessionId && completeList.response.viewId === state.transcriptViewId,
+  );
+  const baselineResources = useMemo(
+    () => completeMatches && completeList ? resourceRows(completeList.response.resources) : [],
+    [completeList, completeMatches],
+  );
+  const allResources = useMemo(
+    () => mergeResourceRows(recentResources, baselineResources),
+    [recentResources, baselineResources],
+  );
+  const completeKnown = completeMatches || !state.hasOlderMessages;
+  const [expandedViewKey, setExpandedViewKey] = useState<string | null>(null);
+  const showAllFiles = completeKnown && expandedViewKey === viewKey;
+  const resources = useMemo(
+    () => showAllFiles ? allResources : allResources.slice(0, MAX_RESOURCE_ROWS),
+    [allResources, showAllFiles],
+  );
   useEffect(() => {
     void store.probeResources(resources.map((row) => row.reference ?? row.label));
   }, [state.sessionId, state.transcriptViewId, resources]);
@@ -499,8 +557,29 @@ export function ResourcesPane() {
         ) : (
           <div className="res__list" aria-label="Referenced files">
             {resources.map((row) => <ResourceListRow key={row.key} row={row} />)}
-            {resources.length === MAX_RESOURCE_ROWS ? (
-              <p className="res__list-note">Most recent {MAX_RESOURCE_ROWS}. Earlier files stay in the transcript and the workspace explorer.</p>
+            {completeKnown && allResources.length > MAX_RESOURCE_ROWS ? (
+              <button
+                type="button"
+                className="res__more"
+                aria-expanded={showAllFiles}
+                onClick={() => setExpandedViewKey(showAllFiles ? null : viewKey)}
+              >
+                <ChevronDown size={12} className={`chev-flip ${showAllFiles ? "chev-flip--open" : ""}`} aria-hidden />
+                Earlier files ({allResources.length - MAX_RESOURCE_ROWS})
+              </button>
+            ) : !completeKnown && failedViewKey === viewKey ? (
+              <button type="button" className="res__more" onClick={() => {
+                setFailedViewKey(null);
+                setListRetry((value) => value + 1);
+              }}>
+                <RefreshCw size={12} aria-hidden />
+                Retry earlier files
+              </button>
+            ) : !completeKnown ? (
+              <div className="res__more res__more--status" role="status">
+                <Loader2 size={12} className="spin" aria-hidden />
+                Earlier files
+              </div>
             ) : null}
           </div>
         )

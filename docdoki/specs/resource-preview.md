@@ -2,6 +2,7 @@
 purpose: Pi conversation references resolve into an authenticated, session-bound resource list and a defensive right-pane preview rather than unrestricted browser filesystem access.
 covers:
   - shared/contracts.ts
+  - shared/resource-references.ts
   - server/resources.ts
   - server/project-files.ts
   - server/app.ts
@@ -31,7 +32,7 @@ Make files and artifacts referenced during Pi work inspectable beside the conver
 
 ## Checks
 
-- The right contextual region presents files and resources referenced by the selected session, and selecting a reference opens its preview in that region. The list is a bounded recent-first projection: it presents at most an explicit number of references and says so, rather than implying the earlier ones are gone — the transcript and the workspace explorer stay the complete routes. The bound belongs to that projection alone; authorization still reads the session's complete reference set.
+- The right contextual region presents files and resources referenced by the selected session, and selecting a reference opens its preview in that region. The list is recent-first: it presents the most recent references and, when earlier ones exist, a trailing disclosure row ("Earlier files (N)" with a flipping chevron) expands the full set in place inside the list's existing bounded scroll region — the affordance itself carries the "this is partial" semantics, no explanatory note. The host derives that complete list from the selected branch projection independently of transcript pagination; the browser merges the current page ahead of it so live references appear immediately, and accepts a response only while session, branch view, and transcript revision still match. The bound belongs to presentation alone; authorization continues to read the complete branch reference set.
 - Resource discovery understands Pi’s structured tool path arguments, embedded image content, CLI `<file name="…">` references, explicit local Markdown links and images, `file://` links, and credible inline local path references without treating remote web URLs as local files.
 - Relative references resolve against the owning session’s project directory. A local file becomes previewable through exactly two authorities: an exact reference in the owning session’s authoritative message projection, or membership in the session workspace’s project index (the same index behind composer file search and the navigation explorer). Index authority ends at the workspace realpath boundary — an indexed symlink never opens an outside file — and ignored trees such as `node_modules` are reachable only through an explicit transcript reference.
 - A bare name is shorthand, not a location claim: when no file sits where it literally points, the host recovers it through the owning workspace's project index only if exactly one indexed file carries that name, and answers with the location it actually opened. Several matches are returned as candidates for the user to choose between; a reference carrying a directory part of its own is never recovered, and index recovery never borrows a citation's authority to leave the workspace.

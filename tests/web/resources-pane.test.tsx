@@ -76,6 +76,11 @@ describe("Files pane", () => {
           { kind: "add", text: "+new", oldLine: null, newLine: 1 },
         ] });
       }
+      if (url.startsWith("/api/resources/list")) {
+        const resources = ["notes.md", "demo.html", ...Array.from({ length: 9 }, (_, index) => `old-${index + 1}.md`)]
+          .map((reference) => ({ key: `file:${reference}`, reference, label: reference, source: "link" as const }));
+        return Response.json({ sessionId: "s1", viewId: "view-s1", resources });
+      }
       if (url.startsWith("/api/resources/probe")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as { references: string[] };
         return Response.json({
@@ -120,6 +125,7 @@ describe("Files pane", () => {
     expect(screen.getByRole("heading", { name: /Unstaged/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Untracked/ })).toBeInTheDocument();
     expect(screen.getByLabelText("Untracked — not yet added to Git")).toHaveTextContent("U");
+    expect(screen.getByLabelText("Untracked — not yet added to Git")).toHaveClass("git-deco--untracked");
     expect(screen.getByText("Showing first 11 of 1005 changed paths.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "both.ts, staged modified" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "both.ts, unstaged modified" })).toBeInTheDocument();
@@ -168,6 +174,25 @@ describe("Files pane", () => {
     expect(within(pane).getByText("feature/git")).toBeInTheDocument();
   });
 
+  it("reveals the complete earlier-file set in the bounded list and can collapse it again", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
+
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    const list = within(pane).getByLabelText("Referenced files");
+    expect(list.querySelectorAll(".res__row")).toHaveLength(8);
+    const toggle = within(pane).getByRole("button", { name: "Earlier files (3)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(list.querySelectorAll(".res__row")).toHaveLength(11);
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(list.querySelectorAll(".res__row")).toHaveLength(8);
+  });
+
   it("marks a missing reference from preflight before the row is selected", async () => {
     missingProbeReference = "demo.html";
     render(<App />);
@@ -185,7 +210,10 @@ describe("Files pane", () => {
 
     expect(await screen.findByRole("complementary", { name: "Files and resources" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Previewed notes" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /notes\.md.*unstaged modified/i })).toBeInTheDocument();
+    const notesRow = screen.getByRole("button", { name: /notes\.md.*unstaged modified/i });
+    expect(notesRow).toBeInTheDocument();
+    expect(notesRow.querySelector(".res__row-name")).toHaveClass("git-deco--modified");
+    expect(within(notesRow).getByLabelText("unstaged modified")).toHaveClass("git-deco--modified");
     expect(screen.queryByText("Session ID")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Pi" })).toHaveAttribute("target", "_blank");
 

@@ -3752,12 +3752,32 @@ body.pane-resizing .nav {
   overflow-y: auto;
 }
 
-/* The list is a bounded recent-first projection; the note says so rather than
-   letting the cap read as "these are all the files". */
-.res__list-note {
-  margin: var(--space-1) 0 0;
-  padding: 0 var(--space-2);
+/* The list is a bounded, recent-first projection; the disclosure row carries
+   both the "there is more" semantics and the action, replacing any note. */
+.res__more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
   font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+button.res__more:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.res__more--status {
+  cursor: default;
   color: var(--faint);
 }
 

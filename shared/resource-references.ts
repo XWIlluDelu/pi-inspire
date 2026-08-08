@@ -44,6 +44,13 @@ export interface SessionResourceReference {
   mimeType?: string;
 }
 
+/** Browser-safe, complete reference projection for one visible branch view. */
+export interface SessionResourceListResponse {
+  sessionId: string;
+  viewId: string;
+  resources: SessionResourceReference[];
+}
+
 function trimReference(value: string): string {
   let result = value.trim();
   if (result.startsWith("<") && result.endsWith(">")) result = result.slice(1, -1).trim();

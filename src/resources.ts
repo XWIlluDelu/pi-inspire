@@ -26,16 +26,15 @@ export function resourceIcon(row: Pick<ResourceRow, "extension" | "mimeType">): 
   return "file";
 }
 
-/** How many recent references the files pane presents. The pane is a
- * recent-first product projection, not the authority: older references stay
- * reachable through the transcript and the workspace explorer. */
+/** How many recent references the collapsed files pane presents. Earlier
+ * references remain available through its disclosure row. */
 export const MAX_RESOURCE_ROWS = 8;
 
 /** Derive the deduplicated, recent-first resource list for the visible
  * session's messages. Extraction rules live in the shared pure module; this
  * only adds presentation metadata. */
-export function collectResources(messages: readonly unknown[], limit?: number): ResourceRow[] {
-  return collectSessionResourceReferences(messages, limit).map((reference) => {
+export function resourceRows(references: readonly SessionResourceReference[]): ResourceRow[] {
+  return references.map((reference) => {
     const displayReference = reference.label.replace(/[?#].*$/u, "").replace(/:\d+(?::\d+)?$/, "");
     const rawBasename = displayReference.split(/[\\/]/).pop() || displayReference;
     let basename = rawBasename;
@@ -50,5 +49,24 @@ export function collectResources(messages: readonly unknown[], limit?: number): 
       name: reference.source === "embedded" ? reference.label : basename,
       extension,
     };
+  });
+}
+
+export function collectResources(messages: readonly unknown[], limit?: number): ResourceRow[] {
+  return resourceRows(collectSessionResourceReferences(messages, limit));
+}
+
+/** Merge a current-page projection ahead of the server's complete baseline.
+ * Keys are extractor-owned stable identities; recent rows win so live tool
+ * metadata is never replaced by an older snapshot. */
+export function mergeResourceRows(
+  recent: readonly ResourceRow[],
+  baseline: readonly ResourceRow[],
+): ResourceRow[] {
+  const seen = new Set<string>();
+  return [...recent, ...baseline].filter((row) => {
+    if (seen.has(row.key)) return false;
+    seen.add(row.key);
+    return true;
   });
 }
