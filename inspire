@@ -101,7 +101,9 @@ do_build() {
     return 0
   fi
   echo "Building client…"
-  npm run build
+  # Retain build failures and warnings without printing hundreds of Unicode-range
+  # font assets during an ordinary source launch.
+  npm run build -- --logLevel warn
   printf '%s\n' "$(source_hash)" > dist/.inspire-build
 }
 
