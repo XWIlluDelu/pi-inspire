@@ -59,7 +59,12 @@ import { projectSafeValue } from "./safe-projection.js";
 const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
 const BRANCH_BRIDGE_TIMEOUT_MS = 15_000;
-const BRANCH_EXTENSION_PATH = fileURLToPath(new URL("./extensions/inspire-branch-bridge.ts", import.meta.url));
+const BRANCH_EXTENSION_PATH = fileURLToPath(new URL(
+  fileURLToPath(import.meta.url).endsWith(".ts")
+    ? "./extensions/inspire-branch-bridge.ts"
+    : "./extensions/inspire-branch-bridge.js",
+  import.meta.url,
+));
 const MAX_PROMPT_CHARS = 500_000;
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
@@ -305,7 +310,7 @@ class PreviewProjection extends EventEmitter implements SessionProjectionView {
 
   async reconcile(_force = false): Promise<ProjectionReconcileResult> {
     return {
-      changed: false, initialMaterialization: false, kind: "none", previousRevision: 1, revision: 1,
+      changed: false, initialMaterialization: false, kind: "none", messageChange: "none", previousRevision: 1, revision: 1,
       previousFingerprint: this.fingerprint, fingerprint: this.fingerprint, healthChanged: false,
       sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
       uncommittedBytes: 0, previousUncommittedBytes: 0, previousTailVerified: true,
@@ -1075,7 +1080,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const projection = slot.projection;
     if (!projection || this.closing) return;
     if (result.changed) slot.branchRevision += 1;
-    if (result.changed && result.kind === "rewrite") this.renewView(slot);
+    if (result.messageChange === "replace") this.renewView(slot);
     const previousConflict = slot.conflict;
     const priorPartial = slot.pendingPartialPersistence;
     const expectedSourceVersion = priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
@@ -1224,6 +1229,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         startupAttestation,
         changed: result.changed,
         changeKind: result.kind,
+        messageChange: result.messageChange,
         healthChanged: result.healthChanged,
         sourceChanged: result.sourceChanged,
         previousRevision: result.previousRevision,
@@ -1582,11 +1588,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return slot;
   }
 
-  private statusFor(slot: RuntimeSlot): SessionRuntimeStatus {
+  private statusFor(slot: RuntimeSlot, selectedSessionId = this.selectedSessionId): SessionRuntimeStatus {
     let indicator: SessionRuntimeStatus["indicator"];
     if (isBusyRunState(slot.runState)) {
       indicator = "running";
-    } else if (slot.conflict && slot.id !== this.selectedSessionId) {
+    } else if (slot.conflict && slot.id !== selectedSessionId) {
       indicator = slot.conflict.kind === "external-change" ? "attention" : "failed";
     } else {
       indicator = slot.attention ?? undefined;
@@ -1594,8 +1600,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return { runState: slot.runState, ...(indicator ? { indicator } : {}) };
   }
 
-  private sessionStatuses(): Record<string, SessionRuntimeStatus> {
-    return Object.fromEntries([...this.slots].map(([id, slot]) => [id, this.statusFor(slot)]));
+  private sessionStatuses(selectedSessionId = this.selectedSessionId): Record<string, SessionRuntimeStatus> {
+    return Object.fromEntries([...this.slots].map(([id, slot]) => [id, this.statusFor(slot, selectedSessionId)]));
   }
 
   private emitSlotEvent(slot: RuntimeSlot, event: unknown): void {
@@ -1933,7 +1939,40 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private previewSnapshot(slot: RuntimeSlot): ActiveSnapshot {
+  private async readRuntimeExtras(slot: RuntimeSlot, rpc: PiRpcProcess): Promise<{
+    stats: unknown;
+    models: unknown[];
+    commands: unknown[];
+  }> {
+    const [stats, models, commands] = await Promise.all([
+      rpc.request({ type: "get_session_stats" }).catch(() => undefined),
+      slot.availableModels
+        ? Promise.resolve(slot.availableModels)
+        : rpc.request<{ models: unknown[] }>({ type: "get_available_models" }).then(
+            (result) => (slot.availableModels = result.models),
+            () => [],
+          ),
+      slot.commands
+        ? Promise.resolve(slot.commands)
+        : rpc.request<{ commands: unknown[] }>({ type: "get_commands" }).then(
+            (result) => {
+              const reserved = slot.bridge?.command;
+              return (slot.commands = result.commands.filter((command) => {
+                if (!reserved || !command || typeof command !== "object") return true;
+                const record = command as Record<string, unknown>;
+                return record.name !== reserved && record.invocationName !== reserved;
+              }));
+            },
+            () => [],
+          ),
+    ]);
+    return { stats, models, commands };
+  }
+
+  private previewSnapshot(
+    slot: RuntimeSlot,
+    sessionStatuses: Record<string, SessionRuntimeStatus> = this.sessionStatuses(),
+  ): ActiveSnapshot {
     if (!slot.preview || !slot.projection) throw new Error("Session projection is not available");
     const effectiveLeafId = this.effectiveLeaf(slot);
     const page = slot.projection.latestPage(slot.overlay, effectiveLeafId, slot.viewId);
@@ -1953,7 +1992,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
-      sessionStatuses: this.sessionStatuses(),
+      sessionStatuses,
       pendingExtensionUiRequests: this.pendingExtensionUiRequests(slot),
       pendingQueues: slot.pendingQueues,
       extensionDisplays: slot.extensionDisplays,
@@ -2374,10 +2413,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!session) throw Object.assign(new Error("Session not found"), { status: 404 });
 
       const slot = await this.prepareSlot(session);
+      const ready = Boolean(slot.process && slot.ready);
+      const snapshot = ready ? await this.snapshotSlot(slot) : this.previewSnapshot(slot);
       if (selection === this.selectionSequence) {
         const previousSessionId = this.selectedSessionId;
         this.selectedSessionId = slot.id;
         slot.attention = null;
+        snapshot.sessionStatuses = this.sessionStatuses();
         this.touch(slot);
         this.diagnostics.record("info", "session_selected", {
           sessionId: slot.id,
@@ -2388,10 +2430,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         this.scheduleIdleWorkerEviction();
       }
-      if (slot.process && slot.ready) return this.snapshotSlot(slot);
-
-      const snapshot = this.previewSnapshot(slot);
-      void this.ensureProcess(slot).catch(() => undefined);
+      if (!ready) void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
       const remaining = (this.selectionReservations.get(id) ?? 1) - 1;
@@ -2595,6 +2634,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       viewId: bridgeToken("view"),
     };
     const provisionalId = slot.id;
+    let committed = false;
+    let committedSnapshot: ActiveSnapshot | null = null;
     let finishProvisional!: () => void;
     const completion = new Promise<void>((resolveCompletion) => { finishProvisional = resolveCompletion; });
     this.provisionalSlots.set(provisionalId, { slot, completion });
@@ -2686,8 +2727,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.pendingExtensionUiRequests = new Map(
         [...slot.pendingExtensionUiRequests].map(([id, request]) => [id, { ...request, sessionId }]),
       );
+      const extras = await this.readRuntimeExtras(slot, rpc);
+      this.assertNotClosing();
+      slot.preview = {
+        ...slot.preview,
+        ...(typeof state.sessionName === "string" ? { sessionName: state.sessionName } : {}),
+        stats: extras.stats,
+        availableModels: extras.models,
+        commands: extras.commands,
+      };
+      committedSnapshot = this.previewSnapshot(slot, {
+        ...this.sessionStatuses(selection === this.selectionSequence ? sessionId : this.selectedSessionId),
+        [sessionId]: this.statusFor(slot, selection === this.selectionSequence ? sessionId : this.selectedSessionId),
+      });
       this.provisionalSlots.delete(provisionalId);
       this.slots.set(sessionId, slot);
+      committed = true;
       if (selection === this.selectionSequence) {
         const previousSessionId = this.selectedSessionId;
         this.selectedSessionId = sessionId;
@@ -2713,9 +2768,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         created: true,
       });
       this.emitSlotEvent(slot, { type: "runtime_ready" });
-      return this.snapshotSlot(slot);
+      return committedSnapshot;
     } catch (error) {
       const failure = slot.startupError ?? error;
+      if (committed && committedSnapshot) {
+        this.logRuntimeError(slot.id, failure, "new_session_post_commit");
+        return committedSnapshot;
+      }
       this.provisionalSlots.delete(provisionalId);
       const stillOwned = slot.process === rpc;
       slot.process = null;
@@ -3079,6 +3138,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
       let destinationProjection: SessionProjectionView | null = null;
       let attachedDestination: RuntimeSlot | null = null;
+      let committed = false;
+      let committedResponse: BranchForkResponse | null = null;
       try {
         destinationProjection = await this.openForkProjection({
           id: destinationId,
@@ -3090,6 +3151,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           firstMessage: "",
           searchText: "",
         });
+        const extras = await this.readRuntimeExtras(source, rpc);
         // Recheck and attach without yielding afterward. JavaScript's
         // run-to-completion semantics make this the atomic
         // reservation-to-owner transition.
@@ -3106,7 +3168,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         }
 
         const destinationViewId = bridgeToken("view");
+        const sourceViewId = bridgeToken("view");
         const page = destinationProjection.latestPage([], destinationProjection.leafId, destinationViewId);
+        const reboundRequests = new Map(
+          [...source.pendingExtensionUiRequests]
+            .filter(([id]) => source.pendingExtensionUiOwners.get(id) === rpc)
+            .map(([id, request]) => [id, { ...request, sessionId: destinationId } as ExtensionUiRequest]),
+        );
         const destination: RuntimeSlot = {
           id: destinationId,
           cwd: source.cwd,
@@ -3128,21 +3196,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             messages: page.messages,
             transcriptPage: page,
             projectionHealth: destinationProjection.health,
-            availableModels: [],
-            commands: [],
+            stats: extras.stats,
+            availableModels: extras.models,
+            commands: extras.commands,
           },
           projection: destinationProjection,
           runState: "idle",
           attention: null,
-          pendingExtensionUiRequests: new Map(),
+          pendingExtensionUiRequests: reboundRequests,
           pendingExtensionUiOwners: new Map(),
           pendingExtensionUiTimers: new Map(),
           extensionResponseTail: Promise.resolve(),
           extensionResponsePending: 0,
           pendingQueues: source.pendingQueues,
           extensionDisplays: source.extensionDisplays,
-          availableModels: null,
-          commands: null,
+          availableModels: extras.models,
+          commands: extras.commands,
           lastUsed: ++this.useSequence,
           activeOperations: 0,
           workerProjectionRevision: destinationProjection.revision,
@@ -3175,12 +3244,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           incarnationId: bridgeToken("slot"),
           viewId: destinationViewId,
         };
+        const selectedAfterCommit = this.selectedSessionId === source.id && this.selectionSequence === selectionAtDispatch
+          ? destinationId
+          : this.selectedSessionId;
+        const snapshot = this.previewSnapshot(destination, {
+          ...this.sessionStatuses(selectedAfterCommit),
+          [destinationId]: this.statusFor(destination, selectedAfterCommit),
+        });
+        committedResponse = { sessionId: destinationId, snapshot, editorText };
+        this.attachProjection(destination, destinationProjection);
 
         source.process = null;
         source.ready = false;
         source.bridge = null;
         source.navigationLease = null;
-        this.renewView(source);
+        source.viewId = sourceViewId;
         this.rebindPendingExtensionUi(source, destination, rpc);
         source.pendingQueues = emptyPendingQueues();
         source.extensionDisplays = [];
@@ -3193,20 +3271,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.slots.set(destinationId, destination);
         attachedDestination = destination;
         this.processOwners.set(rpc, destination);
-        this.attachProjection(destination, destinationProjection);
         if (this.selectedSessionId === source.id && this.selectionSequence === selectionAtDispatch) {
           this.selectedSessionId = destinationId;
           this.selectionSequence += 1;
         }
+        committed = true;
         const buffered = destination.bufferedEvents.slice();
         this.replayBufferedEvents(destination, rpc, buffered);
         this.catalog.invalidate();
         this.emitSlotEvent(destination, { type: "runtime_ready", forkedFrom: source.id });
         this.scheduleIdleWorkerEviction();
-        const snapshot = await this.snapshotSlot(destination);
         reservation.release();
-        return { sessionId: destinationId, snapshot, editorText };
+        return committedResponse;
       } catch (error) {
+        if (committed && committedResponse) {
+          this.logRuntimeError(destinationId, error, "fork_post_commit");
+          return committedResponse;
+        }
         if (attachedDestination) {
           if (this.slots.get(destinationId) === attachedDestination) this.slots.delete(destinationId);
           if (this.selectedSessionId === destinationId) this.selectedSessionId = source.id;
@@ -3404,29 +3485,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.reconcileSlot(slot, true);
       const rpc = slot.process;
       if (!rpc || !slot.ready) return this.previewSnapshot(slot);
-      const [state, stats, models, commands] = await Promise.all([
+      const [state, extras] = await Promise.all([
         rpc.request<Record<string, unknown>>({ type: "get_state" }),
-        rpc.request({ type: "get_session_stats" }).catch(() => undefined),
-        slot.availableModels
-          ? Promise.resolve(slot.availableModels)
-          : rpc.request<{ models: unknown[] }>({ type: "get_available_models" }).then(
-              (result) => (slot.availableModels = result.models),
-              () => [],
-            ),
-        slot.commands
-          ? Promise.resolve(slot.commands)
-          : rpc.request<{ commands: unknown[] }>({ type: "get_commands" }).then(
-              (result) => {
-                const reserved = slot.bridge?.command;
-                return (slot.commands = result.commands.filter((command) => {
-                  if (!reserved || !command || typeof command !== "object") return true;
-                  const record = command as Record<string, unknown>;
-                  return record.name !== reserved && record.invocationName !== reserved;
-                }));
-              },
-              () => [],
-            ),
+        this.readRuntimeExtras(slot, rpc),
       ]);
+      const { stats, models, commands } = extras;
       slot.sessionPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : slot.sessionPath;
       if (!slot.projection) throw new Error("Session projection is not available");
       const effectiveLeafId = this.effectiveLeaf(slot);
@@ -3491,25 +3554,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!slot || slot.id !== sessionId) {
       throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
     }
-    const viewId = slot.viewId;
-    return {
-      sessionId: slot.id,
-      viewId,
-      cwd: slot.cwd,
-      loadMessages: () => this.resourceMessages(slot, viewId),
-    };
-  }
-
-  private async resourceMessages(slot: RuntimeSlot, viewId: string): Promise<unknown[]> {
     return this.useSlot(slot, async () => {
-      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId) {
-        throw Object.assign(new Error("The resource does not belong to the visible branch view"), { status: 409 });
+      if (this.selectedSessionId !== slot.id) {
+        throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
       }
       await this.reconcileSlot(slot, true);
-      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId) {
+      if (this.selectedSessionId !== slot.id || !slot.projection) {
         throw Object.assign(new Error("The resource does not belong to the visible branch view"), { status: 409 });
       }
-      return [...(slot.projection?.viewMessages(this.effectiveLeaf(slot)) ?? [])];
+      const viewId = slot.viewId;
+      const revision = slot.projection.revision;
+      return {
+        sessionId: slot.id,
+        viewId,
+        revision,
+        cwd: slot.cwd,
+        loadMessages: () => this.resourceMessages(slot, viewId, revision),
+      };
+    });
+  }
+
+  private async resourceMessages(slot: RuntimeSlot, viewId: string, revision: number): Promise<unknown[]> {
+    return this.useSlot(slot, async () => {
+      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId || slot.projection?.revision !== revision) {
+        throw Object.assign(new Error("The resource does not belong to the visible branch revision"), { status: 409 });
+      }
+      await this.reconcileSlot(slot, true);
+      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId || slot.projection?.revision !== revision) {
+        throw Object.assign(new Error("The resource does not belong to the visible branch revision"), { status: 409 });
+      }
+      return [...slot.projection.viewMessages(this.effectiveLeaf(slot))];
     });
   }
 

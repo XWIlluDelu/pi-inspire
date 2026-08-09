@@ -222,8 +222,14 @@ export function createApi(token: string | null = null) {
     browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
     browseHostDirs: (path?: string) =>
       request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
-    listResources: (sessionId: string, signal?: AbortSignal) =>
-      post<SessionResourceListResponse>(token, "/api/resources/list", { sessionId }, { signal }),
+    listResources: (
+      sessionId: string,
+      options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+    ) => post<SessionResourceListResponse>(token, "/api/resources/list", {
+      sessionId,
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      ...(options.limit ? { limit: options.limit } : {}),
+    }, { signal: options.signal }),
     probeResources: (sessionId: string, references: string[], signal?: AbortSignal) =>
       post<ResourceProbeResponse>(token, "/api/resources/probe", { sessionId, references }, { signal }),
     resolveResource: (sessionId: string, reference: string, signal?: AbortSignal) =>

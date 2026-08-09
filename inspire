@@ -10,8 +10,27 @@
 #   ./inspire build    build only
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+  link_target="$(readlink "$script_path")"
+  if [[ "$link_target" == /* ]]; then
+    script_path="$link_target"
+  else
+    script_path="$script_dir/$link_target"
+  fi
+done
+root="$(cd "$(dirname "$script_path")" && pwd)"
 cd "$root"
+
+source_runtime="$root/server/index.ts"
+release_runtime="$root/build/server/index.js"
+instance_state="$root/server/instance-state.mjs"
+distribution=0
+if [[ ! -f "$source_runtime" && -f "$release_runtime" ]]; then
+  distribution=1
+  instance_state="$root/build/server/instance-state.mjs"
+fi
 
 mode="${1:-start}"
 instance_host=""
@@ -25,6 +44,10 @@ launcher_lock_owned=0
 need_node() {
   if ! command -v node >/dev/null 2>&1; then
     echo "Node.js is required (22.19+)." >&2
+    exit 1
+  fi
+  if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || major === 22 && minor >= 19 ? 0 : 1)'; then
+    echo "Node.js 22.19 or newer is required." >&2
     exit 1
   fi
 }
@@ -57,6 +80,7 @@ source_hash() {
 }
 
 ensure_deps() {
+  if [[ "$distribution" == "1" ]]; then return 0; fi
   local want stamp="node_modules/.inspire-deps"
   want="$(deps_hash)"
   # The production launcher still builds TypeScript/Vite and starts the host
@@ -72,12 +96,23 @@ ensure_deps() {
 }
 
 do_build() {
+  if [[ "$distribution" == "1" ]]; then
+    echo "This package already contains its production build."
+    return 0
+  fi
   echo "Building client…"
   npm run build
   printf '%s\n' "$(source_hash)" > dist/.inspire-build
 }
 
 ensure_build() {
+  if [[ "$distribution" == "1" ]]; then
+    if [[ ! -f "$root/dist/index.html" || ! -f "$release_runtime" || ! -f "$instance_state" ]]; then
+      echo "The installed insπre package is incomplete." >&2
+      return 1
+    fi
+    return 0
+  fi
   if [[ ! -f dist/index.html || "$(cat dist/.inspire-build 2>/dev/null || true)" != "$(source_hash)" ]]; then
     do_build
   fi
@@ -113,7 +148,7 @@ init_instance() {
 
 inspect_instance() {
   local mock="$1"
-  node "$root/server/instance-state.mjs" inspect \
+  node "$instance_state" inspect \
     "$state_path" "$root" "$instance_host" "$instance_port" "$mock"
 }
 
@@ -201,7 +236,7 @@ acquire_instance_lock() {
 }
 
 require_free_port() {
-  if ! node "$root/server/instance-state.mjs" port \
+  if ! node "$instance_state" port \
     "$state_path" "$root" "$instance_host" "$instance_port"; then
     echo "Port ${instance_host}:${instance_port} is already in use, but no healthy managed insπre state was found." >&2
     echo "Refusing to stop an unknown process. Inspect it with:" >&2
@@ -264,6 +299,10 @@ run_host() {
   else
     unset INSPIRE_MOCK || true
   fi
+  export INSPIRE_INSTALLATION_ROOT="$root"
+  if [[ "$distribution" == "1" ]]; then
+    exec node "$release_runtime"
+  fi
   exec npx --no-install tsx server/index.ts
 }
 
@@ -286,7 +325,7 @@ stop_host() {
     return 1
   fi
   init_instance
-  if node "$root/server/instance-state.mjs" stop \
+  if node "$instance_state" stop \
     "$state_path" "$root" "$instance_host" "$instance_port"; then
     if [[ "$retain_lock" == "1" ]] && ! acquire_instance_lock 0 0; then
       echo "Unable to retain the insπre launcher lock for restart." >&2
@@ -327,7 +366,7 @@ stop_host() {
   fi
   printf '%s\n' "stop requested at $(date -u +%FT%TZ)" > "$stop_request_path"
   for _ in {1..300}; do
-    if node "$root/server/instance-state.mjs" stop \
+    if node "$instance_state" stop \
       "$state_path" "$root" "$instance_host" "$instance_port" >/dev/null 2>&1; then
       rm -f "$stop_request_path"
       echo "Stopped the insπre instance that was starting."
@@ -408,6 +447,10 @@ case "$mode" in
     ;;
   dev)
     need_node
+    if [[ "$distribution" == "1" ]]; then
+      echo "Development mode requires a source checkout." >&2
+      exit 1
+    fi
     ensure_deps
     export INSPIRE_TOKEN="${INSPIRE_TOKEN:-inspire-dev-token}"
     echo "Dev host token: $INSPIRE_TOKEN"

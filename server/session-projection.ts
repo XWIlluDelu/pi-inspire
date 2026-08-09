@@ -57,11 +57,16 @@ interface Candidate {
 
 export type InitialMaterializationAttestation = "partial" | "complete" | "mismatch";
 
+export type ProjectionMessageChange = "none" | "append" | "replace";
+
 export interface ProjectionReconcileResult {
   changed: boolean;
   /** This observation belongs to the new-session file's first materialization. */
   initialMaterialization: boolean;
+  /** Physical JSONL movement; distinct from the projected message view. */
   kind: "none" | "append" | "rewrite";
+  /** Whether the projected active-path message sequence stayed stable, grew by suffix, or was replaced. */
+  messageChange: ProjectionMessageChange;
   previousRevision: number;
   revision: number;
   previousFingerprint: string;
@@ -148,6 +153,28 @@ function contextMessages(entries: SessionEntry[], leafId: string | null, byId: M
       __inspireEntryId: entry.id,
     })),
   );
+}
+
+function projectedMessageId(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = (value as Record<string, unknown>).__inspireMessageId;
+  return typeof id === "string" ? id : null;
+}
+
+function projectedMessageChange(
+  physicalKind: ProjectionReconcileResult["kind"],
+  previous: readonly unknown[],
+  next: readonly unknown[],
+): ProjectionMessageChange {
+  if (physicalKind === "rewrite") return "replace";
+  if (previous.length > next.length) return "replace";
+  const prefixMatches = previous.every((message, index) => {
+    const previousId = projectedMessageId(message);
+    const nextId = projectedMessageId(next[index]);
+    return previousId !== null && previousId === nextId;
+  });
+  if (!prefixMatches) return "replace";
+  return previous.length === next.length ? "none" : "append";
 }
 
 interface BoundedTranscriptItem { value: unknown; serialized: string }
@@ -316,6 +343,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     changed: false,
     initialMaterialization: false,
     kind: "none",
+    messageChange: "none",
     previousRevision: 0,
     revision: 0,
     previousFingerprint: "",
@@ -523,6 +551,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
             changed: false,
             initialMaterialization: this.initialMaterializationPending,
             kind: "none",
+            messageChange: "none",
             previousRevision: this.revision,
             revision: this.revision,
             previousFingerprint: this.fingerprint,
@@ -556,6 +585,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           changed: false,
           initialMaterialization: this.initialMaterializationPending,
           kind: "none",
+          messageChange: "none",
           previousRevision: this.revision,
           revision: this.revision,
           previousFingerprint: this.fingerprint,
@@ -608,7 +638,8 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           next.ctimeNs === this.currentIdentity.ctimeNs
         ) {
           return {
-            changed: false, initialMaterialization, kind: "none", previousRevision, revision: this.revision,
+            changed: false, initialMaterialization, kind: "none", messageChange: "none",
+            previousRevision, revision: this.revision,
             previousFingerprint, fingerprint: this.fingerprint, healthChanged: false,
             sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
             uncommittedBytes: this.uncommittedBytes,
@@ -623,6 +654,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       const previousEntries = this.currentEntries;
       const previousLeafId = this.currentLeafId;
       let kind: ProjectionReconcileResult["kind"] = "none";
+      let messageChange: ProjectionMessageChange = "none";
       let appendedEntries: SessionEntry[] | undefined;
       if (changed) {
         const prefixVerified = this.currentCommittedBytes === 0 || candidate.previousPrefixFingerprint === this.currentFingerprint;
@@ -637,8 +669,9 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         ) {
           appendedEntries = structuredClone(candidate.entries.slice(previousEntries.length));
         }
+        messageChange = projectedMessageChange(kind, this.currentMessages, candidate.messages);
         this.currentRevision += 1;
-        if (kind !== "append") this.appendFromRevision = this.currentRevision;
+        if (messageChange === "replace") this.appendFromRevision = this.currentRevision;
         this.revisionFingerprints.set(this.currentRevision, candidate.fingerprint);
         while (this.revisionFingerprints.size > 256) {
           this.revisionFingerprints.delete(this.revisionFingerprints.keys().next().value!);
@@ -664,6 +697,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         changed,
         initialMaterialization,
         kind,
+        messageChange,
         previousRevision,
         revision: this.revision,
         previousFingerprint,
@@ -688,6 +722,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           changed: false,
           initialMaterialization,
           kind: "none",
+          messageChange: "none",
           previousRevision,
           revision: this.revision,
           previousFingerprint,
@@ -706,6 +741,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         changed: false,
         initialMaterialization,
         kind: "none",
+        messageChange: "none",
         previousRevision,
         revision: this.revision,
         previousFingerprint,

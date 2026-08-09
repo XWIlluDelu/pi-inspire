@@ -3,6 +3,14 @@ export const TOOL_VISIBILITY_PREFERENCES = ["dynamic", "expanded", "collapsed", 
 export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MAX_ATTACHMENTS = 8;
+export const MAX_ATTACHMENT_FILE_BYTES = 16 * 1024 * 1024;
+export const MAX_ATTACHMENT_UPLOAD_BYTES = 32 * 1024 * 1024;
+/** Keeps persisted base64 image messages and their RPC envelope below the 32 MiB line budget. */
+export const MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024;
+/** Worst-case sum of separately padded base64 images at the raw-image cap. */
+export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
+  Math.ceil(MAX_PROMPT_IMAGE_BYTES / 3) * 4 + MAX_ATTACHMENTS * 4;
+export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
 export const MAX_PROJECT_FILES = 20;
 export const MAX_SESSION_LIST_PAGE_SIZE = 100;
 /** Session-list and fallback-heading text is bounded before responsive CSS
@@ -544,6 +552,9 @@ export interface BootstrapResponse {
   piVersion: string;
   mock: boolean;
   preferences: InspirePreferences;
+  /** Present when an invalid saved preference projection is usable for this
+   * bootstrap but the original file was left unchanged and writes are blocked. */
+  preferencesWarning?: string;
   /** Configured models are available before any session owns a Pi worker. */
   availableModels: ModelOption[];
   snapshot: ActiveSnapshot;

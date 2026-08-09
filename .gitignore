@@ -3,6 +3,8 @@
 /.agents/
 /node_modules/
 /dist/
+/build/
+*.tgz
 /coverage/
 /test-results/
 .env

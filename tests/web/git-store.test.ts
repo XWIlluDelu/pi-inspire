@@ -96,7 +96,43 @@ describe("Git inspection ownership and freshness", () => {
     store.setGitSurfaceVisible("test", false);
   });
 
-  it("refreshes on a selected tool completion and stops the visible-only interval", async () => {
+  it("waits one full interval after a slow status completion before polling again", async () => {
+    vi.useFakeTimers();
+    let store: AppStore | null = null;
+    try {
+      const releases: Array<() => void> = [];
+      let calls = 0;
+      installFetch(async (url, init) => {
+        if (url.startsWith("/api/git/status")) {
+          calls += 1;
+          await new Promise<void>((resolve) => releases.push(resolve));
+          return { body: cleanStatus };
+        }
+        return baseRoutes(url, init);
+      });
+      ({ store } = await initStore());
+      store.setGitSurfaceVisible("test", true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(calls).toBe(1);
+      releases.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(3_999);
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toBe(2);
+      releases.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      store?.setGitSurfaceVisible("test", false);
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes on a selected tool completion and stops the visible-only completion timer", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;

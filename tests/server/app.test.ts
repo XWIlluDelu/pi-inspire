@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -11,6 +11,7 @@ import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
+import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
 
 const token = "test-local-token";
 
@@ -19,6 +20,7 @@ describe("local host API", () => {
   let application: ReturnType<typeof createInspireServer>;
   let resources: ResourceStore;
   let runtime: MockRuntime;
+  let attachments: AttachmentStore;
   let git: GitInspectionLike;
   let baseUrl: string;
 
@@ -35,11 +37,12 @@ describe("local host API", () => {
         reason: "no-changes" as const,
       })),
     };
+    attachments = new AttachmentStore(join(temporary, "uploads"));
     application = createInspireServer({
       token,
       runtime,
       catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads")),
+      attachments,
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
       resources,
       git,
@@ -121,6 +124,14 @@ describe("local host API", () => {
     await expect(fetch(`${baseUrl}/api/health`, { headers: { Authorization: `Bearer ${token}` } })).rejects.toThrow();
     await expect(activeResult).resolves.toBe(200);
     await expect(closing).resolves.toBeUndefined();
+  });
+
+  it("cleans attachment storage even when runtime teardown fails", async () => {
+    const attachmentClose = vi.spyOn(attachments, "close");
+    const runtimeClose = vi.spyOn(runtime, "close").mockRejectedValueOnce(new Error("runtime teardown failed"));
+    await expect(application.close()).rejects.toThrow(/runtime teardown failed/);
+    expect(attachmentClose).toHaveBeenCalledOnce();
+    runtimeClose.mockRestore();
   });
 
   it("requires the launch token and rejects foreign origins", async () => {
@@ -345,6 +356,35 @@ describe("local host API", () => {
       .send({ sessionId: "mock-active", revision: 3, targetId: "u1" })
       .expect(200);
     expect(fork).toHaveBeenCalledWith({ sessionId: "mock-active", revision: 3, targetId: "u1" });
+  });
+
+  it("reports invalid preference fields without changing the saved file", async () => {
+    const path = join(temporary, "preferences.json");
+    const raw = JSON.stringify({
+      theme: "dark",
+      launch: "continue",
+      toolVisibility: "invalid",
+      pinnedSessionIds: ["session-a"],
+    });
+    await writeFile(path, raw);
+
+    const response = await request(application.server)
+      .get("/api/bootstrap")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(response.body.preferences).toMatchObject({
+      theme: "dark",
+      launch: "continue",
+      toolVisibility: "dynamic",
+      pinnedSessionIds: ["session-a"],
+    });
+    expect(response.body.preferencesWarning).toMatch(/toolVisibility.*left unchanged/);
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ projectDisplay: "path" })
+      .expect(409);
+    expect(await readFile(path, "utf8")).toBe(raw);
   });
 
   it("persists field-scoped preference patches without losing concurrent fields", async () => {
@@ -1015,6 +1055,17 @@ describe("local host API", () => {
       .expect(400);
   });
 
+  it("rejects multipart batches at the aggregate streaming budget and removes partial files", async () => {
+    await request(application.server)
+      .post("/api/attachments")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), { filename: "one.bin" })
+      .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), { filename: "two.bin" })
+      .attach("files", Buffer.alloc(1), { filename: "overflow.bin" })
+      .expect(413);
+    expect(await readdir(join(temporary, "uploads"))).toEqual([]);
+  }, 15_000);
+
   it("accepts bounded attachments and streams prompt events over an authenticated socket", async () => {
     await request(application.server)
       .post("/api/sessions/open")
@@ -1029,6 +1080,9 @@ describe("local host API", () => {
       .expect(200);
     expect(uploaded.body.attachments[0]).toMatchObject({ fileName: "notes.txt", kind: "file", size: 14 });
     expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
+    const storedFiles = await readdir(join(temporary, "uploads"));
+    expect(storedFiles).toHaveLength(1);
+    expect((await stat(join(temporary, "uploads", storedFiles[0]!))).mode & 0o777).toBe(0o600);
 
     const events: Array<Record<string, unknown>> = [];
     const socket = new WebSocket(`${baseUrl.replace("http", "ws")}/events?token=${token}`);

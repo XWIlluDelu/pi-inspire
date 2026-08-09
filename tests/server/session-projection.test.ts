@@ -447,6 +447,45 @@ describe("SessionProjection bounded paging", () => {
     }
   }, 30_000);
 
+  it("keeps cursors across projected message appends and invalidates them when an appended compaction replaces the view", async () => {
+    const lines = Array.from({ length: 120 }, (_, index) => message(
+      `m${index}`,
+      index ? `m${index - 1}` : null,
+      index % 2 ? "assistant" : "user",
+      `message ${index}`,
+      index + 1,
+    ));
+    const { path, projection } = await fixture(lines);
+    try {
+      const latest = projection.latestPage([], projection.leafId, "view-a");
+      const cursor = latest.olderCursor!;
+      const appendedMessage = message("m120", "m119", "assistant", "continued", 121);
+      await appendFile(path, `${JSON.stringify(appendedMessage)}\n`);
+      await expect(projection.reconcile(true)).resolves.toMatchObject({
+        kind: "append",
+        messageChange: "append",
+      });
+      expect(projection.page(cursor, projection.leafId, "view-a").messages.length).toBeGreaterThan(0);
+
+      await appendFile(path, `${JSON.stringify({
+        type: "compaction",
+        id: "compact",
+        parentId: "m120",
+        timestamp: "2026-08-01T00:03:00.000Z",
+        summary: "compacted history",
+        firstKeptEntryId: "m116",
+        tokensBefore: 1_000,
+      })}\n`);
+      await expect(projection.reconcile(true)).resolves.toMatchObject({
+        kind: "append",
+        messageChange: "replace",
+      });
+      expect(() => projection.page(cursor, projection.leafId, "view-a")).toThrow(/stale/);
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("rejects a cursor from an evicted and reopened projection incarnation", async () => {
     const { record, projection } = await fixture(Array.from({ length: 120 }, (_, index) =>
       message(`m${index}`, index ? `m${index - 1}` : null, "user", `m${index}`, index + 1)));

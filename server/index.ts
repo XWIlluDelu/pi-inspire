@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
@@ -27,7 +27,12 @@ import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const moduleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const inferredRoot = await readFile(join(moduleRoot, "package.json"), "utf8").then(
+  () => moduleRoot,
+  () => join(moduleRoot, ".."),
+);
+const root = resolve(process.env.INSPIRE_INSTALLATION_ROOT || inferredRoot);
 const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { version: string };
 const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piPackage = JSON.parse(await readFile(join(dirname(dirname(piEntry)), "package.json"), "utf8")) as { version: string };

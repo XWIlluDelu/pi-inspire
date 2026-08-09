@@ -41,6 +41,21 @@ describe("preference persistence", () => {
     });
   });
 
+  it("surfaces a host preference-validation warning after bootstrap", async () => {
+    installFetch((url) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return { body: bootstrapPayload({ preferencesWarning: "Saved preferences are invalid. The saved file was left unchanged." }) };
+      }
+      if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      return undefined;
+    });
+    const store = new AppStore();
+    await store.init("token");
+    expect(store.getState().notices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "warning", text: expect.stringMatching(/left unchanged/) }),
+    ]));
+  });
+
   it("setTheme updates local state and persists a field-scoped PATCH", async () => {
     const store = new AppStore();
     await store.init("token");

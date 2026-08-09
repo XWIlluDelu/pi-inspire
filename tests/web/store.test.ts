@@ -781,19 +781,23 @@ describe("transcript paging", () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+          sessionId: "s1", revision: 4, viewId: "view-a", incarnation: "incarnation", appendFromRevision: 1,
+          effectiveLeafId: "m2",
           messages: [{ role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" }],
           hasOlder: true, olderCursor: "cursor-1",
         },
+        effectiveLeafId: "m2",
       }) }) };
       if (url.startsWith("/api/transcript/older")) return { body: {
-        sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+        sessionId: "s1", revision: 4, viewId: "view-a", incarnation: "incarnation", appendFromRevision: 1,
+        effectiveLeafId: "m2",
         messages: [{ role: "user", content: "old", timestamp: 1, __inspireMessageId: "m1:0" }],
         hasOlder: false, olderCursor: null,
       } };
       if (url.startsWith("/api/snapshot")) return { body: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1", revision: snapshotRevision, incarnation: "incarnation",
+          sessionId: "s1", revision: snapshotRevision, viewId: snapshotRevision === 5 ? "view-a" : "view-b",
+          incarnation: "incarnation", effectiveLeafId: snapshotRevision === 5 ? "m3" : "compact",
           appendFromRevision: snapshotRevision === 5 ? 1 : 6,
           messages: snapshotRevision === 5
             ? [
@@ -803,6 +807,7 @@ describe("transcript paging", () => {
             : [{ role: "user", content: "rewrite", timestamp: 9, __inspireMessageId: "rewrite:0" }],
           hasOlder: false, olderCursor: null,
         },
+        effectiveLeafId: snapshotRevision === 5 ? "m3" : "compact",
       }) };
       return baseRoutes(url, init);
     });
@@ -814,10 +819,12 @@ describe("transcript paging", () => {
     // older page lands. It must not discard history from the identical view.
     socket.emit({ type: "snapshot", data: activeSnapshot({
       transcriptPage: {
-        sessionId: "s1", revision: 4, incarnation: "incarnation", appendFromRevision: 1,
+        sessionId: "s1", revision: 4, viewId: "view-a", incarnation: "incarnation", appendFromRevision: 1,
+        effectiveLeafId: "m2",
         messages: [{ role: "user", content: "new", timestamp: 2, __inspireMessageId: "m2:0" }],
         hasOlder: true, olderCursor: "cursor-1",
       },
+      effectiveLeafId: "m2",
     }) });
     expect(store.getState().messages.map((message) => message.content)).toEqual(["old", "new"]);
 
@@ -1334,6 +1341,10 @@ describe("resource previews", () => {
         return { body: {
           sessionId: "s1",
           viewId: "view-s1",
+          revision: 1,
+          offset: 0,
+          total: 1,
+          nextCursor: null,
           resources: [{ key: "file:notes/result.md", reference: "notes/result.md", label: "notes/result.md", source: "link" }],
         } };
       }
@@ -1389,13 +1400,15 @@ describe("resource previews", () => {
     );
   }
 
-  it("loads the complete reference projection for the current branch view", async () => {
+  it("loads a bounded reference page for the current branch revision", async () => {
     installFetch(resourceRoutes());
     const { store } = await initStore();
 
     await expect(store.loadSessionResources()).resolves.toMatchObject({
       sessionId: "s1",
       viewId: "view-s1",
+      revision: 1,
+      total: 1,
       resources: [{ reference: "notes/result.md" }],
     });
   });

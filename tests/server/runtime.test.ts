@@ -472,6 +472,37 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("does not change selection when a ready session's pre-commit snapshot fails", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/project"), record("b", "/project")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    const slots = (runtime as unknown as { slots: Map<string, { ready: boolean }> }).slots;
+    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
+    await runtime.openSession("b");
+
+    const workerA = workers.find((worker) => worker.sessionId === "a")!;
+    const request = workerA.request.bind(workerA);
+    workerA.request = async <T,>(command: Record<string, unknown>): Promise<T> => {
+      if (command.type === "get_state") throw new Error("snapshot failed before selection");
+      return request<T>(command);
+    };
+
+    await expect(runtime.openSession("a")).rejects.toThrow(/snapshot failed before selection/);
+    expect(runtime.activeSessionId).toBe("b");
+    await runtime.close();
+  });
+
   it("retries an in-flight snapshot when selection changes", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -975,6 +1006,30 @@ describe("RuntimeController concurrent sessions", () => {
       const snapshot = await runtime.newSession("/tmp");
       expect(snapshot.active?.sessionId).toBe("new-id");
       expect(worker?.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+    );
+    const internals = runtime as unknown as {
+      snapshotSlot(slot: unknown): Promise<unknown>;
+    };
+    internals.snapshotSlot = async () => {
+      throw new Error("post-commit snapshot must not run");
+    };
+    try {
+      const snapshot = await runtime.newSession("/tmp");
+      expect(snapshot.active?.sessionId).toBe("new-id");
+      expect(runtime.activeSessionId).toBe("new-id");
     } finally {
       await runtime.close();
     }

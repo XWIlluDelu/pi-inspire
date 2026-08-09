@@ -8,13 +8,20 @@ import {
   type ResourceKind,
   type ResourceProbeResult,
 } from "../shared/contracts.js";
-import { collectSessionResourceReferences } from "../shared/resource-references.js";
+import {
+  MAX_RESOURCE_LIST_PAGE_SIZE,
+  RESOURCE_LIST_INITIAL_SIZE,
+  collectSessionResourceReferences,
+  type SessionResourceListResponse,
+  type SessionResourceReference,
+} from "../shared/resource-references.js";
 import { escapesBase } from "./paths.js";
 import { indexedBasenameMatches, invalidateProjectIndex, isIndexedProjectFile } from "./project-files.js";
 
 export interface ResourceContext {
   sessionId: string;
   viewId?: string;
+  revision?: number;
   cwd: string;
   /** Tests and static runtimes may provide messages directly; the real
    * runtime supplies a lazy loader so indexed workspace previews avoid a
@@ -36,6 +43,7 @@ export interface ResolvedResource {
 }
 
 const MAX_HANDLES = 256;
+const MAX_CITATION_INDEXES = 32;
 const LOCATION_FRAGMENT = /#L\d+(?:-L\d+)?$/i;
 const LOCATION_SUFFIX = /:\d+(?::\d+)?$/;
 
@@ -175,43 +183,194 @@ function classifiedProbeFailure(reference: string, error: unknown): ResourceProb
   return null;
 }
 
-function referencedBySession(context: ResourceContext, messages: unknown[], requested: string): boolean {
-  let requestedPath: string;
+interface EmbeddedCitation {
+  messageIndex: number;
+  partIndex: number;
+  mimeType: string;
+  size: number;
+}
+
+interface ResourceCitationIndex {
+  sessionId: string;
+  viewId: string;
+  revision: number;
+  resources: SessionResourceReference[];
+  citedPaths: Set<string>;
+  embedded: Map<string, EmbeddedCitation>;
+}
+
+interface ResourceListOptions {
+  cursor?: string;
+  limit?: number;
+}
+
+function contextRevision(context: ResourceContext): number {
+  return typeof context.revision === "number" && Number.isSafeInteger(context.revision) ? context.revision : 0;
+}
+
+function citationIndexKey(context: ResourceContext): string | null {
+  return context.viewId && Number.isSafeInteger(context.revision)
+    ? JSON.stringify([context.sessionId, context.viewId, context.revision])
+    : null;
+}
+
+function encodeResourceCursor(index: ResourceCitationIndex, offset: number): string {
+  return Buffer.from(JSON.stringify({
+    sessionId: index.sessionId,
+    viewId: index.viewId,
+    revision: index.revision,
+    offset,
+  })).toString("base64url");
+}
+
+function resourceCursorOffset(cursor: string, index: ResourceCitationIndex): number {
+  let value: unknown;
   try {
-    requestedPath = referencePath(requested, context.cwd);
+    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    throw Object.assign(new Error("The resource cursor is not valid"), { status: 400 });
+  }
+  if (!value || typeof value !== "object") {
+    throw Object.assign(new Error("The resource cursor is not valid"), { status: 400 });
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.sessionId !== index.sessionId || record.viewId !== index.viewId || record.revision !== index.revision
+  ) {
+    throw Object.assign(new Error("The referenced-file view changed; reload the list"), { status: 409 });
+  }
+  if (!Number.isSafeInteger(record.offset) || Number(record.offset) < 0 || Number(record.offset) > index.resources.length) {
+    throw Object.assign(new Error("The resource cursor is not valid"), { status: 400 });
+  }
+  return Number(record.offset);
+}
+
+function buildCitationIndex(context: ResourceContext, messages: unknown[]): ResourceCitationIndex {
+  const resources = collectSessionResourceReferences(messages);
+  const citedPaths = new Set<string>();
+  for (const resource of resources) {
+    if (!resource.reference || resource.reference.startsWith("pi-embedded://")) continue;
+    try {
+      citedPaths.add(referencePath(resource.reference, context.cwd));
+    } catch {
+      // Invalid references remain visible but confer no path authority.
+    }
+  }
+
+  const embedded = new Map<string, EmbeddedCitation>();
+  messages.forEach((message, messageIndex) => {
+    if (!message || typeof message !== "object") return;
+    const record = message as Record<string, unknown>;
+    if (record.display === false || !Array.isArray(record.content)) return;
+    const persistedIndex = Number.isSafeInteger(record.__inspireMessageIndex)
+      ? Number(record.__inspireMessageIndex)
+      : messageIndex;
+    record.content.forEach((part, partIndex) => {
+      if (!part || typeof part !== "object") return;
+      const image = part as Record<string, unknown>;
+      if (image.type !== "image" || typeof image.data !== "string" || typeof image.mimeType !== "string") return;
+      embedded.set(`pi-embedded://${persistedIndex}/${partIndex}`, {
+        messageIndex,
+        partIndex,
+        mimeType: image.mimeType,
+        size: Buffer.byteLength(image.data, "base64"),
+      });
+    });
+  });
+
+  return {
+    sessionId: context.sessionId,
+    viewId: resourceViewId(context),
+    revision: contextRevision(context),
+    resources,
+    citedPaths,
+    embedded,
+  };
+}
+
+function referencedByIndex(index: ResourceCitationIndex, context: ResourceContext, requested: string): boolean {
+  try {
+    return index.citedPaths.has(referencePath(requested, context.cwd));
   } catch {
     return false;
   }
-  return collectSessionResourceReferences(messages).some((item) => {
-    if (!item.reference) return false;
-    try {
-      return referencePath(item.reference, context.cwd) === requestedPath;
-    } catch {
-      return false;
-    }
-  });
 }
 
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
+  private readonly citationIndexes = new Map<string, {
+    sessionId: string;
+    generation: number;
+    promise: Promise<ResourceCitationIndex>;
+  }>();
+  private citationIndexGeneration = 0;
 
-  /** Project every reference in the visible branch without exposing message
-   * content. This is the Files pane's complete-list authority; transcript
-   * pagination must not silently truncate the disclosure result. */
-  async list(context: ResourceContext) {
-    return collectSessionResourceReferences(await contextMessages(context));
+  private citationIndex(context: ResourceContext): Promise<ResourceCitationIndex> {
+    const key = citationIndexKey(context);
+    if (!key) return contextMessages(context).then((messages) => buildCitationIndex(context, messages));
+    const cached = this.citationIndexes.get(key);
+    if (cached) {
+      this.citationIndexes.delete(key);
+      this.citationIndexes.set(key, cached);
+      return cached.promise;
+    }
+    const promise = contextMessages(context).then((messages) => buildCitationIndex(context, messages));
+    const entry = {
+      sessionId: context.sessionId,
+      generation: ++this.citationIndexGeneration,
+      promise,
+    };
+    this.citationIndexes.set(key, entry);
+    if (this.citationIndexes.size > MAX_CITATION_INDEXES) {
+      this.citationIndexes.delete(this.citationIndexes.keys().next().value as string);
+    }
+    void promise.then(
+      () => {
+        if (this.citationIndexes.get(key) !== entry) return;
+        for (const [staleKey, stale] of this.citationIndexes) {
+          if (
+            staleKey !== key &&
+            stale.sessionId === context.sessionId &&
+            stale.generation < entry.generation
+          ) this.citationIndexes.delete(staleKey);
+        }
+      },
+      () => {
+        if (this.citationIndexes.get(key) === entry) this.citationIndexes.delete(key);
+      },
+    );
+    return promise;
   }
 
-  /** Check the bounded Files-pane projection without retaining opaque content
-   * handles. Citation-backed references share one lazy transcript load. */
+  /** Return one bounded page from the complete, revision-bound citation
+   * index. The index contains no transcript content or retained handles. */
+  async list(
+    context: ResourceContext,
+    options: ResourceListOptions = {},
+  ): Promise<Omit<SessionResourceListResponse, "sessionId" | "viewId" | "revision">> {
+    const index = await this.citationIndex(context);
+    const limit = options.limit ?? RESOURCE_LIST_INITIAL_SIZE;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RESOURCE_LIST_PAGE_SIZE) {
+      throw Object.assign(new Error("The resource page size is not valid"), { status: 400 });
+    }
+    const offset = options.cursor ? resourceCursorOffset(options.cursor, index) : 0;
+    const end = Math.min(index.resources.length, offset + limit);
+    return {
+      offset,
+      total: index.resources.length,
+      nextCursor: end < index.resources.length ? encodeResourceCursor(index, end) : null,
+      resources: index.resources.slice(offset, end),
+    };
+  }
+
+  /** Check a bounded reference set without retaining content handles. Every
+   * citation check shares one lazy index build. */
   async probe(context: ResourceContext, references: string[]): Promise<ResourceProbeResult[]> {
-    let messages: Promise<unknown[]> | null = null;
-    const sharedContext: ResourceContext = context.loadMessages
-      ? { ...context, loadMessages: () => (messages ??= context.loadMessages!()) }
-      : context;
+    let index: Promise<ResourceCitationIndex> | null = null;
+    const getIndex = () => (index ??= this.citationIndex(context));
     return Promise.all(references.map(async (reference) => {
       try {
-        await this.resolve(sharedContext, reference, false);
+        await this.resolveUsingIndex(context, reference, false, getIndex);
         return { reference, availability: "available" as const };
       } catch (error) {
         const result = classifiedProbeFailure(reference, error);
@@ -222,37 +381,39 @@ export class ResourceStore {
   }
 
   async resolve(context: ResourceContext, reference: string, retainHandle = true): Promise<ResourceDescriptor> {
-    const embedded = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
-    if (embedded) {
-      const messages = await contextMessages(context);
-      const message = messages[Number(embedded[1])];
-      const messageRecord = message && typeof message === "object" ? message as Record<string, unknown> : undefined;
-      if (messageRecord?.display === false) {
+    let index: Promise<ResourceCitationIndex> | null = null;
+    return this.resolveUsingIndex(context, reference, retainHandle, () => (index ??= this.citationIndex(context)));
+  }
+
+  private async resolveUsingIndex(
+    context: ResourceContext,
+    reference: string,
+    retainHandle: boolean,
+    getIndex: () => Promise<ResourceCitationIndex>,
+  ): Promise<ResourceDescriptor> {
+    const embeddedReference = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
+    if (embeddedReference) {
+      const embedded = (await getIndex()).embedded.get(reference);
+      if (!embedded) {
         throw Object.assign(new Error("The embedded image is no longer available"), { status: 404 });
       }
-      const content = messageRecord?.content;
-      const part = Array.isArray(content) ? content[Number(embedded[2])] : undefined;
-      if (!part || typeof part !== "object" || (part as Record<string, unknown>).type !== "image") {
-        throw Object.assign(new Error("The embedded image is no longer available"), { status: 404 });
-      }
-      const record = part as Record<string, unknown>;
-      if (typeof record.data !== "string" || typeof record.mimeType !== "string") {
-        throw Object.assign(new Error("The embedded image is incomplete"), { status: 404 });
-      }
-      const mimeType = record.mimeType;
-      const messageIndex = Number(embedded[1]);
-      const partIndex = Number(embedded[2]);
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
         viewId: resourceViewId(context),
         reference,
-        name: `embedded-image-${messageIndex + 1}`,
-        mimeType,
-        size: Buffer.byteLength(record.data, "base64"),
+        name: `embedded-image-${Number(embeddedReference[1]) + 1}`,
+        mimeType: embedded.mimeType,
+        size: embedded.size,
         kind: "image",
       };
-      if (retainHandle) this.remember({ descriptor, embedded: { messageIndex, partIndex }, authority: "embedded" });
+      if (retainHandle) {
+        this.remember({
+          descriptor,
+          embedded: { messageIndex: embedded.messageIndex, partIndex: embedded.partIndex },
+          authority: "embedded",
+        });
+      }
       return descriptor;
     }
 
@@ -271,7 +432,7 @@ export class ResourceStore {
     // lazily; the cached project index answers the common explorer path.
     let cited: Promise<boolean> | null = null;
     const isCited = () =>
-      (cited ??= contextMessages(context).then((messages) => referencedBySession(context, messages, reference)));
+      (cited ??= getIndex().then((index) => referencedByIndex(index, context, reference)));
     const indexed = await isIndexedProjectFile(context.cwd, lexicalPath);
     if (!indexed && !(await isCited())) {
       throw Object.assign(new Error("The file is not part of this session's workspace or transcript"), { status: 403 });
@@ -361,6 +522,9 @@ export class ResourceStore {
     for (const [id, resource] of this.handles) {
       if (resource.descriptor.sessionId === sessionId) this.handles.delete(id);
     }
+    for (const [key, entry] of this.citationIndexes) {
+      if (entry.sessionId === sessionId) this.citationIndexes.delete(key);
+    }
   }
 
   get(id: string, sessionId: string, viewId?: string): ResolvedResource {
@@ -390,8 +554,8 @@ export class ResourceStore {
       if (await isIndexedProjectFile(context.cwd, lexicalPath)) return;
       throw Object.assign(new Error("The resource is no longer authorized by the workspace"), { status: 403 });
     }
-    const messages = await contextMessages(context);
-    if (!referencedBySession(context, messages, resource.descriptor.reference)) {
+    const index = await this.citationIndex(context);
+    if (!referencedByIndex(index, context, resource.descriptor.reference)) {
       throw Object.assign(new Error("The resource is no longer cited by the visible branch"), { status: 403 });
     }
   }

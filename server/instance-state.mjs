@@ -200,9 +200,12 @@ async function cli() {
   if (!command || !path || !root || !host || !portText) process.exit(64);
   const port = Number.parseInt(portText, 10);
   const expected = { root, host, port, mock: mockText === undefined ? undefined : mockText === "1" };
+  const processMarker = fileURLToPath(import.meta.url).includes("/build/server/")
+    ? "build/server/index.js"
+    : "server/index.ts";
 
   if (command === "inspect") {
-    const result = await inspectInstance(path, expected);
+    const result = await inspectInstance(path, expected, { processMarker });
     if (result.kind === "healthy") {
       console.log(result.url);
       return;
@@ -214,7 +217,7 @@ async function cli() {
     return;
   }
   if (command === "stop") {
-    const result = await stopManagedInstance(path, expected);
+    const result = await stopManagedInstance(path, expected, { processMarker });
     if (result.kind === "stopped") {
       console.log(`Stopped insπre process ${result.state.pid}.`);
       return;
