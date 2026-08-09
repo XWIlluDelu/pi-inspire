@@ -20,7 +20,7 @@ Tailscale provides the smallest custom security surface but substitutes tailnet 
 
 A future design must also separate the ciphertext broker from the browser-code trust authority. If the relay serves or can replace the remote JavaScript, it can steal browser keys and plaintext before application encryption; TLS and SRI on relay-controlled HTML do not remove that power. The remote UI therefore needs a separately trusted installed/verifiable artifact or static distribution origin. Audited cryptographic primitives likewise do not make pairing, transcript authentication, framing, reconnect, permission, and unknown-mutation semantics an audited protocol; independent review remains a gate.
 
-[[groom-personal-remote-relay-2026-08-01]] owns these product, threat-model, client-distribution, transport, protocol-review, and deployment gates. The human deferred the feature on 2026-08-01, so this note records evidence rather than an active implementation choice.
+[[groom-personal-remote-relay-2026-08-01]] owns the product, threat-model, client-distribution, transport, protocol-review, and deployment decisions. This comparison constrains that planning but selects no transport; protocol behavior, vendor capabilities, and prices must be revalidated at the decision and deployment boundaries.
 
 Sources:
 

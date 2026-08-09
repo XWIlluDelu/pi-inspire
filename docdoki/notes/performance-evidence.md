@@ -34,11 +34,11 @@ Counts and aggregate React work remain diagnostic. Every activation uses indepen
 
 ## 2026-08-08 project-hardening validation
 
-The repaired evaluator ran against the completed hardening change set on isolated ports. It accepted 21 browser samples within 22 attempts and rejected one attempt whose frame control was starved, so the final decision used only uncontaminated samples. Exact accounting observed 52 typed WebSocket frames and one `/api/resources/list` request per accepted iteration in addition to the established branch, Git, prompt, session-list, and snapshot contract. The settled-tool witness accepts either the ordinary tool card or Dynamic mode's compact button with the same accessible `read: finished — analysis.ts` identity, instead of depending on an internal card-name node remaining mounted across its minimum-residency transition. No activation witness crossed its threshold three times, and the evaluator returned `no-performance-change` with zero activated suspects.
+The repaired evaluator ran against the completed hardening change set and final Dynamic dwell policy on isolated ports. It accepted 21 browser samples within 22 attempts and rejected one attempt whose event-loop-delay p95 reached 31.70 ms against the 25 ms control bound, so the final decision used only uncontaminated samples. Exact accounting observed 52 typed WebSocket frames and one `/api/resources/list` request per accepted iteration in addition to the established branch, Git, prompt, session-list, and snapshot contract. The settled-tool witness accepts either the ordinary tool card or Dynamic mode's compact button with the same accessible `read: finished — analysis.ts` identity, instead of depending on an internal card-name node remaining mounted across its minimum-residency transition. No activation witness crossed its threshold three times, and the evaluator returned `no-performance-change` with zero activated suspects.
 
-- Browser p95: Changes 178.60 ms and History 116.30 ms against 200 ms; input delay 1.00 ms and scroll delay 14.50 ms against 50 ms; no long tasks.
-- React surface p95: navigation 11.00 ms, transcript 2.00 ms, composer 0.40 ms, Files 0.70 ms against 16.7 ms.
-- Host p95 over the 11,830,406-byte fixture: projection 17.17 ms, catalog 11.19 ms, Git status 11.00 ms against 150/150/100 ms.
+- Browser p95: Changes 179.90 ms and History 115.70 ms against 200 ms; input delay 1.00 ms and scroll delay 12.50 ms against 50 ms; no long tasks.
+- React per-iteration surface p95: navigation 11.70 ms, transcript 2.70 ms, composer 0.90 ms, Files 1.00 ms against 16.7 ms.
+- Host p95 over the 11,830,406-byte fixture: projection 16.41 ms, catalog 12.22 ms, Git status 12.42 ms against 150/150/100 ms.
 - The repaired request contract attributes `/api/resources/list: 1` to the one bounded Files page loaded after returning from History; an extra, missing, or misordered request remains an invalid sample rather than a performance result.
 
 The accepted conclusion is to keep the bounded resource index/pagination and completion-scheduled Git polling fixes, but add no further speculative cache, subscription split, or background coalescer.

@@ -71,9 +71,9 @@ function clockTime(timestamp?: number): string {
 type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
 const CARD_TRANSITION_MS = 180;
-const DYNAMIC_THINKING_EXPANDED_MIN_MS = 700;
-const DYNAMIC_TOOL_EXPANDED_MIN_MS = 600;
-const DYNAMIC_TOOL_COLLAPSED_MIN_MS = 700;
+const DYNAMIC_THINKING_EXPANDED_MIN_MS = 1_800;
+const DYNAMIC_TOOL_EXPANDED_MIN_MS = 1_600;
+const DYNAMIC_TOOL_COLLAPSED_MIN_MS = 800;
 
 interface CardProps {
   defaultVisibility: StaticVisibility;
