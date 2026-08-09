@@ -19,7 +19,7 @@
     "web-ui"
   ],
   "bin": {
-    "inspire": "./inspire"
+    "inspire": "inspire"
   },
   "files": [
     "build/",

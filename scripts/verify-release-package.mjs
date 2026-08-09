@@ -86,6 +86,10 @@ try {
   const stateDirectory = join(temporary, "state");
   await Promise.all([mkdir(packDirectory), mkdir(installDirectory), mkdir(stateDirectory, { mode: 0o700 })]);
 
+  const sourcePackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  if (sourcePackage.bin?.inspire !== "inspire") {
+    throw new Error("Release package must use npm's canonical inspire bin path");
+  }
   const packed = await execFile("npm", ["pack", "--silent", "--json", "--pack-destination", packDirectory], {
     cwd: root,
     maxBuffer: 10 * 1024 * 1024,
@@ -111,17 +115,30 @@ try {
   if (forbidden.length > 0) throw new Error(`Release tarball contains source-only files: ${forbidden.join(", ")}`);
 
   const tarball = join(packDirectory, record.filename);
+  const publishDryRun = await execFile("npm", ["publish", tarball, "--dry-run", "--json"], {
+    cwd: root,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  if (/auto-corrected|errors corrected|invalid and removed/iu.test(publishDryRun.stderr)) {
+    throw new Error(`npm publish would rewrite release metadata:\n${publishDryRun.stderr}`);
+  }
+  const publishManifest = parsePackManifest(publishDryRun.stdout);
+  const publishRecord = Array.isArray(publishManifest) ? publishManifest[0] : Object.values(publishManifest)[0];
+  if (publishRecord?.id !== `${sourcePackage.name}@${sourcePackage.version}`) {
+    throw new Error("npm publish dry-run reported the wrong package identity");
+  }
+
   await execFile("npm", [
     "install", "--prefix", installDirectory, "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", tarball,
   ], { cwd: root, maxBuffer: 10 * 1024 * 1024 });
 
-  const sourcePackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const installedRoot = join(installDirectory, "node_modules", sourcePackage.name);
   const installedPackage = JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8"));
   if (installedPackage.name !== sourcePackage.name || installedPackage.version !== sourcePackage.version) {
     throw new Error("Installed release package identity is wrong");
   }
   if (installedPackage.license !== "MIT") throw new Error("Installed release package must declare MIT");
+  if (installedPackage.bin?.inspire !== "inspire") throw new Error("Installed release package has the wrong inspire bin path");
   const projectLicense = await readFile(join(installedRoot, "LICENSE"), "utf8");
   if (!projectLicense.startsWith("MIT License\n") || !projectLicense.includes("Copyright (c) 2026 XWIlluDelu")) {
     throw new Error("Installed release package has the wrong project license");
@@ -209,6 +226,7 @@ try {
     cliSymlink: "resolved",
     mockHealth: "ok",
     realPiStartup: "ok",
+    publishDryRun: "accepted without metadata correction",
     lifecycle: "mock and real start/status/stop",
   }));
 } catch (error) {

@@ -64,7 +64,7 @@ npm run release:verify
 npm pack
 ```
 
-`prepack` builds the browser client and compiled Node host. The verifier installs the tarball with production dependencies only, checks that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model. After registry publication, the package entry point is installed with `npm install --global inspire-pi-gui` and invoked as `inspire`.
+`prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model. After registry publication, the package entry point is installed with `npm install --global inspire-pi-gui` and invoked as `inspire`.
 
 ## Development
 

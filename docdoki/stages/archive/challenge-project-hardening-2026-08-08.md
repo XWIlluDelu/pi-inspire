@@ -38,7 +38,7 @@ Resolve every correctness, performance, and durability issue established by `PRO
 ## Verification
 
 - `NODE_ENV=test npm run check`: 59 test files and 654 tests passed with TypeScript project references.
-- `npm run release:verify`: production-only tarball install passed; MIT project license, generated bundled-software notices, font licenses, and all required runtime files were present; source-only files were absent; npm's bin symlink resolved; authenticated mock start/status/health/stop passed; a real Pi worker loaded the compiled bridge and created an empty session; exact Pi runtime was 0.84.1.
+- `npm run release:verify`: the exact tarball passed `npm publish --dry-run` without metadata correction, then its production-only install passed; canonical `inspire` bin metadata, MIT project license, generated bundled-software notices, font licenses, and all required runtime files were present; source-only files were absent; npm's bin symlink resolved; authenticated mock start/status/health/stop passed; a real Pi worker loaded the compiled bridge and created an empty session; exact Pi runtime was 0.84.1.
 - Final isolated evaluator: 21 accepted samples, one frame-gap-contaminated attempt discarded, exact `/api/resources/list` count of one per sample, `no-performance-change`, zero activated suspects. Changes p95 178.60 ms, History 116.30 ms, Files React 0.70 ms, projection 17.17 ms, Git status 11.00 ms.
 - Production build instrumentation scan: no benchmark globals, wrappers, or profiler artifacts in generated text assets.
 - Chromium acceptance: desktop 1440x900 and mobile 390x844 conversation, Files, History, and navigation surfaces had no horizontal overflow or incoherent overlap; console reported no errors or warnings. The empty-current-page resource-index failure path has a focused retry regression test.
@@ -55,4 +55,4 @@ Resolve every correctness, performance, and durability issue established by `PRO
 
 ## Handoff
 
-The implementation and local release artifact are complete. The repository root contains the ignored `inspire-pi-gui-0.1.0.tgz` artifact (5,329,740 bytes; SHA-256 `a321b89667b316d93ee24e001ff4261aa578bab20abf0f2f47b147eb3a1b500c`). Public registry publication remains intentionally unperformed pending explicit authorization and registry credentials.
+The implementation and local release artifact are complete. Version `0.1.0` is published from the exact verified `inspire-pi-gui-0.1.0.tgz` tarball (5,329,772 bytes; SHA-256 `df603e9c53e472b668218fd89bbc7a201c2ef3d84a1ef3f4bd85ac22c31e09e7`) only after npm authentication; its Git tag, npm registry version, GitHub Release attachment, and checksum witness must all identify that same release.
