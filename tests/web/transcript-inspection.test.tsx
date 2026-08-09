@@ -361,7 +361,7 @@ describe("transcript density preferences", () => {
     expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(2);
   });
 
-  it("holds fast parallel tools independently, then compacts only at the next Pi boundary", () => {
+  it("holds fast Thinking for 1800 ms and parallel tools for 1600 ms before lifecycle collapse", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -411,14 +411,8 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(599));
+    act(() => vi.advanceTimersByTime(799));
     for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(toolHeader("read")).toHaveAttribute("aria-expanded", "true");
-    expect(toolHeader("bash")).toHaveAttribute("aria-expanded", "false");
-    expect(toolHeader("edit")).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".tool-strip")).toBeNull();
 
     const next = {
       role: "assistant",
@@ -441,15 +435,20 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(99));
+    act(() => vi.advanceTimersByTime(800));
+    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "false");
+    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(199));
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("next call").closest(".card")?.querySelector(".card__header"))
       .toHaveAttribute("aria-expanded", "true");
-    expect(toolHeader("read")).toHaveAttribute("aria-expanded", "false");
 
-    act(() => vi.advanceTimersByTime(878));
+    act(() => vi.advanceTimersByTime(779));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
     act(() => vi.advanceTimersByTime(1));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
@@ -489,13 +488,13 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(599));
+    act(() => vi.advanceTimersByTime(1_599));
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".tool-strip")).toBeNull();
 
-    act(() => vi.advanceTimersByTime(879));
+    act(() => vi.advanceTimersByTime(979));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
     act(() => vi.advanceTimersByTime(1));
     expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
@@ -526,7 +525,7 @@ describe("transcript density preferences", () => {
       />,
     );
     const header = container.querySelector(".card--tool .card__header") as HTMLButtonElement;
-    act(() => vi.advanceTimersByTime(600));
+    act(() => vi.advanceTimersByTime(1_600));
     expect(header).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(header);
     expect(header).toHaveAttribute("aria-expanded", "true");

@@ -64,7 +64,19 @@ npm run release:verify
 npm pack
 ```
 
-`prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model. After registry publication, the package entry point is installed with `npm install --global inspire-pi-gui` and invoked as `inspire`.
+`prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model.
+
+The current release is distributed through GitHub Releases rather than the npm registry. Download, verify, and install its local tarball:
+
+```bash
+curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.1.0/inspire-pi-gui-0.1.0.tgz
+curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.1.0/SHA256SUMS.txt
+sha256sum -c SHA256SUMS.txt
+npm install --global ./inspire-pi-gui-0.1.0.tgz
+inspire
+```
+
+A bare `npm install --global inspire-pi-gui` is not an installation path unless a later release is explicitly published to the npm registry.
 
 ## Development
 
