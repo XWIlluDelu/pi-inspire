@@ -8,7 +8,7 @@ purpose: Product references identify the visual, workbench, state, and inspectio
 
 The Pi GUI/web ecosystem is substantial enough to provide a convention signal, but peer licenses are not inherited merely by studying product behavior. At the 2026-08-09 review, upstream Pi and the independently maintained `pi-web` implementations by jmfederico, agegr, and Epsilondelta-ai, plus `pi-dashboard`, Piface, and `pi-gui`, all used MIT; PizzaPi used Apache-2.0; several smaller public repositories declared no license and therefore provided no reusable code grant. Inspire's provenance records deliberately transfer product capabilities and independently observed state boundaries rather than peer implementation, and its Git history has one author. No peer license therefore constrains the project license.
 
-Inspire uses MIT to match Pi and the dominant ecosystem convention while allowing ordinary npm reuse. License compliance remains artifact-specific: the Vite build generates notices from the modules actually bundled into the browser, runtime npm dependencies retain their own installed licenses, and the locally distributed IBM Plex and Noto Sans fonts retain their SIL OFL texts.
+Inspire uses MIT to match Pi and the dominant ecosystem convention while allowing ordinary npm reuse. License compliance remains artifact-specific: the Vite build generates notices from the modules actually bundled into the browser, runtime npm dependencies retain their own installed licenses, and the locally distributed IBM Plex fonts retain their SIL OFL texts. IBM Plex Sans SC comes from the integrity-pinned official `@ibm/plex-sans-sc@1.1.0` archive; only untouched publisher-generated Unicode splits are redistributed, so the OFL Reserved Font Name `Plex` is not applied to a local Modified Version.
 
 Sources:
 
@@ -82,7 +82,7 @@ Both references use compact user bubbles and open assistant document flows. Thei
 
 Claude Science is the primary visual benchmark. Its released style system supports light, dark, and system modes; uses Anthropic Sans for the interface and default response flow, Anthropic Serif for title or optional response treatment, and Anthropic Mono for code; and combines neutral surfaces with clay branding and controlled semantic colors. OpenAI4S follows a related but more utilitarian treatment: its body and Markdown flow are sans-serif, serif type marks the wordmark and selected titles, monospaced type carries code and data, and its warm-neutral surface system uses a blue primary accent with limited clay, status, and tool colors.
 
-insπre adopts the shared visual grammar rather than either brand. Claude Science leads typography roles, surfaces, boundaries, radii, shadows, and finish. OpenAI4S remains a secondary reference for direct local-tool interaction, command-palette behavior, and practical information organization. Its light and dark palettes are original project tokens; reference colors and proprietary font files are not design assets for reuse.
+insπre adopts the shared visual grammar rather than either reference brand. Claude Science leads typography roles, surfaces, boundaries, radii, shadows, and finish. OpenAI4S remains a secondary reference for direct local-tool interaction, command-palette behavior, and practical information organization. Its light and dark palettes are original project tokens; IBM Plex is an independently selected, openly licensed type system obtained from IBM's official distribution, not a reference-application asset.
 
 Sources:
 

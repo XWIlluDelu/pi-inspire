@@ -15,7 +15,7 @@ A Linux-first local web workbench for [Pi Coding Agent](https://github.com/earen
 - **A complete composer.** Text, searchable project-file references, pasted or dropped images, and ordinary file attachments, plus steering messages and follow-ups while a run is active. Model and thinking-level pickers use your existing Pi configuration.
 - **Adaptive activity cards.** Thinking and tool activity render as distinguishable, inspectable cards with file links and status. The default Dynamic mode keeps the current work expanded, collapses each completed tool, and compacts a completed tool batch at the next model call; fixed expanded, collapsed, Compact, and hidden choices remain available independently.
 - **Session-bound file previews.** Files referenced by Pi messages or tool activity open beside the conversation as defensive previews — images, HTML, PDF, and text/code — without granting the browser arbitrary filesystem access.
-- **A workbench, not a chat page.** Collapsible navigation, a contextual resources panel, a command palette with keyboard accelerators, and a coherent light-and-dark design system (Noto Sans SC, IBM Plex Serif for the wordmark, IBM Plex Mono for code and data).
+- **A workbench, not a chat page.** Collapsible navigation, a contextual resources panel, a command palette with keyboard accelerators, and a coherent light-and-dark design system (IBM Plex Sans SC for interface and reading, IBM Plex Serif for the wordmark, IBM Plex Mono for code and data).
 
 <table>
   <tr>
@@ -103,4 +103,4 @@ The first release is local-only. The loopback host is the only privileged bounda
 
 ## License
 
-[MIT](LICENSE). The release bundle also includes generated third-party software notices at `dist/THIRD_PARTY_NOTICES.txt`; IBM Plex and Noto Sans font licenses are distributed under `src/assets/licenses/`.
+[MIT](LICENSE). The release bundle also includes generated third-party software notices at `dist/THIRD_PARTY_NOTICES.txt`; the official IBM Plex font licenses are distributed under `src/assets/licenses/`.

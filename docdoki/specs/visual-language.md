@@ -34,10 +34,10 @@ primary interface, and visually independent from its references.
   info blue, failure red) that mark meaning rather than decorate; the
   exact values, roles, and usage discipline are the [[design-system]]
   contract.
-- One type voice per role — Noto Sans SC owns the interface and all
-  reading flow (Latin and CJK in a single family), IBM Plex Serif exists
-  only in the italic `insπre` wordmark whose π sets in the KaTeX math
-  face, IBM Plex Mono owns code and machine-oriented data. There is no
+- One IBM Plex voice per role — Sans SC owns the interface and all reading
+  flow (Latin and CJK in a single family), Serif exists only in the italic
+  `insπre` wordmark whose π sets in the KaTeX math face, and Mono owns code
+  and machine-oriented data with Sans SC as its Chinese fallback. There is no
   reading-mode font switch.
 - All palette, type, spacing, radius, elevation, and motion values remain
   centralized as shared CSS tokens in `src/styles.css`, implementing the
