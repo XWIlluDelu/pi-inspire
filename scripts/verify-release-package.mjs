@@ -1,5 +1,6 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +8,90 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
+const plexSansManifestDigest = "012a329e2e373c4aba5c81e46eb6df3bc78252fc65d97e2207a5c12ce286e6c6";
+const fixedFontDigests = new Map([
+  ["ibm-plex-mono-latin-400-normal.woff2", "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7"],
+  ["ibm-plex-mono-latin-500-normal.woff2", "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22"],
+  ["ibm-plex-serif-latin-400-normal.woff2", "cb2c5eee2c0a43ff30d2365407c7bc8b20e3bd90720a4a64102ba0b328022a02"],
+  ["ibm-plex-serif-latin-500-italic.woff2", "42fde68f485b8d3096a22711a16702013d437830f7293ecc4cc75554d479a363"],
+  ["ibm-plex-serif-latin-500-normal.woff2", "677082fc2e9ee60701b874fe5983c98ea9fb3b588cc1b02058ff9bf29ea783e4"],
+  ["ibm-plex-serif-latin-600-normal.woff2", "e279e4f8baa0d4634d98868092f2198ae0dcd9e142c935822c385b9843352a9b"],
+]);
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function parseSha256Sums(value) {
+  const entries = new Map();
+  for (const line of value.trimEnd().split("\n")) {
+    const match = line.match(/^([a-f0-9]{64})  ([A-Za-z0-9.-]+)$/u);
+    if (!match || entries.has(match[2])) throw new Error("IBM Plex Sans SC has an invalid checksum manifest");
+    entries.set(match[2], match[1]);
+  }
+  return entries;
+}
+
+async function verifySourceFonts() {
+  const fontRoot = join(root, "src/assets/fonts");
+  const splitRoot = join(fontRoot, "ibm-plex-sans-sc");
+  const manifestBytes = await readFile(join(splitRoot, "SHA256SUMS"));
+  if (sha256(manifestBytes) !== plexSansManifestDigest) {
+    throw new Error("IBM Plex Sans SC manifest does not match the reviewed official import");
+  }
+  const entries = parseSha256Sums(manifestBytes.toString("ascii"));
+  const expectedSplitFiles = new Set(["faces.css"]);
+  for (const style of ["Regular", "Medium", "SemiBold"]) {
+    for (let index = 0; index <= 216; index += 1) {
+      if (index === 99) continue;
+      expectedSplitFiles.add(`IBMPlexSansSC-${style}-${String(index).padStart(3, "0")}.woff2`);
+    }
+  }
+  if (entries.size !== expectedSplitFiles.size || [...entries.keys()].some((name) => !expectedSplitFiles.has(name))) {
+    throw new Error("IBM Plex Sans SC manifest does not name the complete official 400/500/600 split");
+  }
+  const actualSplitFiles = (await readdir(splitRoot)).filter((name) => name !== "SHA256SUMS");
+  if (actualSplitFiles.length !== expectedSplitFiles.size || actualSplitFiles.some((name) => !expectedSplitFiles.has(name))) {
+    throw new Error("IBM Plex Sans SC source directory and checksum manifest disagree");
+  }
+  for (const [filename, expected] of entries) {
+    const actual = sha256(await readFile(join(splitRoot, filename)));
+    if (actual !== expected) throw new Error(`IBM Plex Sans SC provenance mismatch: ${filename}`);
+  }
+  const facesCss = await readFile(join(splitRoot, "faces.css"), "utf8");
+  if ((facesCss.match(/@font-face/gu) ?? []).length !== 648) {
+    throw new Error("IBM Plex Sans SC must declare exactly 648 Unicode-range faces");
+  }
+  for (const weight of [400, 500, 600]) {
+    if ((facesCss.match(new RegExp(`font-weight: ${weight};`, "gu")) ?? []).length !== 216) {
+      throw new Error(`IBM Plex Sans SC must declare exactly 216 faces at weight ${weight}`);
+    }
+  }
+  for (const [filename, expected] of fixedFontDigests) {
+    const actual = sha256(await readFile(join(fontRoot, filename)));
+    if (actual !== expected) throw new Error(`IBM Plex provenance mismatch: ${filename}`);
+  }
+  return new Set([
+    ...[...entries].filter(([filename]) => filename.endsWith(".woff2")).map(([, digest]) => digest),
+    ...fixedFontDigests.values(),
+  ]);
+}
+
+async function verifyInstalledFonts(installedRoot, expectedDigests) {
+  const assets = join(installedRoot, "dist/assets");
+  const installedDigests = new Set();
+  let css = "";
+  for (const filename of await readdir(assets)) {
+    const value = await readFile(join(assets, filename));
+    if (filename.endsWith(".woff2")) installedDigests.add(sha256(value));
+    if (filename.endsWith(".css")) css += value.toString("utf8");
+  }
+  const missing = [...expectedDigests].filter((digest) => !installedDigests.has(digest));
+  if (missing.length > 0) throw new Error(`Installed bundle is missing ${missing.length} verified IBM font assets`);
+  if ((css.match(/IBMPlexSansSC-/gu) ?? []).length !== 648 || /Noto|MOTO/u.test(css)) {
+    throw new Error("Installed bundle does not contain the exclusive IBM type system");
+  }
+}
 
 // npm forwards prepack output before its machine-readable manifest.
 function parsePackManifest(output) {
@@ -87,6 +172,7 @@ try {
   await Promise.all([mkdir(packDirectory), mkdir(installDirectory), mkdir(stateDirectory, { mode: 0o700 })]);
 
   const sourcePackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  const expectedFontDigests = await verifySourceFonts();
   if (sourcePackage.bin?.inspire !== "inspire") {
     throw new Error("Release package must use npm's canonical inspire bin path");
   }
@@ -104,7 +190,7 @@ try {
     "inspire",
     "LICENSE",
     "src/assets/licenses/ibm-plex-LICENSE.txt",
-    "src/assets/licenses/noto-sans-LICENSE.txt",
+    "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt",
   ]);
   const packedPaths = new Set((record.files ?? []).map((file) => file.path ?? ""));
   const missing = [...required].filter((path) => !packedPaths.has(path));
@@ -143,6 +229,11 @@ try {
   if (!projectLicense.startsWith("MIT License\n") || !projectLicense.includes("Copyright (c) 2026 XWIlluDelu")) {
     throw new Error("Installed release package has the wrong project license");
   }
+  const fontLicenses = `${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), "utf8")}`;
+  for (const witness of ["SIL OPEN FONT LICENSE Version 1.1", 'Reserved Font Name "Plex"', "IBM Corp."]) {
+    if (!fontLicenses.includes(witness)) throw new Error(`IBM font licenses are missing ${witness}`);
+  }
+  await verifyInstalledFonts(installedRoot, expectedFontDigests);
   const thirdPartyNotices = await readFile(join(installedRoot, "dist/THIRD_PARTY_NOTICES.txt"), "utf8");
   for (const identity of ["@earendil-works/pi-tui@0.84.1", "katex@", "react@", "rehype-katex@"]) {
     if (!thirdPartyNotices.includes(identity)) throw new Error(`Bundled notice is missing ${identity}`);
@@ -218,6 +309,7 @@ try {
     package: `${installedPackage.name}@${installedPackage.version}`,
     license: installedPackage.license,
     bundledNotices: "present",
+    verifiedFontAssets: expectedFontDigests.size,
     piManifest: false,
     sourceOnlyFiles: 0,
     requiredFiles: "present",

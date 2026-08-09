@@ -10,6 +10,10 @@ covers:
   - public/app-icon-maskable-512.png
   - public/apple-touch-icon.png
   - src/styles.css
+  - src/assets/fonts/**
+  - src/assets/licenses/**
+  - scripts/import-ibm-plex-sans-sc.mjs
+  - scripts/verify-release-package.mjs
   - src/**/*.tsx
   - tests/web/app.test.tsx
 tokens:
@@ -73,9 +77,9 @@ tokens:
     git-untracked: "= success"
     git-conflict: "= error"
   typography:
-    sans: "'Noto Sans SC', 'IBM Plex Sans', sans-serif"
-    serif: "'IBM Plex Serif', serif"          # wordmark only
-    mono: "'IBM Plex Mono', 'Noto Sans SC', monospace"
+    sans: "'IBM Plex Sans SC', system-ui, sans-serif"
+    serif: "'IBM Plex Serif', Georgia, serif"          # wordmark only
+    mono: "'IBM Plex Mono', 'IBM Plex Sans SC', ui-monospace, monospace"
     size-xs: 11.5px      # chip, meta rows
     size-sm: 12.5px      # secondary UI, code, card summaries
     size-base: 14px      # controls, nav, composer
@@ -121,9 +125,10 @@ tokens:
 
 insπre reads as a restrained scientific instrument: near-neutral paper
 surfaces with a faint cool-green cast, hairline boundaries, soft radii, one
-teal accent family, and one type voice — Noto Sans SC for interface and
-Chinese text, IBM Plex for the wordmark and code. Content — Markdown, KaTeX
-mathematics, highlighted code — carries the character; chrome stays quiet.
+teal accent family, and one IBM Plex type system — Sans SC for interface and
+Chinese/Latin text, Serif for the wordmark, and Mono for code. Content —
+Markdown, KaTeX mathematics, highlighted code — carries the character; chrome
+stays quiet.
 
 The two themes share one component architecture, one information hierarchy,
 and one accent hue: **teal `{colors-light.accent}` in light**, the same hue
@@ -140,10 +145,10 @@ Key characteristics:
 - One interactive accent family per theme with named roles (`accent`,
   `accent-fill`, `accent-deep`, `accent-tint`); annotation hues are
   semantic block coding, never decoration.
-- Noto Sans SC everywhere, so Chinese and Latin share one family with no
-  fallback seam; serif exists only in the `insπre` wordmark (set italic,
+- IBM Plex Sans SC everywhere, so Chinese and Latin share one family with no
+  fallback seam; Serif exists only in the `insπre` wordmark (set italic,
   with the π in KaTeX's math italic face); Plex Mono owns code and machine
-  data with the sans CJK face as its CJK fallback.
+  data with Sans SC as its Chinese fallback.
 - KaTeX renders with its own bundled fonts; the system never restyles formula
   glyphs, only the spacing around them.
 - Hairline borders do the separating; shadows are reserved for genuinely
@@ -224,16 +229,28 @@ discriminate within the list.
 
 ### Families
 
-- **Sans — Noto Sans SC** (weights 400/500/600, self-hosted, one Latin and
-  one CJK subset per weight): interface, transcript body, Chinese and Latin
-  alike. IBM does not publish IBM Plex Sans SC to npm and no vendorable woff2
-  subset exists; Noto Sans SC supplies the same grotesque voice with first-class
-  CJK, keeps the single-family, no-fallback-seam property, and ships from
-  `@fontsource/noto-sans-sc`. Generic `sans-serif` closes the stack.
+- **Sans — IBM Plex Sans SC** (Regular 400, Medium 500, SemiBold 600):
+  interface, transcript body, Chinese and Latin alike. The application vendors
+  the complete official Unicode-split WOFF2 delivery from
+  `@ibm/plex-sans-sc@1.1.0`: 216 untouched faces per weight. The browser loads
+  only ranges intersecting rendered text and caches them; the three complete
+  3.8–4.0 MiB faces are deliberately absent. `system-ui`/`sans-serif` closes
+  the stack for characters outside the IBM repertoire.
 - **Serif — IBM Plex Serif**: the `insπre` wordmark only. No reading mode,
   no serif body text; the wordmark is Latin + π so no CJK serif is needed.
-- **Mono — IBM Plex Mono** with the sans CJK face as its CJK fallback: code
-  blocks, inline code, session IDs, paths, tool arguments and results.
+- **Mono — IBM Plex Mono** with IBM Plex Sans SC as its Chinese fallback:
+  code blocks, inline code, session IDs, paths, tool arguments and results.
+  This preserves one IBM family system without pretending that Plex Mono has a
+  CJK face.
+
+The Sans SC split files remain byte-for-byte IBM originals so they may retain
+OFL Reserved Font Name `Plex`. `scripts/import-ibm-plex-sans-sc.mjs` accepts
+only the exact integrity-pinned 1.1.0 npm archive, generates the local CSS and
+checksum manifest without executing package scripts, and copies no dependency.
+The release verifier pins that manifest, every Mono/Serif file, both IBM license
+texts, and every emitted installed font asset. A future font update must renew
+those witnesses deliberately; ordinary builds do not contact npm or run IBM
+telemetry.
 
 ### Hierarchy
 
