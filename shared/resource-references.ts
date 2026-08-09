@@ -44,10 +44,18 @@ export interface SessionResourceReference {
   mimeType?: string;
 }
 
-/** Browser-safe, complete reference projection for one visible branch view. */
+export const RESOURCE_LIST_INITIAL_SIZE = 8;
+export const RESOURCE_LIST_PAGE_SIZE = 64;
+export const MAX_RESOURCE_LIST_PAGE_SIZE = 100;
+
+/** Browser-safe page from the complete reference projection of one branch view. */
 export interface SessionResourceListResponse {
   sessionId: string;
   viewId: string;
+  revision: number;
+  offset: number;
+  total: number;
+  nextCursor: string | null;
   resources: SessionResourceReference[];
 }
 

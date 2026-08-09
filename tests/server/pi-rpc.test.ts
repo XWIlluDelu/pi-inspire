@@ -2,7 +2,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_RPC_LINE_BYTES, PiRpcOutcomeUnknownError, PiRpcProcess } from "../../server/pi-rpc.js";
+import {
+  MAX_RPC_LINE_BYTES,
+  MAX_RPC_OUTBOUND_LINE_BYTES,
+  PiRpcOutcomeUnknownError,
+  PiRpcProcess,
+} from "../../server/pi-rpc.js";
 
 const processes: PiRpcProcess[] = [];
 const directories: string[] = [];
@@ -48,6 +53,46 @@ process.stdin.on("data", chunk => {
     const result = await rpc.request<{ value: string }>({ type: "echo", value: "ok" });
     expect(result).toEqual({ value: "ok" });
     expect(events).toEqual([{ type: "notice", value: "left right" }]);
+    expect(MAX_RPC_LINE_BYTES).toBeGreaterThan(MAX_RPC_OUTBOUND_LINE_BYTES);
+
+    await expect(rpc.request({ type: "oversized", value: "x".repeat(MAX_RPC_OUTBOUND_LINE_BYTES) }))
+      .rejects.toThrow(`Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`);
+    await expect(rpc.request({ type: "ping" })).resolves.toEqual({ isStreaming: false });
+  });
+
+  it("accepts a bounded Pi message echo above the former image-line ceiling", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-image-echo-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    const imageBytes = 9 * 1024 * 1024;
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    process.stdout.write(JSON.stringify({
+      type:"message_start",
+      message:{role:"user", content:[{type:"image", data:"A".repeat(${imageBytes}), mimeType:"image/png"}]}
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    const event = new Promise<Record<string, unknown>>((resolveEvent) => rpc.once("event", resolveEvent));
+    await rpc.start();
+    await rpc.request({ type: "echo-image" });
+    const message = (await event).message as { content: Array<{ data: string }> };
+    expect(message.content[0]?.data).toHaveLength(imageBytes);
   });
 
   it("keeps stderr out of error messages, carrying it as host-side detail", async () => {

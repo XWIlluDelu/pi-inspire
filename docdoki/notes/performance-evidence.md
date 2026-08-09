@@ -32,6 +32,17 @@ The frozen activation thresholds are:
 
 Counts and aggregate React work remain diagnostic. Every activation uses independent-sample witnesses: p95 must reach its threshold **and** at least `max(3, ceil(samples * 0.10))` samples must individually cross it. At 21 samples this requires three crossings, so neither one spike nor the two samples that determine nearest-rank p95 can activate work alone. React uses each iteration's surface p95 as its independent value. A Vite chunk-size warning or an isolated microbenchmark never activates maintenance by itself.
 
+## 2026-08-08 project-hardening validation
+
+The repaired evaluator ran against the completed hardening change set on isolated ports. It accepted 21 browser samples within 22 attempts and rejected one attempt whose frame control was starved, so the final decision used only uncontaminated samples. Exact accounting observed 52 typed WebSocket frames and one `/api/resources/list` request per accepted iteration in addition to the established branch, Git, prompt, session-list, and snapshot contract. The settled-tool witness accepts either the ordinary tool card or Dynamic mode's compact button with the same accessible `read: finished — analysis.ts` identity, instead of depending on an internal card-name node remaining mounted across its minimum-residency transition. No activation witness crossed its threshold three times, and the evaluator returned `no-performance-change` with zero activated suspects.
+
+- Browser p95: Changes 178.60 ms and History 116.30 ms against 200 ms; input delay 1.00 ms and scroll delay 14.50 ms against 50 ms; no long tasks.
+- React surface p95: navigation 11.00 ms, transcript 2.00 ms, composer 0.40 ms, Files 0.70 ms against 16.7 ms.
+- Host p95 over the 11,830,406-byte fixture: projection 17.17 ms, catalog 11.19 ms, Git status 11.00 ms against 150/150/100 ms.
+- The repaired request contract attributes `/api/resources/list: 1` to the one bounded Files page loaded after returning from History; an extra, missing, or misordered request remains an invalid sample rather than a performance result.
+
+The accepted conclusion is to keep the bounded resource index/pagination and completion-scheduled Git polling fixes, but add no further speculative cache, subscription split, or background coalescer.
+
 ## 2026-08-07 current evidence
 
 Environment: Node 26.5.0, Chromium 145.0.7632.6, Pi 0.84.1. One isolated full batch accepted 21 samples in 26 attempts, discarded five frame-gap/event-loop-contaminated attempts at 33.20–33.30 ms frame-gap p95 or 25.10–30.90 ms event-loop p95 against the 25 ms control bound, and returned `no-performance-change` with zero activated suspects. Host p95 was 17.95 ms for projection, 13.22 ms for catalog, and 10.86 ms for Git status. Browser p95 was 11.20 ms for navigation commits, 2.40 ms for transcript commits, 0.50 ms for composer commits, 0.70 ms for resources commits, 0.80 ms for input delay, and 11.90 ms for scroll delay; no long task was observed. The Changes and Branches interactions measured 175.50 ms and 114.90 ms p95 respectively, both below their 200 ms gate. The active projection serialized to 43,174 bytes. The evaluator therefore authorizes no speculative application performance change.

@@ -451,7 +451,13 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (!active || active.sessionId !== sessionId) {
       throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
     }
-    return { sessionId, viewId: active.transcriptPage.viewId, cwd: active.cwd, messages: active.messages };
+    return {
+      sessionId,
+      viewId: active.transcriptPage.viewId,
+      revision: active.transcriptPage.revision,
+      cwd: active.cwd,
+      messages: active.messages,
+    };
   }
   async close(): Promise<void> {
     for (const timer of this.timers.values()) clearInterval(timer);

@@ -1,8 +1,42 @@
 {
   "name": "inspire-pi-gui",
   "version": "0.1.0",
-  "private": true,
+  "description": "A Linux-first local web workbench for Pi Coding Agent",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XWIlluDelu/pi-inspire.git"
+  },
+  "homepage": "https://github.com/XWIlluDelu/pi-inspire#readme",
+  "bugs": {
+    "url": "https://github.com/XWIlluDelu/pi-inspire/issues"
+  },
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "local-first",
+    "web-ui"
+  ],
+  "bin": {
+    "inspire": "./inspire"
+  },
+  "files": [
+    "build/",
+    "dist/",
+    "docs/screenshots/command-palette-dark.png",
+    "docs/screenshots/conversation-dark.png",
+    "docs/screenshots/conversation-light.png",
+    "docs/screenshots/settings-light.png",
+    "docs/screenshots/welcome-dark.png",
+    "inspire",
+    "LICENSE",
+    "README.md",
+    "src/assets/licenses/"
+  ],
+  "os": [
+    "linux"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },
@@ -11,8 +45,11 @@
     "dev:host": "INSPIRE_TOKEN=inspire-dev-token tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
-    "start": "NODE_ENV=production INSPIRE_OPEN=1 tsx server/index.ts",
-    "start:mock": "NODE_ENV=production INSPIRE_MOCK=1 INSPIRE_OPEN=1 tsx server/index.ts",
+    "release:build": "npm run build && node scripts/build-release.mjs",
+    "release:verify": "node scripts/verify-release-package.mjs",
+    "prepack": "npm run release:build",
+    "start": "./inspire",
+    "start:mock": "./inspire mock",
     "inspire": "./inspire",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -20,25 +57,14 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.1",
-    "@earendil-works/pi-tui": "0.84.1",
-    "@tanstack/react-virtual": "^3.14.7",
     "express": "^5.2.1",
-    "highlight.js": "^11.11.1",
-    "katex": "^0.16.47",
-    "lucide-react": "^1.25.0",
-    "micromark-util-decode-string": "2.0.1",
     "multer": "^2.2.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.1",
-    "remark-math-extended": "6.1.1",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@earendil-works/pi-tui": "0.84.1",
+    "@tanstack/react-virtual": "^3.14.7",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -52,7 +78,18 @@
     "@vitejs/plugin-react": "^5.1.1",
     "axe-core": "^4.12.1",
     "concurrently": "^9.2.4",
+    "highlight.js": "^11.11.1",
     "jsdom": "^29.1.1",
+    "katex": "^0.16.47",
+    "lucide-react": "^1.25.0",
+    "micromark-util-decode-string": "2.0.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math-extended": "6.1.1",
     "supertest": "^7.2.2",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",

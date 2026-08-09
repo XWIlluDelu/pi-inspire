@@ -9,6 +9,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { z, ZodError } from "zod";
 import {
   MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_FILE_BYTES,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
@@ -18,6 +19,10 @@ import {
   type GitDiffSide,
   type NewSessionDefaults,
 } from "../shared/contracts.js";
+import {
+  MAX_RESOURCE_LIST_PAGE_SIZE,
+  RESOURCE_LIST_INITIAL_SIZE,
+} from "../shared/resource-references.js";
 import type { AttachmentStore } from "./attachments.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { GitInspectionLike } from "./git-inspection.js";
@@ -97,7 +102,11 @@ const sessionCwdsSchema = z.object({
   cwds: z.array(z.string().min(1).max(4_096)).max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const attachmentIdSchema = z.string().uuid();
-const resourceListSchema = z.object({ sessionId: sessionIdField });
+const resourceListSchema = z.object({
+  sessionId: sessionIdField,
+  cursor: z.string().min(1).max(2_048).optional(),
+  limit: z.number().int().min(1).max(MAX_RESOURCE_LIST_PAGE_SIZE).default(RESOURCE_LIST_INITIAL_SIZE),
+}).strict();
 const resourceResolveSchema = z.object({
   sessionId: sessionIdField,
   reference: z.string().min(1).max(8_192),
@@ -327,14 +336,20 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
 
   app.get("/api/bootstrap", async (_request, response) => {
+    const [preferenceState, availableModels, snapshot] = await Promise.all([
+      deps.preferences.inspect(),
+      deps.availableModels ? deps.availableModels() : Promise.resolve([]),
+      deps.runtime.snapshot(),
+    ]);
     const body: BootstrapResponse = {
       appName: "insπre",
       version: deps.version,
       piVersion: deps.piVersion,
       mock: deps.mock,
-      preferences: await deps.preferences.read(),
-      availableModels: deps.availableModels ? await deps.availableModels() : [],
-      snapshot: await deps.runtime.snapshot(),
+      preferences: preferenceState.preferences,
+      ...(preferenceState.warning ? { preferencesWarning: preferenceState.warning } : {}),
+      availableModels,
+      snapshot,
     };
     response.json(body);
   });
@@ -403,13 +418,13 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
 
   const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 16 * 1024 * 1024, files: MAX_ATTACHMENTS, fields: MAX_ATTACHMENTS },
+    storage: deps.attachments.multerStorage(),
+    limits: { fileSize: MAX_ATTACHMENT_FILE_BYTES, files: MAX_ATTACHMENTS, fields: MAX_ATTACHMENTS },
   });
   app.post("/api/attachments", upload.array("files", MAX_ATTACHMENTS), async (request, response) => {
     const files = Array.isArray(request.files) ? request.files : [];
     if (files.length === 0) return response.status(400).json({ error: "No files provided" });
-    response.json({ attachments: await Promise.all(files.map((file) => deps.attachments.add(file))) });
+    response.json({ attachments: await deps.attachments.addMany(files) });
   });
   app.delete("/api/attachments/:id", async (request, response) => {
     await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
@@ -485,12 +500,14 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
 
   app.post("/api/resources/list", async (request, response) => {
-    const { sessionId } = resourceListSchema.parse(request.body);
+    const { sessionId, cursor, limit } = resourceListSchema.parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);
+    const page = await deps.resources.list(context, { cursor, limit });
     response.json({
       sessionId,
       viewId: context.viewId ?? `legacy-view:${sessionId}`,
-      resources: await deps.resources.list(context),
+      revision: context.revision ?? 0,
+      ...page,
     });
   });
   app.post("/api/resources/probe", async (request, response) => {
@@ -717,12 +734,26 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
           })
         : Promise.resolve();
       for (const socket of sockets) socket.close(1001, "Server shutting down");
-      await deps.runtime.close();
-      await deps.attachments.close();
+      const runtimeResult = await deps.runtime.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
       server.closeIdleConnections?.();
       await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
       server.closeAllConnections?.();
-      await drained;
+      const drainedResult = await drained.then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const attachmentResult = await deps.attachments.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const failures = [runtimeResult, drainedResult, attachmentResult]
+        .filter((result): result is { status: "rejected"; reason: unknown } => result.status === "rejected")
+        .map((result) => result.reason);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, "Inspire server shutdown failed");
     },
   };
 }

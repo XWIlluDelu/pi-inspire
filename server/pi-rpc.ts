@@ -3,7 +3,10 @@ import { EventEmitter } from "node:events";
 import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 import type { DiagnosticLevel } from "./diagnostics.js";
+
+export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
 interface PendingRequest {
   resolve: (response: RpcResponse) => void;
@@ -39,10 +42,19 @@ interface RpcResponse {
   error?: string;
 }
 
-/** Pi RPC is JSONL. A malformed child must not retain an arbitrarily large
- * unterminated line in the long-lived host; ordinary Pi events are far below
- * this ceiling, while the browser projection is capped more tightly still. */
-export const MAX_RPC_LINE_BYTES = 8 * 1024 * 1024;
+/** Pi may echo an accepted prompt as a message/entry event with a slightly
+ * larger envelope than the stdin command. Keep both directions tied to the
+ * same payload authority while retaining a hard host-memory boundary. */
+export const MAX_RPC_LINE_BYTES = MAX_RPC_OUTBOUND_LINE_BYTES + 1024 * 1024;
+
+function encodeOutboundFrame(value: Record<string, unknown>): string {
+  const frame = `${JSON.stringify(value)}\n`;
+  const bytes = Buffer.byteLength(frame);
+  if (bytes > MAX_RPC_OUTBOUND_LINE_BYTES) {
+    throw Object.assign(new Error(`Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`), { status: 413 });
+  }
+  return frame;
+}
 
 export interface PiRpcOptions {
   cwd: string;
@@ -238,6 +250,7 @@ export class PiRpcProcess extends EventEmitter {
 
     const id = `inspire_${++this.requestSequence}`;
     const commandName = String(command.type);
+    const frame = encodeOutboundFrame({ ...command, id });
     this.diagnostic("debug", "rpc_request", { requestId: id, command: commandName });
     const response = await new Promise<RpcResponse>((resolve, reject) => {
       const pending: PendingRequest = {
@@ -269,7 +282,7 @@ export class PiRpcProcess extends EventEmitter {
       }, timeoutMs);
       this.pending.set(id, pending);
       try {
-        child.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
+        child.stdin.write(frame, (error) => {
           if (!error) return;
           const current = this.pending.get(id);
           if (current !== pending) return;
@@ -302,13 +315,14 @@ export class PiRpcProcess extends EventEmitter {
     if (!child || child.exitCode !== null || !child.stdin.writable) {
       throw new Error("Pi RPC process is not available");
     }
+    const frame = encodeOutboundFrame({ type: "extension_ui_response", ...response });
     this.diagnostic("debug", "rpc_extension_response", {
       requestId: typeof response.id === "string" ? response.id : undefined,
       command: "extension_ui_response",
     });
     await new Promise<void>((resolve, reject) => {
       try {
-        child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", ...response })}\n`, (error) => {
+        child.stdin.write(frame, (error) => {
           if (!error) {
             resolve();
             return;

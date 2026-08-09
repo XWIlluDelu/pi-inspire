@@ -55,6 +55,17 @@ The launcher never kills an arbitrary process merely because it owns the configu
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript.
 
+## Release package
+
+insπre is packaged as a standalone npm CLI application, not as a Pi resource package: it intentionally has no `pi` manifest or `pi-package` keyword. The exact Pi Coding Agent runtime remains a production dependency, while the browser toolchain is used only to produce the release.
+
+```bash
+npm run release:verify
+npm pack
+```
+
+`prepack` builds the browser client and compiled Node host. The verifier installs the tarball with production dependencies only, checks that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model. After registry publication, the package entry point is installed with `npm install --global inspire-pi-gui` and invoked as `inspire`.
+
 ## Development
 
 ```bash
@@ -77,3 +88,7 @@ npm run build
 ## Privacy
 
 The first release is local-only. The loopback host is the only privileged boundary: provider credentials and unrestricted filesystem access stay in the trusted host process and are never sent to browser storage.
+
+## License
+
+[MIT](LICENSE). The release bundle also includes generated third-party software notices at `dist/THIRD_PARTY_NOTICES.txt`; IBM Plex and Noto Sans font licenses are distributed under `src/assets/licenses/`.

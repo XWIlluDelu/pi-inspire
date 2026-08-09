@@ -28,28 +28,78 @@ describe("ResourceStore", () => {
     resources = new ResourceStore();
   });
 
-  it("lists the complete recent-first branch projection without retaining message content", async () => {
+  it("paginates one revision-bound citation index without retaining message content", async () => {
     const { project } = await workspace();
     let messageLoads = 0;
     const messages = Array.from({ length: 20 }, (_, index) => ({
       role: "assistant",
       content: [{ type: "text", text: `See \`file-${index}.md\`.` }],
     }));
-
-    const listed = await resources.list({
+    const context = {
       sessionId: "s1",
       viewId: "view-s1",
+      revision: 7,
       cwd: project,
       loadMessages: async () => {
         messageLoads += 1;
         return messages;
       },
-    });
+    };
 
-    expect(listed).toHaveLength(20);
-    expect(listed[0]?.reference).toBe("file-19.md");
-    expect(listed.at(-1)?.reference).toBe("file-0.md");
+    const first = await resources.list(context);
+    expect(first).toMatchObject({ offset: 0, total: 20 });
+    expect(first.resources).toHaveLength(8);
+    expect(first.resources[0]?.reference).toBe("file-19.md");
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await resources.list(context, { cursor: first.nextCursor!, limit: 10 });
+    expect(second).toMatchObject({ offset: 8, total: 20 });
+    expect(second.resources).toHaveLength(10);
+    expect(second.resources[0]?.reference).toBe("file-11.md");
+    expect(second.nextCursor).toEqual(expect.any(String));
+
+    await resources.probe(context, ["file-19.md", "file-0.md"]);
     expect(messageLoads).toBe(1);
+    await expect(resources.list({ ...context, revision: 8 }, { cursor: first.nextCursor! }))
+      .rejects.toMatchObject({ status: 409 });
+  });
+
+  it("keeps the newest revision cached when an older index completes later", async () => {
+    const { project } = await workspace();
+    let resolveOlder!: (messages: unknown[]) => void;
+    let resolveNewer!: (messages: unknown[]) => void;
+    const olderMessages = new Promise<unknown[]>((resolve) => { resolveOlder = resolve; });
+    const newerMessages = new Promise<unknown[]>((resolve) => { resolveNewer = resolve; });
+    let olderLoads = 0;
+    let newerLoads = 0;
+    const olderContext = {
+      sessionId: "s1",
+      viewId: "view-s1",
+      revision: 7,
+      cwd: project,
+      loadMessages: () => {
+        olderLoads += 1;
+        return olderMessages;
+      },
+    };
+    const newerContext = {
+      ...olderContext,
+      revision: 8,
+      loadMessages: () => {
+        newerLoads += 1;
+        return newerMessages;
+      },
+    };
+
+    const olderList = resources.list(olderContext);
+    const newerList = resources.list(newerContext);
+    resolveNewer([{ role: "assistant", content: [{ type: "text", text: "See `newer.md`." }] }]);
+    await expect(newerList).resolves.toMatchObject({ total: 1 });
+    resolveOlder([{ role: "assistant", content: [{ type: "text", text: "See `older.md`." }] }]);
+    await expect(olderList).resolves.toMatchObject({ total: 1 });
+
+    await expect(resources.list(newerContext)).resolves.toMatchObject({ total: 1 });
+    expect({ olderLoads, newerLoads }).toEqual({ olderLoads: 1, newerLoads: 1 });
   });
 
   it("opens project-local files without granting a different session the handle", async () => {

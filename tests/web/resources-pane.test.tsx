@@ -9,22 +9,37 @@ import { activeSnapshot, bootstrapPayload, installFakeWebSocket } from "./helper
 describe("Files pane", () => {
   let gitStatusFails = false;
   let missingProbeReference: string | null = null;
+  let resourceListFails = false;
+  let bootstrapMessages: unknown[] = [];
 
   beforeEach(async () => {
     gitStatusFails = false;
     missingProbeReference = null;
+    resourceListFails = false;
+    bootstrapMessages = [{
+      role: "assistant",
+      content: [{ type: "text", text: "Open [notes](notes.md), [page](demo.html), or [Pi](https://pi.dev)." }],
+      timestamp: 1,
+    }];
     installFakeWebSocket();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:preview") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bootstrap")) {
-        const messages = [{
-          role: "assistant",
-          content: [{ type: "text", text: "Open [notes](notes.md), [page](demo.html), or [Pi](https://pi.dev)." }],
-          timestamp: 1,
-        }];
-        return Response.json(bootstrapPayload({ snapshot: activeSnapshot({ messages }) }));
+        return Response.json(bootstrapPayload({ snapshot: activeSnapshot({
+          messages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: 1,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+            hasOlder: true,
+            olderCursor: "older-s1",
+          },
+        }) }));
       }
       if (url.startsWith("/api/sessions")) return Response.json({ sessions: [], total: 0, offset: 0, limit: 40 });
       const gitPath = (id: string, display: string, workspacePath?: string) => ({
@@ -77,9 +92,22 @@ describe("Files pane", () => {
         ] });
       }
       if (url.startsWith("/api/resources/list")) {
-        const resources = ["notes.md", "demo.html", ...Array.from({ length: 9 }, (_, index) => `old-${index + 1}.md`)]
+        if (resourceListFails) return Response.json({ error: "Reference index unavailable" }, { status: 503 });
+        const body = JSON.parse(String(init?.body ?? "{}")) as { cursor?: string; limit?: number };
+        const resources = ["notes.md", "demo.html", ...Array.from({ length: 148 }, (_, index) => `old-${index + 1}.md`)]
           .map((reference) => ({ key: `file:${reference}`, reference, label: reference, source: "link" as const }));
-        return Response.json({ sessionId: "s1", viewId: "view-s1", resources });
+        const offset = body.cursor ? Number(body.cursor.slice("cursor:".length)) : 0;
+        const limit = body.limit ?? 8;
+        const end = Math.min(resources.length, offset + limit);
+        return Response.json({
+          sessionId: "s1",
+          viewId: "view-s1",
+          revision: 1,
+          offset,
+          total: resources.length,
+          nextCursor: end < resources.length ? `cursor:${end}` : null,
+          resources: resources.slice(offset, end),
+        });
       }
       if (url.startsWith("/api/resources/probe")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as { references: string[] };
@@ -174,23 +202,48 @@ describe("Files pane", () => {
     expect(within(pane).getByText("feature/git")).toBeInTheDocument();
   });
 
-  it("reveals the complete earlier-file set in the bounded list and can collapse it again", async () => {
+  it("pages the complete earlier-file set through a bounded DOM window", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
 
     const pane = await screen.findByRole("complementary", { name: "Files and resources" });
     const list = within(pane).getByLabelText("Referenced files");
-    expect(list.querySelectorAll(".res__row")).toHaveLength(8);
-    const toggle = within(pane).getByRole("button", { name: "Earlier files (3)" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(8));
+    fireEvent.click(await within(pane).findByRole("button", { name: "Earlier files (142)" }));
 
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(list.querySelectorAll(".res__row")).toHaveLength(11);
+    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(72));
+    expect(within(pane).getByText("Files 9–72 of 150")).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "Earlier files (78)" }));
+    await waitFor(() => expect(within(pane).getByText("Files 73–136 of 150")).toBeInTheDocument());
+    expect(list.querySelectorAll(".res__row")).toHaveLength(72);
 
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(within(pane).getByRole("button", { name: "Earlier files (14)" }));
+    await waitFor(() => expect(within(pane).getByText("Files 137–150 of 150")).toBeInTheDocument());
+    expect(list.querySelectorAll(".res__row")).toHaveLength(22);
+
+    fireEvent.click(within(pane).getByRole("button", { name: "Newer files" }));
+    await waitFor(() => expect(within(pane).getByText("Files 73–136 of 150")).toBeInTheDocument());
+    fireEvent.click(within(pane).getByRole("button", { name: "Recent files" }));
     expect(list.querySelectorAll(".res__row")).toHaveLength(8);
+    expect(within(pane).getByRole("button", { name: "Earlier files (142)" })).toBeInTheDocument();
+  });
+
+  it("offers retry when an older-file index fails with no references on the current page", async () => {
+    bootstrapMessages = [];
+    resourceListFails = true;
+    await store.init("token");
+    store.clearResourceSelection();
+    store.setResourcesOpen(true);
+    render(<App />);
+
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    expect(await within(pane).findByText("Earlier files unavailable")).toBeInTheDocument();
+    expect(within(pane).queryByText("No files yet")).not.toBeInTheDocument();
+
+    resourceListFails = false;
+    fireEvent.click(within(pane).getByRole("button", { name: "Retry" }));
+    const list = await within(pane).findByLabelText("Referenced files");
+    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(8));
   });
 
   it("marks a missing reference from preflight before the row is selected", async () => {
