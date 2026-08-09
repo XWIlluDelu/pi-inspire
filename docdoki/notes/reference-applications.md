@@ -4,6 +4,23 @@ purpose: Product references identify the visual, workbench, state, and inspectio
 
 # Reference applications
 
+## License landscape
+
+The Pi GUI/web ecosystem is substantial enough to provide a convention signal, but peer licenses are not inherited merely by studying product behavior. At the 2026-08-09 review, upstream Pi and the independently maintained `pi-web` implementations by jmfederico, agegr, and Epsilondelta-ai, plus `pi-dashboard`, Piface, and `pi-gui`, all used MIT; PizzaPi used Apache-2.0; several smaller public repositories declared no license and therefore provided no reusable code grant. Inspire's provenance records deliberately transfer product capabilities and independently observed state boundaries rather than peer implementation, and its Git history has one author. No peer license therefore constrains the project license.
+
+Inspire uses MIT to match Pi and the dominant ecosystem convention while allowing ordinary npm reuse. License compliance remains artifact-specific: the Vite build generates notices from the modules actually bundled into the browser, runtime npm dependencies retain their own installed licenses, and the locally distributed IBM Plex and Noto Sans fonts retain their SIL OFL texts.
+
+Sources:
+
+- [Pi MIT license at reviewed commit](https://github.com/earendil-works/pi/blob/936aff00918de1187f085f123c2812d8f2d67745/LICENSE)
+- [jmfederico/pi-web MIT license](https://github.com/jmfederico/pi-web/blob/7885c75085d354f41a802372ca65d8e32b914f93/LICENSE)
+- [agegr/pi-web MIT license](https://github.com/agegr/pi-web/blob/598c3c6f3c11b0e3bfc4c39cc8884ea7e3e3da34/LICENSE)
+- [Epsilondelta-ai/pi-web MIT license](https://github.com/Epsilondelta-ai/pi-web/blob/8b8bf7b2f162617ca1a7823bb4a52a4ac35cac35/LICENSE)
+- [pi-dashboard MIT license](https://github.com/samfoy/pi-dashboard/blob/4d8b6eff3fcd6458055066f21b9c1bdbab5dc71f/LICENSE)
+- [Piface MIT license](https://github.com/jbn/piface/blob/6172144f221b5f6e2240d9ca1bb7cc522607ef62/LICENSE)
+- [pi-gui MIT license](https://github.com/minghinmatthewlam/pi-gui/blob/eb9a7380705dffad36db3efa771ee825aafbef6f/LICENSE)
+- [PizzaPi Apache-2.0 license](https://github.com/Pizzaface/PizzaPi/blob/8d254569f1f8ba74b457354b6447f63c470dce01/LICENSE)
+
 ## cscience and Claude Science
 
 The reviewed `Haleclipse/cscience` tree is a launcher, unpacker, and AST patcher for an already-built Claude Science runtime rather than a maintainable GUI source project. Its repository can ground packaging facts, but its GUI observations come from released minified assets and are design references only.

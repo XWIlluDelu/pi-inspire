@@ -45,8 +45,23 @@ describe("History contextual mode", () => {
       if (url.startsWith("/api/branches/tree")) return Response.json(tree("s1", effectiveLeafId));
       if (url === "/api/branches/navigate") {
         effectiveLeafId = String(body.targetId);
+        const messages = [{ role: "assistant", content: "switched", timestamp: 9 }];
         return Response.json({
-          snapshot: activeSnapshot({ effectiveLeafId, messages: [{ role: "assistant", content: "switched", timestamp: 9 }] }),
+          snapshot: activeSnapshot({
+            effectiveLeafId,
+            messages,
+            transcriptPage: {
+              sessionId: "s1",
+              revision: 2,
+              viewId: `view-${effectiveLeafId}`,
+              incarnation: "projection-1",
+              appendFromRevision: 2,
+              effectiveLeafId,
+              messages,
+              hasOlder: false,
+              olderCursor: null,
+            },
+          }),
           ...(body.mode === "edit" ? { editorText: "revise" } : {}),
         });
       }
@@ -79,11 +94,13 @@ describe("History contextual mode", () => {
     await waitFor(() => expect(requests.some(({ url, body }) => url === "/api/branches/navigate" && body.targetId === "branch" && body.mode === "switch")).toBe(true));
     expect(confirm).toHaveBeenCalled();
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit from here: user: revise" })).toBeEnabled());
     const edit = screen.getByRole("button", { name: "Edit from here: user: revise" });
     fireEvent.click(edit);
     await waitFor(() => expect(screen.getByPlaceholderText("Message Pi…")).toHaveValue("revise"));
     expect(requests.some(({ url, body }) => url === "/api/branches/navigate" && body.targetId === "u2" && body.mode === "edit")).toBe(true);
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Fork from here: user: revise" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Fork from here: user: revise" }));
     await waitFor(() => expect(screen.getByPlaceholderText("Message Pi…")).toHaveValue("revise"));
     expect(store.getState().sessionId).toBe("forked");

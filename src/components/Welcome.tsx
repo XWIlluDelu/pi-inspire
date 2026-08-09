@@ -1,7 +1,6 @@
 import { ChevronRight, FolderOpen, FolderSearch, Loader2, Paperclip, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   THINKING_LEVELS,
   modelIdentityKey,
@@ -9,6 +8,7 @@ import {
   type ThinkingLevel,
 } from "../../shared/contracts";
 import type { ProjectFileResult } from "../api";
+import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
@@ -142,9 +142,8 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
 
   const addFiles = (files: File[]) => {
     if (starting || files.length === 0) return;
-    const room = MAX_ATTACHMENTS - attachmentsRef.current.length;
-    const accepted = files.slice(0, Math.max(0, room));
-    setAttachmentError(accepted.length < files.length ? `At most ${MAX_ATTACHMENTS} attachments per message` : null);
+    const { accepted, warning } = selectAttachmentFiles(attachmentsRef.current, files);
+    setAttachmentError(warning);
     if (accepted.length > 0) setAttachments((current) => [...current, ...accepted.map(localAttachment)]);
   };
 

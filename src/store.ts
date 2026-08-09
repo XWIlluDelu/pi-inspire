@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import {
   defaultPreferences,
-  MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
@@ -43,6 +42,7 @@ import {
 import { messageFallbackCorrelation } from "../shared/message-identity";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import { deleteSessionDraft } from "./session-drafts";
+import { selectAttachmentFiles } from "./attachment-selection";
 import { ApiError, createApi, eventsUrl, type Api, type ProjectFileResult } from "./api";
 import {
   asMessage,
@@ -93,6 +93,7 @@ export const TEXT_PREVIEW_BYTES = 256 * 1024;
  * Fetch one sentinel byte beyond the limit so a same-inode file growth cannot
  * masquerade as a complete preview. */
 export const MAX_MEDIA_PREVIEW_BYTES = 32 * 1024 * 1024;
+const GIT_REFRESH_INTERVAL_MS = 4_000;
 
 /** In-document CSP injected into sandboxed HTML previews: no scripts (the
  * iframe sandbox enforces that too), no remote subresources. */
@@ -421,7 +422,7 @@ export class AppStore {
   private gitRefreshQueued = false;
   private gitDiffRequest: AbortController | null = null;
   private gitSurfaces = new Set<string>();
-  private gitRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private gitRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private branchTreeRequest = 0;
   private branchActionRequest = 0;
   private transportGeneration = 0;
@@ -619,6 +620,7 @@ export class AppStore {
         connectionProblem: null,
       });
       this.applySnapshot(boot.snapshot);
+      if (boot.preferencesWarning) this.notify("warning", boot.preferencesWarning);
       this.connect(token);
       void this.loadSessions(this.state.sessionQuery).then(() => {
         // The remembered launch preference applies once per store lifetime so
@@ -654,12 +656,13 @@ export class AppStore {
     const nextSessionId = active?.sessionId ?? null;
     const sessionChanged = nextSessionId !== this.state.sessionId;
     const page = active?.transcriptPage;
+    const pageHasAuthoritativeView = typeof page?.viewId === "string" && page.viewId.length > 0;
     const nextViewId = page ? (page.viewId ?? `legacy-view:${page.incarnation ?? nextSessionId ?? "none"}`) : null;
     const nextEffectiveLeafId = page?.effectiveLeafId ?? active?.effectiveLeafId ?? null;
     const viewChanged = Boolean(
       !sessionChanged && nextSessionId && (
         (nextViewId && nextViewId !== this.state.transcriptViewId) ||
-        nextEffectiveLeafId !== this.state.transcriptEffectiveLeafId
+        (!pageHasAuthoritativeView && nextEffectiveLeafId !== this.state.transcriptEffectiveLeafId)
       ),
     );
     if (sessionChanged || viewChanged) {
@@ -1979,9 +1982,8 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId || files.length === 0) return;
     const composer = this.composerFor(sessionId);
-    const room = MAX_ATTACHMENTS - composer.attachments.length;
-    const accepted = files.slice(0, Math.max(0, room));
-    if (accepted.length < files.length) this.notify("warning", `At most ${MAX_ATTACHMENTS} attachments per message`);
+    const { accepted, warning } = selectAttachmentFiles(composer.attachments, files);
+    if (warning) this.notify("warning", warning);
     if (accepted.length === 0) return;
 
     const pending: PendingAttachment[] = accepted.map((file) => {
@@ -2481,17 +2483,27 @@ export class AppStore {
     }
   };
 
+  private clearGitRefreshTimer(): void {
+    if (this.gitRefreshTimer) clearTimeout(this.gitRefreshTimer);
+    this.gitRefreshTimer = null;
+  }
+
+  private scheduleGitRefresh(): void {
+    if (this.gitSurfaces.size === 0 || this.gitRefreshTimer) return;
+    this.gitRefreshTimer = setTimeout(() => {
+      this.gitRefreshTimer = null;
+      void this.refreshGitStatus();
+    }, GIT_REFRESH_INTERVAL_MS);
+  }
+
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
+    const wasVisible = this.gitSurfaces.size > 0;
     if (visible) this.gitSurfaces.add(surface);
     else this.gitSurfaces.delete(surface);
     if (this.gitSurfaces.size > 0) {
-      if (!this.gitRefreshTimer) {
-        this.gitRefreshTimer = setInterval(() => void this.refreshGitStatus(), 4_000);
-      }
-      void this.refreshGitStatus();
+      if (!wasVisible) void this.refreshGitStatus();
     } else {
-      if (this.gitRefreshTimer) clearInterval(this.gitRefreshTimer);
-      this.gitRefreshTimer = null;
+      this.clearGitRefreshTimer();
       this.gitRefreshQueued = false;
       this.gitStatusRequest?.abort();
       this.gitStatusRequest = null;
@@ -2507,8 +2519,10 @@ export class AppStore {
       this.gitRefreshQueued = true;
       return this.gitStatusPromise;
     }
+    this.clearGitRefreshTimer();
     this.gitStatusPromise = this.runGitStatusRefresh().finally(() => {
       this.gitStatusPromise = null;
+      this.scheduleGitRefresh();
     });
     return this.gitStatusPromise;
   };
@@ -2652,19 +2666,20 @@ export class AppStore {
     this.set({ resourceAvailability });
   }
 
-  /** Load the complete reference projection for the currently visible branch.
-   * The host returns labels and references only, never message content. */
-  loadSessionResources = async (signal?: AbortSignal): Promise<SessionResourceListResponse | null> => {
+  /** Load one bounded page from the reference projection for the currently
+   * visible branch revision. The host returns labels and references only. */
+  loadSessionResources = async (
+    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<SessionResourceListResponse | null> => {
     const sessionId = this.state.sessionId;
     const viewId = this.state.transcriptViewId;
     const revision = this.state.transcriptRevision;
     if (!this.api || !sessionId || !viewId) return null;
-    const response = await this.api.listResources(sessionId, signal);
+    const response = await this.api.listResources(sessionId, options);
     if (
-      signal?.aborted || this.state.sessionId !== sessionId ||
+      options.signal?.aborted || this.state.sessionId !== sessionId ||
       this.state.transcriptViewId !== viewId || this.state.transcriptRevision !== revision ||
-      response.sessionId !== sessionId ||
-      response.viewId !== viewId
+      response.sessionId !== sessionId || response.viewId !== viewId || response.revision !== revision
     ) return null;
     return response;
   };

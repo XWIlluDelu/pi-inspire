@@ -1,5 +1,6 @@
 import {
   collectSessionResourceReferences,
+  RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceReference,
 } from "../shared/resource-references";
 
@@ -28,7 +29,7 @@ export function resourceIcon(row: Pick<ResourceRow, "extension" | "mimeType">): 
 
 /** How many recent references the collapsed files pane presents. Earlier
  * references remain available through its disclosure row. */
-export const MAX_RESOURCE_ROWS = 8;
+export const MAX_RESOURCE_ROWS = RESOURCE_LIST_INITIAL_SIZE;
 
 /** Derive the deduplicated, recent-first resource list for the visible
  * session's messages. Extraction rules live in the shared pure module; this

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GitDiffSide, GitFileChange, ResourceKind, ResourceProbeResult } from "../../shared/contracts";
+import { RESOURCE_LIST_PAGE_SIZE } from "../../shared/resource-references";
 import { formatBytes } from "../format";
 import { gitDecorationForChange, gitHeadLabel, presentGitFacet } from "../git-presentation";
 import {
@@ -453,49 +454,97 @@ export function ResourcesPane() {
     store.setGitSurfaceVisible("resources-pane", true);
     return () => store.setGitSurfaceVisible("resources-pane", false);
   }, []);
-  // Recent messages update immediately while the host projects the complete
-  // visible branch independently of transcript pagination. Matching view ids
-  // prevent an old request from leaking rows across navigation.
-  const recentResources = useMemo(() => collectResources(state.messages), [state.messages]);
-  const [completeList, setCompleteList] = useState<{
-    revision: number;
+  // The current transcript page updates immediately. The host supplies a
+  // revision-bound complete index in bounded pages for older references.
+  const recentResources = useMemo(() => collectResources(state.messages, MAX_RESOURCE_ROWS), [state.messages]);
+  const [initialList, setInitialList] = useState<{
+    viewKey: string;
+    response: NonNullable<Awaited<ReturnType<typeof store.loadSessionResources>>>;
+  } | null>(null);
+  const [earlierPage, setEarlierPage] = useState<{
+    cursor: string;
+    back: string[];
     response: NonNullable<Awaited<ReturnType<typeof store.loadSessionResources>>>;
   } | null>(null);
   const [failedViewKey, setFailedViewKey] = useState<string | null>(null);
   const [listRetry, setListRetry] = useState(0);
-  const viewKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}`;
+  const [expandedViewKey, setExpandedViewKey] = useState<string | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [failedPage, setFailedPage] = useState<{ cursor: string; back: string[] } | null>(null);
+  const pageRequestRef = useRef<AbortController | null>(null);
+  const viewKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}:${state.transcriptRevision}`;
+
   useEffect(() => {
+    pageRequestRef.current?.abort();
+    pageRequestRef.current = null;
+    setEarlierPage(null);
+    setExpandedViewKey(null);
+    setPageLoading(false);
+    setFailedPage(null);
     if (state.contextMode !== "files") return;
     const request = new AbortController();
-    const revision = state.transcriptRevision;
-    void store.loadSessionResources(request.signal).then((response) => {
+    void store.loadSessionResources({ signal: request.signal }).then((response) => {
       if (!response || request.signal.aborted) return;
-      setCompleteList({ revision, response });
+      setInitialList({ viewKey, response });
       setFailedViewKey(null);
     }).catch(() => {
       if (!request.signal.aborted) setFailedViewKey(viewKey);
     });
     return () => request.abort();
   }, [state.contextMode, state.sessionId, state.transcriptViewId, state.transcriptRevision, listRetry, viewKey]);
-  const completeMatches = Boolean(
-    completeList && completeList.revision === state.transcriptRevision &&
-    completeList.response.sessionId === state.sessionId && completeList.response.viewId === state.transcriptViewId,
+
+  useEffect(() => () => pageRequestRef.current?.abort(), []);
+
+  const retryInitialList = () => {
+    setFailedViewKey(null);
+    setListRetry((value) => value + 1);
+  };
+  const loadEarlierPage = (cursor: string, back: string[]) => {
+    pageRequestRef.current?.abort();
+    const request = new AbortController();
+    pageRequestRef.current = request;
+    setPageLoading(true);
+    setFailedPage(null);
+    void store.loadSessionResources({ cursor, limit: RESOURCE_LIST_PAGE_SIZE, signal: request.signal }).then((response) => {
+      if (!response || request.signal.aborted) return;
+      setEarlierPage({ cursor, back, response });
+    }).catch(() => {
+      if (!request.signal.aborted) setFailedPage({ cursor, back });
+    }).finally(() => {
+      if (pageRequestRef.current === request) {
+        pageRequestRef.current = null;
+        setPageLoading(false);
+      }
+    });
+  };
+
+  const initialMatches = Boolean(initialList?.viewKey === viewKey);
+  const initialResponse = initialMatches ? initialList!.response : null;
+  const earlierMatches = Boolean(
+    expandedViewKey === viewKey && earlierPage &&
+    earlierPage.response.sessionId === state.sessionId &&
+    earlierPage.response.viewId === state.transcriptViewId &&
+    earlierPage.response.revision === state.transcriptRevision,
   );
-  const baselineResources = useMemo(
-    () => completeMatches && completeList ? resourceRows(completeList.response.resources) : [],
-    [completeList, completeMatches],
-  );
+  const baselineResources = useMemo(() => {
+    if (!initialResponse) return [];
+    const initial = resourceRows(initialResponse.resources);
+    if (!earlierMatches || !earlierPage) return initial;
+    return mergeResourceRows(initial, resourceRows(earlierPage.response.resources));
+  }, [earlierMatches, earlierPage, initialResponse]);
   const allResources = useMemo(
     () => mergeResourceRows(recentResources, baselineResources),
     [recentResources, baselineResources],
   );
-  const completeKnown = completeMatches || !state.hasOlderMessages;
-  const [expandedViewKey, setExpandedViewKey] = useState<string | null>(null);
-  const showAllFiles = completeKnown && expandedViewKey === viewKey;
+  const expanded = expandedViewKey === viewKey;
   const resources = useMemo(
-    () => showAllFiles ? allResources : allResources.slice(0, MAX_RESOURCE_ROWS),
-    [allResources, showAllFiles],
+    () => expanded ? allResources : allResources.slice(0, MAX_RESOURCE_ROWS),
+    [allResources, expanded],
   );
+  const totalResources = initialResponse?.total ?? (!state.hasOlderMessages ? allResources.length : null);
+  const earlierRemaining = earlierMatches && earlierPage
+    ? Math.max(0, earlierPage.response.total - earlierPage.response.offset - earlierPage.response.resources.length)
+    : Math.max(0, (totalResources ?? 0) - MAX_RESOURCE_ROWS);
   useEffect(() => {
     void store.probeResources(resources.map((row) => row.reference ?? row.label));
   }, [state.sessionId, state.transcriptViewId, resources]);
@@ -547,7 +596,21 @@ export function ResourcesPane() {
       {state.contextMode !== "branches" && state.gitStatusError && state.gitStatus ? <div className="changes__stale" role="status">Status is stale — {state.gitStatusError}</div> : null}
       {state.contextMode === "files" ? (
         resources.length === 0 ? (
-          state.resourcePreview ? null : (
+          state.resourcePreview ? null : failedViewKey === viewKey ? (
+            <div className="empty-state" role="alert">
+              <AlertTriangle size={24} strokeWidth={1.5} aria-hidden />
+              <span className="empty-state__title">Earlier files unavailable</span>
+              <button type="button" className="button" onClick={retryInitialList}>
+                <RefreshCw size={12} aria-hidden />
+                Retry
+              </button>
+            </div>
+          ) : !initialResponse && state.hasOlderMessages ? (
+            <div className="empty-state" role="status">
+              <Loader2 size={22} className="spin" strokeWidth={1.5} aria-hidden />
+              <span className="empty-state__title">Loading earlier files</span>
+            </div>
+          ) : (
             <div className="empty-state">
               <FileSearch size={26} strokeWidth={1.5} aria-hidden />
               <span className="empty-state__title">No files yet</span>
@@ -557,25 +620,70 @@ export function ResourcesPane() {
         ) : (
           <div className="res__list" aria-label="Referenced files">
             {resources.map((row) => <ResourceListRow key={row.key} row={row} />)}
-            {completeKnown && allResources.length > MAX_RESOURCE_ROWS ? (
+            {expanded ? (
+              <>
+                {earlierMatches && earlierPage ? (
+                  <p className="res__list-note">
+                    Files {earlierPage.response.offset + 1}–{earlierPage.response.offset + earlierPage.response.resources.length} of {earlierPage.response.total}
+                  </p>
+                ) : null}
+                <button type="button" className="res__more" onClick={() => {
+                  pageRequestRef.current?.abort();
+                  setExpandedViewKey(null);
+                  setEarlierPage(null);
+                  setPageLoading(false);
+                  setFailedPage(null);
+                }}>
+                  <ChevronDown size={12} className="chev-flip chev-flip--open" aria-hidden />
+                  Recent files
+                </button>
+                {earlierMatches && earlierPage && earlierPage.back.length > 0 ? (
+                  <button type="button" className="res__more" disabled={pageLoading} onClick={() => {
+                    const cursor = earlierPage.back.at(-1)!;
+                    loadEarlierPage(cursor, earlierPage.back.slice(0, -1));
+                  }}>
+                    Newer files
+                  </button>
+                ) : null}
+                {earlierMatches && earlierPage?.response.nextCursor ? (
+                  <button type="button" className="res__more" disabled={pageLoading} onClick={() => loadEarlierPage(
+                    earlierPage.response.nextCursor!,
+                    [...earlierPage.back, earlierPage.cursor],
+                  )}>
+                    Earlier files ({earlierRemaining})
+                  </button>
+                ) : null}
+                {pageLoading ? (
+                  <div className="res__more res__more--status" role="status">
+                    <Loader2 size={12} className="spin" aria-hidden />
+                    Loading files
+                  </div>
+                ) : failedPage ? (
+                  <button type="button" className="res__more" onClick={() => loadEarlierPage(failedPage.cursor, failedPage.back)}>
+                    <RefreshCw size={12} aria-hidden />
+                    Retry files
+                  </button>
+                ) : null}
+              </>
+            ) : initialResponse?.nextCursor && initialResponse.total > MAX_RESOURCE_ROWS ? (
               <button
                 type="button"
                 className="res__more"
-                aria-expanded={showAllFiles}
-                onClick={() => setExpandedViewKey(showAllFiles ? null : viewKey)}
+                aria-expanded="false"
+                onClick={() => {
+                  setExpandedViewKey(viewKey);
+                  loadEarlierPage(initialResponse.nextCursor!, []);
+                }}
               >
-                <ChevronDown size={12} className={`chev-flip ${showAllFiles ? "chev-flip--open" : ""}`} aria-hidden />
-                Earlier files ({allResources.length - MAX_RESOURCE_ROWS})
+                <ChevronDown size={12} aria-hidden />
+                Earlier files ({initialResponse.total - MAX_RESOURCE_ROWS})
               </button>
-            ) : !completeKnown && failedViewKey === viewKey ? (
-              <button type="button" className="res__more" onClick={() => {
-                setFailedViewKey(null);
-                setListRetry((value) => value + 1);
-              }}>
+            ) : failedViewKey === viewKey ? (
+              <button type="button" className="res__more" onClick={retryInitialList}>
                 <RefreshCw size={12} aria-hidden />
                 Retry earlier files
               </button>
-            ) : !completeKnown ? (
+            ) : !initialResponse && state.hasOlderMessages ? (
               <div className="res__more res__more--status" role="status">
                 <Loader2 size={12} className="spin" aria-hidden />
                 Earlier files

@@ -160,7 +160,18 @@ export default function (pi) {
       tree = await runtime.branchTree(SESSION_ID);
       await runtime.navigateBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "a2", mode: "switch" });
       tree = await runtime.branchTree(SESSION_ID);
-      const forked = await runtime.forkBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "u2" });
+      const internals = runtime as unknown as { snapshotSlot(slot: { id: string }): Promise<unknown> };
+      const originalSnapshotSlot = internals.snapshotSlot.bind(runtime);
+      internals.snapshotSlot = async (slot) => {
+        if (slot.id !== SESSION_ID) throw new Error("post-commit fork snapshot must not run");
+        return originalSnapshotSlot(slot);
+      };
+      let forked!: Awaited<ReturnType<typeof runtime.forkBranch>>;
+      try {
+        forked = await runtime.forkBranch({ sessionId: SESSION_ID, revision: tree.revision, targetId: "u2" });
+      } finally {
+        internals.snapshotSlot = originalSnapshotSlot;
+      }
       const destinationTree = await runtime.branchTree(forked.sessionId);
       await runtime.navigateBranch({
         sessionId: forked.sessionId,

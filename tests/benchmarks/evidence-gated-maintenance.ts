@@ -61,6 +61,7 @@ const EXPECTED_SCENARIO_REQUESTS: Record<string, number> = {
   "/api/git/diff": 2,
   "/api/git/status": 3,
   "/api/prompt": 1,
+  "/api/resources/list": 1,
   "/api/sessions": BACKGROUND_SETTLEMENTS,
   "/api/snapshot": 1,
 };
@@ -595,7 +596,7 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
   }
   async forkBranch(_request: BranchForkRequest): Promise<BranchForkResponse> { throw new Error("Benchmark fork must not be invoked"); }
   async resourceContext(sessionId: string): Promise<ResourceContext> {
-    return { sessionId, viewId: "benchmark-view", cwd: this.record.cwd, messages: this.messages };
+    return { sessionId, viewId: "benchmark-view", revision: 1, cwd: this.record.cwd, messages: this.messages };
   }
   async close(): Promise<void> { for (const timer of this.timers) clearTimeout(timer); this.timers.clear(); }
 }
@@ -990,6 +991,13 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
         .filter(row => row.querySelector('[aria-label="Completed"]'))
         .map(row => row.querySelector('.nav__row-name')?.textContent ?? '')
         .sort();
+      const settledToolCard = [...document.querySelectorAll('.card--tool')].some(card =>
+        card.querySelector('.card__tool-name')?.textContent === 'read' && card.textContent.includes('analysis.ts')
+      );
+      const settledCompactTool = [...document.querySelectorAll('.tool-strip__item')].some(item => {
+        const label = item.getAttribute('aria-label') ?? '';
+        return label.startsWith('read: finished') && label.includes('analysis.ts');
+      });
       return {
         commits: window.__INSPIRE_MAINTENANCE_BENCHMARK__.commits,
         perf: window.__INSPIRE_BROWSER_PERF__,
@@ -1000,7 +1008,7 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
           queueSettled: !document.body.textContent.includes('Pending steering') && !document.body.textContent.includes('Pending follow-up'),
           backgroundSettled: JSON.stringify(completedBackgroundRows) === ${JSON.stringify(JSON.stringify(expectedCompleted))},
           streamed: document.body.textContent.includes('Frozen evaluator stream completed'),
-          tool: [...document.querySelectorAll('.card__tool-name')].some(node => node.textContent === 'read') && document.body.textContent.includes('analysis.ts')
+          tool: settledToolCard || settledCompactTool
         }
       };
     })()`);
@@ -1253,6 +1261,7 @@ export default {
             gitDiff: "changed-row selection plus selected-diff reload after explicit status refresh",
             gitStatus: "Changes entry plus explicit refresh plus settled tool refresh",
             prompt: "one submitted streaming prompt",
+            resourceList: "one bounded Files index page after returning from History",
             sessions: "one loaded-extent refresh for each of four background settlements",
             snapshot: "one selected-session settlement resync",
           },
