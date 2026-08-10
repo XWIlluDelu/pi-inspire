@@ -2532,11 +2532,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       throw Object.assign(new Error("The session became active while deletion was being prepared"), { status: 409 });
     }
     // The initial forced catalog read established one unambiguous id/path.
-    // The destructive adapter now reopens that exact path, verifies its
-    // current regular-file identity and embedded session id, and quarantines
-    // that inode atomically. A second global JSONL rescan cannot close a race
-    // beyond that path-local authority and made browser deletion pay for the
-    // full project catalog twice.
+    // The destructive adapter now reopens that exact path and verifies its
+    // current regular-file identity and embedded session id immediately
+    // before passing the original JSONL name to Pi's Trash-first operation.
+    // A second global scan cannot strengthen that path-local authority and
+    // made browser deletion pay for the full project catalog twice.
     try {
       const disposition = await this.deleteSessionRecord(initial);
       return { sessionId, disposition };
