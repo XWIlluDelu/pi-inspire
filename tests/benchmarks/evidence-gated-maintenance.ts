@@ -994,7 +994,7 @@ async function browserIteration(root: string, iteration: number): Promise<Browse
       const settledToolCard = [...document.querySelectorAll('.card--tool')].some(card =>
         card.querySelector('.card__tool-name')?.textContent === 'read' && card.textContent.includes('analysis.ts')
       );
-      const settledCompactTool = [...document.querySelectorAll('.tool-strip__item')].some(item => {
+      const settledCompactTool = [...document.querySelectorAll('.activity-strip__item')].some(item => {
         const label = item.getAttribute('aria-label') ?? '';
         return label.startsWith('read: finished') && label.includes('analysis.ts');
       });

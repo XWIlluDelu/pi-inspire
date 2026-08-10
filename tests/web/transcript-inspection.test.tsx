@@ -180,6 +180,7 @@ describe("transcript live follow", () => {
   });
 
   it("follows thinking and tool growth until the user deliberately scrolls away", () => {
+    vi.useFakeTimers();
     const observed = new Map<Element, ResizeObserverCallback>();
     class TestResizeObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
@@ -241,10 +242,41 @@ describe("transcript live follow", () => {
     const content = container.querySelector(".transcript__content")!;
     act(() => observed.get(content)?.([], {} as ResizeObserver));
     expect(log.scrollTop).toBe(1_100);
-
-    fireEvent.wheel(log, { deltaY: -200 });
-    log.scrollTop = 400;
     fireEvent.scroll(log);
+
+    // Input precedes its scroll event. A stream delta in that gap must not win
+    // the race and pull the viewport back to latest.
+    fireEvent.wheel(log, { deltaY: -200 });
+    scrollHeight = 1_450;
+    rerender(
+      <Transcript
+        messages={[
+          { role: "user", content: "question", timestamp: 1 },
+          {
+            ...active,
+            content: [
+              { type: "thinking", thinking: "live reasoning continues" },
+              { type: "toolCall", id: "live-tool", name: "read", arguments: { path: "notes.md" } },
+            ],
+          },
+        ]}
+        {...props}
+      />,
+    );
+    expect(log.scrollTop).toBe(1_100);
+
+    // Even a small deliberate move inside the old 80px proximity band owns the
+    // viewport. Later layout-driven scroll events must not silently reacquire
+    // latest-follow after the input marker expires.
+    log.scrollTop = 1_090;
+    fireEvent.scroll(log);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(401));
+    log.scrollTop = 1_120;
+    fireEvent.scroll(log);
+    scrollHeight = 1_700;
+    act(() => observed.get(content)?.([], {} as ResizeObserver));
+    expect(log.scrollTop).toBe(1_120);
     expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
   });
 });
@@ -298,7 +330,7 @@ describe("transcript density preferences", () => {
     expect(screen.getByText("toolUse")).toBeInTheDocument();
   });
 
-  it("lays only adjacent tool calls across a row and reveals one downward detail panel", () => {
+  it("lays only adjacent tool calls across a row and reveals one downward detail panel", async () => {
     const { container } = render(
       <Transcript
         messages={[assistant, ...results]}
@@ -308,29 +340,33 @@ describe("transcript density preferences", () => {
         assistantRoundDisplay="divider"
       />,
     );
-    const strips = container.querySelectorAll(".tool-strip");
+    const strips = container.querySelectorAll(".activity-strip");
     expect(strips).toHaveLength(2);
-    expect(strips[0]!.querySelectorAll(".tool-strip__item")).toHaveLength(2);
-    expect(strips[1]!.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(2);
+    expect(strips[1]!.querySelectorAll(".activity-strip__item")).toHaveLength(1);
 
     const read = screen.getByRole("button", { name: /read: finished/i });
     fireEvent.click(read);
     expect(read).toHaveAttribute("aria-expanded", "true");
-    const detail = strips[0]!.querySelector(".tool-strip__detail");
+    const detail = strips[0]!.querySelector(".activity-strip__detail");
     expect(detail).not.toBeNull();
-    expect(strips[0]!.querySelector(".tool-strip__items")?.nextElementSibling).toContainElement(detail as HTMLElement);
+    expect(strips[0]!.querySelector(".activity-strip__items")?.nextElementSibling).toContainElement(detail as HTMLElement);
     expect(within(detail as HTMLElement).getByText("read result")).toBeInTheDocument();
+
+    fireEvent.click(within(detail as HTMLElement).getByRole("button", { name: "Collapse read tool details" }));
+    expect(read).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(screen.queryByText("read result")).not.toBeInTheDocument());
 
     const ffgrep = screen.getByRole("button", { name: /ffgrep: finished/i });
     fireEvent.click(ffgrep);
-    expect(container.querySelectorAll(".tool-strip__detail")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__detail")).toHaveLength(1);
     expect(screen.queryByText("read result")).not.toBeInTheDocument();
     expect(screen.getByText("alpha result")).toBeInTheDocument();
 
     fireEvent.click(ffgrep);
-    expect(strips[0]!.querySelector(".tool-strip__reveal")).toHaveAttribute("aria-hidden", "true");
+    expect(strips[0]!.querySelector(".activity-strip__reveal")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("alpha result")).toBeInTheDocument();
-    return waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
   });
 
   it("loads historical Dynamic content directly at its final density", () => {
@@ -356,9 +392,9 @@ describe("transcript density preferences", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Thinking/i })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Expand Thinking" })).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelectorAll(".card--tool")).toHaveLength(0);
-    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(2);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
   });
 
   it("holds fast Thinking for 1800 ms and parallel tools for 1600 ms before lifecycle collapse", () => {
@@ -391,9 +427,9 @@ describe("transcript density preferences", () => {
       />,
     );
 
-    const thinkingHeaders = screen.getAllByRole("button", { name: /Thinking/i });
+    const thinkingHeaders = screen.getAllByRole("button", { name: /^(?:Expand|Collapse) Thinking$/ });
     const toolHeader = (name: string) => screen.getByText(name, { selector: ".card__tool-name" })
-      .closest(".card")?.querySelector(".card__header") as HTMLElement;
+      .closest(".card")?.querySelector(".card__disclosure") as HTMLElement;
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
     for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
 
@@ -445,16 +481,16 @@ describe("transcript density preferences", () => {
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByText("next call").closest(".card")?.querySelector(".card__header"))
+    expect(screen.getByText("next call").closest(".card")?.querySelector(".card__disclosure"))
       .toHaveAttribute("aria-expanded", "true");
 
     act(() => vi.advanceTimersByTime(779));
-    expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
-    expect(container.querySelector(".tool-strip")).toBeNull();
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(3);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(3);
   });
 
   it("gives a fast final tool perceptible Expanded and Collapsed dwell before Compact", () => {
@@ -476,7 +512,7 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    const header = container.querySelector(".card--tool .card__header");
+    const header = container.querySelector(".card--tool .card__disclosure");
     expect(header).toHaveAttribute("aria-expanded", "true");
 
     rerender(
@@ -492,15 +528,15 @@ describe("transcript density preferences", () => {
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".tool-strip")).toBeNull();
+    expect(container.querySelector(".activity-strip")).toBeNull();
 
     act(() => vi.advanceTimersByTime(979));
-    expect(container.querySelector(".dynamic-tool-batch--compacting")).toBeNull();
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
-    expect(container.querySelector(".tool-strip")).toBeNull();
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
   });
 
   it("pauses Dynamic batch compaction while a completed tool is manually inspected", () => {
@@ -524,7 +560,7 @@ describe("transcript density preferences", () => {
         toolActivity={{ "held-tool": { id: "held-tool", name: "read", phase: "done" } }}
       />,
     );
-    const header = container.querySelector(".card--tool .card__header") as HTMLButtonElement;
+    const header = container.querySelector(".card--tool .card__disclosure") as HTMLButtonElement;
     act(() => vi.advanceTimersByTime(1_600));
     expect(header).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(header);
@@ -532,14 +568,14 @@ describe("transcript density preferences", () => {
 
     rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
     act(() => vi.advanceTimersByTime(2_000));
-    expect(container.querySelector(".tool-strip")).toBeNull();
+    expect(container.querySelector(".activity-strip")).toBeNull();
     expect(header).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.click(header);
     act(() => vi.advanceTimersByTime(0));
-    expect(container.querySelector(".dynamic-tool-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
   });
 
   it("switches Dynamic density immediately when reduced motion is requested", () => {
@@ -573,14 +609,14 @@ describe("transcript density preferences", () => {
         toolActivity={{ "reduced-tool": { id: "reduced-tool", name: "bash", phase: "running" } }}
       />,
     );
-    const header = container.querySelector(".card--tool .card__header");
+    const header = container.querySelector(".card--tool .card__disclosure");
     rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
 
     act(() => vi.runOnlyPendingTimers());
     act(() => vi.runOnlyPendingTimers());
     act(() => vi.runOnlyPendingTimers());
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelectorAll(".tool-strip__item")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
   });
 
   it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", () => {
@@ -593,8 +629,9 @@ describe("transcript density preferences", () => {
         toolVisibility="collapsed"
       />,
     );
-    const collapsed = document.querySelector(".card--thinking .card__header") as HTMLElement;
-    const summary = collapsed.querySelector(".card__summary--prose") as HTMLElement;
+    const thinkingCard = document.querySelector(".card--thinking") as HTMLElement;
+    const collapsed = thinkingCard.querySelector(".card__disclosure") as HTMLElement;
+    const summary = thinkingCard.querySelector(".card__summary--prose") as HTMLElement;
     expect(within(summary).getByText("strong").tagName).toBe("STRONG");
     expect(summary.querySelector(".katex")).not.toBeNull();
     expect(screen.queryByText("Second line")).not.toBeInTheDocument();
@@ -700,11 +737,93 @@ describe("message actions", () => {
       await waitFor(() => expect(fork).toHaveBeenCalledWith("entry-user"));
 
       const assistantTurn = screen.getByText("assistant source").closest(".turn") as HTMLElement;
-      fireEvent.click(within(assistantTurn).getByRole("button", { name: "Copy message" }));
+      const responseActions = assistantTurn.querySelector(".turn__actions--response") as HTMLElement;
+      expect(assistantTurn.querySelector(".assistant-doc")?.nextElementSibling).toBe(responseActions);
+      fireEvent.click(within(responseActions).getByRole("button", { name: "Copy response" }));
       await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("assistant source"));
       expect(within(assistantTurn).queryByRole("button", { name: /Fork session/ })).not.toBeInTheDocument();
     } finally {
       store.forkFromEntry = originalFork;
+    }
+  });
+
+  it("keeps response and activity-block clipboard projections separate", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const originalOpenResource = store.openResource;
+    const openResource = vi.fn(async () => undefined);
+    store.openResource = openResource;
+    const generic = { type: "custom", extensionName: "Web search", payload: { count: 2 } };
+    try {
+      render(
+        <Transcript
+          messages={[
+            {
+              role: "assistant",
+              timestamp: 1,
+              content: [
+                { type: "thinking", thinking: "private reasoning" },
+                { type: "text", text: "first response" },
+                { type: "toolCall", id: "copy-tool", name: "read", arguments: { path: "src/a.ts" } },
+                { type: "text", text: "second response" },
+                generic,
+              ],
+            },
+            { role: "toolResult", toolCallId: "copy-tool", content: "file body", timestamp: 2 },
+            {
+              role: "custom",
+              customType: "intercom_message",
+              content: "custom payload",
+              details: { channel: "local" },
+              display: true,
+              timestamp: 3,
+            },
+          ]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+          assistantRoundDisplay="divider"
+        />,
+      );
+
+      const responseTurn = screen.getByText("first response").closest(".turn") as HTMLElement;
+      fireEvent.click(within(responseTurn).getByRole("button", { name: "Copy response" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("first response\n\nsecond response"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy thinking block" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("private reasoning"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy read tool block" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith([
+        "read",
+        "Arguments",
+        JSON.stringify({ path: "src/a.ts" }, null, 2),
+        "Result",
+        "file body",
+      ].join("\n\n")));
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy web search block" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(JSON.stringify(generic, null, 2)));
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy intercom message block" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith([
+        "Intercom message",
+        "Type: intercom_message",
+        "Content",
+        "custom payload",
+        "Details",
+        JSON.stringify({ channel: "local" }, null, 2),
+      ].join("\n\n")));
+
+      const toolCard = screen.getByText("read", { selector: ".card__tool-name" }).closest(".card") as HTMLElement;
+      fireEvent.click(within(toolCard).getByRole("button", { name: "src/a.ts" }));
+      await waitFor(() => expect(openResource).toHaveBeenCalledTimes(1));
+      fireEvent.click(toolCard.querySelector(".card__header") as HTMLElement);
+      expect(openResource).toHaveBeenCalledTimes(1);
+      fireEvent.click(within(toolCard).getByRole("button", { name: "Expand read tool" }));
+      expect(openResource).toHaveBeenCalledTimes(1);
+    } finally {
+      store.openResource = originalOpenResource;
     }
   });
 });
@@ -758,8 +877,8 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".card--generic")).toBeNull();
   });
 
-  it("honors Pi's display flag for custom context messages", () => {
-    const { rerender } = render(
+  it("renders visible custom messages as aligned, inspectable activity and omits display:false", () => {
+    const { rerender, container } = render(
       <Transcript
         messages={[{
           role: "custom",
@@ -774,6 +893,7 @@ describe("transient conversation projections", () => {
     );
     expect(screen.queryByText(/Magic Context/)).not.toBeInTheDocument();
     expect(screen.queryByText("context-only")).not.toBeInTheDocument();
+    expect(container.querySelector(".turn--custom")).toBeNull();
 
     rerender(
       <Transcript
@@ -782,13 +902,264 @@ describe("transient conversation projections", () => {
           customType: "intercom_message",
           content: "visible extension message",
           display: true,
+          timestamp: 10,
         }]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
       />,
     );
-    expect(screen.getByText("Intercom message")).toHaveClass("card__generic-title");
+    const title = screen.getByText("Intercom message");
+    expect(title).toHaveClass("card__tool-name");
+    const card = title.closest(".card") as HTMLElement;
+    expect(card).toHaveClass("card--custom");
+    expect(card.querySelector(".card__icon svg")).toHaveAttribute("width", "14");
+    const header = card.querySelector(".card__disclosure") as HTMLButtonElement;
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(card.querySelector(".card__status")).toBeEmptyDOMElement();
+    fireEvent.click(header);
+    expect(screen.getByText(/visible extension message/)).toBeInTheDocument();
+
+    rerender(
+      <Transcript
+        messages={[{
+          role: "custom",
+          customType: "intercom_message",
+          content: "visible extension message",
+          display: true,
+          timestamp: 10,
+        }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="hidden"
+      />,
+    );
+    expect(container.querySelector(".turn--custom")).toBeNull();
+  });
+
+  it("compacts adjacent custom activity into typed tiles without invented result status", async () => {
+    const { container } = render(
+      <Transcript
+        messages={[
+          { role: "custom", customType: "intercom_message", content: "one", display: true, timestamp: 20 },
+          { role: "custom", customType: "hidden_context", content: "hidden", display: false, timestamp: 21 },
+          { role: "custom", customType: "web_search_content_ready", content: "two", display: true, timestamp: 22 },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="compact"
+      />,
+    );
+    const strip = container.querySelector(".activity-strip") as HTMLElement;
+    expect(strip.querySelectorAll(".activity-strip__item--custom")).toHaveLength(2);
+    expect(screen.queryByText("hidden_context")).not.toBeInTheDocument();
+
+    const intercom = screen.getByRole("button", { name: "Intercom message: custom activity" });
+    expect(within(intercom).getByText("intercom_message")).toHaveClass("activity-strip__kind");
+    expect(intercom.querySelector(".status-success, .status-error, .status-unknown, .spin")).toBeNull();
+    fireEvent.click(intercom);
+    const detail = strip.querySelector(".activity-strip__detail") as HTMLElement;
+    expect(detail).toHaveClass("card--custom");
+    expect(detail.querySelector(".card__custom-kind")).toHaveTextContent("intercom_message");
+    expect(within(detail).getByText("one")).toBeInTheDocument();
+    fireEvent.click(within(detail).getByRole("button", { name: "Collapse Intercom message custom activity details" }));
+    expect(intercom).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(screen.queryByText("one")).not.toBeInTheDocument());
+  });
+
+  it("merges trailing custom activity into the preceding final tool strip", () => {
+    const toolBatch = {
+      role: "assistant",
+      timestamp: 25,
+      content: [
+        { type: "toolCall", id: "merged-read", name: "read", arguments: { path: "a.ts" } },
+        { type: "toolCall", id: "merged-bash", name: "bash", arguments: { command: "npm test" } },
+      ],
+    };
+    const { container } = render(
+      <Transcript
+        messages={[
+          toolBatch,
+          { role: "toolResult", toolCallId: "merged-read", content: "read", timestamp: 26 },
+          { role: "toolResult", toolCallId: "merged-bash", content: "tested", timestamp: 27 },
+          { role: "custom", customType: "intercom_message", content: "delivered", display: true, timestamp: 28 },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="compact"
+      />,
+    );
+
+    const strips = container.querySelectorAll(".activity-strip");
+    expect(strips).toHaveLength(1);
+    const items = strips[0]!.querySelectorAll(".activity-strip__item");
+    expect(items).toHaveLength(3);
+    expect(items[2]).toHaveAccessibleName("Intercom message: custom activity");
+    expect(container.querySelector(".turn--custom")).toBeNull();
+  });
+
+  it("keeps a trailing live custom message in its tool batch through Dynamic compaction", () => {
+    vi.useFakeTimers();
+    const active = {
+      role: "assistant",
+      timestamp: 29,
+      __inspireLiveId: "merged-live",
+      content: [{ type: "toolCall", id: "merged-live-tool", name: "read", arguments: { path: "live.ts" } }],
+    };
+    const result = { role: "toolResult", toolCallId: "merged-live-tool", content: "done", timestamp: 30 };
+    const started = {
+      role: "custom",
+      customType: "intercom_message",
+      content: "delivered",
+      display: true,
+      timestamp: 31,
+      __inspireLiveId: "merged-custom-live",
+    };
+    const preferences = {
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { container, rerender } = render(
+      <Transcript
+        messages={[active, result, started]}
+        streaming
+        activeAssistantMessageKey="live:merged-live"
+        {...preferences}
+      />,
+    );
+    const headers = container.querySelectorAll(".card--tool .card__disclosure, .card--custom .card__disclosure");
+    expect(headers).toHaveLength(2);
+    for (const header of headers) expect(header).toHaveAttribute("aria-expanded", "true");
+
+    const ended = { ...started, __inspireSettled: true };
+    rerender(
+      <Transcript
+        messages={[active, result, ended]}
+        streaming
+        activeAssistantMessageKey="live:merged-live"
+        {...preferences}
+      />,
+    );
+    act(() => vi.advanceTimersByTime(1_600));
+    for (const header of headers) expect(header).toHaveAttribute("aria-expanded", "false");
+
+    rerender(
+      <Transcript
+        messages={[active, result, ended, { role: "assistant", content: "next", timestamp: 32, __inspireLiveId: "next" }]}
+        streaming
+        activeAssistantMessageKey="live:next"
+        {...preferences}
+      />,
+    );
+    act(() => vi.advanceTimersByTime(980));
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(180));
+    const strips = container.querySelectorAll(".activity-strip");
+    expect(strips).toHaveLength(1);
+    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(2);
+    expect(strips[0]!.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+    expect(container.querySelector(".turn--custom")).toBeNull();
+  });
+
+  it("loads historical Dynamic custom activity directly as Compact", () => {
+    const { container } = render(
+      <Transcript
+        messages={[{
+          role: "custom",
+          customType: "web_search_content_ready",
+          content: "ready",
+          display: true,
+          timestamp: 30,
+        }]}
+        streaming={false}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
+    );
+    expect(container.querySelector(".card--custom")).toBeNull();
+    expect(container.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+  });
+
+  it("streams custom activity through Expanded, Collapsed, and Compact", () => {
+    vi.useFakeTimers();
+    const started = {
+      role: "custom",
+      customType: "web_search_content_ready",
+      content: "streamed payload",
+      display: true,
+      timestamp: 40,
+      __inspireLiveId: "custom-live",
+    };
+    const props = {
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const { container, rerender } = render(
+      <Transcript messages={[started]} streaming {...props} />,
+    );
+    const header = container.querySelector(".card--custom .card__disclosure") as HTMLButtonElement;
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/streamed payload/)).toBeInTheDocument();
+    expect(container.querySelector(".activity-strip")).toBeNull();
+
+    const ended = { ...started, __inspireSettled: true };
+    rerender(<Transcript messages={[ended]} streaming {...props} />);
+    act(() => vi.advanceTimersByTime(1_599));
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".activity-strip")).toBeNull();
+
+    rerender(
+      <Transcript
+        messages={[ended, { role: "assistant", content: "next call", timestamp: 41, __inspireLiveId: "next" }]}
+        streaming
+        {...props}
+      />,
+    );
+    act(() => vi.advanceTimersByTime(979));
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(container.querySelector(".activity-strip")).toBeNull();
+    act(() => vi.advanceTimersByTime(180));
+    expect(container.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+  });
+
+  it("keeps one Dynamic lifecycle when a custom activity adopts its durable timestamp", () => {
+    vi.useFakeTimers();
+    const props = {
+      streaming: true,
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+    };
+    const started = {
+      role: "custom",
+      customType: "intercom_message",
+      content: "owned once",
+      display: true,
+      timestamp: 50,
+      __inspireLiveId: "custom-live-owned",
+      __inspireMessageId: "custom-owned:0",
+      __inspireEntryId: "custom-owned",
+    };
+    const { container, rerender } = render(<Transcript messages={[started]} {...props} />);
+    const header = container.querySelector(".card--custom .card__disclosure") as HTMLButtonElement;
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    rerender(<Transcript messages={[{
+      ...started,
+      timestamp: 5_000,
+      __inspireLiveId: undefined,
+      __inspireSettled: undefined,
+    }]} {...props} />);
+    expect(container.querySelector(".card--custom .card__disclosure")).toBe(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1_599));
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
   });
 
   it("renders one attributable inspectable generic extension surface", () => {

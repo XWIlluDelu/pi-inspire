@@ -1326,6 +1326,164 @@ describe("RuntimeController projection ownership gate", () => {
     expect(worker.stops).toBe(1);
   });
 
+  it("pairs a live custom message to its durable entry despite Pi assigning a different persistence timestamp", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const live = {
+        role: "custom", customType: "intercom_message", content: "delivered",
+        display: true, details: { source: "peer" }, timestamp: 2_000,
+      };
+      const entry = {
+        type: "custom_message", id: "custom-1", parentId: "u1",
+        timestamp: "2026-08-01T00:00:05.000Z", customType: "intercom_message",
+        content: "delivered", display: true, details: { source: "peer" },
+      };
+      const worker = workers[0]!;
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", { type: "message_start", message: structuredClone(live) });
+      worker.emit("event", { type: "message_end", message: structuredClone(live) });
+      const liveSnapshot = await runtime.snapshot();
+      const liveCustom = liveSnapshot.active?.messages.filter((message) =>
+        (message as { role?: string }).role === "custom") ?? [];
+      expect(liveCustom).toHaveLength(1);
+      expect((liveCustom[0] as Record<string, unknown>).__inspireLiveId).toMatch(/:live:/);
+
+      await appendFile(path, `${JSON.stringify(entry)}\n`);
+      worker.emit("event", { type: "agent_settled" });
+      let snapshot = await runtime.snapshot();
+      await vi.waitFor(async () => {
+        snapshot = await runtime.snapshot();
+        expect(snapshot.runState).toBe("idle");
+        expect(snapshot.active?.messages.some((message) =>
+          (message as Record<string, unknown>).__inspireMessageId === "custom-1:0")).toBe(true);
+      });
+      const custom = snapshot.active?.messages.filter((message) =>
+        (message as { role?: string }).role === "custom") ?? [];
+      expect(custom).toHaveLength(1);
+      expect(custom[0]).toMatchObject({
+        timestamp: Date.parse(entry.timestamp),
+        __inspireMessageId: "custom-1:0",
+        __inspireEntryId: "custom-1",
+      });
+      expect(custom[0]).not.toHaveProperty("__inspireLiveId");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("pairs equal-payload custom messages one-to-one without coalescing legitimate repeats", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      worker.emit("event", { type: "agent_start" });
+      for (const timestamp of [2_001, 2_001]) {
+        const live = {
+          role: "custom", customType: "intercom_message", content: "same payload",
+          display: true, timestamp,
+        };
+        worker.emit("event", { type: "message_start", message: structuredClone(live) });
+        worker.emit("event", { type: "message_end", message: structuredClone(live) });
+      }
+      const entries = [
+        {
+          type: "custom_message", id: "custom-repeat-1", parentId: "u1",
+          timestamp: "2026-08-01T00:00:07.000Z", customType: "intercom_message",
+          content: "same payload", display: true,
+        },
+        {
+          type: "custom_message", id: "custom-repeat-2", parentId: "custom-repeat-1",
+          timestamp: "2026-08-01T00:00:08.000Z", customType: "intercom_message",
+          content: "same payload", display: true,
+        },
+      ];
+      await appendFile(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+      worker.emit("event", { type: "agent_settled" });
+      let snapshot = await runtime.snapshot();
+      await vi.waitFor(async () => {
+        snapshot = await runtime.snapshot();
+        expect(snapshot.runState).toBe("idle");
+        expect(snapshot.active?.messages.filter((message) =>
+          (message as { role?: string }).role === "custom")).toHaveLength(2);
+      });
+      expect(snapshot.active?.messages.filter((message) =>
+        (message as { role?: string }).role === "custom").map((message) =>
+        (message as Record<string, unknown>).__inspireMessageId)).toEqual([
+        "custom-repeat-1:0",
+        "custom-repeat-2:0",
+      ]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("merges entry-first custom lifecycle events into the already projected row", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const entry = {
+        type: "custom_message", id: "custom-entry-first", parentId: "u1",
+        timestamp: "2026-08-01T00:00:06.000Z", customType: "intercom_message",
+        content: "arrived while idle", display: true,
+      };
+      const live = {
+        role: "custom", customType: "intercom_message", content: "arrived while idle",
+        display: true, timestamp: 3_000,
+      };
+      const worker = workers[0]!;
+      worker.emit("event", { type: "entry_appended", entry: structuredClone(entry) });
+      await appendFile(path, `${JSON.stringify(entry)}\n`);
+      await vi.waitFor(async () => {
+        expect((await runtime.snapshot()).active?.messages.some((message) =>
+          (message as Record<string, unknown>).__inspireMessageId === "custom-entry-first:0")).toBe(true);
+      });
+
+      const forwarded: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => {
+        const record = event as Record<string, unknown>;
+        if (record.type === "message_start" || record.type === "message_end") forwarded.push(record);
+      });
+      worker.emit("event", { type: "message_start", message: structuredClone(live) });
+      worker.emit("event", { type: "message_end", message: structuredClone(live) });
+      const snapshot = await runtime.snapshot();
+      const custom = snapshot.active?.messages.filter((message) =>
+        (message as { role?: string }).role === "custom") ?? [];
+      expect(custom).toHaveLength(1);
+      expect(custom[0]).toMatchObject({
+        timestamp: Date.parse(entry.timestamp),
+        __inspireMessageId: "custom-entry-first:0",
+        __inspireEntryId: "custom-entry-first",
+      });
+      expect(forwarded).toHaveLength(2);
+      const forwardedMessages = forwarded.map((event) => event.message as Record<string, unknown>);
+      expect(new Set(forwardedMessages.map((message) => message.__inspireLiveId))).toHaveLength(1);
+      for (const message of forwardedMessages) {
+        expect(message).toMatchObject({
+          __inspireMessageId: "custom-entry-first:0",
+          __inspireEntryId: "custom-entry-first",
+        });
+      }
+      expect(forwardedMessages[1]).toMatchObject({ __inspireSettled: true });
+
+      // The entry-first lifecycle must not leave a stale custom persistence
+      // expectation that claims the next unrelated append.
+      const assistant = { role: "assistant", content: "next", timestamp: 4_000, stopReason: "stop" };
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", { type: "message_end", message: structuredClone(assistant) });
+      await appendFile(path, `${JSON.stringify({
+        type: "message", id: "after-entry-first", parentId: "custom-entry-first",
+        timestamp: "2026-08-01T00:00:09.000Z", message: assistant,
+      })}\n`);
+      worker.emit("event", { type: "agent_settled" });
+      await vi.waitFor(async () => {
+        const settled = await runtime.snapshot();
+        expect(settled.active?.projectionConflict).toBeNull();
+        expect(settled.active?.messages.some((message) =>
+          (message as Record<string, unknown>).__inspireMessageId === "after-entry-first:0")).toBe(true);
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("uses a bounded live overlay for reconnect and removes it after persistence without duplicates", async () => {
     const { runtime, workers, path } = await setup();
     try {

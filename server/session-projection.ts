@@ -924,8 +924,30 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       delete copy.__inspireMessageId;
       return messageFallbackCorrelation(copy);
     }).filter((key): key is string => key !== null));
+    const persistedIndexByEntryId = new Map(persisted.flatMap((value, index) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const entryId = (value as Record<string, unknown>).__inspireEntryId;
+      return typeof entryId === "string" ? [[entryId, index] as const] : [];
+    }));
     const combined = [...persisted];
     for (const item of overlay) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const overlayRecord = item as Record<string, unknown>;
+        const entryId = typeof overlayRecord.__inspireEntryId === "string" ? overlayRecord.__inspireEntryId : null;
+        const persistedIndex = entryId ? persistedIndexByEntryId.get(entryId) : undefined;
+        if (persistedIndex !== undefined) {
+          const durable = persisted[persistedIndex] as Record<string, unknown>;
+          combined[persistedIndex] = {
+            ...overlayRecord,
+            __inspireMessageId: durable.__inspireMessageId,
+            __inspireEntryId: entryId,
+            ...(durable.__inspireMessageIndex !== undefined
+              ? { __inspireMessageIndex: durable.__inspireMessageIndex }
+              : {}),
+          };
+          continue;
+        }
+      }
       let key: string | null = null;
       if (item && typeof item === "object") {
         const copy = { ...(item as Record<string, unknown>) };

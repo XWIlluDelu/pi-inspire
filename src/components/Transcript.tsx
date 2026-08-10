@@ -66,7 +66,7 @@ function clockTime(timestamp?: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// --- Collapsible cards (thinking / tool / generic) ---
+// --- Collapsible cards (thinking / tool / custom / generic) ---
 
 type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -75,13 +75,92 @@ const DYNAMIC_THINKING_EXPANDED_MIN_MS = 1_800;
 const DYNAMIC_TOOL_EXPANDED_MIN_MS = 1_600;
 const DYNAMIC_TOOL_COLLAPSED_MIN_MS = 800;
 
+interface CopyActionProps {
+  text: string;
+  label: string;
+  className: string;
+}
+
+function CopyAction({ text, label, className }: CopyActionProps) {
+  const { copied, copy } = useCopied();
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className={`icon-button ${className}`}
+      aria-label={copied ? `${label} copied` : `Copy ${label.toLowerCase()}`}
+      title={copied ? "Copied" : `Copy ${label.toLowerCase()}`}
+      onClick={() => void copy(text)}
+    >
+      {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
+    </button>
+  );
+}
+
+interface CardHeaderProps {
+  expanded: boolean;
+  icon: React.ReactNode;
+  label: React.ReactNode;
+  toggleLabel: string;
+  onToggle: () => void;
+  summary?: React.ReactNode;
+  status?: React.ReactNode;
+  copyText?: string;
+  copyLabel?: string;
+  controlsId?: string;
+}
+
+/** Activity headers are composite controls, not one oversized button: the
+ * disclosure, resource summary, and copy action each own only their visible
+ * target and one semantic action. */
+function CardHeader({
+  expanded,
+  icon,
+  label,
+  toggleLabel,
+  onToggle,
+  summary,
+  status,
+  copyText,
+  copyLabel = `${toggleLabel} block`,
+  controlsId,
+}: CardHeaderProps) {
+  const action = expanded ? "Collapse" : "Expand";
+  return (
+    <div className="card__header">
+      <button
+        type="button"
+        className="card__disclosure"
+        aria-label={`${action} ${toggleLabel}`}
+        aria-expanded={expanded}
+        aria-controls={controlsId}
+        title={`${action} ${toggleLabel}`}
+        onClick={onToggle}
+      >
+        <span className="card__chevron">
+          <ChevronRight size={14} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
+        </span>
+        <span className="card__icon">{icon}</span>
+        <span className="card__label">{label}</span>
+      </button>
+      {summary}
+      <span className="card__header-spacer" aria-hidden />
+      <span className="card__status">{status}</span>
+      {copyText ? <CopyAction text={copyText} label={copyLabel} className="card__copy" /> : null}
+    </div>
+  );
+}
+
 interface CardProps {
   defaultVisibility: StaticVisibility;
   className: string;
   icon: React.ReactNode;
   label: React.ReactNode;
+  toggleLabel: string;
   summary?: React.ReactNode;
   status?: React.ReactNode;
+  copyText?: string;
+  copyLabel?: string;
   children: React.ReactNode;
   forceClosed?: boolean;
   onManualOpenChange?: (open: boolean) => void;
@@ -92,14 +171,18 @@ function CollapsibleCard({
   className,
   icon,
   label,
+  toggleLabel,
   summary,
   status,
+  copyText,
+  copyLabel,
   children,
   forceClosed = false,
   onManualOpenChange,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
   const [override, setOverride] = useState<"open" | "closed" | null>(null);
+  const bodyId = useId();
   const hidden = defaultVisibility === "hidden";
   const open = !hidden && !forceClosed && (override !== null ? override === "open" : defaultVisibility === "expanded");
   // Closing content stays mounted only for the height transition. Collapsed
@@ -135,27 +218,27 @@ function CollapsibleCard({
   if (hidden) return null;
   return (
     <section className={`card ${className}`}>
-      <button
-        type="button"
-        className="card__header"
-        onClick={() => {
+      <CardHeader
+        expanded={open}
+        icon={icon}
+        label={label}
+        toggleLabel={toggleLabel}
+        onToggle={() => {
           const nextOpen = !open;
           setOverride(nextOpen ? "open" : "closed");
           onManualOpenChange?.(nextOpen);
         }}
-        aria-expanded={open}
-      >
-        <span className="card__icon">{icon}</span>
-        <span className="card__label">{label}</span>
-        {/* The one-line summary only earns its place while collapsed. */}
-        {!open && summary ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary) : null}
-        <span className="card__status">{status}</span>
-        <span className="card__chevron">
-          <ChevronRight size={14} className={`chev ${open ? "chev--open" : ""}`} aria-hidden />
-        </span>
-      </button>
+        summary={!open && summary
+          ? (typeof summary === "string" ? <span className="card__summary">{summary}</span> : summary)
+          : undefined}
+        status={status}
+        copyText={copyText}
+        copyLabel={copyLabel}
+        controlsId={bodyId}
+      />
       {bodyMounted ? (
         <div
+          id={bodyId}
           className={`card__reveal ${bodyOpen ? "card__reveal--open" : ""}`}
           aria-hidden={!bodyOpen}
           inert={!bodyOpen}
@@ -197,11 +280,14 @@ function ThinkingCard({
       className="card--thinking"
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
+      toggleLabel="Thinking"
       summary={
         <span className="card__summary card__summary--prose">
           <RichText text={firstLine.slice(0, 90)} variant="thinking" inline />
         </span>
       }
+      copyText={clean}
+      copyLabel="Thinking block"
     >
       <RichText text={clean} variant="thinking" />
     </CollapsibleCard>
@@ -262,21 +348,10 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
   const summary = toolSummary(call);
   if (!summary) return null;
   if (!isLocalResourceReference(summary)) return <span className="card__summary">{summary}</span>;
-  // The summary sits inside the collapsible header's own <button>, so a real
-  // nested button would be invalid HTML; this behaves like one without nesting.
   return (
-    <span
-      className="card__summary card__summary--file"
-      data-file-path={summary}
-      title={`Preview ${summary}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-        void store.openResource(summary);
-      }}
-    >
+    <FileRefButton reference={summary} className="card__summary card__summary--file">
       {summary}
-    </span>
+    </FileRefButton>
   );
 }
 
@@ -372,6 +447,12 @@ function ToolDetails({
   );
 }
 
+function toolClipboardText(call: ToolCallContent, result: ChatMessage | undefined): string {
+  const sections = [call.name, "Arguments", JSON.stringify(call.arguments ?? {}, null, 2)];
+  if (result) sections.push("Result", toolResultText(result));
+  return sections.join("\n\n");
+}
+
 function ToolCard({
   call,
   result,
@@ -412,19 +493,34 @@ function ToolCard({
       className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
       icon={toolIcon(call.name)}
       label={<code className="card__tool-name">{call.name}</code>}
+      toggleLabel={`${call.name} tool`}
       summary={<ToolSummary call={call} />}
       status={statusIcon(status)}
+      copyText={toolClipboardText(call, result)}
+      copyLabel={`${call.name} tool block`}
     >
       <ToolDetails call={call} result={result} status={status} />
     </CollapsibleCard>
   );
 }
 
-interface CompactTool {
+interface CompactToolActivity {
+  kind: "tool";
+  key: string;
   call: ToolCallContent;
   result: ChatMessage | undefined;
   activity?: ActivityTool;
 }
+
+interface CompactCustomActivity {
+  kind: "custom";
+  key: string;
+  message: ChatMessage;
+  title: string;
+  customType: string;
+}
+
+type CompactActivity = CompactToolActivity | CompactCustomActivity;
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   running: "running",
@@ -433,44 +529,97 @@ const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   unknown: "no result",
 };
 
-/** Compact mode changes only the geometry of an adjacent run of tool calls:
- * icons wrap horizontally, while one selected call reveals its ordinary
- * details directly below that row without reordering transcript content. */
-function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean }) {
+function inspectableValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function CustomMessageDetails({ message }: { message: ChatMessage }) {
+  return (
+    <div className="card__sections">
+      <div>
+        <div className="card__section-label">Content</div>
+        <pre className="card__mono">{inspectableValue(message.content ?? [])}</pre>
+      </div>
+      {message.details !== undefined ? (
+        <div>
+          <div className="card__section-label">Details</div>
+          <pre className="card__mono">{inspectableValue(message.details)}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function compactActivityPresentation(activity: CompactActivity, live: boolean) {
+  if (activity.kind === "custom") {
+    return {
+      custom: true,
+      failed: false,
+      label: `${activity.title}: custom activity`,
+      title: `${activity.title} · ${activity.customType}`,
+      content: (
+        <>
+          <Package size={14} aria-hidden />
+          <code className="activity-strip__kind">{activity.customType}</code>
+        </>
+      ),
+    };
+  }
+
+  const status = toolStatus(activity.result, activity.activity, live);
+  const summary = toolSummary(activity.call);
+  return {
+    custom: false,
+    failed: status === "failure",
+    label: `${activity.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
+    title: `${activity.call.name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
+    content: (
+      <>
+        {toolIcon(activity.call.name)}
+        {statusIcon(status)}
+      </>
+    ),
+  };
+}
+
+/** Compact mode changes only the geometry of an adjacent activity run. Items
+ * wrap horizontally, while one selection reveals its ordinary details below
+ * the strip without reordering transcript content. */
+function CompactActivityStrip({ activities, live }: { activities: CompactActivity[]; live: boolean }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [renderedIndex, setRenderedIndex] = useState<number | null>(null);
   const [origin, setOrigin] = useState(22);
   const panelId = useId();
   const itemsRef = useRef<HTMLDivElement>(null);
-  const rendered = renderedIndex == null ? null : tools[renderedIndex] ?? null;
+  const rendered = renderedIndex == null ? null : activities[renderedIndex] ?? null;
 
   // Keep the last detail mounted for the brief grid-collapse transition; it is
   // inert throughout closing and is removed once no pixels remain visible.
   useEffect(() => {
     if (selectedIndex != null || renderedIndex == null) return;
-    const timer = window.setTimeout(() => setRenderedIndex(null), 180);
+    const timer = window.setTimeout(() => setRenderedIndex(null), CARD_TRANSITION_MS);
     return () => window.clearTimeout(timer);
   }, [selectedIndex, renderedIndex]);
 
   return (
     <div
-      className="tool-strip"
-      style={{ "--tool-detail-origin": `${origin}px` } as React.CSSProperties}
+      className="activity-strip"
+      style={{ "--activity-detail-origin": `${origin}px` } as React.CSSProperties}
     >
-      <div ref={itemsRef} className="tool-strip__items" aria-label="Tool calls">
-        {tools.map((tool, index) => {
-          const status = toolStatus(tool.result, tool.activity, live);
-          const summary = toolSummary(tool.call);
+      <div ref={itemsRef} className="activity-strip__items" aria-label="Activity">
+        {activities.map((activity, index) => {
           const active = selectedIndex === index;
+          const presentation = compactActivityPresentation(activity, live);
           return (
             <button
-              key={tool.call.id ?? index}
+              key={activity.key}
               type="button"
-              className={`tool-strip__item ${active ? "tool-strip__item--active" : ""} ${status === "failure" ? "tool-strip__item--failed" : ""}`}
-              aria-label={`${tool.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`}
+              className={`activity-strip__item ${presentation.custom ? "activity-strip__item--custom" : ""} ${active ? "activity-strip__item--active" : ""} ${presentation.failed ? "activity-strip__item--failed" : ""}`}
+              aria-label={presentation.label}
               aria-expanded={active}
               aria-controls={active ? panelId : undefined}
-              title={`${tool.call.name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`}
+              title={presentation.title}
               onClick={(event) => {
                 const itemsBounds = itemsRef.current?.getBoundingClientRect();
                 const itemBounds = event.currentTarget.getBoundingClientRect();
@@ -483,30 +632,34 @@ function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean
                 }
               }}
             >
-              {toolIcon(tool.call.name)}
-              {statusIcon(status)}
+              {presentation.content}
             </button>
           );
         })}
       </div>
       <div
-        className={`tool-strip__reveal ${selectedIndex != null ? "tool-strip__reveal--open" : ""}`}
+        className={`activity-strip__reveal ${selectedIndex != null ? "activity-strip__reveal--open" : ""}`}
         aria-hidden={selectedIndex == null}
         inert={selectedIndex == null}
       >
-        <div className="tool-strip__reveal-inner">
-          {rendered ? (
+        <div className="activity-strip__reveal-inner">
+          {rendered?.kind === "tool" ? (
             <section
-              key={rendered.call.id ?? renderedIndex}
+              key={rendered.key}
               id={panelId}
-              className={`card card--tool tool-strip__detail ${toolStatus(rendered.result, rendered.activity, live) === "failure" ? "card--failed" : ""}`}
+              className={`card card--tool activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live) === "failure" ? "card--failed" : ""}`}
             >
-              <div className="tool-strip__detail-head">
-                <span className="card__icon">{toolIcon(rendered.call.name)}</span>
-                <code className="card__tool-name">{rendered.call.name}</code>
-                <ToolSummary call={rendered.call} />
-                <span className="card__status">{statusIcon(toolStatus(rendered.result, rendered.activity, live))}</span>
-              </div>
+              <CardHeader
+                expanded
+                icon={toolIcon(rendered.call.name)}
+                label={<code className="card__tool-name">{rendered.call.name}</code>}
+                toggleLabel={`${rendered.call.name} tool details`}
+                onToggle={() => setSelectedIndex(null)}
+                summary={<ToolSummary call={rendered.call} />}
+                status={statusIcon(toolStatus(rendered.result, rendered.activity, live))}
+                copyText={toolClipboardText(rendered.call, rendered.result)}
+                copyLabel={`${rendered.call.name} tool block`}
+              />
               <div className="card__body">
                 <ToolDetails
                   call={rendered.call}
@@ -514,6 +667,20 @@ function CompactToolStrip({ tools, live }: { tools: CompactTool[]; live: boolean
                   status={toolStatus(rendered.result, rendered.activity, live)}
                 />
               </div>
+            </section>
+          ) : rendered?.kind === "custom" ? (
+            <section key={rendered.key} id={panelId} className="card card--custom activity-strip__detail">
+              <CardHeader
+                expanded
+                icon={<Package size={14} aria-hidden />}
+                label={<code className="card__tool-name">{rendered.title}</code>}
+                toggleLabel={`${rendered.title} custom activity details`}
+                onToggle={() => setSelectedIndex(null)}
+                summary={<code className="card__custom-kind">{rendered.customType}</code>}
+                copyText={customClipboardText(rendered.message)}
+                copyLabel={`${rendered.title} block`}
+              />
+              <div className="card__body"><CustomMessageDetails message={rendered.message} /></div>
             </section>
           ) : null}
         </div>
@@ -558,6 +725,61 @@ function genericContentTitle(item: object): string | null {
     : bounded;
 }
 
+function customMessageType(message: ChatMessage): string {
+  const value = typeof message.customType === "string" ? message.customType.trim().slice(0, 80) : "";
+  return value || "custom";
+}
+
+function customMessageTitle(message: ChatMessage): string {
+  return humanizeGenericType(customMessageType(message));
+}
+
+function customClipboardText(message: ChatMessage): string {
+  const sections = [
+    customMessageTitle(message),
+    `Type: ${customMessageType(message)}`,
+    "Content",
+    inspectableValue(message.content ?? []),
+  ];
+  if (message.details !== undefined) sections.push("Details", inspectableValue(message.details));
+  return sections.join("\n\n");
+}
+
+function customActivityIdentity(message: ChatMessage, fallbackIndex: number): string {
+  if (message.__inspireEntryId) return `entry:${message.__inspireEntryId}`;
+  if (message.__inspireLiveId) return `live:${message.__inspireLiveId}`;
+  if (message.timestamp != null) {
+    return `${customMessageType(message)}:${String(message.timestamp)}`;
+  }
+  return messageKey(message) ?? `${customMessageType(message)}:${fallbackIndex}`;
+}
+
+function customActivityKeys(messages: ChatMessage[]): string[] {
+  const occurrences = new Map<string, number>();
+  return messages.map((message, index) => {
+    const identity = customActivityIdentity(message, index);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    return `custom:${identity}:${occurrence}`;
+  });
+}
+
+function compactCustomActivities(messages: ChatMessage[]): CompactCustomActivity[] {
+  const keys = customActivityKeys(messages);
+  return messages.map((message, index) => ({
+    kind: "custom",
+    key: keys[index]!,
+    message,
+    title: customMessageTitle(message),
+    customType: customMessageType(message),
+  }));
+}
+
+function assistantEndsWithToolRun(message: ChatMessage): boolean {
+  const items = contentItems(message);
+  return items.length > 0 && items[items.length - 1]?.type === "toolCall";
+}
+
 function hasRenderableAssistantContent(
   message: ChatMessage,
   thinkingVisibility: VisibilityPreference,
@@ -591,9 +813,12 @@ function GenericCard({
       className="card--generic"
       icon={<Package size={14} aria-hidden />}
       label={<span className="card__generic-title">{title}</span>}
+      toggleLabel={title}
       summary={type && type !== "custom" && type !== title
         ? <code className="card__generic-kind">{type}</code>
         : undefined}
+      copyText={JSON.stringify(item, null, 2)}
+      copyLabel={`${title} block`}
     >
       <pre className="card__mono">{JSON.stringify(item, null, 2)}</pre>
     </CollapsibleCard>
@@ -604,7 +829,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
-type DynamicToolPhase = "cards" | "compacting" | "compact";
+type DynamicActivityPhase = "cards" | "compacting" | "compact";
 
 /** A card that the browser actually observes stays expanded long enough to be
  * perceived. Settled history starts closed and never replays old lifecycle
@@ -657,20 +882,23 @@ function useDynamicCardOpen(
   return open;
 }
 
-/** One assistant message owns one Pi tool batch. Cards collapse independently;
- * the batch only changes geometry after every card has completed its collapse,
- * the collapsed state has remained perceptible, and the next Pi boundary has
- * arrived. */
-function useDynamicToolBatch(
+/** Tool calls and displayed custom messages share one density lifecycle.
+ * Cards collapse independently; a batch changes geometry only after every card
+ * has closed, the collapsed state has remained perceptible, and its next Pi
+ * boundary has arrived. */
+function useDynamicActivityBatch(
   dynamic: boolean,
-  active: boolean,
-  hasTools: boolean,
+  lifecycleObserved: boolean,
+  compactRequested: boolean,
+  hasActivities: boolean,
   inspectionHeld: boolean,
   allCardsClosed: boolean,
 ) {
-  const [phase, setPhase] = useState<DynamicToolPhase>(dynamic && !active ? "compact" : "cards");
+  const [phase, setPhase] = useState<DynamicActivityPhase>(
+    dynamic && !lifecycleObserved ? "compact" : "cards",
+  );
   const phaseRef = useRef(phase);
-  const observedActive = useRef(active);
+  const observedLifecycle = useRef(lifecycleObserved);
   const allClosedAt = useRef<number | null>(allCardsClosed ? performance.now() : null);
 
   phaseRef.current = phase;
@@ -684,24 +912,27 @@ function useDynamicToolBatch(
   }, [allCardsClosed]);
 
   useEffect(() => {
-    if (!dynamic || !hasTools) {
-      observedActive.current = active;
+    if (!dynamic || !hasActivities) {
+      observedLifecycle.current = lifecycleObserved;
       setPhase("cards");
       return;
     }
 
-    if (active) {
-      observedActive.current = true;
-      if (phase !== "cards") setPhase("cards");
-      return;
+    if (lifecycleObserved) {
+      observedLifecycle.current = true;
+      if (!compactRequested) {
+        if (phase !== "cards") setPhase("cards");
+        return;
+      }
     }
 
-    if (!observedActive.current) {
+    if (!observedLifecycle.current) {
       // Settled history chooses final density without replaying unseen stages.
       if (phase !== "compact") setPhase("compact");
       return;
     }
 
+    if (!compactRequested) return;
     if (inspectionHeld) {
       if (phase === "compacting") setPhase("cards");
       return;
@@ -724,9 +955,67 @@ function useDynamicToolBatch(
       if (phaseRef.current === "cards") setPhase("compacting");
     }, remaining);
     return () => window.clearTimeout(timer);
-  }, [active, allCardsClosed, dynamic, hasTools, inspectionHeld, phase]);
+  }, [
+    allCardsClosed,
+    compactRequested,
+    dynamic,
+    hasActivities,
+    inspectionHeld,
+    lifecycleObserved,
+    phase,
+  ]);
 
   return { compact: phase === "compact", closing: phase === "compacting", phase };
+}
+
+function useDynamicActivityGroup(
+  dynamic: boolean,
+  lifecycleObserved: boolean,
+  compactRequested: boolean,
+  activityKeys: string[],
+) {
+  const keySignature = JSON.stringify(activityKeys);
+  const currentKeys = new Set(activityKeys);
+  const [heldActivityIds, setHeldActivityIds] = useState<Set<string>>(() => new Set());
+  const [closedActivityIds, setClosedActivityIds] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    const retainCurrent = (current: Set<string>) => {
+      const next = new Set([...current].filter((id) => currentKeys.has(id)));
+      return next.size === current.size ? current : next;
+    };
+    setHeldActivityIds(retainCurrent);
+    setClosedActivityIds(retainCurrent);
+    // keySignature is the stable membership boundary for this activity group.
+  }, [keySignature]);
+
+  const inspectionHeld = [...heldActivityIds].some((id) => currentKeys.has(id));
+  const allCardsClosed = activityKeys.length > 0 && activityKeys.every((id) => closedActivityIds.has(id));
+  const batch = useDynamicActivityBatch(
+    dynamic,
+    lifecycleObserved,
+    compactRequested,
+    activityKeys.length > 0,
+    inspectionHeld,
+    allCardsClosed,
+  );
+
+  return {
+    ...batch,
+    markClosed(activityKey: string) {
+      setClosedActivityIds((current) => current.has(activityKey)
+        ? current
+        : new Set(current).add(activityKey));
+    },
+    setInspectionHeld(activityKey: string, held: boolean) {
+      setHeldActivityIds((current) => {
+        const next = new Set(current);
+        if (held) next.add(activityKey);
+        else next.delete(activityKey);
+        return next;
+      });
+    },
+  };
 }
 
 // --- Turns ---
@@ -754,23 +1043,114 @@ function toolIcon(name: string): React.ReactNode {
   }
 }
 
-function MessageActions({ text, forkEntryId }: { text: string; forkEntryId?: string }) {
-  const { copied, copy } = useCopied();
+function CustomMessageCard({
+  message,
+  visibility,
+  dynamic,
+  forceClosed = false,
+  onDynamicClosed,
+  onManualOpenChange,
+}: {
+  message: ChatMessage;
+  visibility: StaticVisibility;
+  dynamic: boolean;
+  forceClosed?: boolean;
+  onDynamicClosed?: () => void;
+  onManualOpenChange?: (open: boolean) => void;
+}) {
+  const lifecycleObserved = typeof message.__inspireLiveId === "string";
+  const complete = message.__inspireSettled === true || !lifecycleObserved;
+  const dynamicOpen = useDynamicCardOpen(
+    dynamic,
+    lifecycleObserved,
+    complete,
+    DYNAMIC_TOOL_EXPANDED_MIN_MS,
+    onDynamicClosed,
+  );
+  return (
+    <CollapsibleCard
+      defaultVisibility={dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility}
+      forceClosed={forceClosed}
+      onManualOpenChange={onManualOpenChange}
+      className="card--custom"
+      icon={<Package size={14} aria-hidden />}
+      label={<code className="card__tool-name">{customMessageTitle(message)}</code>}
+      toggleLabel={`${customMessageTitle(message)} custom activity`}
+      copyText={customClipboardText(message)}
+      copyLabel={`${customMessageTitle(message)} block`}
+    >
+      <CustomMessageDetails message={message} />
+    </CollapsibleCard>
+  );
+}
+
+function CustomActivityBatch({
+  messages,
+  toolVisibility,
+  compactRequested,
+}: {
+  messages: ChatMessage[];
+  toolVisibility: ToolVisibilityPreference;
+  compactRequested: boolean;
+}) {
+  const dynamic = toolVisibility === "dynamic";
+  const activities = compactCustomActivities(messages);
+  const activityKeys = activities.map((activity) => activity.key);
+  const lifecycleObserved = messages.some((message) => typeof message.__inspireLiveId === "string");
+  const dynamicBatch = useDynamicActivityGroup(
+    dynamic,
+    lifecycleObserved,
+    compactRequested,
+    activityKeys,
+  );
+  const ordinaryVisibility: StaticVisibility = toolVisibility === "compact" || dynamic
+    ? "collapsed"
+    : toolVisibility;
+  const compact = toolVisibility === "compact" || (dynamic && dynamicBatch.compact);
+
+  if (toolVisibility === "hidden" || activities.length === 0) return null;
+  return (
+    <div className="turn turn--custom">
+      <div className={`custom-activity-batch ${dynamic ? `dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}` : ""}`}>
+        {compact ? (
+          <CompactActivityStrip activities={activities} live={false} />
+        ) : messages.map((message, index) => {
+          const activityKey = activityKeys[index]!;
+          return (
+            <CustomMessageCard
+              key={activityKey}
+              message={message}
+              visibility={ordinaryVisibility}
+              dynamic={dynamic}
+              forceClosed={dynamic && dynamicBatch.closing}
+              onDynamicClosed={dynamic ? () => dynamicBatch.markClosed(activityKey) : undefined}
+              onManualOpenChange={dynamic
+                ? (open) => dynamicBatch.setInspectionHeld(activityKey, open)
+                : undefined}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MessageActions({
+  text,
+  forkEntryId,
+  copyLabel = "Message",
+  className = "",
+}: {
+  text: string;
+  forkEntryId?: string;
+  copyLabel?: string;
+  className?: string;
+}) {
   const [forking, setForking] = useState(false);
   if (!text && !forkEntryId) return null;
   return (
-    <div className="turn__actions">
-      {text ? (
-        <button
-          type="button"
-          className="icon-button turn__action"
-          aria-label={copied ? "Message copied" : "Copy message"}
-          title={copied ? "Copied" : "Copy message"}
-          onClick={() => void copy(text)}
-        >
-          {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
-        </button>
-      ) : null}
+    <div className={`turn__actions ${className}`}>
+      {text ? <CopyAction text={text} label={copyLabel} className="turn__action" /> : null}
       {forkEntryId ? (
         <button
           type="button"
@@ -844,6 +1224,8 @@ const AssistantTurn = memo(function AssistantTurn({
   message,
   toolResults,
   toolActivity,
+  customMessages,
+  customCompactRequested,
   streaming,
   dynamicActive,
   thinkingVisibility,
@@ -853,6 +1235,8 @@ const AssistantTurn = memo(function AssistantTurn({
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
   toolActivity: Record<string, ActivityTool>;
+  customMessages: ChatMessage[];
+  customCompactRequested: boolean;
   streaming: boolean;
   dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
@@ -860,35 +1244,24 @@ const AssistantTurn = memo(function AssistantTurn({
   assistantRoundDisplay: AssistantRoundDisplayPreference;
 }) {
   const items = contentItems(message);
-  const hasVisibleContent = hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility);
+  const customActivities = compactCustomActivities(customMessages);
+  const hasVisibleContent = hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility)
+    || (toolVisibility !== "hidden" && customMessages.length > 0);
   const dynamicTools = toolVisibility === "dynamic";
   const toolKeys = items.flatMap((item, index) => item.type === "toolCall"
     ? [((item as ToolCallContent).id || `tool:${index}`)]
     : []);
-  const hasTools = toolKeys.length > 0;
-  const toolKeySignature = toolKeys.join("\u0000");
-  const currentToolKeys = new Set(toolKeys);
-  const [heldToolIds, setHeldToolIds] = useState<Set<string>>(() => new Set());
-  const [closedToolIds, setClosedToolIds] = useState<Set<string>>(() => new Set());
-
-  useEffect(() => {
-    const retainCurrent = (current: Set<string>) => {
-      const next = new Set([...current].filter((id) => currentToolKeys.has(id)));
-      return next.size === current.size ? current : next;
-    };
-    setHeldToolIds(retainCurrent);
-    setClosedToolIds(retainCurrent);
-    // toolKeySignature is the stable membership boundary for this Pi batch.
-  }, [toolKeySignature]);
-
-  const inspectionHeld = [...heldToolIds].some((id) => currentToolKeys.has(id));
-  const allCardsClosed = hasTools && toolKeys.every((id) => closedToolIds.has(id));
-  const dynamicBatch = useDynamicToolBatch(
+  const activityKeys = [...toolKeys, ...customActivities.map((activity) => activity.key)];
+  const hasActivities = activityKeys.length > 0;
+  const lifecycleObserved = dynamicActive
+    || customMessages.some((custom) => typeof custom.__inspireLiveId === "string");
+  const compactRequested = !dynamicActive
+    && (customMessages.length === 0 || customCompactRequested);
+  const dynamicBatch = useDynamicActivityGroup(
     dynamicTools,
-    dynamicActive,
-    hasTools,
-    inspectionHeld,
-    allCardsClosed,
+    lifecycleObserved,
+    compactRequested,
+    activityKeys,
   );
   const renderedItems: React.ReactNode[] = typeof message.content === "string" && message.content.length > 0
     ? [<RichText key="text" text={message.content} variant="assistant" />]
@@ -896,27 +1269,38 @@ const AssistantTurn = memo(function AssistantTurn({
   const ordinaryToolVisibility: StaticVisibility = toolVisibility === "compact" || dynamicTools
     ? "collapsed"
     : toolVisibility;
-  const compactTools = toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact);
+  const compactActivities = toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact);
+  let customActivitiesRendered = false;
   // Execution events, not membership in the current batch, own the running
   // status. After reconnect an unobserved call stays expanded but unknown.
   const live = streaming;
 
   for (let index = 0; index < items.length;) {
     const item = items[index]!;
-    if (item.type === "toolCall" && compactTools) {
-      const tools: CompactTool[] = [];
+    if (item.type === "toolCall" && compactActivities) {
+      const activities: CompactActivity[] = [];
       const start = index;
       while (index < items.length && items[index]?.type === "toolCall") {
         const call = items[index] as ToolCallContent;
-        tools.push({
+        activities.push({
+          kind: "tool",
+          key: call.id || `tool:${index}`,
           call,
           result: toolResults.get(call.id),
           activity: toolActivity[call.id],
         });
         index += 1;
       }
+      if (index === items.length && customActivities.length > 0) {
+        activities.push(...customActivities);
+        customActivitiesRendered = true;
+      }
       renderedItems.push(
-        <CompactToolStrip key={`tools:${(tools[0]?.call.id ?? start)}`} tools={tools} live={live} />,
+        <CompactActivityStrip
+          key={`tools:${activities[0]?.key ?? start}`}
+          activities={activities}
+          live={live}
+        />,
       );
       continue;
     }
@@ -948,17 +1332,10 @@ const AssistantTurn = memo(function AssistantTurn({
           dynamic={dynamicTools}
           dynamicActive={dynamicActive}
           forceClosed={dynamicTools && dynamicBatch.closing}
-          onDynamicClosed={dynamicTools ? () => {
-            setClosedToolIds((current) => current.has(toolKey) ? current : new Set(current).add(toolKey));
-          } : undefined}
-          onManualOpenChange={dynamicTools ? (open) => {
-            setHeldToolIds((current) => {
-              const next = new Set(current);
-              if (open) next.add(toolKey);
-              else next.delete(toolKey);
-              return next;
-            });
-          } : undefined}
+          onDynamicClosed={dynamicTools ? () => dynamicBatch.markClosed(toolKey) : undefined}
+          onManualOpenChange={dynamicTools
+            ? (open) => dynamicBatch.setInspectionHeld(toolKey, open)
+            : undefined}
         />,
       );
     } else {
@@ -971,6 +1348,36 @@ const AssistantTurn = memo(function AssistantTurn({
     }
     index += 1;
   }
+
+  if (!customActivitiesRendered && customActivities.length > 0) {
+    if (compactActivities) {
+      renderedItems.push(
+        <CompactActivityStrip
+          key={`customs:${customActivities[0]!.key}`}
+          activities={customActivities}
+          live={false}
+        />,
+      );
+    } else {
+      customMessages.forEach((custom, index) => {
+        const activityKey = customActivities[index]!.key;
+        renderedItems.push(
+          <CustomMessageCard
+            key={activityKey}
+            message={custom}
+            visibility={ordinaryToolVisibility}
+            dynamic={dynamicTools}
+            forceClosed={dynamicTools && dynamicBatch.closing}
+            onDynamicClosed={dynamicTools ? () => dynamicBatch.markClosed(activityKey) : undefined}
+            onManualOpenChange={dynamicTools
+              ? (open) => dynamicBatch.setInspectionHeld(activityKey, open)
+              : undefined}
+          />,
+        );
+      });
+    }
+  }
+
   const divider = assistantRoundDisplay === "divider";
   return (
     <div className={`turn turn--assistant ${divider ? "turn--round-divider" : ""} ${streaming ? "turn--streaming" : ""}`}>
@@ -984,7 +1391,6 @@ const AssistantTurn = memo(function AssistantTurn({
           {message.stopReason && message.stopReason !== "stop" ? (
             <span className="turn__flag">{message.stopReason}</span>
           ) : null}
-          <MessageActions text={messageText(message)} />
         </div>
       )}
       <div className="assistant-doc">
@@ -993,12 +1399,17 @@ const AssistantTurn = memo(function AssistantTurn({
             <Loader2 size={14} className="spin" aria-hidden />
             <span>Working…</span>
           </div>
-        ) : dynamicTools && hasTools ? (
-          <div className={`dynamic-tool-batch dynamic-tool-batch--${dynamicBatch.phase}`}>
+        ) : dynamicTools && hasActivities ? (
+          <div className={`dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}`}>
             {renderedItems}
           </div>
         ) : renderedItems}
       </div>
+      <MessageActions
+        text={messageText(message)}
+        copyLabel="Response"
+        className="turn__actions--response"
+      />
     </div>
   );
 });
@@ -1177,6 +1588,7 @@ export function Transcript({
   const virtualizedFollowRef = useRef<((index: number) => void) | null>(null);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | null>(null);
+  const lastScrollTopRef = useRef(0);
   const olderLoadInFlightRef = useRef(false);
   const onLoadOlderRef = useRef(onLoadOlder);
   const sessionIdRef = useRef(sessionId);
@@ -1197,6 +1609,7 @@ export function Transcript({
     setCurrentMatch(-1);
     pinnedRef.current = true;
     userScrollIntentRef.current = false;
+    lastScrollTopRef.current = 0;
     olderLoadInFlightRef.current = false;
     setPinned(true);
   }, [sessionId]);
@@ -1245,7 +1658,9 @@ export function Transcript({
 
   const followLatest = useCallback(() => {
     const element = scrollRef.current;
-    if (!element || !pinnedRef.current) return;
+    // Input arrives before the browser's corresponding scroll event. Do not let
+    // a stream delta win that race and pull the viewport back to latest.
+    if (!element || !pinnedRef.current || userScrollIntentRef.current) return;
     const virtualizedFollow = virtualizedFollowRef.current;
     if (virtualizedFollow && latestRowIndexRef.current >= 0) {
       virtualizedFollow(latestRowIndexRef.current);
@@ -1261,22 +1676,31 @@ export function Transcript({
   const onScroll = () => {
     const element = scrollRef.current;
     if (!element) return;
+    const previousScrollTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = element.scrollTop;
     const searchOwnsViewport = searchQuery.length > 0 && currentMatch >= 0;
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
-    // Virtual-row measurement and browser scroll anchoring can keep moving the
-    // scroller after our requested target. Only an actual wheel/touch/key/rail
-    // gesture transfers ownership away from latest; scroll events alone cannot
-    // distinguish those layout corrections from user input.
-    if (pinnedRef.current && !searchOwnsViewport && !userScrollIntentRef.current) {
-      setPinned(true);
-      if (remaining >= 80) followLatest();
+    if (searchOwnsViewport) {
+      pinnedRef.current = false;
+      setPinned(false);
+      if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlder();
       return;
     }
-    const isPinned = remaining < 80;
-    // A search jump owns the viewport until the user explicitly clears it or
-    // chooses latest. Virtualizer geometry near the bottom must not silently
-    // reinstate live-follow and pull the selected match away on append.
-    const nextPinned = searchOwnsViewport ? false : isPinned;
+    // Virtual-row measurement, Markdown reflow, and browser scroll anchoring
+    // also emit scroll events. They may maintain latest-follow while latest owns
+    // the viewport, but they may never take ownership back from a user.
+    if (!userScrollIntentRef.current) {
+      if (pinnedRef.current) {
+        setPinned(true);
+        if (remaining >= 80) followLatest();
+      }
+      return;
+    }
+    // Any deliberate movement toward earlier content releases latest-follow,
+    // even inside the former 80px proximity band. A user moving downward may
+    // reacquire it only by actually reaching the latest boundary.
+    const movedTowardHistory = element.scrollTop < previousScrollTop;
+    const nextPinned = !movedTowardHistory && remaining < 80;
     pinnedRef.current = nextPinned;
     if (nextPinned) userScrollIntentRef.current = false;
     setPinned(nextPinned);
@@ -1313,11 +1737,44 @@ export function Transcript({
       searchText: string;
       searchScope: Exclude<TranscriptSearchScope, "all"> | null;
     }> = [];
-    messages.forEach((raw, index) => {
-      const message = asMessage(raw);
+    const hasLaterAssistant = new Array<boolean>(messages.length + 1).fill(false);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      hasLaterAssistant[index] = hasLaterAssistant[index + 1]! || asMessage(messages[index]).role === "assistant";
+    }
+
+    for (let index = 0; index < messages.length;) {
+      const message = asMessage(messages[index]);
+
+      if (message.role === "custom") {
+        const batchStart = index;
+        const customMessages: ChatMessage[] = [];
+        while (index < messages.length) {
+          const candidate = asMessage(messages[index]);
+          if (candidate.role !== "custom") break;
+          // display:false remains in Pi/model context but is absent from the
+          // browser activity run and does not split adjacent visible messages.
+          if (candidate.display !== false) customMessages.push(candidate);
+          index += 1;
+        }
+        if (toolVisibility !== "hidden" && customMessages.length > 0) {
+          built.push({
+            key: `custom-batch:${customActivityIdentity(customMessages[0]!, batchStart)}`,
+            node: (
+              <CustomActivityBatch
+                messages={customMessages}
+                toolVisibility={toolVisibility}
+                compactRequested={!streaming || hasLaterAssistant[index]!}
+              />
+            ),
+            searchText: "",
+            searchScope: null,
+          });
+        }
+        continue;
+      }
+
       const key = messageKey(message) ?? `${message.role}:${index}`;
-      const projection = message as ChatMessage & { __inspireLiveId?: unknown; __inspireSettled?: unknown };
-      const settled = typeof projection.__inspireLiveId !== "string" || projection.__inspireSettled === true;
+      const settled = typeof message.__inspireLiveId !== "string" || message.__inspireSettled === true;
       if (message.role === "user") {
         built.push({
           key,
@@ -1326,44 +1783,74 @@ export function Transcript({
           searchScope: "user",
         });
       } else if (message.role === "assistant") {
+        let activityEnd = index + 1;
+        const trailingCustomMessages: ChatMessage[] = [];
+        if (assistantEndsWithToolRun(message)) {
+          const ownToolCallIds = new Set(contentItems(message).flatMap((item) => (
+            item.type === "toolCall" && typeof (item as ToolCallContent).id === "string"
+              ? [(item as ToolCallContent).id]
+              : []
+          )));
+          while (activityEnd < messages.length) {
+            const candidate = asMessage(messages[activityEnd]);
+            if (candidate.role === "toolResult"
+              && typeof candidate.toolCallId === "string"
+              && ownToolCallIds.has(candidate.toolCallId)) {
+              activityEnd += 1;
+              continue;
+            }
+            if (candidate.role === "custom") {
+              if (candidate.display !== false) trailingCustomMessages.push(candidate);
+              activityEnd += 1;
+              continue;
+            }
+            break;
+          }
+        }
+
         const assistantStreaming = index === activeStreamingIndex;
         // Pi can persist an empty error response before automatically retrying.
         // It remains authoritative history, but must not become a phantom
         // Divider-only transcript row with an estimated virtual-list height.
-        if (!assistantStreaming && !hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility)) return;
-        built.push({
-          key,
-          node: (
-            <AssistantTurn
-              message={message}
-              toolResults={toolResults}
-              toolActivity={toolActivity}
-              streaming={assistantStreaming}
-              dynamicActive={key === activeAssistantMessageKey}
-              thinkingVisibility={thinkingVisibility}
-              toolVisibility={toolVisibility}
-              assistantRoundDisplay={assistantRoundDisplay}
-            />
-          ),
-          searchText: settled && index !== activeStreamingIndex ? messageText(message) : "",
-          searchScope: "model",
-        });
+        if (assistantStreaming
+          || hasRenderableAssistantContent(message, thinkingVisibility, toolVisibility)
+          || (toolVisibility !== "hidden" && trailingCustomMessages.length > 0)) {
+          built.push({
+            key,
+            node: (
+              <AssistantTurn
+                message={message}
+                toolResults={toolResults}
+                toolActivity={toolActivity}
+                customMessages={trailingCustomMessages}
+                customCompactRequested={!streaming || hasLaterAssistant[activityEnd]!}
+                streaming={assistantStreaming}
+                dynamicActive={key === activeAssistantMessageKey}
+                thinkingVisibility={thinkingVisibility}
+                toolVisibility={toolVisibility}
+                assistantRoundDisplay={assistantRoundDisplay}
+              />
+            ),
+            searchText: settled && index !== activeStreamingIndex ? messageText(message) : "",
+            searchScope: "model",
+          });
+        }
+        index = activityEnd;
+        continue;
       } else if (message.role === "toolResult") {
         const paired = typeof message.toolCallId === "string" && toolCallIds.has(message.toolCallId);
         if (!paired) {
           built.push({
             key,
             node: <UnpairedToolResultRow
-            toolName={message.toolName}
-            visibility={toolVisibility === "compact" || toolVisibility === "dynamic" ? "collapsed" : toolVisibility}
-          />,
+              toolName={message.toolName}
+              visibility={toolVisibility === "compact" || toolVisibility === "dynamic" ? "collapsed" : toolVisibility}
+            />,
             searchText: "",
             searchScope: null,
           });
         }
-      } else if (message.role !== "custom" || message.display !== false) {
-        // Pi custom messages with display:false remain in model context but are
-        // explicitly hidden from the transcript.
+      } else {
         built.push({
           key,
           node: <UnknownRoleRow
@@ -1374,12 +1861,14 @@ export function Transcript({
           searchScope: null,
         });
       }
-    });
+      index += 1;
+    }
     return built;
   }, [
     messages,
     activeAssistantMessageKey,
     activeStreamingIndex,
+    streaming,
     thinkingVisibility,
     toolVisibility,
     assistantRoundDisplay,

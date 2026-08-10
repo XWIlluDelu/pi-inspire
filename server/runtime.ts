@@ -69,6 +69,7 @@ const MAX_PROMPT_CHARS = 500_000;
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
+const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
 const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
 const FORK_BUFFER_OVERFLOW_ERROR = "Fork event buffer exceeded its bound; the worker was stopped";
 export const PI_STARTUP_RESPONSE_UI_ERROR = "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
@@ -231,15 +232,21 @@ function eventSessionEntry(value: unknown): SessionEntry | null {
   return structuredClone(entry) as unknown as SessionEntry;
 }
 
+function customMessageEntryMatches(message: unknown, entry: SessionEntry): boolean {
+  if (!message || typeof message !== "object" || Array.isArray(message) || entry.type !== "custom_message") return false;
+  const record = message as Record<string, unknown>;
+  return record.role === "custom" &&
+    entry.customType === record.customType &&
+    samePersistedJson(entry.content ?? [], record.content ?? []) &&
+    entry.display === record.display &&
+    samePersistedJson(entry.details, record.details);
+}
+
 function messageExpectation(message: unknown): PersistenceExpectation | null {
   if (!message || typeof message !== "object") return null;
   const record = message as Record<string, unknown>;
   if (record.role === "custom") {
-    return knownExpectation((entry) => entry.type === "custom_message" &&
-      entry.customType === record.customType &&
-      samePersistedJson(entry.content, record.content ?? []) &&
-      entry.display === record.display &&
-      samePersistedJson(entry.details, record.details));
+    return knownExpectation((entry) => customMessageEntryMatches(message, entry));
   }
   if (record.role !== "user" && record.role !== "assistant" && record.role !== "toolResult") return null;
   return knownExpectation((entry) => entry.type === "message" && samePersistedJson(entry.message, record));
@@ -447,6 +454,22 @@ interface StartupProjectionBaseline {
   missingThinkingLevel: boolean;
 }
 
+interface CustomActivityOwnership {
+  pendingEntries: SessionEntry[];
+  pendingMessageActivityIds: string[];
+  activityIdByEntryId: Map<string, string>;
+  entryIdByActivityId: Map<string, string>;
+}
+
+function emptyCustomActivityOwnership(): CustomActivityOwnership {
+  return {
+    pendingEntries: [],
+    pendingMessageActivityIds: [],
+    activityIdByEntryId: new Map(),
+    entryIdByActivityId: new Map(),
+  };
+}
+
 interface RuntimeSlot {
   id: string;
   cwd: string;
@@ -487,6 +510,10 @@ interface RuntimeSlot {
    * as active when the current message falls outside a bounded page. */
   activeAssistantCorrelation: string | null;
   activeOverlayIds: Map<string, string>;
+  /** Pi assigns a fresh persistence timestamp to custom_message entries, so
+   * live↔durable ownership is established one-to-one from exact payload and
+   * event order rather than the ordinary role+timestamp correlation. */
+  customActivities: CustomActivityOwnership;
   conflict: ProjectionConflict | null;
   persistenceExpectations: PersistenceExpectation[];
   absorbedPersistenceEntries: Map<string, SessionEntry[]>;
@@ -594,6 +621,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private renewView(slot: RuntimeSlot): void {
     slot.viewId = bridgeToken("view");
+    slot.customActivities = emptyCustomActivityOwnership();
   }
 
   private reserveForkDestination(id: string, path: string): ForkReservation {
@@ -703,6 +731,79 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return typeof identity === "string" ? identity : null;
   }
 
+  private projectionHasEntry(slot: RuntimeSlot, entryId: string): boolean {
+    return (slot.projection?.messages ?? []).some((message) =>
+      message && typeof message === "object" && !Array.isArray(message) &&
+      (message as Record<string, unknown>).__inspireEntryId === entryId);
+  }
+
+  private rememberCustomActivityOwner(slot: RuntimeSlot, entryId: string, activityId: string): boolean {
+    const ownership = slot.customActivities;
+    const ownedActivity = ownership.activityIdByEntryId.get(entryId);
+    const ownedEntry = ownership.entryIdByActivityId.get(activityId);
+    if ((ownedActivity && ownedActivity !== activityId) || (ownedEntry && ownedEntry !== entryId)) return false;
+    ownership.activityIdByEntryId.set(entryId, activityId);
+    ownership.entryIdByActivityId.set(activityId, entryId);
+    ownership.pendingEntries = ownership.pendingEntries.filter((entry) => entry.id !== entryId);
+    ownership.pendingMessageActivityIds = ownership.pendingMessageActivityIds.filter((pending) => pending !== activityId);
+    while (ownership.activityIdByEntryId.size > CUSTOM_ACTIVITY_OWNERSHIP_MAX) {
+      const oldestEntryId = ownership.activityIdByEntryId.keys().next().value as string | undefined;
+      if (!oldestEntryId) break;
+      const oldestActivityId = ownership.activityIdByEntryId.get(oldestEntryId);
+      ownership.activityIdByEntryId.delete(oldestEntryId);
+      if (oldestActivityId) ownership.entryIdByActivityId.delete(oldestActivityId);
+    }
+    return true;
+  }
+
+  private claimCustomActivityEntry(slot: RuntimeSlot, entry: SessionEntry): void {
+    if (entry.type !== "custom_message" || slot.customActivities.activityIdByEntryId.has(entry.id)) return;
+    const ownership = slot.customActivities;
+    const pendingIndex = ownership.pendingMessageActivityIds.findIndex((activityId) => {
+      const pending = slot.overlay.find((item) => this.overlayIdentity(item) === activityId);
+      return pending !== undefined && customMessageEntryMatches(pending, entry);
+    });
+    if (pendingIndex >= 0) {
+      const activityId = ownership.pendingMessageActivityIds[pendingIndex]!;
+      this.rememberCustomActivityOwner(slot, entry.id, activityId);
+      const overlayIndex = slot.overlay.findIndex((item) => this.overlayIdentity(item) === activityId);
+      if (overlayIndex >= 0) {
+        const overlay = slot.overlay[overlayIndex];
+        if (overlay && typeof overlay === "object" && !Array.isArray(overlay)) {
+          slot.overlay[overlayIndex] = {
+            ...(overlay as Record<string, unknown>),
+            __inspireMessageId: `${entry.id}:0`,
+            __inspireEntryId: entry.id,
+          };
+        }
+      }
+      return;
+    }
+    if (!ownership.pendingEntries.some((candidate) => candidate.id === entry.id)) {
+      ownership.pendingEntries.push(structuredClone(entry));
+      if (ownership.pendingEntries.length > CUSTOM_ACTIVITY_OWNERSHIP_MAX) ownership.pendingEntries.shift();
+    }
+  }
+
+  private claimCustomActivityMessage(slot: RuntimeSlot, message: unknown, activityId: string): string | null {
+    const ownership = slot.customActivities;
+    const linkedEntryId = ownership.entryIdByActivityId.get(activityId);
+    if (linkedEntryId) return linkedEntryId;
+    const entryIndex = ownership.pendingEntries.findIndex((entry) => customMessageEntryMatches(message, entry));
+    if (entryIndex >= 0) {
+      const entry = ownership.pendingEntries[entryIndex]!;
+      this.rememberCustomActivityOwner(slot, entry.id, activityId);
+      return entry.id;
+    }
+    if (!ownership.pendingMessageActivityIds.includes(activityId)) {
+      ownership.pendingMessageActivityIds.push(activityId);
+      if (ownership.pendingMessageActivityIds.length > CUSTOM_ACTIVITY_OWNERSHIP_MAX) {
+        ownership.pendingMessageActivityIds.shift();
+      }
+    }
+    return null;
+  }
+
   private updateOverlay(slot: RuntimeSlot, message: unknown, phase: "start" | "update" | "end"): unknown {
     const correlation = messageFallbackCorrelation(message);
     let liveId = correlation ? slot.activeOverlayIds.get(correlation) : undefined;
@@ -711,16 +812,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (correlation) slot.activeOverlayIds.set(correlation, liveId);
     }
     const bounded = boundedTranscriptValue(message);
-    const projected = bounded && typeof bounded === "object" && !Array.isArray(bounded)
+    const boundedRecord = bounded && typeof bounded === "object" && !Array.isArray(bounded)
+      ? bounded as Record<string, unknown>
+      : null;
+    const customEntryId = boundedRecord?.role === "custom"
+      ? this.claimCustomActivityMessage(slot, bounded, liveId)
+      : null;
+    const projected = boundedRecord
       ? {
-          ...(bounded as Record<string, unknown>),
+          ...boundedRecord,
           __inspireLiveId: liveId,
+          ...(customEntryId ? { __inspireMessageId: `${customEntryId}:0`, __inspireEntryId: customEntryId } : {}),
           ...(phase === "end" ? { __inspireSettled: true } : {}),
         }
       : bounded;
     const next = [...slot.overlay];
     const index = next.findIndex((item) => this.overlayIdentity(item) === liveId);
-    if (index >= 0) next[index] = projected;
+    const durableEnd = phase === "end" && customEntryId !== null && this.projectionHasEntry(slot, customEntryId);
+    if (durableEnd) {
+      if (index >= 0) next.splice(index, 1);
+    } else if (index >= 0) next[index] = projected;
     else next.push(projected);
     if (phase === "end" && correlation) slot.activeOverlayIds.delete(correlation);
     while (next.length > 0 && Buffer.byteLength(JSON.stringify(next)) > TRANSIENT_OVERLAY_MAX_BYTES) next.shift();
@@ -752,13 +863,34 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return null;
   }
 
-  private reconcileOverlay(slot: RuntimeSlot): void {
+  private reconcileOverlay(slot: RuntimeSlot, appendedEntries: readonly SessionEntry[] = []): void {
+    const persisted = slot.projection?.messages ?? [];
     const remaining = new Map<string, number>();
-    for (const item of slot.projection?.messages ?? []) {
+    const customCandidates = appendedEntries.filter((entry) => entry.type === "custom_message");
+    const usedCustomEntries = new Set(slot.customActivities.activityIdByEntryId.keys());
+    for (const item of persisted) {
       const key = messageFallbackCorrelation(item);
       if (key) remaining.set(key, (remaining.get(key) ?? 0) + 1);
     }
     slot.overlay = slot.overlay.filter((item) => {
+      if (item && typeof item === "object" && !Array.isArray(item) && (item as Record<string, unknown>).role === "custom") {
+        const activityId = this.overlayIdentity(item);
+        let entryId = activityId ? slot.customActivities.entryIdByActivityId.get(activityId) : undefined;
+        if (!entryId) {
+          const candidate = customCandidates.find((entry) =>
+            !usedCustomEntries.has(entry.id) && customMessageEntryMatches(item, entry));
+          if (candidate) {
+            entryId = candidate.id;
+            usedCustomEntries.add(entryId);
+            if (activityId) this.rememberCustomActivityOwner(slot, entryId, activityId);
+          }
+        }
+        // A custom_message entry can exist before Pi emits its synthetic live
+        // lifecycle. Keep the active overlay for reconnect snapshots, but once
+        // message_end settles it the durable row becomes the sole owner.
+        if (entryId && (item as Record<string, unknown>).__inspireSettled === true) return false;
+        return true;
+      }
       const key = messageFallbackCorrelation(item);
       const count = key ? (remaining.get(key) ?? 0) : 0;
       if (!key || count === 0) return true;
@@ -1126,7 +1258,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       });
       if (!lastOwnership.owned) return false;
       this.captureWriterProjectionResult(slot, result);
-      this.reconcileOverlay(slot);
+      this.reconcileOverlay(slot, result.appendedEntries);
       return true;
     };
 
@@ -1186,7 +1318,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         if (lastOwnership.owned) {
           this.captureWriterProjectionResult(slot, result);
-          this.reconcileOverlay(slot);
+          this.reconcileOverlay(slot, result.appendedEntries);
         } else {
           this.setProjectionConflict(
             slot,
@@ -1245,7 +1377,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!startupAttestation && (result.changed || result.healthChanged || result.sourceChanged)) {
       await this.handleProjectionUpdate(slot, result);
     }
-    this.reconcileOverlay(slot);
+    this.reconcileOverlay(slot, result.appendedEntries);
     return result;
   }
 
@@ -1656,6 +1788,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         return;
       }
+      this.claimCustomActivityEntry(slot, entry);
       const absorbed = this.consumeAbsorbedPersistenceEntry(slot, entry);
       if (!absorbed) slot.persistenceExpectations.push(exactEntryExpectation(entry));
       this.diagnostics.record("debug", absorbed ? "persistence_claim_absorbed" : "persistence_claim_added", {
@@ -1669,7 +1802,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
     if (event.type === "message_end") {
       if (this.consumeAbsorbedPersistenceEvent(slot, event.message)) return;
-      const expectation = messageExpectation(event.message);
+      const message = event.message;
+      if (message && typeof message === "object" && !Array.isArray(message) &&
+          (message as Record<string, unknown>).role === "custom") {
+        const correlation = messageFallbackCorrelation(message);
+        const activityId = correlation ? slot.activeOverlayIds.get(correlation) : undefined;
+        // Pi's idle sendMessage path persists custom_message before emitting
+        // message_start/end. That entry's exact claim already owns the write;
+        // adding a second future expectation here would misattribute the next
+        // real append to this already-durable message.
+        if (activityId && slot.customActivities.entryIdByActivityId.has(activityId)) return;
+      }
+      const expectation = messageExpectation(message);
       if (expectation) slot.persistenceExpectations.push(expectation);
       return;
     }
@@ -1758,6 +1902,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       case "agent_start":
         slot.runState = "running";
         slot.activeAssistantCorrelation = null;
+        slot.customActivities.pendingEntries = [];
+        slot.customActivities.pendingMessageActivityIds = [];
         slot.attention = null;
         break;
       case "compaction_start":
@@ -1786,6 +1932,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         for (const expectation of slot.persistenceExpectations) expectation.settle(null);
         slot.persistenceExpectations = [];
         slot.absorbedPersistenceEntries.clear();
+        slot.customActivities.pendingEntries = [];
+        slot.customActivities.pendingMessageActivityIds = [];
         this.catalog.invalidate();
         this.scheduleIdleWorkerEviction();
         break;
@@ -2146,6 +2294,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         nextOverlayId: 0,
         activeAssistantCorrelation: null,
         activeOverlayIds: new Map(),
+        customActivities: emptyCustomActivityOwnership(),
         conflict: null,
         persistenceExpectations: [],
         absorbedPersistenceEntries: new Map(),
@@ -2613,6 +2762,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       nextOverlayId: 0,
       activeAssistantCorrelation: null,
       activeOverlayIds: new Map(),
+      customActivities: emptyCustomActivityOwnership(),
       conflict: null,
       persistenceExpectations: [],
       absorbedPersistenceEntries: new Map(),
@@ -3224,6 +3374,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           nextOverlayId: source.nextOverlayId,
           activeAssistantCorrelation: null,
           activeOverlayIds: new Map(),
+          customActivities: emptyCustomActivityOwnership(),
           conflict: null,
           persistenceExpectations: [],
           absorbedPersistenceEntries: new Map(),
