@@ -32,7 +32,7 @@ import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
-import { Welcome } from "./components/Welcome";
+import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { Wordmark } from "./components/Wordmark";
 import { gitChangeCount, gitHeadLabel } from "./git-presentation";
 import { isAbortableRunState, messageText, store, type ChatMessage, useAppState } from "./store";
@@ -87,7 +87,7 @@ function StateChip({
   switch (runState) {
     case "running":
       return (
-        <span key="running" className="chip chip--accent chip--live">
+        <span key="running" className="chip chip--warning chip--live">
           <Loader2 size={12} className="spin" aria-hidden /> <span className="chip__label">Running</span>
         </span>
       );
@@ -411,6 +411,7 @@ export function App() {
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [welcomeInheritance, setWelcomeInheritance] = useState<WelcomeInheritance | null>(null);
 
   const openSession = (id: string) => {
     setSettingsOpen(false);
@@ -421,11 +422,26 @@ export function App() {
   const newSession = () => {
     setSettingsOpen(false);
     setMobileNavOpen(false);
+    const current = store.getState();
+    if (current.sessionId && current.cwd) {
+      // Host deselection must clear session ownership, but the start surface
+      // still inherits the workspace choices visible at the user's gesture.
+      setWelcomeInheritance({
+        cwd: current.cwd,
+        model: current.model,
+        thinkingLevel: current.thinkingLevel,
+        commands: [...current.commands],
+      });
+    }
     void store.deselectSession().then((deselected) => {
       if (!deselected) return;
       store.setResourcesOpen(false);
     });
   };
+
+  useEffect(() => {
+    if (state.sessionId) setWelcomeInheritance(null);
+  }, [state.sessionId]);
 
   const toggleNavigation = useCallback(() => {
     if (narrowViewport) {
@@ -677,7 +693,10 @@ export function App() {
             ) : composerContent}
           </>
         ) : (
-          <Welcome showRecent={narrowViewport ? !mobileNavOpen : navCollapsed} />
+          <Welcome
+            showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
+            inherited={welcomeInheritance}
+          />
         )}
       </main>
       {state.resourcesOpen ? (

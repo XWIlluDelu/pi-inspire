@@ -163,9 +163,9 @@ Key characteristics:
 Every accent use maps to one of four named roles; components must not invent
 intermediate values:
 
-- **`accent`** — identity and state: focus rings, selection borders and the π
-  in the wordmark, active-session markers, running indicators, checked
-  controls, links in dark theme, the context gauge.
+- **`accent`** — identity and interaction: focus rings, selection borders and
+  the π in the wordmark, active-session markers, checked controls, links in
+  dark theme, and the context gauge.
 - **`accent-fill`** — the only filled-control background (primary button,
   send button, active chip). Text on it is `on-accent`. Light uses a step
   deeper than `accent` so white text passes 4.5:1; dark uses a bright fill
@@ -193,8 +193,11 @@ trees) may carry git state color on the name itself, through the text-tuned
   glyph before a single label is read.
 - **`error`** — failed tool cards and error notices.
 - **`hairline-strong`** (neutral) — unknown/extension content: uncommitted.
-- `success`/`warning` keep their status meanings (result icons, run states,
-  the context gauge's caution tones).
+- Runtime outcomes use a traffic-light grammar independent of the teal brand
+  accent: working is `warning` and breathes, completed is `success`, and failed
+  is `error`. Needs-recovery attention also uses `warning`, but rests under a
+  static ring so it does not impersonate live work. The context gauge retains
+  the warning/error caution tones.
 
 Git state decorates identifier lists (workspace explorer, referenced-files
 list) the way editor trees do: a changed file's name carries
@@ -216,8 +219,8 @@ discriminate within the list.
   communicates interaction or state, annotation hues only on block edges
   and icons.
 - The dark teal is a small-area color: focus rings, selection edges, links,
-  running dots, the gauge, and the compact `accent-fill` controls. It is
-  never a panel background, banner fill, or large illustration color.
+  the gauge, and the compact `accent-fill` controls. It is never a panel
+  background, banner fill, runtime-outcome color, or large illustration color.
 - Semantic colors (success/warning/error) appear only with a semantic
   meaning, tuned per theme, and never as decoration.
 - All text/background pairs meet WCAG AA (4.5:1 body, 3:1 large or UI
@@ -346,8 +349,9 @@ tracking, 2px×10px padding): each semantic variant fills with its hue at
 Motion is part of the grammar: every chip enters with a 96%→100%
 fade-scale, and a state still in progress (running, retrying, compacting,
 live tool, reconnect) breathes a soft halo in its own hue
-(`{motion.breathe}`); terminal states rest. The mock badge shares the
-warning capsule surface.
+(`{motion.breathe}`); terminal states rest. Running and retrying use the
+warning capsule, keeping active work visually separate from green completion
+and red failure. The mock badge shares the warning capsule surface.
 
 ### Workbench chrome
 
@@ -436,10 +440,10 @@ warning capsule surface.
   No session row or folder then claims current-page styling.
 - Row hover shows `surface-inset`; the visible row pairs the 2px `accent`
   inset edge with an `accent-tint` wash that fades toward the right, so the
-  highlight points back at the edge. Running/attention dots use `accent`,
-  `success`, `warning`, and `error`; the running dot breathes
-  (`{motion.breathe}`) while settled attention dots rest under a soft 3px ring
-  of their hue.
+  highlight points back at the edge. Runtime dots use `warning` for working,
+  `success` for completed, and `error` for failed. Working breathes
+  (`{motion.breathe}`); needs-recovery also uses `warning` but rests under a
+  soft 3px ring, as do the green and red terminal-attention dots.
 - Curation actions are two 22px `faint` icon buttons occupying exactly the 46px age/count column, which fades as they appear on hover or focus, so no text moves. Ordinary session and folder rows expose Pin + Hide; Hidden sessions expose Restore + Delete, while Hidden folders expose Restore without inventing folder deletion. Delete uses `error` only on hover/focus. Folder Hidden is independent metadata keyed by exact cwd: restoring a folder preserves any sessions hidden individually, and Pin/Hidden are mutually exclusive at the folder level. The four navigation sections — pinned sessions, pinned folders, ordinary folders, Hidden (sessions and whole folders) — separate by a spacing step, never by a rule.
 - Session pagination is a compact bordered text control below the chronological groups. It appears only while loading, on failure, or while older sessions remain; a fully loaded list emits no redundant `Showing N of N` or completion message. Loading disables the same control with a spinner, failure turns it into an explicit retry named for the failed operation (including preservation refresh), and the touch layout raises the target to 40px.
 - The **workspace explorer** sits at the nav's bottom edge while a session is

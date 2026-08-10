@@ -12,7 +12,7 @@ import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
-import { store, useAppState, type PendingAttachment } from "../store";
+import { store, useAppState, type PendingAttachment, type PiCommand } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -40,13 +40,35 @@ function localAttachment(file: File): WelcomeAttachment {
   };
 }
 
+export interface WelcomeInheritance {
+  cwd: string;
+  model: ModelOption | null;
+  thinkingLevel: string;
+  commands: readonly PiCommand[];
+}
+
 /** Landing composer. Its staged files remain browser-local until Pi has
  * assigned the new session identity, then enter the normal attachment owner
  * and prompt lifecycle before the first message is delivered. */
-export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
+export function Welcome({
+  showRecent = true,
+  inherited,
+}: {
+  showRecent?: boolean;
+  inherited?: WelcomeInheritance | null;
+}) {
   const state = useAppState();
+  const liveInheritance = state.cwd ? {
+    cwd: state.cwd,
+    model: state.model,
+    thinkingLevel: state.thinkingLevel,
+    commands: state.commands,
+  } satisfies WelcomeInheritance : null;
+  const inheritance = liveInheritance ?? inherited ?? null;
+  const inheritedModel = inheritance?.model ?? null;
+  const inheritedThinkingLevel = inheritance?.thinkingLevel ?? state.thinkingLevel;
   const [draft, setDraft] = useState("");
-  const [directory, setDirectory] = useState("");
+  const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [projectFileRoot, setProjectFileRoot] = useState<string | null>(null);
@@ -56,23 +78,23 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
   const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
-  const [modelKey, setModelKey] = useState(() => state.model ? modelIdentityKey(state.model) : "");
+  const [modelKey, setModelKey] = useState(() => inheritedModel ? modelIdentityKey(inheritedModel) : "");
   const [resolvedDefaultModel, setResolvedDefaultModel] = useState<ModelOption | null>(null);
   const [modelTouched, setModelTouched] = useState(false);
   const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready" | "error">(
-    state.model ? "ready" : "idle",
+    inheritedModel ? "ready" : "idle",
   );
   const [thinkingTouched, setThinkingTouched] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
-    THINKING_LEVELS.includes(state.thinkingLevel as ThinkingLevel)
-      ? state.thinkingLevel as ThinkingLevel
+    THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
+      ? inheritedThinkingLevel as ThinkingLevel
       : "off",
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
-  const effectiveDirectory = directory.trim() || state.cwd || "";
+  const effectiveDirectory = directory.trim();
   const availableModels = useMemo(() => {
     if (!resolvedDefaultModel || state.availableModels.some((model) => modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel))) {
       return state.availableModels;
@@ -82,8 +104,8 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
   const selectedModel = useMemo<ModelOption | null>(() => {
     const catalogModel = availableModels.find((model) => modelIdentityKey(model) === modelKey);
     if (catalogModel) return catalogModel;
-    return state.model && modelIdentityKey(state.model) === modelKey ? state.model : null;
-  }, [availableModels, modelKey, state.model]);
+    return inheritedModel && modelIdentityKey(inheritedModel) === modelKey ? inheritedModel : null;
+  }, [availableModels, inheritedModel, modelKey]);
   const thinkingLevels = useMemo(() => supportedThinkingLevels(selectedModel), [selectedModel]);
 
   useEffect(() => () => {
@@ -96,24 +118,24 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
     if (!thinkingLevels.includes(thinkingLevel)) setThinkingLevel(thinkingLevels[0] ?? "off");
   }, [thinkingLevel, thinkingLevels]);
 
-  // Until the user chooses explicitly, a live session model is the preferred
-  // inheritance source. This effect also closes the snapshot-arrival race that
-  // previously left the start surface at "Select model".
+  // Until the user chooses explicitly, an inherited session model is the
+  // preferred source. The explicit inheritance survives host deselection, and
+  // a live model still closes the snapshot-arrival race in isolated renders.
   useEffect(() => {
-    if (modelTouched || !state.model) return;
-    setModelKey(modelIdentityKey(state.model));
+    if (modelTouched || !inheritedModel) return;
+    setModelKey(modelIdentityKey(inheritedModel));
     setModelStatus("ready");
-    if (!thinkingTouched && THINKING_LEVELS.includes(state.thinkingLevel as ThinkingLevel)) {
-      setThinkingLevel(state.thinkingLevel as ThinkingLevel);
+    if (!thinkingTouched && THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)) {
+      setThinkingLevel(inheritedThinkingLevel as ThinkingLevel);
     }
-  }, [modelTouched, state.model, state.thinkingLevel, thinkingTouched]);
+  }, [inheritedModel, inheritedThinkingLevel, modelTouched, thinkingTouched]);
 
   // With no session model to inherit, ask the host for Pi's actual startup
   // choice in the prospective workspace. A stale path response cannot replace
   // a later path or an explicit user selection.
   useEffect(() => {
-    if (modelTouched || state.model || !effectiveDirectory) {
-      if (!effectiveDirectory && !state.model && !modelTouched) setModelStatus("idle");
+    if (modelTouched || inheritedModel || !effectiveDirectory) {
+      if (!effectiveDirectory && !inheritedModel && !modelTouched) setModelStatus("idle");
       return;
     }
     let cancelled = false;
@@ -138,7 +160,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [effectiveDirectory, modelTouched, state.model, thinkingTouched]);
+  }, [effectiveDirectory, inheritedModel, modelTouched, thinkingTouched]);
 
   const addFiles = (files: File[]) => {
     if (starting || files.length === 0) return;
@@ -193,8 +215,9 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
     setPickerOpen(false);
   };
 
-  // A typed directory wins over the current project; empty means current.
-  const commandScopeMatches = Boolean(state.cwd && (!directory.trim() || directory.trim() === state.cwd));
+  // Inherited runtime commands apply only while the visible directory still
+  // names the workspace they came from.
+  const commandScopeMatches = Boolean(inheritance && effectiveDirectory === inheritance.cwd);
   const hasInput = Boolean(draft.trim() || attachments.length > 0 || projectFiles.length > 0);
   const canStart = Boolean(hasInput && effectiveDirectory && selectedModel && !starting);
 
@@ -281,7 +304,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
         <ComposerInput
           value={draft}
           onChange={setDraft}
-          commands={commandScopeMatches ? state.commands : []}
+          commands={commandScopeMatches ? inheritance?.commands ?? [] : []}
           completionDisabled={starting}
           completionScope={`new-session:${effectiveDirectory}`}
           searchProjectFiles={effectiveDirectory ? searchProjectFiles : undefined}
@@ -380,7 +403,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
             className="welcome__dir"
             value={directory}
             onChange={(event) => changeDirectory(event.target.value)}
-            placeholder={state.cwd ?? "/path/to/project"}
+            placeholder="/path/to/project"
             aria-label="Project directory"
             spellCheck={false}
             disabled={starting}
@@ -404,7 +427,7 @@ export function Welcome({ showRecent = true }: { showRecent?: boolean }) {
 
       {browsing ? (
         <DirectoryPicker
-          initial={directory.trim() || state.cwd || undefined}
+          initial={effectiveDirectory || undefined}
           onCancel={() => setBrowsing(false)}
           onPick={(path) => {
             changeDirectory(path);
