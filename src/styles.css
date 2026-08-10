@@ -3691,8 +3691,8 @@ body.pane-resizing .nav {
   overflow-y: auto;
 }
 
-/* The list is a bounded, recent-first projection; the disclosure row carries
-   both the "there is more" semantics and the action, replacing any note. */
+/* The list owns one bounded scroll region: a disclosure switches its recent
+   prefix to continuous history without exposing transport pagination. */
 .res__more {
   display: inline-flex;
   align-items: center;

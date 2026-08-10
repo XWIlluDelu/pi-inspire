@@ -10,12 +10,16 @@ describe("Files pane", () => {
   let gitStatusFails = false;
   let missingProbeReference: string | null = null;
   let resourceListFails = false;
+  let resourceListFailureCursor: string | null = null;
+  let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let bootstrapMessages: unknown[] = [];
 
   beforeEach(async () => {
     gitStatusFails = false;
     missingProbeReference = null;
     resourceListFails = false;
+    resourceListFailureCursor = null;
+    resourceListRequests = [];
     bootstrapMessages = [{
       role: "assistant",
       content: [{ type: "text", text: "Open [notes](notes.md), [page](demo.html), or [Pi](https://pi.dev)." }],
@@ -92,8 +96,14 @@ describe("Files pane", () => {
         ] });
       }
       if (url.startsWith("/api/resources/list")) {
-        if (resourceListFails) return Response.json({ error: "Reference index unavailable" }, { status: 503 });
         const body = JSON.parse(String(init?.body ?? "{}")) as { cursor?: string; limit?: number };
+        resourceListRequests.push({
+          ...(body.cursor ? { cursor: body.cursor } : {}),
+          ...(body.limit ? { limit: body.limit } : {}),
+        });
+        if (resourceListFails || body.cursor === resourceListFailureCursor) {
+          return Response.json({ error: "Reference index unavailable" }, { status: 503 });
+        }
         const resources = ["notes.md", "demo.html", ...Array.from({ length: 148 }, (_, index) => `old-${index + 1}.md`)]
           .map((reference) => ({ key: `file:${reference}`, reference, label: reference, source: "link" as const }));
         const offset = body.cursor ? Number(body.cursor.slice("cursor:".length)) : 0;
@@ -202,7 +212,7 @@ describe("Files pane", () => {
     expect(within(pane).getByText("feature/git")).toBeInTheDocument();
   });
 
-  it("pages the complete earlier-file set through a bounded DOM window", async () => {
+  it("reveals every earlier file after one disclosure while transport stays paged", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
 
@@ -211,21 +221,36 @@ describe("Files pane", () => {
     await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(8));
     fireEvent.click(await within(pane).findByRole("button", { name: "Earlier files (142)" }));
 
-    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(72));
-    expect(within(pane).getByText("Files 9–72 of 150")).toBeInTheDocument();
-    fireEvent.click(within(pane).getByRole("button", { name: "Earlier files (78)" }));
-    await waitFor(() => expect(within(pane).getByText("Files 73–136 of 150")).toBeInTheDocument());
-    expect(list.querySelectorAll(".res__row")).toHaveLength(72);
+    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(150));
+    expect(within(pane).queryByText(/^Files \d/)).not.toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: /^(?:Newer|Earlier) files/ })).not.toBeInTheDocument();
+    expect(resourceListRequests).toEqual([
+      {},
+      { cursor: "cursor:8", limit: 64 },
+      { cursor: "cursor:72", limit: 64 },
+      { cursor: "cursor:136", limit: 64 },
+    ]);
 
-    fireEvent.click(within(pane).getByRole("button", { name: "Earlier files (14)" }));
-    await waitFor(() => expect(within(pane).getByText("Files 137–150 of 150")).toBeInTheDocument());
-    expect(list.querySelectorAll(".res__row")).toHaveLength(22);
-
-    fireEvent.click(within(pane).getByRole("button", { name: "Newer files" }));
-    await waitFor(() => expect(within(pane).getByText("Files 73–136 of 150")).toBeInTheDocument());
     fireEvent.click(within(pane).getByRole("button", { name: "Recent files" }));
     expect(list.querySelectorAll(".res__row")).toHaveLength(8);
     expect(within(pane).getByRole("button", { name: "Earlier files (142)" })).toBeInTheDocument();
+  });
+
+  it("retries a failed automatic page and continues through the remaining files", async () => {
+    resourceListFailureCursor = "cursor:72";
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
+
+    const pane = await screen.findByRole("complementary", { name: "Files and resources" });
+    const list = within(pane).getByLabelText("Referenced files");
+    fireEvent.click(await within(pane).findByRole("button", { name: "Earlier files (142)" }));
+    const retry = await within(pane).findByRole("button", { name: "Retry earlier files" });
+    expect(list.querySelectorAll(".res__row")).toHaveLength(72);
+
+    resourceListFailureCursor = null;
+    fireEvent.click(retry);
+    await waitFor(() => expect(list.querySelectorAll(".res__row")).toHaveLength(150));
+    expect(within(pane).queryByRole("button", { name: "Retry earlier files" })).not.toBeInTheDocument();
   });
 
   it("offers retry when an older-file index fails with no references on the current page", async () => {
