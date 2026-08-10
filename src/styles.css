@@ -913,7 +913,7 @@ a {
 /* Same motion grammar as chips: in-progress breathes, settled attention
    rests under a soft ring. */
 .nav__row-dot--running {
-  background: var(--accent);
+  background: var(--warning);
   animation: dot-breathe 1.8s ease-in-out infinite;
 }
 
@@ -935,7 +935,7 @@ a {
 @keyframes dot-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 40%, transparent);
   }
   60% {
     box-shadow: 0 0 0 4px transparent;
