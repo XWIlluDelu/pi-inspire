@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -33,11 +33,16 @@ async function fixture(id = "session-a"): Promise<{ dir: string; path: string; s
 }
 
 describe("session file deletion", () => {
-  it("moves the validated catalog session to Trash when the command succeeds", async () => {
+  it("passes Pi's original session path to Trash so restore keeps the JSONL name and location", async () => {
     const { dir, path, session } = await fixture();
-    const trashed = join(dir, "trashed.jsonl");
+    const trashDir = join(dir, "Trash");
+    await mkdir(trashDir);
+    const trashed = join(trashDir, "session-a.jsonl");
 
-    await expect(deleteSessionFile(session, async (candidate) => rename(candidate, trashed))).resolves.toBe("trashed");
+    await expect(deleteSessionFile(session, async (candidate) => {
+      expect(candidate).toBe(path);
+      await rename(candidate, trashed);
+    })).resolves.toBe("trashed");
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(trashed, "utf8")).toContain('"id":"session-a"');
   });
@@ -94,21 +99,18 @@ describe("session file deletion", () => {
     });
   });
 
-  it("refuses to unlink the session after a concurrent append on the quarantined inode", async () => {
+  it("refuses to unlink the session after a concurrent append on the inspected inode", async () => {
     const { path, session } = await fixture();
-    let quarantine: string | undefined;
 
     await expect(deleteSessionFile(session, async (candidate) => {
-      quarantine = candidate;
+      expect(candidate).toBe(path);
       await appendFile(candidate, `${JSON.stringify({ type: "message", id: "late-write" })}\n`);
       throw new Error("trash failed");
     })).rejects.toMatchObject({
       message: "The session file changed before permanent deletion",
       status: 409,
     });
-    expect(quarantine).toBeDefined();
-    expect(await readFile(quarantine!, "utf8")).toContain("late-write");
-    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path, "utf8")).toContain("late-write");
   });
 
   it("keeps a public replacement when Trash moves the original and reports failure", async () => {
@@ -122,17 +124,15 @@ describe("session file deletion", () => {
     expect(await readFile(path, "utf8")).toContain("replacement");
   });
 
-  it("rejects a successful Trash command that leaves the quarantine in place", async () => {
+  it("rejects a successful Trash command that leaves the original file in place", async () => {
     const { path, session } = await fixture();
-    let quarantine: string | undefined;
 
     await expect(deleteSessionFile(session, async (candidate) => {
-      quarantine = candidate;
+      expect(candidate).toBe(path);
     })).rejects.toMatchObject({
       message: "The Trash command did not remove the session file",
       status: 502,
     });
-    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(quarantine!, "utf8")).toContain('"id":"session-a"');
+    expect(await readFile(path, "utf8")).toContain('"id":"session-a"');
   });
 });

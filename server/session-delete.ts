@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { execFile } from "node:child_process";
-import { lstat, open, rename, unlink, type FileHandle } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { lstat, open, unlink, type FileHandle } from "node:fs/promises";
+import { extname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SessionDeleteDisposition } from "../shared/contracts.js";
 import type { SessionRecord } from "./session-catalog.js";
@@ -33,13 +32,8 @@ function sameFileVersion(left: SessionFileIdentity, right: SessionFileIdentity):
     left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
-// A same-filesystem rename updates ctime on common filesystems. Preserve the
-// authoritative inode, content length, and mtime checks while allowing that
-// one expected directory-entry transition; later checks use the post-rename
-// identity and are strict again.
-function sameFileAfterRename(left: SessionFileIdentity, right: SessionFileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size &&
-    left.mtimeNs === right.mtimeNs;
+function sameFileObject(left: SessionFileIdentity, right: SessionFileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 export type TrashSessionPath = (path: string) => Promise<void>;
@@ -134,16 +128,6 @@ async function trashPath(path: string): Promise<void> {
   });
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 async function fileIdentityAt(path: string): Promise<SessionFileIdentity | null> {
   try {
     const stats = await lstat(path, { bigint: true });
@@ -155,73 +139,39 @@ async function fileIdentityAt(path: string): Promise<SessionFileIdentity | null>
   }
 }
 
-async function exactFileAt(path: string, expected: SessionFileIdentity): Promise<boolean> {
-  const identity = await fileIdentityAt(path);
-  return identity !== null && sameFileVersion(identity, expected);
-}
-
-/** Move the inspected public directory entry to a fresh hidden sibling. The
- * random name prevents an ordinary path collision; the identity check below
- * is still authoritative before any path-based destructive operation. */
-async function quarantineSessionFile(
-  path: string,
-  expected: SessionFileIdentity,
-): Promise<{ path: string; identity: SessionFileIdentity }> {
-  const name = basename(path);
-  const directory = dirname(path);
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const quarantine = join(directory, `.${name}.inspire-delete-${randomUUID()}`);
-    if (await pathExists(quarantine)) continue;
-    try {
-      await rename(path, quarantine);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EEXIST") continue;
-      if (code === "ENOENT") throw Object.assign(new Error("Session not found"), { status: 404 });
-      throw error;
-    }
-    const moved = await fileIdentityAt(quarantine);
-    if (moved && sameFileAfterRename(moved, expected)) return { path: quarantine, identity: moved };
-    throw Object.assign(new Error("The session file changed while deletion was being prepared"), { status: 409 });
-  }
-  throw Object.assign(new Error("The session deletion quarantine could not be reserved"), { status: 409 });
-}
-
-/** Delete one catalog-authorized Pi session. This mirrors Pi's own picker:
- * atomically quarantine the validated entry, prefer the desktop Trash, then
- * permanently unlink only after revalidating that quarantine still names the
- * exact inspected session inode. */
+/** Delete one catalog-authorized Pi session. Pi's own picker passes the
+ * original JSONL path directly to the desktop Trash command, so a restored
+ * item keeps both its filename and its original session-directory location.
+ * Inspire adds path/header identity validation before that operation and
+ * revalidates the original inode before Pi's permanent-unlink fallback. */
 export async function deleteSessionFile(
   session: SessionRecord,
   moveToTrash: TrashSessionPath = trashPath,
 ): Promise<SessionDeleteDisposition> {
   const path = resolve(session.path);
-  const identity = await inspectSessionFile(session);
-  const quarantined = await quarantineSessionFile(path, identity);
-  const quarantine = quarantined.path;
+  const inspected = await inspectSessionFile(session);
   let trashError: unknown;
   try {
-    await moveToTrash(quarantine);
+    await moveToTrash(path);
   } catch (error) {
     trashError = error;
   }
+
+  const current = await fileIdentityAt(path);
+  // A Trash command can move the inspected file and then report failure. A
+  // concurrent replacement at the public path is not the deletion target and
+  // must survive; in either case the inspected inode already left the path.
+  if (current === null || !sameFileObject(current, inspected)) return "trashed";
+
   if (trashError === undefined) {
-    if (await pathExists(quarantine)) {
-      throw Object.assign(new Error("The Trash command did not remove the session file"), { status: 502 });
-    }
-    return "trashed";
+    throw Object.assign(new Error("The Trash command did not remove the session file"), { status: 502 });
   }
-
-  // A command can move the quarantined file and still report failure. The
-  // destructive result is already known in that case; never retry it as a
-  // permanent unlink operation.
-  if (!(await pathExists(quarantine))) return "trashed";
-
-  if (!(await exactFileAt(quarantine, quarantined.identity))) {
+  if (!sameFileVersion(current, inspected)) {
     throw Object.assign(new Error("The session file changed before permanent deletion"), { status: 409 });
   }
+
   try {
-    await unlink(quarantine);
+    await unlink(path);
     return "deleted";
   } catch (error) {
     const failure = Object.assign(new Error("The session could not be deleted"), { status: 500 });
