@@ -53,6 +53,7 @@ beforeAll(async () => {
           sessionId: requested,
           sessionName: requested === older.id ? older.title : summary.title,
           cwd: summary.cwd,
+          commands: [{ name: "project-check", description: "Check this project", source: "extension" }],
           messages: [
             { role: "user", content: "hello world", timestamp: 1 },
             {
@@ -161,7 +162,18 @@ describe("welcome flow", () => {
     expect(previous).toHaveAttribute("aria-current", "page");
 
     fireEvent.click(within(nav).getByRole("button", { name: "New session" }));
-    expect(await screen.findByLabelText("Project directory")).toBeInTheDocument();
+    const directory = await screen.findByLabelText("Project directory");
+    expect(directory).toHaveValue("/demo");
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Kimi K3");
+    expect(screen.getByRole("combobox", { name: "Thinking level" })).toHaveTextContent("medium");
+
+    const firstMessage = screen.getByLabelText("First message") as HTMLTextAreaElement;
+    fireEvent.change(firstMessage, { target: { value: "/project", selectionStart: 8 } });
+    firstMessage.setSelectionRange(8, 8);
+    fireEvent.select(firstMessage);
+    expect(within(await screen.findByRole("listbox", { name: "Slash command completions" }))
+      .getByRole("option", { name: /\/project-check.*Check this project/ })).toBeInTheDocument();
+
     expect(deselectCalls).toBe(1);
     expect(store.getState().sessionId).toBeNull();
     expect(previous).not.toHaveAttribute("aria-current");
@@ -592,6 +604,18 @@ function sessionRowButton(nav: HTMLElement, title: string): HTMLElement {
 }
 
 describe("session attention indicators", () => {
+  it("uses the yellow live status for selected-session work", () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+
+    act(() => ws.emit({ type: "agent_start" }));
+    const running = screen.getByText("Running").closest(".chip");
+    expect(running).toHaveClass("chip--warning", "chip--live");
+    expect(running).not.toHaveClass("chip--accent");
+
+    act(() => ws.emit({ type: "agent_settled" }));
+  });
+
   it("shows yellow while a background session works without leaking its output into the transcript", async () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;
