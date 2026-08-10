@@ -1,14 +1,15 @@
 /* insπre — restrained scientific workbench.
    Implements the design-system contract (docdoki/specs/design-system.md):
    paper-not-cream neutrals, hairline boundaries, one accent per theme
-   (teal in light, the same hue raised luminous in dark), IBM Plex type voices. */
+   (teal in light, the same hue raised luminous in dark), IBM Plex UI voices,
+   and the Flux Mono SC code voice. */
 
 /* --- Self-hosted fonts (SIL OFL, see src/assets/licenses) --- */
 
-/* Exact IBM-published Unicode splits keep the browser transfer bounded without
-   modifying the Reserved Font Name. The generated sheet contains 216 faces for
-   each supported UI weight and is checksum-pinned by the release verifier. */
+/* Exact, checksum-pinned Unicode splits keep browser transfer bounded. IBM Plex
+   Sans SC owns UI text; Flux Mono SC v0.1.0 owns the 600/1200 code grid. */
 @import "./assets/fonts/ibm-plex-sans-sc/faces.css";
+@import "./assets/fonts/flux-mono-sc/flux-mono-sc.css";
 
 @font-face {
   font-family: "IBM Plex Serif";
@@ -54,28 +55,6 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
 /* --- Tokens --- */
 
 :root {
@@ -106,7 +85,7 @@
   --composer-max: 880px;
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
   --font-serif: "IBM Plex Serif", Georgia, serif;
-  --font-mono: "IBM Plex Mono", "IBM Plex Sans SC", ui-monospace, monospace;
+  --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;
   --text-base: 14px;

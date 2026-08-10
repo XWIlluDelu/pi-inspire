@@ -9,9 +9,9 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
 const plexSansManifestDigest = "012a329e2e373c4aba5c81e46eb6df3bc78252fc65d97e2207a5c12ce286e6c6";
+const fluxManifestDigest = "3c2b68ef00d466260b24b4db97d17cb0e552c2d4194a7c4432cff8f69f20181b";
+const fluxSumsDigest = "24612c6ced4a164a61f355bcc3e7a3acc5159b8bf5f921f0e2cae0b6b394c281";
 const fixedFontDigests = new Map([
-  ["ibm-plex-mono-latin-400-normal.woff2", "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7"],
-  ["ibm-plex-mono-latin-500-normal.woff2", "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22"],
   ["ibm-plex-serif-latin-400-normal.woff2", "cb2c5eee2c0a43ff30d2365407c7bc8b20e3bd90720a4a64102ba0b328022a02"],
   ["ibm-plex-serif-latin-500-italic.woff2", "42fde68f485b8d3096a22711a16702013d437830f7293ecc4cc75554d479a363"],
   ["ibm-plex-serif-latin-500-normal.woff2", "677082fc2e9ee60701b874fe5983c98ea9fb3b588cc1b02058ff9bf29ea783e4"],
@@ -22,11 +22,11 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function parseSha256Sums(value) {
+function parseSha256Sums(value, label) {
   const entries = new Map();
   for (const line of value.trimEnd().split("\n")) {
     const match = line.match(/^([a-f0-9]{64})  ([A-Za-z0-9.-]+)$/u);
-    if (!match || entries.has(match[2])) throw new Error("IBM Plex Sans SC has an invalid checksum manifest");
+    if (!match || entries.has(match[2])) throw new Error(`${label} has an invalid checksum manifest`);
     entries.set(match[2], match[1]);
   }
   return entries;
@@ -39,7 +39,7 @@ async function verifySourceFonts() {
   if (sha256(manifestBytes) !== plexSansManifestDigest) {
     throw new Error("IBM Plex Sans SC manifest does not match the reviewed official import");
   }
-  const entries = parseSha256Sums(manifestBytes.toString("ascii"));
+  const entries = parseSha256Sums(manifestBytes.toString("ascii"), "IBM Plex Sans SC");
   const expectedSplitFiles = new Set(["faces.css"]);
   for (const style of ["Regular", "Medium", "SemiBold"]) {
     for (let index = 0; index <= 216; index += 1) {
@@ -71,8 +71,55 @@ async function verifySourceFonts() {
     const actual = sha256(await readFile(join(fontRoot, filename)));
     if (actual !== expected) throw new Error(`IBM Plex provenance mismatch: ${filename}`);
   }
+
+  const fluxRoot = join(fontRoot, "flux-mono-sc");
+  const fluxManifestBytes = await readFile(join(fluxRoot, "manifest.json"));
+  const fluxSumsBytes = await readFile(join(fluxRoot, "SHA256SUMS"));
+  if (sha256(fluxManifestBytes) !== fluxManifestDigest || sha256(fluxSumsBytes) !== fluxSumsDigest) {
+    throw new Error("Flux Mono SC does not match the reviewed v0.1.0 release");
+  }
+  const fluxManifest = JSON.parse(fluxManifestBytes.toString("utf8"));
+  if (
+    fluxManifest.family !== "Flux Mono SC"
+    || fluxManifest.version !== "0.100"
+    || fluxManifest.publicMappings !== 29_835
+    || JSON.stringify(fluxManifest.styles) !== JSON.stringify([
+      { style: "Regular", weight: 400 },
+      { style: "Medium", weight: 500 },
+    ])
+  ) {
+    throw new Error("Flux Mono SC manifest contract is wrong");
+  }
+  const fluxEntries = parseSha256Sums(fluxSumsBytes.toString("ascii"), "Flux Mono SC");
+  const expectedFluxFiles = new Set(["flux-mono-sc.css", "manifest.json"]);
+  for (const face of fluxManifest.files.faces ?? []) {
+    if (face.shards?.length !== 56) throw new Error(`Flux Mono SC ${face.style} must contain 56 Web shards`);
+    for (const shard of face.shards) expectedFluxFiles.add(shard.file);
+  }
+  const actualFluxFiles = new Set((await readdir(fluxRoot)).filter((name) => name !== "SHA256SUMS"));
+  if (
+    fluxEntries.size !== expectedFluxFiles.size
+    || actualFluxFiles.size !== expectedFluxFiles.size
+    || [...expectedFluxFiles].some((name) => !fluxEntries.has(name) || !actualFluxFiles.has(name))
+  ) {
+    throw new Error("Flux Mono SC directory, release manifest, and checksums disagree");
+  }
+  for (const [filename, expected] of fluxEntries) {
+    if (sha256(await readFile(join(fluxRoot, filename))) !== expected) {
+      throw new Error(`Flux Mono SC provenance mismatch: ${filename}`);
+    }
+  }
+  const fluxCss = await readFile(join(fluxRoot, "flux-mono-sc.css"), "utf8");
+  if (
+    (fluxCss.match(/@font-face/gu) ?? []).length !== 112
+    || (fluxCss.match(/font-weight: 400;/gu) ?? []).length !== 56
+    || (fluxCss.match(/font-weight: 500;/gu) ?? []).length !== 56
+  ) {
+    throw new Error("Flux Mono SC CSS must declare the exact 400/500 Web partition");
+  }
   return new Set([
     ...[...entries].filter(([filename]) => filename.endsWith(".woff2")).map(([, digest]) => digest),
+    ...[...fluxEntries].filter(([filename]) => filename.endsWith(".woff2")).map(([, digest]) => digest),
     ...fixedFontDigests.values(),
   ]);
 }
@@ -86,10 +133,17 @@ async function verifyInstalledFonts(installedRoot, expectedDigests) {
     if (filename.endsWith(".woff2")) installedDigests.add(sha256(value));
     if (filename.endsWith(".css")) css += value.toString("utf8");
   }
+  for (const match of css.matchAll(/data:[^;,]+;base64,([A-Za-z0-9+/=]+)/gu)) {
+    installedDigests.add(sha256(Buffer.from(match[1], "base64")));
+  }
   const missing = [...expectedDigests].filter((digest) => !installedDigests.has(digest));
-  if (missing.length > 0) throw new Error(`Installed bundle is missing ${missing.length} verified IBM font assets`);
-  if ((css.match(/IBMPlexSansSC-/gu) ?? []).length !== 648 || /Noto|MOTO/u.test(css)) {
-    throw new Error("Installed bundle does not contain the exclusive IBM type system");
+  if (missing.length > 0) throw new Error(`Installed bundle is missing ${missing.length} verified font assets`);
+  if (
+    (css.match(/IBMPlexSansSC-/gu) ?? []).length !== 648
+    || (css.match(/@font-face\{font-family:Flux Mono SC;/gu) ?? []).length !== 112
+    || /Noto|MOTO|IBM Plex Mono/u.test(css)
+  ) {
+    throw new Error("Installed bundle does not contain the reviewed IBM UI and Flux Mono SC code type system");
   }
 }
 
@@ -191,6 +245,8 @@ try {
     "LICENSE",
     "src/assets/licenses/ibm-plex-LICENSE.txt",
     "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt",
+    "src/assets/licenses/flux-mono-LICENSE.txt",
+    "src/assets/licenses/flux-mono-NOTICE.md",
   ]);
   const packedPaths = new Set((record.files ?? []).map((file) => file.path ?? ""));
   const missing = [...required].filter((path) => !packedPaths.has(path));
@@ -229,9 +285,9 @@ try {
   if (!projectLicense.startsWith("MIT License\n") || !projectLicense.includes("Copyright (c) 2026 XWIlluDelu")) {
     throw new Error("Installed release package has the wrong project license");
   }
-  const fontLicenses = `${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), "utf8")}`;
-  for (const witness of ["SIL OPEN FONT LICENSE Version 1.1", 'Reserved Font Name "Plex"', "IBM Corp."]) {
-    if (!fontLicenses.includes(witness)) throw new Error(`IBM font licenses are missing ${witness}`);
+  const fontLicenses = `${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-NOTICE.md"), "utf8")}`;
+  for (const witness of ["SIL OPEN FONT LICENSE Version 1.1", 'Reserved Font Name "Plex"', "IBM Corp.", "Flux Mono SC", "Modifications are copyright © 2026 XWIlluDelu"]) {
+    if (!fontLicenses.includes(witness)) throw new Error(`Bundled font licenses are missing ${witness}`);
   }
   await verifyInstalledFonts(installedRoot, expectedFontDigests);
   const thirdPartyNotices = await readFile(join(installedRoot, "dist/THIRD_PARTY_NOTICES.txt"), "utf8");
