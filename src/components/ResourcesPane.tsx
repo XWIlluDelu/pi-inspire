@@ -454,33 +454,30 @@ export function ResourcesPane() {
     store.setGitSurfaceVisible("resources-pane", true);
     return () => store.setGitSurfaceVisible("resources-pane", false);
   }, []);
-  // The current transcript page updates immediately. The host supplies a
-  // revision-bound complete index in bounded pages for older references.
+  // The current transcript page updates immediately. The host keeps transport
+  // bounded with revision-bound cursor pages; after one disclosure the pane
+  // consumes those pages itself and appends them into one continuous list.
   const recentResources = useMemo(() => collectResources(state.messages, MAX_RESOURCE_ROWS), [state.messages]);
   const [initialList, setInitialList] = useState<{
     viewKey: string;
     response: NonNullable<Awaited<ReturnType<typeof store.loadSessionResources>>>;
   } | null>(null);
-  const [earlierPage, setEarlierPage] = useState<{
-    cursor: string;
-    back: string[];
-    response: NonNullable<Awaited<ReturnType<typeof store.loadSessionResources>>>;
-  } | null>(null);
+  const [earlierResources, setEarlierResources] = useState<ResourceRow[]>([]);
   const [failedViewKey, setFailedViewKey] = useState<string | null>(null);
   const [listRetry, setListRetry] = useState(0);
   const [expandedViewKey, setExpandedViewKey] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
-  const [failedPage, setFailedPage] = useState<{ cursor: string; back: string[] } | null>(null);
+  const [failedPageCursor, setFailedPageCursor] = useState<string | null>(null);
   const pageRequestRef = useRef<AbortController | null>(null);
   const viewKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}:${state.transcriptRevision}`;
 
   useEffect(() => {
     pageRequestRef.current?.abort();
     pageRequestRef.current = null;
-    setEarlierPage(null);
+    setEarlierResources([]);
     setExpandedViewKey(null);
     setPageLoading(false);
-    setFailedPage(null);
+    setFailedPageCursor(null);
     if (state.contextMode !== "files") return;
     const request = new AbortController();
     void store.loadSessionResources({ signal: request.signal }).then((response) => {
@@ -499,52 +496,61 @@ export function ResourcesPane() {
     setFailedViewKey(null);
     setListRetry((value) => value + 1);
   };
-  const loadEarlierPage = (cursor: string, back: string[]) => {
+  const loadEarlierPages = (startCursor: string) => {
     pageRequestRef.current?.abort();
     const request = new AbortController();
     pageRequestRef.current = request;
     setPageLoading(true);
-    setFailedPage(null);
-    void store.loadSessionResources({ cursor, limit: RESOURCE_LIST_PAGE_SIZE, signal: request.signal }).then((response) => {
-      if (!response || request.signal.aborted) return;
-      setEarlierPage({ cursor, back, response });
-    }).catch(() => {
-      if (!request.signal.aborted) setFailedPage({ cursor, back });
-    }).finally(() => {
-      if (pageRequestRef.current === request) {
-        pageRequestRef.current = null;
-        setPageLoading(false);
+    setFailedPageCursor(null);
+    void (async () => {
+      let cursor: string | null = startCursor;
+      try {
+        while (cursor) {
+          const response = await store.loadSessionResources({
+            cursor,
+            limit: RESOURCE_LIST_PAGE_SIZE,
+            signal: request.signal,
+          });
+          if (!response || request.signal.aborted) return;
+          setEarlierResources((current) => mergeResourceRows(current, resourceRows(response.resources)));
+          cursor = response.nextCursor;
+        }
+      } catch {
+        if (!request.signal.aborted && cursor) setFailedPageCursor(cursor);
+      } finally {
+        if (pageRequestRef.current === request) {
+          pageRequestRef.current = null;
+          setPageLoading(false);
+        }
       }
-    });
+    })();
+  };
+  const collapseEarlierFiles = () => {
+    pageRequestRef.current?.abort();
+    pageRequestRef.current = null;
+    setExpandedViewKey(null);
+    setEarlierResources([]);
+    setPageLoading(false);
+    setFailedPageCursor(null);
   };
 
   const initialMatches = Boolean(initialList?.viewKey === viewKey);
   const initialResponse = initialMatches ? initialList!.response : null;
-  const earlierMatches = Boolean(
-    expandedViewKey === viewKey && earlierPage &&
-    earlierPage.response.sessionId === state.sessionId &&
-    earlierPage.response.viewId === state.transcriptViewId &&
-    earlierPage.response.revision === state.transcriptRevision,
-  );
+  const expanded = expandedViewKey === viewKey;
   const baselineResources = useMemo(() => {
     if (!initialResponse) return [];
     const initial = resourceRows(initialResponse.resources);
-    if (!earlierMatches || !earlierPage) return initial;
-    return mergeResourceRows(initial, resourceRows(earlierPage.response.resources));
-  }, [earlierMatches, earlierPage, initialResponse]);
+    return expanded ? mergeResourceRows(initial, earlierResources) : initial;
+  }, [earlierResources, expanded, initialResponse]);
   const allResources = useMemo(
     () => mergeResourceRows(recentResources, baselineResources),
     [recentResources, baselineResources],
   );
-  const expanded = expandedViewKey === viewKey;
   const resources = useMemo(
     () => expanded ? allResources : allResources.slice(0, MAX_RESOURCE_ROWS),
     [allResources, expanded],
   );
   const totalResources = initialResponse?.total ?? (!state.hasOlderMessages ? allResources.length : null);
-  const earlierRemaining = earlierMatches && earlierPage
-    ? Math.max(0, earlierPage.response.total - earlierPage.response.offset - earlierPage.response.resources.length)
-    : Math.max(0, (totalResources ?? 0) - MAX_RESOURCE_ROWS);
   useEffect(() => {
     void store.probeResources(resources.map((row) => row.reference ?? row.label));
   }, [state.sessionId, state.transcriptViewId, resources]);
@@ -622,46 +628,24 @@ export function ResourcesPane() {
             {resources.map((row) => <ResourceListRow key={row.key} row={row} />)}
             {expanded ? (
               <>
-                {earlierMatches && earlierPage ? (
-                  <p className="res__list-note">
-                    Files {earlierPage.response.offset + 1}–{earlierPage.response.offset + earlierPage.response.resources.length} of {earlierPage.response.total}
-                  </p>
-                ) : null}
-                <button type="button" className="res__more" onClick={() => {
-                  pageRequestRef.current?.abort();
-                  setExpandedViewKey(null);
-                  setEarlierPage(null);
-                  setPageLoading(false);
-                  setFailedPage(null);
-                }}>
+                <button
+                  type="button"
+                  className="res__more"
+                  aria-expanded="true"
+                  onClick={collapseEarlierFiles}
+                >
                   <ChevronDown size={12} className="chev-flip chev-flip--open" aria-hidden />
                   Recent files
                 </button>
-                {earlierMatches && earlierPage && earlierPage.back.length > 0 ? (
-                  <button type="button" className="res__more" disabled={pageLoading} onClick={() => {
-                    const cursor = earlierPage.back.at(-1)!;
-                    loadEarlierPage(cursor, earlierPage.back.slice(0, -1));
-                  }}>
-                    Newer files
-                  </button>
-                ) : null}
-                {earlierMatches && earlierPage?.response.nextCursor ? (
-                  <button type="button" className="res__more" disabled={pageLoading} onClick={() => loadEarlierPage(
-                    earlierPage.response.nextCursor!,
-                    [...earlierPage.back, earlierPage.cursor],
-                  )}>
-                    Earlier files ({earlierRemaining})
-                  </button>
-                ) : null}
                 {pageLoading ? (
                   <div className="res__more res__more--status" role="status">
                     <Loader2 size={12} className="spin" aria-hidden />
-                    Loading files
+                    Loading earlier files
                   </div>
-                ) : failedPage ? (
-                  <button type="button" className="res__more" onClick={() => loadEarlierPage(failedPage.cursor, failedPage.back)}>
+                ) : failedPageCursor ? (
+                  <button type="button" className="res__more" onClick={() => loadEarlierPages(failedPageCursor)}>
                     <RefreshCw size={12} aria-hidden />
-                    Retry files
+                    Retry earlier files
                   </button>
                 ) : null}
               </>
@@ -672,7 +656,7 @@ export function ResourcesPane() {
                 aria-expanded="false"
                 onClick={() => {
                   setExpandedViewKey(viewKey);
-                  loadEarlierPage(initialResponse.nextCursor!, []);
+                  loadEarlierPages(initialResponse.nextCursor!);
                 }}
               >
                 <ChevronDown size={12} aria-hidden />
