@@ -32,8 +32,11 @@ export type AssistantContent = TextContent | ThinkingContent | ToolCallContent |
 
 export interface ChatMessage {
   role: string;
-  /** Host projection metadata: message-row identity and its owning Pi entry. */
+  /** Host projection metadata: durable/live row identity, settlement, and the
+   * owning Pi entry. */
   __inspireMessageId?: string;
+  __inspireLiveId?: string;
+  __inspireSettled?: boolean;
   __inspireEntryId?: string;
   /** Position in Pi's authoritative active-path message projection. Embedded
    * image content is addressed by this index plus its content-part index. */

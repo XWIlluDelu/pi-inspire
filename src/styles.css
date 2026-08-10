@@ -1839,8 +1839,8 @@ a {
   color: var(--warning);
 }
 
-/* Message actions stay out of the reading flow until the turn is pointed
-   or keyboard-focused; touch devices (no hover) keep them faintly visible. */
+/* Message actions stay quiet until the turn is pointed or keyboard-focused.
+   Response actions remain faintly discoverable at the content's true end. */
 .turn__actions {
   display: inline-flex;
   align-items: center;
@@ -1852,6 +1852,13 @@ a {
 
 .turn--user > .turn__actions {
   margin-top: calc(-1 * var(--space-2));
+}
+
+.turn__actions--response {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  margin-left: 0;
+  opacity: 0.48;
 }
 
 .turn:hover .turn__actions,
@@ -2088,7 +2095,7 @@ a {
   max-width: 46ch;
 }
 
-/* --- Cards (thinking / tool / generic) ---
+/* --- Cards (thinking / tool / custom / generic) ---
    Every activity block declares its kind with a 3px left edge — the same
    grammar the toast notices use: violet reasoning, blue tool work, red
    failure, gray unknown. Surfaces stay neutral. */
@@ -2114,11 +2121,13 @@ a {
   background: color-mix(in srgb, var(--think) 4%, var(--bg-inset));
 }
 
-.card--tool {
+.card--tool,
+.card--custom {
   border-left-color: var(--info);
 }
 
-.card--tool .card__icon {
+.card--tool .card__icon,
+.card--custom .card__icon {
   color: var(--info);
 }
 
@@ -2147,17 +2156,56 @@ a {
   gap: var(--space-2);
   width: 100%;
   min-height: 34px;
-  border: 0;
-  background: transparent;
-  padding: var(--space-1) var(--space-3) var(--space-1) 10px;
+  padding: var(--space-1) 8px var(--space-1) 6px;
   font-size: var(--text-sm);
   text-align: left;
   color: var(--muted);
+}
+
+.card__disclosure {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 2px 4px;
+  color: inherit;
+  text-align: left;
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.card__header:hover {
+.card__disclosure:hover,
+.card__disclosure:focus-visible {
   background: var(--bg-inset);
+}
+
+.card__header-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.card__copy.icon-button {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.card__header:hover .card__copy,
+.card__header:focus-within .card__copy {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .card__copy.icon-button {
+    opacity: 0.75;
+  }
 }
 
 .card__icon {
@@ -2180,8 +2228,9 @@ a {
 }
 
 .card__summary {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(55%, 56ch);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2197,9 +2246,11 @@ a {
   line-height: var(--leading-ui);
 }
 
-.card__generic-kind {
-  flex: 1;
+.card__generic-kind,
+.card__custom-kind {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(45%, 48ch);
   overflow: hidden;
   color: var(--faint);
   font-family: var(--font-mono);
@@ -2210,40 +2261,36 @@ a {
   white-space: nowrap;
 }
 
-.card--generic .card__header {
-  align-items: baseline;
-}
-
-.card--generic .card__icon,
-.card--generic .card__status,
-.card--generic .card__chevron {
-  align-self: center;
-}
-
 .card__summary--file {
+  display: block;
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  padding: 0;
   cursor: pointer;
   color: var(--accent-deep);
+  text-align: left;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
 }
 
-/* Compact tool calls retain chronological position while changing only their
-   local flow from vertical cards to a wrapping strip of quiet tiles. */
-.tool-strip {
-  --tool-detail-origin: 28px;
+/* Compact activity retains chronological position while changing only local
+   flow from vertical cards to a wrapping strip of quiet, inspectable tiles. */
+.activity-strip {
+  --activity-detail-origin: 28px;
   display: flex;
   flex-direction: column;
 }
 
-.tool-strip__items {
+.activity-strip__items {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
-.tool-strip__item {
+.activity-strip__item {
   min-width: 56px;
   height: 30px;
   display: inline-flex;
@@ -2262,20 +2309,39 @@ a {
     box-shadow var(--dur-micro) var(--ease-standard);
 }
 
-.tool-strip__item:hover,
-.tool-strip__item:focus-visible {
+.activity-strip__item--custom {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-start;
+  padding-inline: 8px 10px;
+}
+
+.activity-strip__kind {
+  max-width: 24ch;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-strip__item:hover,
+.activity-strip__item:focus-visible {
   background: var(--bg-inset);
 }
 
-.tool-strip__item--active {
+.activity-strip__item--active {
   background: var(--bg-inset);
   border-color: var(--hairline-strong);
   border-left-color: var(--info);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
-.tool-strip__item--failed,
-.tool-strip__item--failed.tool-strip__item--active {
+.activity-strip__item--failed,
+.activity-strip__item--failed.activity-strip__item--active {
   color: var(--error);
   border-left-color: var(--error);
 }
@@ -2284,7 +2350,7 @@ a {
   color: var(--faint);
 }
 
-.tool-strip__reveal {
+.activity-strip__reveal {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -2295,34 +2361,25 @@ a {
     transform var(--dur-standard) var(--ease-standard);
 }
 
-.tool-strip__reveal--open {
+.activity-strip__reveal--open {
   grid-template-rows: 1fr;
   opacity: 1;
   transform: none;
   pointer-events: auto;
 }
 
-.tool-strip__reveal-inner {
+.activity-strip__reveal-inner {
   min-height: 0;
   overflow: hidden;
 }
 
-.tool-strip__detail {
+.activity-strip__detail {
   margin-top: var(--space-1);
-  transform-origin: var(--tool-detail-origin) top;
-  animation: tool-detail-in var(--dur-standard) var(--ease-standard);
+  transform-origin: var(--activity-detail-origin) top;
+  animation: activity-detail-in var(--dur-standard) var(--ease-standard);
 }
 
-.tool-strip__detail-head {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3) var(--space-1) 10px;
-  color: var(--muted);
-}
-
-@keyframes tool-detail-in {
+@keyframes activity-detail-in {
   from {
     opacity: 0;
     transform: translateY(-5px) scaleY(0.94);
@@ -2337,18 +2394,24 @@ a {
 
 /* Dynamic density is a local fade/scale change: cards never fly across the
    transcript to become compact tiles. */
-.dynamic-tool-batch {
+.dynamic-activity-batch {
   display: contents;
 }
 
-.dynamic-tool-batch--compacting .card--tool {
+.custom-activity-batch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dynamic-activity-batch--compacting :is(.card--tool, .card--custom) {
   opacity: 0;
   transform: scale(0.985);
   transition: opacity var(--dur-micro) var(--ease-standard),
     transform var(--dur-micro) var(--ease-standard);
 }
 
-.dynamic-tool-batch--compact .tool-strip {
+.dynamic-activity-batch--compact .activity-strip {
   animation: dynamic-strip-in var(--dur-standard) var(--ease-standard);
 }
 
@@ -2384,11 +2447,7 @@ a {
 
 .card__status {
   display: inline-flex;
-  margin-left: auto;
-}
-
-.card__summary + .card__status {
-  margin-left: 0;
+  flex: 0 0 auto;
 }
 
 .card__chevron {
