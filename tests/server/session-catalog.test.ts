@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { newestPerCwd, orderSessionRecords, SessionCatalog, type SessionRecord } from "../../server/session-catalog.js";
+import {
+  newestPerCwd,
+  orderSessionRecords,
+  SessionCatalog,
+  type SessionRecord,
+} from "../../server/session-catalog.js";
 
 function record(id: string, cwd: string, modified: string): SessionRecord {
   return {
@@ -20,7 +25,9 @@ describe("catalog pagination", () => {
     const old = record("old", "/work/a", "2026-07-01T10:00:00Z");
     const beta = record("beta", "/work/a", sameTime);
     const alpha = record("alpha", "/work/a", sameTime);
-    expect(orderSessionRecords([old, beta, alpha]).map((session) => session.id)).toEqual(["alpha", "beta", "old"]);
+    expect(
+      orderSessionRecords([old, beta, alpha]).map((session) => session.id),
+    ).toEqual(["alpha", "beta", "old"]);
   });
 
   it("reports offset, bounded limit, and filtered total independently from page length", async () => {
@@ -44,7 +51,11 @@ describe("catalog pagination", () => {
 describe("catalog title provenance", () => {
   it("uses firstMessage as the public title when a session is unnamed", () => {
     const secret = "SECRET_PROMPT_DO_NOT_NOTIFY";
-    const unnamed = record("unnamed", "/safe/research-project", "2026-07-01T10:00:00Z");
+    const unnamed = record(
+      "unnamed",
+      "/safe/research-project",
+      "2026-07-01T10:00:00Z",
+    );
     unnamed.firstMessage = secret;
     unnamed.searchText = secret.toLowerCase();
     const summary = new SessionCatalog("/unused").project(unnamed);
@@ -53,10 +64,16 @@ describe("catalog title provenance", () => {
   });
 
   it("calls an empty conversation New session rather than Untitled session", () => {
-    const empty = record("empty", "/safe/research-project", "2026-07-01T10:00:00Z");
+    const empty = record(
+      "empty",
+      "/safe/research-project",
+      "2026-07-01T10:00:00Z",
+    );
     empty.firstMessage = "";
     empty.messageCount = 0;
-    expect(new SessionCatalog("/unused").project(empty).title).toBe("New session");
+    expect(new SessionCatalog("/unused").project(empty).title).toBe(
+      "New session",
+    );
   });
 });
 
@@ -72,19 +89,19 @@ describe("newestPerCwd", () => {
   it("answers with each named folder's sessions, newest first", () => {
     // The catalog's own order is not assumed: a folder pin has to produce the
     // folder's newest work whatever order the session tree was listed in.
-    expect(newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 40).map((session) => session.id)).toEqual([
-      "alpha-new",
-      "alpha-mid",
-      "beta-old",
-      "alpha-old",
-    ]);
+    expect(
+      newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 40).map(
+        (session) => session.id,
+      ),
+    ).toEqual(["alpha-new", "alpha-mid", "beta-old", "alpha-old"]);
   });
 
   it("bounds each folder independently rather than the answer as a whole", () => {
-    expect(newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 1).map((session) => session.id)).toEqual([
-      "alpha-new",
-      "beta-old",
-    ]);
+    expect(
+      newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 1).map(
+        (session) => session.id,
+      ),
+    ).toEqual(["alpha-new", "beta-old"]);
   });
 
   it("returns nothing when no folder is pinned", () => {

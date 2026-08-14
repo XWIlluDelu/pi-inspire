@@ -5,7 +5,7 @@ const PATCH = [
   "--- a/src/app.ts",
   "+++ b/src/app.ts",
   "@@ -1,4 +1,4 @@",
-  " import x from \"x\";",
+  ' import x from "x";',
   "-const a = 1;",
   "+const a = 2;",
   " export default a;",
@@ -33,8 +33,12 @@ describe("parseUnifiedDiff", () => {
   });
 
   it("rejects prose whose lines merely start with + or -", () => {
-    expect(parseUnifiedDiff("- bullet one\n- bullet two\n+ emphasis")).toBeNull();
-    expect(parseUnifiedDiff("email @@ mentions --- +++ but no hunk header")).toBeNull();
+    expect(
+      parseUnifiedDiff("- bullet one\n- bullet two\n+ emphasis"),
+    ).toBeNull();
+    expect(
+      parseUnifiedDiff("email @@ mentions --- +++ but no hunk header"),
+    ).toBeNull();
   });
 
   it("rejects hunk-shaped text without file markers", () => {

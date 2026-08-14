@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { store } from "../../src/store";
@@ -17,13 +23,17 @@ let promptsSettled = 0;
 beforeAll(async () => {
   installFakeWebSocket();
   installFetch(async (url) => {
-    if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
+    if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
     if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
     if (url.startsWith("/api/files")) {
       const session = /sessionId=([^&]*)/.exec(url)?.[1] ?? "";
-      return { body: { files: [{ path: `${session}/only.ts`, name: "only.ts" }] } };
+      return {
+        body: { files: [{ path: `${session}/only.ts`, name: "only.ts" }] },
+      };
     }
-    if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+    if (url.startsWith("/api/sessions"))
+      return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
     if (url.startsWith("/api/prompt")) {
       if (promptGate) await promptGate;
       promptsSettled += 1;
@@ -65,7 +75,9 @@ describe("composer drafts across sessions", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("draft for B");
 
     act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({ type: "snapshot", data: activeSnapshot() });
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "snapshot", data: activeSnapshot() });
     });
     expect(screen.getByLabelText("Message")).toHaveValue("");
   });
@@ -100,12 +112,18 @@ describe("project-file send ownership", () => {
   it("freezes chips during delivery and clears only the delivered canonical paths", async () => {
     render(<Composer />);
     store.addProjectFile("src/owned.ts");
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "send with file" } });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "send with file" },
+    });
     let release!: () => void;
-    promptGate = new Promise<void>((resolve) => { release = resolve; });
+    promptGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(store.getState().sending).toBe(true);
-    expect(screen.getByRole("button", { name: "Remove src/owned.ts" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Remove src/owned.ts" }),
+    ).toBeDisabled();
 
     store.removeProjectFile("src/owned.ts");
     store.addProjectFile("src/racing.ts");
@@ -120,11 +138,15 @@ describe("project-file send ownership", () => {
 describe("project file picker scoping", () => {
   it("clears and re-scopes results when the session changes", async () => {
     act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({ type: "snapshot", data: activeSnapshot({ sessionId: "sA" }) });
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "snapshot", data: activeSnapshot({ sessionId: "sA" }) });
     });
     render(<Composer />);
     fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
-    fireEvent.change(screen.getByLabelText("Search project files"), { target: { value: "only" } });
+    fireEvent.change(screen.getByLabelText("Search project files"), {
+      target: { value: "only" },
+    });
     // Session A's path appears.
     await screen.findByRole("option", { name: /sA\/only\.ts/ });
 
@@ -135,7 +157,9 @@ describe("project file picker scoping", () => {
         data: activeSnapshot({ sessionId: "sB", sessionName: "B" }),
       });
     });
-    expect(screen.queryByRole("option", { name: /sA\/only\.ts/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /sA\/only\.ts/ }),
+    ).not.toBeInTheDocument();
     await screen.findByRole("option", { name: /sB\/only\.ts/ });
   });
 });

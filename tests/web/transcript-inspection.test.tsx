@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Transcript, findLiteralMatches } from "../../src/components/Transcript";
+import {
+  Transcript,
+  findLiteralMatches,
+} from "../../src/components/Transcript";
 import { store } from "../../src/store";
 
 beforeEach(() => {
@@ -24,7 +34,11 @@ describe("settled transcript search", () => {
         sessionId="scoped"
         messages={[
           { role: "user", content: "shared phrase from user", timestamp: 1 },
-          { role: "assistant", content: "shared phrase from model", timestamp: 2 },
+          {
+            role: "assistant",
+            content: "shared phrase from model",
+            timestamp: 2,
+          },
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
@@ -32,8 +46,12 @@ describe("settled transcript search", () => {
       />,
     );
 
-    const search = screen.getByRole("search", { name: "Search settled transcript" });
-    const input = screen.getByRole("searchbox", { name: "Search conversation" });
+    const search = screen.getByRole("search", {
+      name: "Search settled transcript",
+    });
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
     const log = screen.getByRole("log");
     expect(search.parentElement).toHaveClass("transcript-wrap");
     expect(search.nextElementSibling).toBe(log);
@@ -41,21 +59,34 @@ describe("settled transcript search", () => {
 
     fireEvent.change(input, { target: { value: "shared" } });
     expect(search).toHaveClass("transcript-search--active");
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("2 matches");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("2 matches");
 
     fireEvent.click(screen.getByRole("combobox", { name: "Search scope" }));
     fireEvent.click(screen.getByRole("option", { name: "User" }));
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("1 match");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 match");
 
     fireEvent.click(screen.getByRole("combobox", { name: "Search scope" }));
     fireEvent.click(screen.getByRole("option", { name: "Model" }));
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("1 match");
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search conversation" }), { target: { value: "user" } });
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("No matches");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 match");
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search conversation" }),
+      { target: { value: "user" } },
+    );
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("No matches");
 
     fireEvent.click(screen.getByRole("combobox", { name: "Search scope" }));
     fireEvent.click(screen.getByRole("option", { name: "All" }));
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("1 match");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 match");
 
     fireEvent.change(input, { target: { value: "" } });
     expect(search).not.toHaveClass("transcript-search--active");
@@ -76,11 +107,26 @@ describe("settled transcript search", () => {
         content: [
           { type: "text", text: "BETA beta" },
           { type: "thinking", thinking: "hidden needle" },
-          { type: "toolCall", id: "tool-1", name: "search", arguments: { query: "needle" } },
+          {
+            type: "toolCall",
+            id: "tool-1",
+            name: "search",
+            arguments: { query: "needle" },
+          },
         ],
       },
-      { role: "assistant", timestamp: 3, content: [{ type: "text", text: "live beta" }], __inspireLiveId: "assistant-live" },
-      { role: "user", content: "unsettled beta", timestamp: 4, __inspireLiveId: "user-live" },
+      {
+        role: "assistant",
+        timestamp: 3,
+        content: [{ type: "text", text: "live beta" }],
+        __inspireLiveId: "assistant-live",
+      },
+      {
+        role: "user",
+        content: "unsettled beta",
+        timestamp: 4,
+        __inspireLiveId: "user-live",
+      },
     ];
     const { rerender } = render(
       <Transcript
@@ -91,18 +137,34 @@ describe("settled transcript search", () => {
         toolVisibility="collapsed"
       />,
     );
-    const input = screen.getByRole("searchbox", { name: "Search conversation" });
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
 
     fireEvent.change(input, { target: { value: "beta" } });
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("2 matches");
-    fireEvent.click(screen.getByRole("button", { name: "Next transcript match" }));
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Previous transcript match" }));
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("2 of 2");
-    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("2 matches");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next transcript match" }),
+    );
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 of 2");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Previous transcript match" }),
+    );
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("2 of 2");
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "needle" } });
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("No matches");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("No matches");
 
     fireEvent.change(input, { target: { value: "beta" } });
     rerender(
@@ -110,25 +172,35 @@ describe("settled transcript search", () => {
         sessionId="s1"
         messages={[
           { role: "user", content: "older beta", timestamp: 0 },
-          ...messages.map((message) => message.timestamp === 3 ? { ...message, __inspireSettled: true } : message),
+          ...messages.map((message) =>
+            message.timestamp === 3
+              ? { ...message, __inspireSettled: true }
+              : message,
+          ),
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
       />,
     );
-    expect(screen.getByLabelText("Transcript search matches")).toHaveTextContent("4 matches");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("4 matches");
 
     rerender(
       <Transcript
         sessionId="s2"
-        messages={[{ role: "user", content: "beta in another session", timestamp: 10 }]}
+        messages={[
+          { role: "user", content: "beta in another session", timestamp: 10 },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
       />,
     );
-    expect(screen.getByRole("searchbox", { name: "Search conversation" })).toHaveValue("");
+    expect(
+      screen.getByRole("searchbox", { name: "Search conversation" }),
+    ).toHaveValue("");
   });
 });
 
@@ -137,10 +209,19 @@ describe("transcript live follow", () => {
     const settled = [
       { role: "user", content: "question", timestamp: 1 },
       { role: "assistant", content: [], stopReason: "error", timestamp: 2 },
-      { role: "assistant", content: [{ type: "text", text: "recovered answer" }], timestamp: 3 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "recovered answer" }],
+        timestamp: 3,
+      },
     ];
     const { container, rerender } = render(
-      <Transcript messages={settled} streaming={false} thinkingVisibility="dynamic" toolVisibility="dynamic" />,
+      <Transcript
+        messages={settled}
+        streaming={false}
+        thinkingVisibility="dynamic"
+        toolVisibility="dynamic"
+      />,
     );
     expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
     expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
@@ -165,7 +246,12 @@ describe("transcript live follow", () => {
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
     expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
 
-    const activeRetry = { role: "assistant", content: [], timestamp: 5, __inspireLiveId: "retry-call" };
+    const activeRetry = {
+      role: "assistant",
+      content: [],
+      timestamp: 5,
+      __inspireLiveId: "retry-call",
+    };
     rerender(
       <Transcript
         messages={[...settled, activeRetry]}
@@ -184,9 +270,15 @@ describe("transcript live follow", () => {
     const observed = new Map<Element, ResizeObserverCallback>();
     class TestResizeObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
-      observe(target: Element) { observed.set(target, this.callback); }
-      unobserve(target: Element) { observed.delete(target); }
-      disconnect() { observed.clear(); }
+      observe(target: Element) {
+        observed.set(target, this.callback);
+      }
+      unobserve(target: Element) {
+        observed.delete(target);
+      }
+      disconnect() {
+        observed.clear();
+      }
     }
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
 
@@ -203,10 +295,15 @@ describe("transcript live follow", () => {
       toolVisibility: "dynamic" as const,
     };
     const { container, rerender } = render(
-      <Transcript messages={[{ role: "user", content: "question", timestamp: 1 }, active]} {...props} />,
+      <Transcript
+        messages={[{ role: "user", content: "question", timestamp: 1 }, active]}
+        {...props}
+      />,
     );
     const log = screen.getByRole("log");
-    expect(screen.getByText("Working…").closest(".assistant-activity")).toHaveAttribute("role", "status");
+    expect(
+      screen.getByText("Working…").closest(".assistant-activity"),
+    ).toHaveAttribute("role", "status");
     let scrollHeight = 1_000;
     Object.defineProperties(log, {
       clientHeight: { configurable: true, get: () => 300 },
@@ -222,7 +319,12 @@ describe("transcript live follow", () => {
             ...active,
             content: [
               { type: "thinking", thinking: "live reasoning" },
-              { type: "toolCall", id: "live-tool", name: "read", arguments: { path: "notes.md" } },
+              {
+                type: "toolCall",
+                id: "live-tool",
+                name: "read",
+                arguments: { path: "notes.md" },
+              },
             ],
           },
         ]}
@@ -238,7 +340,9 @@ describe("transcript live follow", () => {
     // programmatic follow scroll into apparent user intent.
     scrollHeight = 1_400;
     fireEvent.scroll(log);
-    expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Jump to latest" }),
+    ).not.toBeInTheDocument();
     const content = container.querySelector(".transcript__content")!;
     act(() => observed.get(content)?.([], {} as ResizeObserver));
     expect(log.scrollTop).toBe(1_100);
@@ -256,7 +360,12 @@ describe("transcript live follow", () => {
             ...active,
             content: [
               { type: "thinking", thinking: "live reasoning continues" },
-              { type: "toolCall", id: "live-tool", name: "read", arguments: { path: "notes.md" } },
+              {
+                type: "toolCall",
+                id: "live-tool",
+                name: "read",
+                arguments: { path: "notes.md" },
+              },
             ],
           },
         ]}
@@ -270,14 +379,18 @@ describe("transcript live follow", () => {
     // latest-follow after the input marker expires.
     log.scrollTop = 1_090;
     fireEvent.scroll(log);
-    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(401));
     log.scrollTop = 1_120;
     fireEvent.scroll(log);
     scrollHeight = 1_700;
     act(() => observed.get(content)?.([], {} as ResizeObserver));
     expect(log.scrollTop).toBe(1_120);
-    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -288,16 +401,50 @@ describe("transcript density preferences", () => {
     stopReason: "toolUse",
     timestamp: 2,
     content: [
-      { type: "toolCall", id: "tool-a", name: "ffgrep", arguments: { query: "alpha" } },
-      { type: "toolCall", id: "tool-b", name: "read", arguments: { path: "src/a.ts" } },
+      {
+        type: "toolCall",
+        id: "tool-a",
+        name: "ffgrep",
+        arguments: { query: "alpha" },
+      },
+      {
+        type: "toolCall",
+        id: "tool-b",
+        name: "read",
+        arguments: { path: "src/a.ts" },
+      },
       { type: "text", text: "between tool runs" },
-      { type: "toolCall", id: "tool-c", name: "bash", arguments: { command: "npm test" } },
+      {
+        type: "toolCall",
+        id: "tool-c",
+        name: "bash",
+        arguments: { command: "npm test" },
+      },
     ],
   };
   const results = [
-    { role: "toolResult", toolCallId: "tool-a", toolName: "ffgrep", content: "alpha result", timestamp: 3 },
-    { role: "toolResult", toolCallId: "tool-b", toolName: "read", content: "read result", timestamp: 4 },
-    { role: "toolResult", toolCallId: "tool-c", toolName: "bash", content: "failed result", isError: true, timestamp: 5 },
+    {
+      role: "toolResult",
+      toolCallId: "tool-a",
+      toolName: "ffgrep",
+      content: "alpha result",
+      timestamp: 3,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "tool-b",
+      toolName: "read",
+      content: "read result",
+      timestamp: 4,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "tool-c",
+      toolName: "bash",
+      content: "failed result",
+      isError: true,
+      timestamp: 5,
+    },
   ];
 
   it("replaces only the assistant attribution row with a divider", () => {
@@ -342,31 +489,52 @@ describe("transcript density preferences", () => {
     );
     const strips = container.querySelectorAll(".activity-strip");
     expect(strips).toHaveLength(2);
-    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(2);
-    expect(strips[1]!.querySelectorAll(".activity-strip__item")).toHaveLength(1);
+    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(
+      2,
+    );
+    expect(strips[1]!.querySelectorAll(".activity-strip__item")).toHaveLength(
+      1,
+    );
 
     const read = screen.getByRole("button", { name: /read: finished/i });
     fireEvent.click(read);
     expect(read).toHaveAttribute("aria-expanded", "true");
     const detail = strips[0]!.querySelector(".activity-strip__detail");
     expect(detail).not.toBeNull();
-    expect(strips[0]!.querySelector(".activity-strip__items")?.nextElementSibling).toContainElement(detail as HTMLElement);
-    expect(within(detail as HTMLElement).getByText("read result")).toBeInTheDocument();
+    expect(
+      strips[0]!.querySelector(".activity-strip__items")?.nextElementSibling,
+    ).toContainElement(detail as HTMLElement);
+    expect(
+      within(detail as HTMLElement).getByText("read result"),
+    ).toBeInTheDocument();
 
-    fireEvent.click(within(detail as HTMLElement).getByRole("button", { name: "Collapse read tool details" }));
+    fireEvent.click(
+      within(detail as HTMLElement).getByRole("button", {
+        name: "Collapse read tool details",
+      }),
+    );
     expect(read).toHaveAttribute("aria-expanded", "false");
-    await waitFor(() => expect(screen.queryByText("read result")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText("read result")).not.toBeInTheDocument(),
+    );
 
     const ffgrep = screen.getByRole("button", { name: /ffgrep: finished/i });
     fireEvent.click(ffgrep);
-    expect(container.querySelectorAll(".activity-strip__detail")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__detail")).toHaveLength(
+      1,
+    );
     expect(screen.queryByText("read result")).not.toBeInTheDocument();
     expect(screen.getByText("alpha result")).toBeInTheDocument();
 
     fireEvent.click(ffgrep);
-    expect(strips[0]!.querySelector(".activity-strip__reveal")).toHaveAttribute("aria-hidden", "true");
+    expect(strips[0]!.querySelector(".activity-strip__reveal")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     expect(screen.getByText("alpha result")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText("alpha result")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText("alpha result")).not.toBeInTheDocument(),
+    );
   });
 
   it("loads historical Dynamic content directly at its final density", () => {
@@ -375,16 +543,36 @@ describe("transcript density preferences", () => {
       timestamp: 10,
       content: [
         { type: "thinking", thinking: "settled reasoning\nmore detail" },
-        { type: "toolCall", id: "history-a", name: "read", arguments: { path: "a.ts" } },
-        { type: "toolCall", id: "history-b", name: "bash", arguments: { command: "npm test" } },
+        {
+          type: "toolCall",
+          id: "history-a",
+          name: "read",
+          arguments: { path: "a.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "history-b",
+          name: "bash",
+          arguments: { command: "npm test" },
+        },
       ],
     };
     const { container } = render(
       <Transcript
         messages={[
           historical,
-          { role: "toolResult", toolCallId: "history-a", content: "read", timestamp: 11 },
-          { role: "toolResult", toolCallId: "history-b", content: "tested", timestamp: 12 },
+          {
+            role: "toolResult",
+            toolCallId: "history-a",
+            content: "read",
+            timestamp: 11,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "history-b",
+            content: "tested",
+            timestamp: 12,
+          },
         ]}
         streaming={false}
         thinkingVisibility="dynamic"
@@ -392,9 +580,74 @@ describe("transcript density preferences", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Expand Thinking" })).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByRole("button", { name: "Expand Thinking" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelectorAll(".card--tool")).toHaveLength(0);
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
+  });
+
+  it("toggles thinking, tool, and custom cards from non-interactive header space", () => {
+    render(
+      <Transcript
+        messages={[
+          {
+            role: "assistant",
+            timestamp: 12,
+            content: [
+              { type: "thinking", thinking: "reasoning details" },
+              {
+                type: "toolCall",
+                id: "header-tool",
+                name: "read",
+                arguments: { path: "src/header.ts" },
+              },
+              { type: "text", text: "answer" },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "header-tool",
+            content: "file body",
+            timestamp: 13,
+          },
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "custom details",
+            display: true,
+            timestamp: 14,
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+
+    const cards = [
+      screen
+        .getByText("Thinking", { selector: ".card__label" })
+        .closest(".card") as HTMLElement,
+      screen
+        .getByText("read", { selector: ".card__tool-name" })
+        .closest(".card") as HTMLElement,
+      screen
+        .getByText("Intercom message", { selector: ".card__tool-name" })
+        .closest(".card") as HTMLElement,
+    ];
+    for (const card of cards) {
+      const disclosure = card.querySelector(
+        ".card__disclosure",
+      ) as HTMLButtonElement;
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(
+        card.querySelector(".card__header-spacer") as HTMLElement,
+      );
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(card.querySelector(".card__header") as HTMLElement);
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    }
   });
 
   it("holds fast Thinking for 1800 ms and parallel tools for 1600 ms before lifecycle collapse", () => {
@@ -406,15 +659,42 @@ describe("transcript density preferences", () => {
       content: [
         { type: "thinking", thinking: "first thought" },
         { type: "thinking", thinking: "second thought" },
-        { type: "toolCall", id: "parallel-a", name: "read", arguments: { path: "a.ts" } },
-        { type: "toolCall", id: "parallel-b", name: "bash", arguments: { command: "npm test" } },
-        { type: "toolCall", id: "parallel-c", name: "edit", arguments: { path: "b.ts" } },
+        {
+          type: "toolCall",
+          id: "parallel-a",
+          name: "read",
+          arguments: { path: "a.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "parallel-b",
+          name: "bash",
+          arguments: { command: "npm test" },
+        },
+        {
+          type: "toolCall",
+          id: "parallel-c",
+          name: "edit",
+          arguments: { path: "b.ts" },
+        },
       ],
     };
     const running = {
-      "parallel-a": { id: "parallel-a", name: "read", phase: "running" as const },
-      "parallel-b": { id: "parallel-b", name: "bash", phase: "running" as const },
-      "parallel-c": { id: "parallel-c", name: "edit", phase: "running" as const },
+      "parallel-a": {
+        id: "parallel-a",
+        name: "read",
+        phase: "running" as const,
+      },
+      "parallel-b": {
+        id: "parallel-b",
+        name: "bash",
+        phase: "running" as const,
+      },
+      "parallel-c": {
+        id: "parallel-c",
+        name: "edit",
+        phase: "running" as const,
+      },
     };
     const { container, rerender } = render(
       <Transcript
@@ -427,11 +707,18 @@ describe("transcript density preferences", () => {
       />,
     );
 
-    const thinkingHeaders = screen.getAllByRole("button", { name: /^(?:Expand|Collapse) Thinking$/ });
-    const toolHeader = (name: string) => screen.getByText(name, { selector: ".card__tool-name" })
-      .closest(".card")?.querySelector(".card__disclosure") as HTMLElement;
-    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
-    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+    const thinkingHeaders = screen.getAllByRole("button", {
+      name: /^(?:Expand|Collapse) Thinking$/,
+    });
+    const toolHeader = (name: string) =>
+      screen
+        .getByText(name, { selector: ".card__tool-name" })
+        .closest(".card")
+        ?.querySelector(".card__disclosure") as HTMLElement;
+    for (const header of thinkingHeaders)
+      expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"])
+      expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
 
     rerender(
       <Transcript
@@ -448,7 +735,8 @@ describe("transcript density preferences", () => {
       />,
     );
     act(() => vi.advanceTimersByTime(799));
-    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"])
+      expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
 
     const next = {
       role: "assistant",
@@ -472,22 +760,36 @@ describe("transcript density preferences", () => {
       />,
     );
     act(() => vi.advanceTimersByTime(800));
-    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
-    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
+    for (const header of thinkingHeaders)
+      expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"])
+      expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
-    for (const name of ["read", "bash", "edit"]) expect(toolHeader(name)).toHaveAttribute("aria-expanded", "false");
-    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["read", "bash", "edit"])
+      expect(toolHeader(name)).toHaveAttribute("aria-expanded", "false");
+    for (const header of thinkingHeaders)
+      expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(199));
-    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const header of thinkingHeaders)
+      expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
-    for (const header of thinkingHeaders) expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByText("next call").closest(".card")?.querySelector(".card__disclosure"))
-      .toHaveAttribute("aria-expanded", "true");
+    for (const header of thinkingHeaders)
+      expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen
+        .getByText("next call")
+        .closest(".card")
+        ?.querySelector(".card__disclosure"),
+    ).toHaveAttribute("aria-expanded", "true");
 
     act(() => vi.advanceTimersByTime(779));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(3);
@@ -499,15 +801,29 @@ describe("transcript density preferences", () => {
       role: "assistant",
       timestamp: 30,
       __inspireLiveId: "last-call",
-      content: [{ type: "toolCall", id: "last-tool", name: "read", arguments: { path: "last.ts" } }],
+      content: [
+        {
+          type: "toolCall",
+          id: "last-tool",
+          name: "read",
+          arguments: { path: "last.ts" },
+        },
+      ],
     };
-    const result = { role: "toolResult", toolCallId: "last-tool", content: "done", timestamp: 31 };
+    const result = {
+      role: "toolResult",
+      toolCallId: "last-tool",
+      content: "done",
+      timestamp: 31,
+    };
     const { container, rerender } = render(
       <Transcript
         messages={[active, result]}
         streaming={false}
         activeAssistantMessageKey="live:last-call"
-        toolActivity={{ "last-tool": { id: "last-tool", name: "read", phase: "done" } }}
+        toolActivity={{
+          "last-tool": { id: "last-tool", name: "read", phase: "done" },
+        }}
         thinkingVisibility="dynamic"
         toolVisibility="dynamic"
       />,
@@ -531,9 +847,13 @@ describe("transcript density preferences", () => {
     expect(container.querySelector(".activity-strip")).toBeNull();
 
     act(() => vi.advanceTimersByTime(979));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
@@ -545,7 +865,14 @@ describe("transcript density preferences", () => {
       role: "assistant",
       timestamp: 40,
       __inspireLiveId: "held-call",
-      content: [{ type: "toolCall", id: "held-tool", name: "read", arguments: { path: "held.ts" } }],
+      content: [
+        {
+          type: "toolCall",
+          id: "held-tool",
+          name: "read",
+          arguments: { path: "held.ts" },
+        },
+      ],
     };
     const props = {
       messages: [active],
@@ -557,10 +884,14 @@ describe("transcript density preferences", () => {
       <Transcript
         {...props}
         activeAssistantMessageKey="live:held-call"
-        toolActivity={{ "held-tool": { id: "held-tool", name: "read", phase: "done" } }}
+        toolActivity={{
+          "held-tool": { id: "held-tool", name: "read", phase: "done" },
+        }}
       />,
     );
-    const header = container.querySelector(".card--tool .card__disclosure") as HTMLButtonElement;
+    const header = container.querySelector(
+      ".card--tool .card__disclosure",
+    ) as HTMLButtonElement;
     act(() => vi.advanceTimersByTime(1_600));
     expect(header).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(header);
@@ -573,7 +904,9 @@ describe("transcript density preferences", () => {
 
     fireEvent.click(header);
     act(() => vi.advanceTimersByTime(0));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
   });
@@ -594,7 +927,14 @@ describe("transcript density preferences", () => {
       role: "assistant",
       timestamp: 41,
       __inspireLiveId: "reduced-call",
-      content: [{ type: "toolCall", id: "reduced-tool", name: "bash", arguments: { command: "check" } }],
+      content: [
+        {
+          type: "toolCall",
+          id: "reduced-tool",
+          name: "bash",
+          arguments: { command: "check" },
+        },
+      ],
     };
     const props = {
       messages: [pending],
@@ -606,7 +946,13 @@ describe("transcript density preferences", () => {
       <Transcript
         {...props}
         activeAssistantMessageKey="live:reduced-call"
-        toolActivity={{ "reduced-tool": { id: "reduced-tool", name: "bash", phase: "running" } }}
+        toolActivity={{
+          "reduced-tool": {
+            id: "reduced-tool",
+            name: "bash",
+            phase: "running",
+          },
+        }}
       />,
     );
     const header = container.querySelector(".card--tool .card__disclosure");
@@ -623,32 +969,56 @@ describe("transcript density preferences", () => {
     const text = "First line with **strong** and $E = mc^2$\nSecond line";
     const { rerender } = render(
       <Transcript
-        messages={[{ role: "assistant", timestamp: 1, content: [{ type: "thinking", thinking: text }] }]}
+        messages={[
+          {
+            role: "assistant",
+            timestamp: 1,
+            content: [{ type: "thinking", thinking: text }],
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
       />,
     );
-    const thinkingCard = document.querySelector(".card--thinking") as HTMLElement;
-    const collapsed = thinkingCard.querySelector(".card__disclosure") as HTMLElement;
-    const summary = thinkingCard.querySelector(".card__summary--prose") as HTMLElement;
+    const thinkingCard = document.querySelector(
+      ".card--thinking",
+    ) as HTMLElement;
+    const collapsed = thinkingCard.querySelector(
+      ".card__disclosure",
+    ) as HTMLElement;
+    const summary = thinkingCard.querySelector(
+      ".card__summary--prose",
+    ) as HTMLElement;
     expect(within(summary).getByText("strong").tagName).toBe("STRONG");
     expect(summary.querySelector(".katex")).not.toBeNull();
     expect(screen.queryByText("Second line")).not.toBeInTheDocument();
 
     fireEvent.click(collapsed);
-    const expanded = screen.getByText(/Second line/, { selector: ".rich-text--thinking p" });
-    expect(within(expanded.parentElement as HTMLElement).getByText("strong").tagName).toBe("STRONG");
+    const expanded = screen.getByText(/Second line/, {
+      selector: ".rich-text--thinking p",
+    });
+    expect(
+      within(expanded.parentElement as HTMLElement).getByText("strong").tagName,
+    ).toBe("STRONG");
 
     rerender(
       <Transcript
-        messages={[{ role: "assistant", timestamp: 1, content: [{ type: "thinking", thinking: text }] }]}
+        messages={[
+          {
+            role: "assistant",
+            timestamp: 1,
+            content: [{ type: "thinking", thinking: text }],
+          },
+        ]}
         streaming={false}
         thinkingVisibility="hidden"
         toolVisibility="collapsed"
       />,
     );
-    expect(screen.queryByRole("button", { name: /Thinking/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Thinking/i }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -657,42 +1027,71 @@ describe("persisted user images", () => {
     const originalLoad = store.loadEmbeddedImage;
     const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
     store.loadEmbeddedImage = load;
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:persisted-image") });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:persisted-image"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
     try {
       render(
         <Transcript
           sessionId="s-images"
           viewId="view-images"
-          messages={[{
-            role: "user",
-            content: [{ type: "image", mimeType: "image/png" }, { type: "text", text: "caption" }],
-            timestamp: 1,
-            __inspireMessageIndex: 4,
-          }]}
+          messages={[
+            {
+              role: "user",
+              content: [
+                { type: "image", mimeType: "image/png" },
+                { type: "text", text: "caption" },
+              ],
+              timestamp: 1,
+              __inspireMessageIndex: 4,
+            },
+          ]}
           streaming={false}
           thinkingVisibility="collapsed"
           toolVisibility="collapsed"
         />,
       );
-      const thumbnail = await screen.findByRole("button", { name: "Preview attached image" });
-      expect(load).toHaveBeenCalledWith("s-images", "view-images", "pi-embedded://4/0", expect.any(AbortSignal));
+      const thumbnail = await screen.findByRole("button", {
+        name: "Preview attached image",
+      });
+      expect(load).toHaveBeenCalledWith(
+        "s-images",
+        "view-images",
+        "pi-embedded://4/0",
+        expect.any(AbortSignal),
+      );
       expect(screen.getByText("caption")).toBeInTheDocument();
-      const thumbnailImage = within(thumbnail).getByRole("img", { name: "Attached image" });
+      const thumbnailImage = within(thumbnail).getByRole("img", {
+        name: "Attached image",
+      });
       expect(thumbnailImage).toHaveAttribute("draggable", "false");
       expect(fireEvent.dragStart(thumbnailImage)).toBe(false);
 
       fireEvent.click(thumbnail);
       const preview = screen.getByRole("dialog", { name: "Image preview" });
-      const previewImage = within(preview).getByRole("img", { name: "Attached image" });
+      const previewImage = within(preview).getByRole("img", {
+        name: "Attached image",
+      });
       expect(previewImage).toHaveAttribute("draggable", "false");
       expect(fireEvent.dragStart(previewImage)).toBe(false);
 
       const zoom = within(preview).getByRole("button", { name: "Zoom image" });
       fireEvent.click(zoom);
-      expect(within(preview).getByRole("button", { name: "Fit image to window" })).toHaveAttribute("aria-pressed", "true");
+      expect(
+        within(preview).getByRole("button", { name: "Fit image to window" }),
+      ).toHaveAttribute("aria-pressed", "true");
 
-      fireEvent.pointerDown(zoom, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(zoom, {
+        pointerId: 1,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      });
       fireEvent.pointerMove(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
       expect(zoom).toHaveClass("image-lightbox__canvas--panning");
       fireEvent.pointerUp(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
@@ -700,7 +1099,11 @@ describe("persisted user images", () => {
       expect(zoom).toHaveAttribute("aria-pressed", "true");
 
       fireEvent.keyDown(window, { key: "Escape" });
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Image preview" }),
+        ).not.toBeInTheDocument(),
+      );
     } finally {
       store.loadEmbeddedImage = originalLoad;
     }
@@ -710,7 +1113,10 @@ describe("persisted user images", () => {
 describe("message actions", () => {
   it("copies each conversation message and forks through its authoritative entry id", async () => {
     const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const originalFork = store.forkFromEntry;
     const fork = vi.fn(async () => true);
     store.forkFromEntry = fork;
@@ -719,8 +1125,17 @@ describe("message actions", () => {
         <Transcript
           sessionId="s1"
           messages={[
-            { role: "user", content: "**user source**", timestamp: 1, __inspireEntryId: "entry-user" },
-            { role: "assistant", content: [{ type: "text", text: "assistant source" }], timestamp: 2 },
+            {
+              role: "user",
+              content: "**user source**",
+              timestamp: 1,
+              __inspireEntryId: "entry-user",
+            },
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "assistant source" }],
+              timestamp: 2,
+            },
           ]}
           streaming={false}
           thinkingVisibility="collapsed"
@@ -728,20 +1143,44 @@ describe("message actions", () => {
         />,
       );
 
-      const userTurn = screen.getByText("user source").closest(".turn") as HTMLElement;
-      fireEvent.click(within(userTurn).getByRole("button", { name: "Copy message" }));
-      await waitFor(() => expect(writeText).toHaveBeenCalledWith("**user source**"));
-      expect(within(userTurn).getByRole("button", { name: "Message copied" })).toBeInTheDocument();
+      const userTurn = screen
+        .getByText("user source")
+        .closest(".turn") as HTMLElement;
+      fireEvent.click(
+        within(userTurn).getByRole("button", { name: "Copy message" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith("**user source**"),
+      );
+      expect(
+        within(userTurn).getByRole("button", { name: "Message copied" }),
+      ).toBeInTheDocument();
 
-      fireEvent.click(within(userTurn).getByRole("button", { name: "Fork session from this input" }));
+      fireEvent.click(
+        within(userTurn).getByRole("button", {
+          name: "Fork session from this input",
+        }),
+      );
       await waitFor(() => expect(fork).toHaveBeenCalledWith("entry-user"));
 
-      const assistantTurn = screen.getByText("assistant source").closest(".turn") as HTMLElement;
-      const responseActions = assistantTurn.querySelector(".turn__actions--response") as HTMLElement;
-      expect(assistantTurn.querySelector(".assistant-doc")?.nextElementSibling).toBe(responseActions);
-      fireEvent.click(within(responseActions).getByRole("button", { name: "Copy response" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("assistant source"));
-      expect(within(assistantTurn).queryByRole("button", { name: /Fork session/ })).not.toBeInTheDocument();
+      const assistantTurn = screen
+        .getByText("assistant source")
+        .closest(".turn") as HTMLElement;
+      const responseActions = assistantTurn.querySelector(
+        ".turn__actions--response",
+      ) as HTMLElement;
+      expect(
+        assistantTurn.querySelector(".assistant-doc")?.nextElementSibling,
+      ).toBe(responseActions);
+      fireEvent.click(
+        within(responseActions).getByRole("button", { name: "Copy response" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith("assistant source"),
+      );
+      expect(
+        within(assistantTurn).queryByRole("button", { name: /Fork session/ }),
+      ).not.toBeInTheDocument();
     } finally {
       store.forkFromEntry = originalFork;
     }
@@ -749,11 +1188,18 @@ describe("message actions", () => {
 
   it("keeps response and activity-block clipboard projections separate", async () => {
     const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const originalOpenResource = store.openResource;
     const openResource = vi.fn(async () => undefined);
     store.openResource = openResource;
-    const generic = { type: "custom", extensionName: "Web search", payload: { count: 2 } };
+    const generic = {
+      type: "custom",
+      extensionName: "Web search",
+      payload: { count: 2 },
+    };
     try {
       render(
         <Transcript
@@ -764,12 +1210,22 @@ describe("message actions", () => {
               content: [
                 { type: "thinking", thinking: "private reasoning" },
                 { type: "text", text: "first response" },
-                { type: "toolCall", id: "copy-tool", name: "read", arguments: { path: "src/a.ts" } },
+                {
+                  type: "toolCall",
+                  id: "copy-tool",
+                  name: "read",
+                  arguments: { path: "src/a.ts" },
+                },
                 { type: "text", text: "second response" },
                 generic,
               ],
             },
-            { role: "toolResult", toolCallId: "copy-tool", content: "file body", timestamp: 2 },
+            {
+              role: "toolResult",
+              toolCallId: "copy-tool",
+              content: "file body",
+              timestamp: 2,
+            },
             {
               role: "custom",
               customType: "intercom_message",
@@ -786,41 +1242,84 @@ describe("message actions", () => {
         />,
       );
 
-      const responseTurn = screen.getByText("first response").closest(".turn") as HTMLElement;
-      fireEvent.click(within(responseTurn).getByRole("button", { name: "Copy response" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("first response\n\nsecond response"));
+      const responseTurn = screen
+        .getByText("first response")
+        .closest(".turn") as HTMLElement;
+      fireEvent.click(
+        within(responseTurn).getByRole("button", { name: "Copy response" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith(
+          "first response\n\nsecond response",
+        ),
+      );
 
-      fireEvent.click(screen.getByRole("button", { name: "Copy thinking block" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("private reasoning"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy thinking block" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith("private reasoning"),
+      );
 
-      fireEvent.click(screen.getByRole("button", { name: "Copy read tool block" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith([
-        "read",
-        "Arguments",
-        JSON.stringify({ path: "src/a.ts" }, null, 2),
-        "Result",
-        "file body",
-      ].join("\n\n")));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy read tool block" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith(
+          [
+            "read",
+            "Arguments",
+            JSON.stringify({ path: "src/a.ts" }, null, 2),
+            "Result",
+            "file body",
+          ].join("\n\n"),
+        ),
+      );
 
-      fireEvent.click(screen.getByRole("button", { name: "Copy web search block" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(JSON.stringify(generic, null, 2)));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy web search block" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith(
+          JSON.stringify(generic, null, 2),
+        ),
+      );
 
-      fireEvent.click(screen.getByRole("button", { name: "Copy intercom message block" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith([
-        "Intercom message",
-        "Type: intercom_message",
-        "Content",
-        "custom payload",
-        "Details",
-        JSON.stringify({ channel: "local" }, null, 2),
-      ].join("\n\n")));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy intercom message block" }),
+      );
+      await waitFor(() =>
+        expect(writeText).toHaveBeenLastCalledWith(
+          [
+            "Intercom message",
+            "Type: intercom_message",
+            "Content",
+            "custom payload",
+            "Details",
+            JSON.stringify({ channel: "local" }, null, 2),
+          ].join("\n\n"),
+        ),
+      );
 
-      const toolCard = screen.getByText("read", { selector: ".card__tool-name" }).closest(".card") as HTMLElement;
-      fireEvent.click(within(toolCard).getByRole("button", { name: "src/a.ts" }));
+      const toolCard = screen
+        .getByText("read", { selector: ".card__tool-name" })
+        .closest(".card") as HTMLElement;
+      const disclosure = within(toolCard).getByRole("button", {
+        name: "Expand read tool",
+      });
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(
+        within(toolCard).getByRole("button", { name: "src/a.ts" }),
+      );
       await waitFor(() => expect(openResource).toHaveBeenCalledTimes(1));
-      fireEvent.click(toolCard.querySelector(".card__header") as HTMLElement);
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(
+        toolCard.querySelector(".card__header-spacer") as HTMLElement,
+      );
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
       expect(openResource).toHaveBeenCalledTimes(1);
-      fireEvent.click(within(toolCard).getByRole("button", { name: "Expand read tool" }));
+      fireEvent.click(disclosure);
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
       expect(openResource).toHaveBeenCalledTimes(1);
     } finally {
       store.openResource = originalOpenResource;
@@ -836,23 +1335,45 @@ describe("transient conversation projections", () => {
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
-        queue={{ steering: ["steer first", "steer second"], followUp: ["follow first", "follow second"] }}
+        queue={{
+          steering: ["steer first", "steer second"],
+          followUp: ["follow first", "follow second"],
+        }}
       />,
     );
     const steering = screen.getByRole("region", { name: "Pending steering" });
     const followUp = screen.getByRole("region", { name: "Pending follow-up" });
-    expect(within(steering).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["steer first", "steer second"]);
-    expect(within(followUp).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["follow first", "follow second"]);
-    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+    expect(
+      within(steering)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["steer first", "steer second"]);
+    expect(
+      within(followUp)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["follow first", "follow second"]);
+    expect(
+      screen.queryByRole("button", { name: /cancel/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders attributable extension content and hides anonymous extension plumbing", () => {
     const { rerender, container } = render(
       <Transcript
-        messages={[{
-          role: "assistant",
-          content: [{ type: "custom", title: "Extension content", extensionName: "Web search", payload: { hidden: true } }],
-        }]}
+        messages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "custom",
+                title: "Extension content",
+                extensionName: "Web search",
+                payload: { hidden: true },
+              },
+            ],
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -864,10 +1385,18 @@ describe("transient conversation projections", () => {
 
     rerender(
       <Transcript
-        messages={[{
-          role: "assistant",
-          content: [null, "internal", 7, { title: "Extension content" }, { type: "CUSTOM" }],
-        }]}
+        messages={[
+          {
+            role: "assistant",
+            content: [
+              null,
+              "internal",
+              7,
+              { title: "Extension content" },
+              { type: "CUSTOM" },
+            ],
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -880,12 +1409,14 @@ describe("transient conversation projections", () => {
   it("renders visible custom messages as aligned, inspectable activity and omits display:false", () => {
     const { rerender, container } = render(
       <Transcript
-        messages={[{
-          role: "custom",
-          customType: "magic-context:ceiling-nudge",
-          content: "context-only",
-          display: false,
-        }]}
+        messages={[
+          {
+            role: "custom",
+            customType: "magic-context:ceiling-nudge",
+            content: "context-only",
+            display: false,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -897,13 +1428,15 @@ describe("transient conversation projections", () => {
 
     rerender(
       <Transcript
-        messages={[{
-          role: "custom",
-          customType: "intercom_message",
-          content: "visible extension message",
-          display: true,
-          timestamp: 10,
-        }]}
+        messages={[
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "visible extension message",
+            display: true,
+            timestamp: 10,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -913,7 +1446,10 @@ describe("transient conversation projections", () => {
     expect(title).toHaveClass("card__tool-name");
     const card = title.closest(".card") as HTMLElement;
     expect(card).toHaveClass("card--custom");
-    expect(card.querySelector(".card__icon svg")).toHaveAttribute("width", "14");
+    expect(card.querySelector(".card__icon svg")).toHaveAttribute(
+      "width",
+      "14",
+    );
     const header = card.querySelector(".card__disclosure") as HTMLButtonElement;
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(card.querySelector(".card__status")).toBeEmptyDOMElement();
@@ -922,13 +1458,15 @@ describe("transient conversation projections", () => {
 
     rerender(
       <Transcript
-        messages={[{
-          role: "custom",
-          customType: "intercom_message",
-          content: "visible extension message",
-          display: true,
-          timestamp: 10,
-        }]}
+        messages={[
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "visible extension message",
+            display: true,
+            timestamp: 10,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="hidden"
@@ -941,9 +1479,27 @@ describe("transient conversation projections", () => {
     const { container } = render(
       <Transcript
         messages={[
-          { role: "custom", customType: "intercom_message", content: "one", display: true, timestamp: 20 },
-          { role: "custom", customType: "hidden_context", content: "hidden", display: false, timestamp: 21 },
-          { role: "custom", customType: "web_search_content_ready", content: "two", display: true, timestamp: 22 },
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "one",
+            display: true,
+            timestamp: 20,
+          },
+          {
+            role: "custom",
+            customType: "hidden_context",
+            content: "hidden",
+            display: false,
+            timestamp: 21,
+          },
+          {
+            role: "custom",
+            customType: "web_search_content_ready",
+            content: "two",
+            display: true,
+            timestamp: 22,
+          },
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
@@ -951,20 +1507,40 @@ describe("transient conversation projections", () => {
       />,
     );
     const strip = container.querySelector(".activity-strip") as HTMLElement;
-    expect(strip.querySelectorAll(".activity-strip__item--custom")).toHaveLength(2);
+    expect(
+      strip.querySelectorAll(".activity-strip__item--custom"),
+    ).toHaveLength(2);
     expect(screen.queryByText("hidden_context")).not.toBeInTheDocument();
 
-    const intercom = screen.getByRole("button", { name: "Intercom message: custom activity" });
-    expect(within(intercom).getByText("intercom_message")).toHaveClass("activity-strip__kind");
-    expect(intercom.querySelector(".status-success, .status-error, .status-unknown, .spin")).toBeNull();
+    const intercom = screen.getByRole("button", {
+      name: "Intercom message: custom activity",
+    });
+    expect(within(intercom).getByText("intercom_message")).toHaveClass(
+      "activity-strip__kind",
+    );
+    expect(
+      intercom.querySelector(
+        ".status-success, .status-error, .status-unknown, .spin",
+      ),
+    ).toBeNull();
     fireEvent.click(intercom);
-    const detail = strip.querySelector(".activity-strip__detail") as HTMLElement;
+    const detail = strip.querySelector(
+      ".activity-strip__detail",
+    ) as HTMLElement;
     expect(detail).toHaveClass("card--custom");
-    expect(detail.querySelector(".card__custom-kind")).toHaveTextContent("intercom_message");
+    expect(detail.querySelector(".card__custom-kind")).toHaveTextContent(
+      "intercom_message",
+    );
     expect(within(detail).getByText("one")).toBeInTheDocument();
-    fireEvent.click(within(detail).getByRole("button", { name: "Collapse Intercom message custom activity details" }));
+    fireEvent.click(
+      within(detail).getByRole("button", {
+        name: "Collapse Intercom message custom activity details",
+      }),
+    );
     expect(intercom).toHaveAttribute("aria-expanded", "false");
-    await waitFor(() => expect(screen.queryByText("one")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText("one")).not.toBeInTheDocument(),
+    );
   });
 
   it("merges trailing custom activity into the preceding final tool strip", () => {
@@ -972,17 +1548,43 @@ describe("transient conversation projections", () => {
       role: "assistant",
       timestamp: 25,
       content: [
-        { type: "toolCall", id: "merged-read", name: "read", arguments: { path: "a.ts" } },
-        { type: "toolCall", id: "merged-bash", name: "bash", arguments: { command: "npm test" } },
+        {
+          type: "toolCall",
+          id: "merged-read",
+          name: "read",
+          arguments: { path: "a.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "merged-bash",
+          name: "bash",
+          arguments: { command: "npm test" },
+        },
       ],
     };
     const { container } = render(
       <Transcript
         messages={[
           toolBatch,
-          { role: "toolResult", toolCallId: "merged-read", content: "read", timestamp: 26 },
-          { role: "toolResult", toolCallId: "merged-bash", content: "tested", timestamp: 27 },
-          { role: "custom", customType: "intercom_message", content: "delivered", display: true, timestamp: 28 },
+          {
+            role: "toolResult",
+            toolCallId: "merged-read",
+            content: "read",
+            timestamp: 26,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "merged-bash",
+            content: "tested",
+            timestamp: 27,
+          },
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "delivered",
+            display: true,
+            timestamp: 28,
+          },
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
@@ -1004,9 +1606,21 @@ describe("transient conversation projections", () => {
       role: "assistant",
       timestamp: 29,
       __inspireLiveId: "merged-live",
-      content: [{ type: "toolCall", id: "merged-live-tool", name: "read", arguments: { path: "live.ts" } }],
+      content: [
+        {
+          type: "toolCall",
+          id: "merged-live-tool",
+          name: "read",
+          arguments: { path: "live.ts" },
+        },
+      ],
     };
-    const result = { role: "toolResult", toolCallId: "merged-live-tool", content: "done", timestamp: 30 };
+    const result = {
+      role: "toolResult",
+      toolCallId: "merged-live-tool",
+      content: "done",
+      timestamp: 30,
+    };
     const started = {
       role: "custom",
       customType: "intercom_message",
@@ -1027,9 +1641,12 @@ describe("transient conversation projections", () => {
         {...preferences}
       />,
     );
-    const headers = container.querySelectorAll(".card--tool .card__disclosure, .card--custom .card__disclosure");
+    const headers = container.querySelectorAll(
+      ".card--tool .card__disclosure, .card--custom .card__disclosure",
+    );
     expect(headers).toHaveLength(2);
-    for (const header of headers) expect(header).toHaveAttribute("aria-expanded", "true");
+    for (const header of headers)
+      expect(header).toHaveAttribute("aria-expanded", "true");
 
     const ended = { ...started, __inspireSettled: true };
     rerender(
@@ -1041,43 +1658,64 @@ describe("transient conversation projections", () => {
       />,
     );
     act(() => vi.advanceTimersByTime(1_600));
-    for (const header of headers) expect(header).toHaveAttribute("aria-expanded", "false");
+    for (const header of headers)
+      expect(header).toHaveAttribute("aria-expanded", "false");
 
     rerender(
       <Transcript
-        messages={[active, result, ended, { role: "assistant", content: "next", timestamp: 32, __inspireLiveId: "next" }]}
+        messages={[
+          active,
+          result,
+          ended,
+          {
+            role: "assistant",
+            content: "next",
+            timestamp: 32,
+            __inspireLiveId: "next",
+          },
+        ]}
         streaming
         activeAssistantMessageKey="live:next"
         {...preferences}
       />,
     );
     act(() => vi.advanceTimersByTime(980));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
     const strips = container.querySelectorAll(".activity-strip");
     expect(strips).toHaveLength(1);
-    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(2);
-    expect(strips[0]!.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(
+      2,
+    );
+    expect(
+      strips[0]!.querySelectorAll(".activity-strip__item--custom"),
+    ).toHaveLength(1);
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
   it("loads historical Dynamic custom activity directly as Compact", () => {
     const { container } = render(
       <Transcript
-        messages={[{
-          role: "custom",
-          customType: "web_search_content_ready",
-          content: "ready",
-          display: true,
-          timestamp: 30,
-        }]}
+        messages={[
+          {
+            role: "custom",
+            customType: "web_search_content_ready",
+            content: "ready",
+            display: true,
+            timestamp: 30,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="dynamic"
         toolVisibility="dynamic"
       />,
     );
     expect(container.querySelector(".card--custom")).toBeNull();
-    expect(container.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+    expect(
+      container.querySelectorAll(".activity-strip__item--custom"),
+    ).toHaveLength(1);
   });
 
   it("streams custom activity through Expanded, Collapsed, and Compact", () => {
@@ -1097,7 +1735,9 @@ describe("transient conversation projections", () => {
     const { container, rerender } = render(
       <Transcript messages={[started]} streaming {...props} />,
     );
-    const header = container.querySelector(".card--custom .card__disclosure") as HTMLButtonElement;
+    const header = container.querySelector(
+      ".card--custom .card__disclosure",
+    ) as HTMLButtonElement;
     expect(header).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/streamed payload/)).toBeInTheDocument();
     expect(container.querySelector(".activity-strip")).toBeNull();
@@ -1112,18 +1752,32 @@ describe("transient conversation projections", () => {
 
     rerender(
       <Transcript
-        messages={[ended, { role: "assistant", content: "next call", timestamp: 41, __inspireLiveId: "next" }]}
+        messages={[
+          ended,
+          {
+            role: "assistant",
+            content: "next call",
+            timestamp: 41,
+            __inspireLiveId: "next",
+          },
+        ]}
         streaming
         {...props}
       />,
     );
     act(() => vi.advanceTimersByTime(979));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".dynamic-activity-batch--compacting")).not.toBeNull();
+    expect(
+      container.querySelector(".dynamic-activity-batch--compacting"),
+    ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".activity-strip__item--custom")).toHaveLength(1);
+    expect(
+      container.querySelectorAll(".activity-strip__item--custom"),
+    ).toHaveLength(1);
   });
 
   it("keeps one Dynamic lifecycle when a custom activity adopts its durable timestamp", () => {
@@ -1143,17 +1797,30 @@ describe("transient conversation projections", () => {
       __inspireMessageId: "custom-owned:0",
       __inspireEntryId: "custom-owned",
     };
-    const { container, rerender } = render(<Transcript messages={[started]} {...props} />);
-    const header = container.querySelector(".card--custom .card__disclosure") as HTMLButtonElement;
+    const { container, rerender } = render(
+      <Transcript messages={[started]} {...props} />,
+    );
+    const header = container.querySelector(
+      ".card--custom .card__disclosure",
+    ) as HTMLButtonElement;
     expect(header).toHaveAttribute("aria-expanded", "true");
 
-    rerender(<Transcript messages={[{
-      ...started,
-      timestamp: 5_000,
-      __inspireLiveId: undefined,
-      __inspireSettled: undefined,
-    }]} {...props} />);
-    expect(container.querySelector(".card--custom .card__disclosure")).toBe(header);
+    rerender(
+      <Transcript
+        messages={[
+          {
+            ...started,
+            timestamp: 5_000,
+            __inspireLiveId: undefined,
+            __inspireSettled: undefined,
+          },
+        ]}
+        {...props}
+      />,
+    );
+    expect(container.querySelector(".card--custom .card__disclosure")).toBe(
+      header,
+    );
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1_599));
     expect(header).toHaveAttribute("aria-expanded", "true");
@@ -1170,14 +1837,30 @@ describe("transient conversation projections", () => {
         thinkingVisibility="collapsed"
         toolVisibility="hidden"
         extensionDisplays={[
-          { id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan", payload: { widgetLines: ["one"] } },
-          { id: "showPanel:build", method: "showPanel", attribution: "extensions/build.ts · build", payload: { status: "passing" } },
+          {
+            id: "setWidget:plan",
+            method: "setWidget",
+            attribution: "extensions/plan.ts · plan",
+            payload: { widgetLines: ["one"] },
+          },
+          {
+            id: "showPanel:build",
+            method: "showPanel",
+            attribution: "extensions/build.ts · build",
+            payload: { status: "passing" },
+          },
         ]}
       />,
     );
-    const surface = screen.getByRole("region", { name: "Extension display content" });
-    expect(within(surface).getByText("extensions/plan.ts · plan")).toBeInTheDocument();
-    expect(within(surface).getByText("extensions/build.ts · build")).toBeInTheDocument();
+    const surface = screen.getByRole("region", {
+      name: "Extension display content",
+    });
+    expect(
+      within(surface).getByText("extensions/plan.ts · plan"),
+    ).toBeInTheDocument();
+    expect(
+      within(surface).getByText("extensions/build.ts · build"),
+    ).toBeInTheDocument();
     fireEvent.click(within(surface).getByText("extensions/plan.ts · plan"));
     expect(within(surface).getByText(/widgetLines/)).toBeInTheDocument();
   });

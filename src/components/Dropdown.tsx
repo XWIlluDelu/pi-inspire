@@ -42,7 +42,8 @@ export function Dropdown({
   const listRef = useRef<HTMLDivElement>(null);
 
   const selectedIndex = options.findIndex((option) => option.value === value);
-  const shown = display ?? (selectedIndex >= 0 ? options[selectedIndex]!.label : value);
+  const shown =
+    display ?? (selectedIndex >= 0 ? options[selectedIndex]!.label : value);
 
   const openMenu = () => {
     if (disabled || options.length === 0) return;
@@ -69,12 +70,18 @@ export function Dropdown({
   useEffect(() => {
     if (!open) return;
     const element = listRef.current?.children[active];
-    if (element && typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "nearest" });
+    if (element && typeof element.scrollIntoView === "function")
+      element.scrollIntoView({ block: "nearest" });
   }, [open, active]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (!open) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "ArrowUp" ||
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
         event.preventDefault();
         openMenu();
       }

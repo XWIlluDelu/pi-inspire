@@ -26,7 +26,9 @@ describe("composer caret completion", () => {
       start: draft.lastIndexOf("@"),
       query: "second",
     });
-    expect(parseCaretCompletion("use @src/ma|in.ts later".replace("|", ""), 11)).toMatchObject({
+    expect(
+      parseCaretCompletion("use @src/ma|in.ts later".replace("|", ""), 11),
+    ).toMatchObject({
       query: "src/ma",
       end: 16,
     });
@@ -46,30 +48,55 @@ describe("composer caret completion", () => {
   it("replaces exactly the parsed range and reports the restored caret", () => {
     const value = "before @src/main after";
     const token = parseCaretCompletion(value, 16)!;
-    expect(replaceCompletionToken(value, token, "")).toEqual({ value: "before  after", caret: 7 });
+    expect(replaceCompletionToken(value, token, "")).toEqual({
+      value: "before  after",
+      caret: 7,
+    });
 
     const command = parseCaretCompletion("/com existing args", 3)!;
-    expect(replaceCompletionToken("/com existing args", command, "/compact ")).toEqual({
+    expect(
+      replaceCompletionToken("/com existing args", command, "/compact "),
+    ).toEqual({
       value: "/compact  existing args",
       caret: 9,
     });
   });
 
   it("ranks basename and directory matches locally", () => {
-    const files = rankProjectFiles([
-      { path: "docs/field report.md", name: "field report.md" },
-      { path: "src/report-field.ts", name: "report-field.ts" },
-      { path: "other.txt", name: "other.txt" },
-    ], "field report");
-    expect(files.map((file) => file.path)).toEqual(["docs/field report.md", "src/report-field.ts"]);
+    const files = rankProjectFiles(
+      [
+        { path: "docs/field report.md", name: "field report.md" },
+        { path: "src/report-field.ts", name: "report-field.ts" },
+        { path: "other.txt", name: "other.txt" },
+      ],
+      "field report",
+    );
+    expect(files.map((file) => file.path)).toEqual([
+      "docs/field report.md",
+      "src/report-field.ts",
+    ]);
   });
 
   it("uses Pi's command-name matcher rather than unrelated description text", () => {
-    const commands = rankCommands([
-      { name: "loop", description: "Run repeatedly", source: "prompt" },
-      { name: "review-loop", description: "Review repeatedly", source: "extension" },
-      { name: "goal", description: "Run a loop to completion", source: "extension" },
-    ], "loop");
-    expect(commands.map((command) => command.name)).toEqual(["loop", "review-loop"]);
+    const commands = rankCommands(
+      [
+        { name: "loop", description: "Run repeatedly", source: "prompt" },
+        {
+          name: "review-loop",
+          description: "Review repeatedly",
+          source: "extension",
+        },
+        {
+          name: "goal",
+          description: "Run a loop to completion",
+          source: "extension",
+        },
+      ],
+      "loop",
+    );
+    expect(commands.map((command) => command.name)).toEqual([
+      "loop",
+      "review-loop",
+    ]);
   });
 });

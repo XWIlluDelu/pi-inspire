@@ -1,9 +1,4 @@
-import {
-  FolderSearch,
-  Paperclip,
-  Send,
-  Square,
-} from "lucide-react";
+import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { clipboardFiles } from "../clipboard-files";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
@@ -27,10 +22,12 @@ function ContextMeter() {
   const usage = useAppState().contextUsage;
   if (!usage || usage.percent === null) return null;
   const percent = Math.max(0, Math.min(100, usage.percent));
-  const tone = percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
-  const tokens = usage.tokens !== null
-    ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
-    : `${usage.contextWindow.toLocaleString()}-token window`;
+  const tone =
+    percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
+  const tokens =
+    usage.tokens !== null
+      ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
+      : `${usage.contextWindow.toLocaleString()}-token window`;
   return (
     <div
       className={`meter ${tone}`}
@@ -60,10 +57,17 @@ function ContextMeter() {
 export function Composer() {
   const state = useAppState();
   const sessionId = state.sessionId;
-  const [draft, setDraft] = useState(() => (sessionId ? sessionDraft(sessionId) : ""));
+  const [draft, setDraft] = useState(() =>
+    sessionId ? sessionDraft(sessionId) : "",
+  );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [deliveryBehavior, setDeliveryBehavior] = useState<
+    "steer" | "followUp"
+  >("steer");
+  const wasBusyRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const busy = isBusyRunState(state.runState);
   // Conflict recovery keeps the existing steer-shaped keyboard path, but it
   // is not part of the host's active/queued busy ownership set.
@@ -82,13 +86,32 @@ export function Composer() {
     setDraft(sessionId ? sessionDraft(sessionId) : "");
   }, [sessionId]);
 
+  useEffect(() => {
+    setDeliveryBehavior("steer");
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (busy && !wasBusyRef.current) setDeliveryBehavior("steer");
+    wasBusyRef.current = busy;
+  }, [busy]);
+
   const editorNonce = state.editorText?.nonce;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Pi's nonce is the editor-delivery revision; same-nonce payload changes must not replace a draft.
   useEffect(() => {
     if (state.editorText) updateDraft(state.editorText.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorNonce]);
 
-  const canSend = Boolean(sessionId && (draft.trim() || state.attachments.length > 0 || state.projectFiles.length > 0));
+  const canSend = Boolean(
+    sessionId &&
+      (draft.trim() ||
+        state.attachments.length > 0 ||
+        state.projectFiles.length > 0),
+  );
+  const activeBehavior = busy
+    ? deliveryBehavior
+    : composerBusy
+      ? "steer"
+      : undefined;
   const submit = async (behavior?: "steer" | "followUp") => {
     const message = draft;
     if (!canSend || state.sending) return;
@@ -103,8 +126,9 @@ export function Composer() {
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    if (composerBusy && (event.ctrlKey || event.metaKey)) void submit("followUp");
-    else void submit(composerBusy ? "steer" : undefined);
+    if (composerBusy && (event.ctrlKey || event.metaKey))
+      void submit("followUp");
+    else void submit(activeBehavior);
   };
 
   const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -115,7 +139,11 @@ export function Composer() {
   };
 
   const activeModel = state.model
-    ? state.availableModels.find((model) => model.provider === state.model?.provider && model.id === state.model?.id) ?? state.model
+    ? (state.availableModels.find(
+        (model) =>
+          model.provider === state.model?.provider &&
+          model.id === state.model?.id,
+      ) ?? state.model)
     : null;
   const thinkingSupported = activeModel?.reasoning !== false;
 
@@ -125,9 +153,12 @@ export function Composer() {
       aria-label="Message composer"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(composerBusy ? "steer" : undefined);
+        void submit(activeBehavior);
       }}
-      onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDropActive(true);
+      }}
       onDragLeave={() => setDropActive(false)}
       onDrop={(event) => {
         event.preventDefault();
@@ -165,11 +196,39 @@ export function Composer() {
         completionScope={sessionId}
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
-        placeholder={composerBusy ? "Steer the running task — Ctrl+Enter queues a follow-up" : "Message Pi…"}
+        placeholder={
+          busy
+            ? deliveryBehavior === "steer"
+              ? "Add direction to the running task…"
+              : "Add a follow-up for after this task…"
+            : "Message Pi…"
+        }
         label="Message"
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />
+      {busy ? (
+        <div className="composer__delivery">
+          <div className="segmented" role="group" aria-label="Message delivery">
+            <button
+              type="button"
+              aria-pressed={deliveryBehavior === "steer"}
+              onClick={() => setDeliveryBehavior("steer")}
+              title="Influence the task that is running now"
+            >
+              Steer
+            </button>
+            <button
+              type="button"
+              aria-pressed={deliveryBehavior === "followUp"}
+              onClick={() => setDeliveryBehavior("followUp")}
+              title="Queue this message after the current task"
+            >
+              Queue next
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="composer__meta">
         <ModelSelector
           value={activeModel}
@@ -179,15 +238,25 @@ export function Composer() {
         />
         <Dropdown
           label="Thinking level"
-          title={thinkingSupported ? "Thinking level" : "The active model does not support thinking"}
+          title={
+            thinkingSupported
+              ? "Thinking level"
+              : "The active model does not support thinking"
+          }
           direction="up"
           value={state.thinkingLevel}
-          display={thinkingSupported ? state.thinkingLevel : "thinking unavailable"}
+          display={
+            thinkingSupported ? state.thinkingLevel : "thinking unavailable"
+          }
           disabled={!thinkingSupported}
-          options={THINKING_LEVELS.map((level) => ({ value: level, label: level }))}
+          options={THINKING_LEVELS.map((level) => ({
+            value: level,
+            label: level,
+          }))}
           onChange={(value) => void store.setThinkingLevel(value)}
         />
         <button
+          ref={projectPickerButtonRef}
           type="button"
           className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
           onClick={() => setPickerOpen((value) => !value)}
@@ -197,23 +266,58 @@ export function Composer() {
         >
           <FolderSearch size={14} aria-hidden />
         </button>
-        <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Attach files" title="Attach files (or paste / drop them)">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach files"
+          title="Attach files (or paste / drop them)"
+        >
           <Paperclip size={14} aria-hidden />
         </button>
         <span className="composer__spacer" />
         <ContextMeter />
+        {busy ? (
+          <button
+            type="submit"
+            className="composer__send"
+            disabled={!canSend || state.sending}
+            aria-label={
+              deliveryBehavior === "steer"
+                ? "Send as steer"
+                : "Queue after current task"
+            }
+            title={
+              deliveryBehavior === "steer"
+                ? "Send as steer"
+                : "Queue after current task"
+            }
+          >
+            <Send size={14} aria-hidden />
+          </button>
+        ) : null}
         {abortable ? (
           <button
             type="button"
             className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
             onClick={() => void store.abort()}
-            aria-label={state.runState === "conflict" ? "Recover session" : "Abort running task"}
+            aria-label={
+              state.runState === "conflict"
+                ? "Recover session"
+                : "Abort running task"
+            }
             title={state.runState === "conflict" ? "Recover session" : "Abort"}
           >
             <Square size={14} aria-hidden />
           </button>
         ) : (
-          <button type="submit" className="composer__send" disabled={!canSend || state.sending} aria-label="Send message" title="Send">
+          <button
+            type="submit"
+            className="composer__send"
+            disabled={!canSend || state.sending}
+            aria-label="Send message"
+            title="Send"
+          >
             <Send size={14} aria-hidden />
           </button>
         )}
@@ -225,7 +329,12 @@ export function Composer() {
           disabled={state.sending}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
-          onClose={() => setPickerOpen(false)}
+          onClose={() => {
+            setPickerOpen(false);
+            requestAnimationFrame(() =>
+              projectPickerButtonRef.current?.focus(),
+            );
+          }}
         />
       ) : null}
     </form>

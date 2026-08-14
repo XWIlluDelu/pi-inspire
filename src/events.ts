@@ -28,7 +28,11 @@ export interface ToolCallContent {
   name: string;
   arguments?: unknown;
 }
-export type AssistantContent = TextContent | ThinkingContent | ToolCallContent | Record<string, unknown>;
+export type AssistantContent =
+  | TextContent
+  | ThinkingContent
+  | ToolCallContent
+  | Record<string, unknown>;
 
 export interface ChatMessage {
   role: string;
@@ -63,14 +67,18 @@ export function asMessage(value: unknown): ChatMessage {
 export function contentItems(message: ChatMessage): AssistantContent[] {
   if (!Array.isArray(message.content)) return [];
   return message.content.filter(
-    (item): item is AssistantContent => item !== null && typeof item === "object" && !Array.isArray(item),
+    (item): item is AssistantContent =>
+      item !== null && typeof item === "object" && !Array.isArray(item),
   );
 }
 
 export function messageText(message: ChatMessage): string {
   if (typeof message.content === "string") return message.content;
   return contentItems(message)
-    .filter((item): item is TextContent => item.type === "text" && typeof (item as TextContent).text === "string")
+    .filter(
+      (item): item is TextContent =>
+        item.type === "text" && typeof (item as TextContent).text === "string",
+    )
     .map((item) => item.text)
     .join("\n\n");
 }
@@ -185,7 +193,11 @@ function indexOfKey(messages: ChatMessage[], key: string): number {
 /** Replace the message identified by key. Only keyless defensive events may
  * fall back to the trailing unsettled assistant; a new keyed turn must never
  * overwrite an older turn merely because its end event was absent. */
-function upsert(messages: ChatMessage[], incoming: ChatMessage, settledKeys: ReadonlySet<string>): ChatMessage[] {
+function upsert(
+  messages: ChatMessage[],
+  incoming: ChatMessage,
+  settledKeys: ReadonlySet<string>,
+): ChatMessage[] {
   const next = [...messages];
   const key = messageKey(incoming);
   let index = key ? indexOfKey(next, key) : -1;
@@ -193,7 +205,10 @@ function upsert(messages: ChatMessage[], incoming: ChatMessage, settledKeys: Rea
     for (let i = next.length - 1; i >= 0; i -= 1) {
       const candidate = next[i]!;
       const candidateKey = messageKey(candidate);
-      if (candidate.role === "assistant" && (!candidateKey || !settledKeys.has(candidateKey))) {
+      if (
+        candidate.role === "assistant" &&
+        (!candidateKey || !settledKeys.has(candidateKey))
+      ) {
         index = i;
         break;
       }
@@ -218,7 +233,8 @@ function summarize(value: unknown, max = 90): string | undefined {
       if (text) return text.slice(0, max);
     }
     for (const key of ["path", "file", "command", "query", "url"]) {
-      if (typeof record[key] === "string") return String(record[key]).slice(0, max);
+      if (typeof record[key] === "string")
+        return String(record[key]).slice(0, max);
     }
   }
   try {
@@ -228,16 +244,25 @@ function summarize(value: unknown, max = 90): string | undefined {
   }
 }
 
-function pushNotice(slice: EventSlice, kind: Notice["kind"], text: string): void {
+function pushNotice(
+  slice: EventSlice,
+  kind: Notice["kind"],
+  text: string,
+): void {
   slice.notices = [...slice.notices, { id: slice.nextNoticeId, kind, text }];
   slice.nextNoticeId += 1;
 }
 
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
-function upsertExtensionUiRequest(current: ExtensionUiRequest[], request: ExtensionUiRequest): ExtensionUiRequest[] {
+function upsertExtensionUiRequest(
+  current: ExtensionUiRequest[],
+  request: ExtensionUiRequest,
+): ExtensionUiRequest[] {
   const index = current.findIndex((candidate) => candidate.id === request.id);
   if (index < 0) return [...current, request];
   const next = [...current];
@@ -245,14 +270,31 @@ function upsertExtensionUiRequest(current: ExtensionUiRequest[], request: Extens
   return next;
 }
 
-function updateExtensionDisplay(current: GenericExtensionDisplay[], event: WireEvent): GenericExtensionDisplay[] {
+function updateExtensionDisplay(
+  current: GenericExtensionDisplay[],
+  event: WireEvent,
+): GenericExtensionDisplay[] {
   if (!Array.isArray(event.extensionDisplays)) return current;
-  return event.extensionDisplays.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const display = value as Record<string, unknown>;
-    if (typeof display.id !== "string" || typeof display.method !== "string" || typeof display.attribution !== "string") return [];
-    return [{ id: display.id, method: display.method, attribution: display.attribution, payload: display.payload }];
-  }).slice(-20);
+  return event.extensionDisplays
+    .flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const display = value as Record<string, unknown>;
+      if (
+        typeof display.id !== "string" ||
+        typeof display.method !== "string" ||
+        typeof display.attribution !== "string"
+      )
+        return [];
+      return [
+        {
+          id: display.id,
+          method: display.method,
+          attribution: display.attribution,
+          payload: display.payload,
+        },
+      ];
+    })
+    .slice(-20);
 }
 
 /**
@@ -260,7 +302,11 @@ function updateExtensionDisplay(current: GenericExtensionDisplay[], event: WireE
  * slice. Settled-message dedupe keys are reported (not mutated) so the store
  * stays the single owner of the settled set.
  */
-export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string>, event: WireEvent): ReduceResult {
+export function reduceEvent(
+  current: EventSlice,
+  settledKeys: ReadonlySet<string>,
+  event: WireEvent,
+): ReduceResult {
   const slice: EventSlice = { ...current };
   const settle: string[] = [];
   let resync = false;
@@ -281,9 +327,12 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       break;
     }
     case "message_update": {
-      const supplied = event.message && typeof event.message === "object" && !Array.isArray(event.message)
-        ? asMessage(event.message)
-        : null;
+      const supplied =
+        event.message &&
+        typeof event.message === "object" &&
+        !Array.isArray(event.message)
+          ? asMessage(event.message)
+          : null;
       if (supplied && typeof supplied.role === "string") {
         // Pi <=0.83 RPC and Inspire's reconstructed host projection supply the
         // complete partial message directly.
@@ -334,7 +383,8 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     case "agent_settled": {
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
-      if (slice.runState !== "failed" && slice.runState !== "aborted") slice.runState = "idle";
+      if (slice.runState !== "failed" && slice.runState !== "aborted")
+        slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
       slice.queue = IDLE_QUEUE();
@@ -365,7 +415,10 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
         ...current.tools,
         [id]: {
           id,
-          name: typeof event.toolName === "string" && event.toolName ? event.toolName : (existing?.name ?? "tool"),
+          name:
+            typeof event.toolName === "string" && event.toolName
+              ? event.toolName
+              : (existing?.name ?? "tool"),
           phase: "running",
           detail,
         },
@@ -381,7 +434,10 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
         ...current.tools,
         [id]: {
           id,
-          name: typeof event.toolName === "string" && event.toolName ? event.toolName : (existing?.name ?? "tool"),
+          name:
+            typeof event.toolName === "string" && event.toolName
+              ? event.toolName
+              : (existing?.name ?? "tool"),
           phase: event.isError ? "error" : "done",
           detail: existing?.detail ?? summarize(event.result),
         },
@@ -395,7 +451,8 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       slice.retry = {
         attempt: Number(event.attempt ?? 1),
         maxAttempts: Number(event.maxAttempts ?? 1),
-        message: typeof event.errorMessage === "string" ? event.errorMessage : "",
+        message:
+          typeof event.errorMessage === "string" ? event.errorMessage : "",
       };
       break;
     }
@@ -421,15 +478,26 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       break;
     }
     case "extension_error": {
-      const path = typeof event.extensionPath === "string" ? ` in ${event.extensionPath}` : "";
-      pushNotice(slice, "error", `Extension error${path}: ${String(event.error ?? "unknown error")}`);
+      const path =
+        typeof event.extensionPath === "string"
+          ? ` in ${event.extensionPath}`
+          : "";
+      pushNotice(
+        slice,
+        "error",
+        `Extension error${path}: ${String(event.error ?? "unknown error")}`,
+      );
       changed = true;
       break;
     }
     case "runtime_error": {
       slice.runState = "failed";
       slice.extensionUiRequests = [];
-      pushNotice(slice, "error", `Pi runtime stopped: ${String(event.error ?? "unknown error")}`);
+      pushNotice(
+        slice,
+        "error",
+        `Pi runtime stopped: ${String(event.error ?? "unknown error")}`,
+      );
       changed = true;
       break;
     }
@@ -440,36 +508,56 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       const dialog = parseExtensionUiRequest(event);
       if (dialog) {
         changed = true;
-        slice.extensionUiRequests = upsertExtensionUiRequest(current.extensionUiRequests, dialog);
+        slice.extensionUiRequests = upsertExtensionUiRequest(
+          current.extensionUiRequests,
+          dialog,
+        );
       } else if (method === "notify") {
-        const kind = event.notifyType === "warning" || event.notifyType === "error" ? event.notifyType : "info";
+        const kind =
+          event.notifyType === "warning" || event.notifyType === "error"
+            ? event.notifyType
+            : "info";
         pushNotice(slice, kind, String(event.message ?? ""));
         changed = true;
       } else if (method === "setStatus") {
         const key = typeof event.statusKey === "string" ? event.statusKey : "";
         if (!key) break;
         slice.statuses = { ...current.statuses };
-        if (typeof event.statusText === "string" && event.statusText) slice.statuses[key] = event.statusText;
+        if (typeof event.statusText === "string" && event.statusText)
+          slice.statuses[key] = event.statusText;
         else delete slice.statuses[key];
         changed = true;
       } else if (method === "setTitle") {
-        slice.windowTitle = typeof event.title === "string" && event.title ? event.title : null;
+        slice.windowTitle =
+          typeof event.title === "string" && event.title ? event.title : null;
         changed = true;
       } else if (method === "set_editor_text") {
         if (typeof event.text === "string") {
-          slice.editorText = { text: event.text, nonce: (current.editorText?.nonce ?? 0) + 1 };
+          slice.editorText = {
+            text: event.text,
+            nonce: (current.editorText?.nonce ?? 0) + 1,
+          };
           changed = true;
         }
       } else {
-        const displays = updateExtensionDisplay(current.extensionDisplays, event);
+        const displays = updateExtensionDisplay(
+          current.extensionDisplays,
+          event,
+        );
         if (displays !== current.extensionDisplays) {
           slice.extensionDisplays = displays;
           changed = true;
         }
-        if (!EXTENSION_ONE_WAY_METHODS.has(method) && event.responseRequired !== false) {
+        if (
+          !EXTENSION_ONE_WAY_METHODS.has(method) &&
+          event.responseRequired !== false
+        ) {
           const unsupported = parsePendingExtensionUiRequest(event);
           if (unsupported) {
-            slice.extensionUiRequests = upsertExtensionUiRequest(current.extensionUiRequests, unsupported);
+            slice.extensionUiRequests = upsertExtensionUiRequest(
+              current.extensionUiRequests,
+              unsupported,
+            );
             changed = true;
           }
         }
@@ -478,8 +566,14 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
     }
     case "extension_ui_remove": {
       const id = typeof event.id === "string" ? event.id : "";
-      if (!id || !current.extensionUiRequests.some((request) => request.id === id)) break;
-      slice.extensionUiRequests = current.extensionUiRequests.filter((request) => request.id !== id);
+      if (
+        !id ||
+        !current.extensionUiRequests.some((request) => request.id === id)
+      )
+        break;
+      slice.extensionUiRequests = current.extensionUiRequests.filter(
+        (request) => request.id !== id,
+      );
       changed = true;
       break;
     }
@@ -493,5 +587,7 @@ export function reduceEvent(current: EventSlice, settledKeys: ReadonlySet<string
       break;
   }
 
-  return changed || resync ? { slice, settle, resync, changed: true } : { slice: current, settle, resync, changed: false };
+  return changed || resync
+    ? { slice, settle, resync, changed: true }
+    : { slice: current, settle, resync, changed: false };
 }

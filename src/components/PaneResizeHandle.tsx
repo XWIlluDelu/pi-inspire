@@ -26,14 +26,25 @@ interface PaneResizeHandleProps {
  * sits above it in z-order, so scrolling wins inside the thumb and resizing
  * wins along the rest of the edge. Double-click restores the default width;
  * arrow keys resize from the keyboard. */
-export function PaneResizeHandle({ cssVar, storageKey, paneSelector, edge, min, max, label, variant }: PaneResizeHandleProps) {
+export function PaneResizeHandle({
+  cssVar,
+  storageKey,
+  paneSelector,
+  edge,
+  min,
+  max,
+  label,
+  variant,
+}: PaneResizeHandleProps) {
   const [dragging, setDragging] = useState(false);
   // Exposed as aria-valuenow (a focusable separator is a widget and must
   // report its position); refreshed whenever this handle changes the width.
   const [current, setCurrent] = useState(min);
 
   const clamp = (width: number) =>
-    Math.round(Math.min(Math.max(min, max(window.innerWidth)), Math.max(min, width)));
+    Math.round(
+      Math.min(Math.max(min, max(window.innerWidth)), Math.max(min, width)),
+    );
 
   const setWidth = (width: number | null) => {
     const root = document.documentElement;
@@ -46,6 +57,7 @@ export function PaneResizeHandle({ cssVar, storageKey, paneSelector, edge, min, 
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: width props define this handle's immutable ownership; a changed identity remounts the handle.
   useEffect(() => {
     const root = document.documentElement;
     const applyResponsiveWidth = () => {
@@ -68,12 +80,10 @@ export function PaneResizeHandle({ cssVar, storageKey, paneSelector, edge, min, 
     applyResponsiveWidth();
     window.addEventListener("resize", applyResponsiveWidth);
     return () => window.removeEventListener("resize", applyResponsiveWidth);
-    // Width ownership belongs to this handle instance; prop identities are
-    // stable for its lifetime and changing them would mean mounting a new pane.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const paneWidth = () => document.querySelector(paneSelector)?.getBoundingClientRect().width ?? 0;
+  const paneWidth = () =>
+    document.querySelector(paneSelector)?.getBoundingClientRect().width ?? 0;
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();

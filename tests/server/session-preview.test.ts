@@ -8,7 +8,11 @@ import type { SessionRecord } from "../../server/session-catalog.js";
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("loadSessionPreview", () => {
@@ -17,17 +21,35 @@ describe("loadSessionPreview", () => {
     directories.push(directory);
     const path = join(directory, "legacy.jsonl");
     const original = [
-      JSON.stringify({ type: "session", id: "legacy", timestamp: "2026-07-22T00:00:00.000Z", cwd: "/project" }),
-      JSON.stringify({ type: "message", timestamp: "2026-07-22T00:00:01.000Z", message: { role: "user", content: "legacy", timestamp: 1 } }),
+      JSON.stringify({
+        type: "session",
+        id: "legacy",
+        timestamp: "2026-07-22T00:00:00.000Z",
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-07-22T00:00:01.000Z",
+        message: { role: "user", content: "legacy", timestamp: 1 },
+      }),
       "",
     ].join("\n");
     await writeFile(path, original);
     const record: SessionRecord = {
-      id: "legacy", cwd: "/project", path, created: new Date(), modified: new Date(),
-      messageCount: 1, firstMessage: "legacy", searchText: "legacy",
+      id: "legacy",
+      cwd: "/project",
+      path,
+      created: new Date(),
+      modified: new Date(),
+      messageCount: 1,
+      firstMessage: "legacy",
+      searchText: "legacy",
     };
     const loaded = await loadSessionPreview(record);
-    expect(loaded.messages[0]).toMatchObject({ role: "user", content: "legacy" });
+    expect(loaded.messages[0]).toMatchObject({
+      role: "user",
+      content: "legacy",
+    });
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
@@ -36,11 +58,49 @@ describe("loadSessionPreview", () => {
     directories.push(directory);
     const path = join(directory, "session.jsonl");
     const lines = [
-      { type: "session", version: 3, id: "session-a", timestamp: "2026-07-22T00:00:00.000Z", cwd: "/project" },
-      { type: "message", id: "u1", parentId: null, timestamp: "2026-07-22T00:00:01.000Z", message: { role: "user", content: "hello", timestamp: 1 } },
-      { type: "message", id: "a1", parentId: "u1", timestamp: "2026-07-22T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "answer" }], provider: "test", model: "model-a", stopReason: "stop", timestamp: 2 } },
-      { type: "thinking_level_change", id: "t1", parentId: "a1", timestamp: "2026-07-22T00:00:03.000Z", thinkingLevel: "high" },
-      { type: "custom", id: "c1", parentId: "t1", timestamp: "2026-07-22T00:00:04.000Z", customType: "example", data: { seen: true } },
+      {
+        type: "session",
+        version: 3,
+        id: "session-a",
+        timestamp: "2026-07-22T00:00:00.000Z",
+        cwd: "/project",
+      },
+      {
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-07-22T00:00:01.000Z",
+        message: { role: "user", content: "hello", timestamp: 1 },
+      },
+      {
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-07-22T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "answer" }],
+          provider: "test",
+          model: "model-a",
+          stopReason: "stop",
+          timestamp: 2,
+        },
+      },
+      {
+        type: "thinking_level_change",
+        id: "t1",
+        parentId: "a1",
+        timestamp: "2026-07-22T00:00:03.000Z",
+        thinkingLevel: "high",
+      },
+      {
+        type: "custom",
+        id: "c1",
+        parentId: "t1",
+        timestamp: "2026-07-22T00:00:04.000Z",
+        customType: "example",
+        data: { seen: true },
+      },
     ];
     const original = `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
     await writeFile(path, original);

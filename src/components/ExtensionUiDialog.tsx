@@ -6,8 +6,18 @@ function cancel(request: ExtensionUiRequest): void {
   void store.respondExtensionUi({ id: request.id, cancelled: true });
 }
 
-function DialogBody({ request, responding }: { request: ExtensionUiRequest; responding: boolean }) {
-  const [value, setValue] = useState(request.method === "editor" && "prefill" in request ? (request.prefill ?? "") : "");
+function DialogBody({
+  request,
+  responding,
+}: {
+  request: ExtensionUiRequest;
+  responding: boolean;
+}) {
+  const [value, setValue] = useState(
+    request.method === "editor" && "prefill" in request
+      ? (request.prefill ?? "")
+      : "",
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -17,21 +27,34 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
     return () => window.removeEventListener("keydown", onKey);
   }, [request, responding]);
 
-  const title = request.title || (request.unsupported ? "Unsupported extension request" : "Pi extension request");
+  const title =
+    request.title ||
+    (request.unsupported
+      ? "Unsupported extension request"
+      : "Pi extension request");
 
   if (request.unsupported) {
     return (
       <>
         <h2 className="dialog__title">{title}</h2>
         <p className="dialog__message">
-          This extension requested the unsupported interactive method <code>{request.method}</code>. It cannot be completed in insπre.
+          This extension requested the unsupported interactive method{" "}
+          <code>{request.method}</code>. It cannot be completed in insπre.
         </p>
         <details className="dialog__details">
           <summary>Inspect request</summary>
-          <pre className="card__mono">{JSON.stringify(request.payload, null, 2)}</pre>
+          <pre className="card__mono">
+            {JSON.stringify(request.payload, null, 2)}
+          </pre>
         </details>
         <div className="dialog__actions">
-          <button type="button" className="button button--primary" autoFocus disabled={responding} onClick={() => cancel(request)}>
+          <button
+            type="button"
+            className="button button--primary"
+            autoFocus
+            disabled={responding}
+            onClick={() => cancel(request)}
+          >
             Close and cancel request
           </button>
         </div>
@@ -52,14 +75,21 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
               key={option}
               className="picker__row"
               disabled={responding}
-              onClick={() => void store.respondExtensionUi({ id: request.id, value: option })}
+              onClick={() =>
+                void store.respondExtensionUi({ id: request.id, value: option })
+              }
             >
               {option}
             </button>
           ))}
         </div>
         <div className="dialog__actions">
-          <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
+          <button
+            type="button"
+            className="button"
+            disabled={responding}
+            onClick={() => cancel(request)}
+          >
             Cancel
           </button>
         </div>
@@ -71,16 +101,28 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
     return (
       <>
         <h2 className="dialog__title">{title}</h2>
-        {request.message ? <p className="dialog__message">{request.message}</p> : null}
+        {request.message ? (
+          <p className="dialog__message">{request.message}</p>
+        ) : null}
         <div className="dialog__actions">
-          <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
+          <button
+            type="button"
+            className="button"
+            disabled={responding}
+            onClick={() => cancel(request)}
+          >
             Cancel
           </button>
           <button
             type="button"
             className="button"
             disabled={responding}
-            onClick={() => void store.respondExtensionUi({ id: request.id, confirmed: false })}
+            onClick={() =>
+              void store.respondExtensionUi({
+                id: request.id,
+                confirmed: false,
+              })
+            }
           >
             No
           </button>
@@ -89,7 +131,9 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
             className="button button--primary"
             autoFocus
             disabled={responding}
-            onClick={() => void store.respondExtensionUi({ id: request.id, confirmed: true })}
+            onClick={() =>
+              void store.respondExtensionUi({ id: request.id, confirmed: true })
+            }
           >
             Yes
           </button>
@@ -103,7 +147,8 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (!responding) void store.respondExtensionUi({ id: request.id, value });
+        if (!responding)
+          void store.respondExtensionUi({ id: request.id, value });
       }}
     >
       <h2 className="dialog__title">{title}</h2>
@@ -129,10 +174,19 @@ function DialogBody({ request, responding }: { request: ExtensionUiRequest; resp
         />
       )}
       <div className="dialog__actions">
-        <button type="button" className="button" disabled={responding} onClick={() => cancel(request)}>
+        <button
+          type="button"
+          className="button"
+          disabled={responding}
+          onClick={() => cancel(request)}
+        >
           Cancel
         </button>
-        <button type="submit" className="button button--primary" disabled={responding}>
+        <button
+          type="submit"
+          className="button button--primary"
+          disabled={responding}
+        >
           {isEditor ? "Save" : "Submit"}
         </button>
       </div>
@@ -162,7 +216,11 @@ export function ExtensionUiDialog() {
         tabIndex={-1}
       >
         {/* key remounts the form state per request */}
-        <DialogBody key={`${request.sessionId}:${request.id}`} request={request} responding={responding} />
+        <DialogBody
+          key={`${request.sessionId}:${request.id}`}
+          request={request}
+          responding={responding}
+        />
       </div>
     </div>
   );

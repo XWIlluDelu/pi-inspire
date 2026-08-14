@@ -20,34 +20,70 @@ import {
   type InstanceState,
 } from "./instance-state.mjs";
 import { GitInspectionService } from "./git-inspection.js";
-import { availableModelOptions, resolveNewSessionDefaults } from "./model-catalog.js";
-import { MOCK_AVAILABLE_MODELS, MockCatalog, MockGitInspection, MockRuntime } from "./mock.js";
+import {
+  availableModelOptions,
+  resolveNewSessionDefaults,
+} from "./model-catalog.js";
+import {
+  MOCK_AVAILABLE_MODELS,
+  MockCatalog,
+  MockGitInspection,
+  MockRuntime,
+} from "./mock.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
 
 const moduleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const inferredRoot = await readFile(join(moduleRoot, "package.json"), "utf8").then(
+const inferredRoot = await readFile(
+  join(moduleRoot, "package.json"),
+  "utf8",
+).then(
   () => moduleRoot,
   () => join(moduleRoot, ".."),
 );
 const root = resolve(process.env.INSPIRE_INSTALLATION_ROOT || inferredRoot);
-const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { version: string };
-const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-const piPackage = JSON.parse(await readFile(join(dirname(dirname(piEntry)), "package.json"), "utf8")) as { version: string };
+const packageJson = JSON.parse(
+  await readFile(join(root, "package.json"), "utf8"),
+) as { version: string };
+const piEntry = fileURLToPath(
+  import.meta.resolve("@earendil-works/pi-coding-agent"),
+);
+const piPackage = JSON.parse(
+  await readFile(join(dirname(dirname(piEntry)), "package.json"), "utf8"),
+) as { version: string };
 
 const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
 if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
   throw new Error("insπre binds to loopback only in the local release");
 }
 const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
-if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("INSPIRE_PORT must be a valid TCP port");
-const tokenPath = process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
+if (!Number.isInteger(port) || port < 1 || port > 65_535)
+  throw new Error("INSPIRE_PORT must be a valid TCP port");
+const tokenPath =
+  process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
 const mock = process.env.INSPIRE_MOCK === "1";
+const configuredMockStreamInterval = mock
+  ? process.env.INSPIRE_MOCK_STREAM_INTERVAL_MS
+  : undefined;
+const mockStreamIntervalMs = configuredMockStreamInterval
+  ? Number(configuredMockStreamInterval)
+  : undefined;
+if (
+  mockStreamIntervalMs !== undefined &&
+  (!Number.isInteger(mockStreamIntervalMs) ||
+    mockStreamIntervalMs < 10 ||
+    mockStreamIntervalMs > 1_000)
+) {
+  throw new Error(
+    "INSPIRE_MOCK_STREAM_INTERVAL_MS must be an integer from 10 to 1000",
+  );
+}
 const configuredLogPath = process.env.INSPIRE_LOG_PATH;
-const diagnosticLogPath = configuredLogPath || defaultDiagnosticLogPath(root, host, port);
+const diagnosticLogPath =
+  configuredLogPath || defaultDiagnosticLogPath(root, host, port);
 const diagnostics = await openDiagnosticLogger({
   path: diagnosticLogPath,
   createPrivateDirectory: !configuredLogPath,
@@ -60,7 +96,10 @@ const diagnostics = await openDiagnosticLogger({
     port,
   },
 }).catch((error) => {
-  console.error("Unable to initialize private diagnostic logging", error instanceof Error ? error.message : String(error));
+  console.error(
+    "Unable to initialize private diagnostic logging",
+    error instanceof Error ? error.message : String(error),
+  );
   return nullDiagnosticLogger();
 });
 diagnostics.record("info", "host_starting", { processId: process.pid });
@@ -70,7 +109,7 @@ let catalog: SessionCatalogLike;
 let runtime: RuntimeLike;
 if (mock) {
   catalog = new MockCatalog();
-  runtime = new MockRuntime();
+  runtime = new MockRuntime({ streamIntervalMs: mockStreamIntervalMs });
 } else {
   catalog = new SessionCatalog(process.cwd());
   runtime = new RuntimeController(
@@ -89,25 +128,40 @@ const preferences = new PreferencesStore(
 );
 const resources = new ResourceStore();
 const git = mock ? new MockGitInspection() : new GitInspectionService();
-const modelRuntime = mock ? null : await ModelRuntime.create().catch((error) => {
-  console.error("Unable to load Pi's model catalog for the new-session picker:", error instanceof Error ? error.message : String(error));
-  return null;
-});
+const modelRuntime = mock
+  ? null
+  : await ModelRuntime.create().catch((error) => {
+      console.error(
+        "Unable to load Pi's model catalog for the new-session picker:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    });
 const readAvailableModels = async () => {
   if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
   if (!modelRuntime) return [];
   try {
     return await availableModelOptions(modelRuntime);
   } catch (error) {
-    console.error("Unable to refresh Pi's available models:", error instanceof Error ? error.message : String(error));
+    console.error(
+      "Unable to refresh Pi's available models:",
+      error instanceof Error ? error.message : String(error),
+    );
     return [];
   }
 };
 const readNewSessionDefaults = async (cwd: string) => {
   if (mock) {
-    return { cwd, model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null), thinkingLevel: "medium" as const };
+    return {
+      cwd,
+      model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
+      thinkingLevel: "medium" as const,
+    };
   }
-  if (!modelRuntime) throw Object.assign(new Error("Pi's model catalog is unavailable"), { status: 503 });
+  if (!modelRuntime)
+    throw Object.assign(new Error("Pi's model catalog is unavailable"), {
+      status: 503,
+    });
   return resolveNewSessionDefaults(modelRuntime, cwd);
 };
 const application = createInspireServer({
@@ -166,7 +220,9 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 application.server.once("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
-    console.error(`Port ${host}:${port} is already in use. insπre will not stop an unknown process.`);
+    console.error(
+      `Port ${host}:${port} is already in use. insπre will not stop an unknown process.`,
+    );
   } else {
     console.error("Unable to start the insπre host", error);
   }
@@ -174,7 +230,7 @@ application.server.once("error", (error: NodeJS.ErrnoException) => {
 });
 
 async function announceStarted(): Promise<void> {
-  if (stopRequestPath && await consumeStopRequest(stopRequestPath)) {
+  if (stopRequestPath && (await consumeStopRequest(stopRequestPath))) {
     await shutdown("a pending stop request");
     return;
   }
@@ -219,7 +275,7 @@ async function announceStarted(): Promise<void> {
   }
 }
 
-if (stopRequestPath && await consumeStopRequest(stopRequestPath)) {
+if (stopRequestPath && (await consumeStopRequest(stopRequestPath))) {
   await shutdown("a pending stop request");
 } else {
   application.server.listen(port, host, () => void announceStarted());

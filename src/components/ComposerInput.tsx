@@ -50,15 +50,31 @@ function CompletionMenu({
   }, [active]);
   let previousGroup = "";
   return (
-    <div className="completion" id={id} role="listbox" aria-label={token.kind === "file" ? "Project file completions" : "Slash command completions"} aria-busy={status === "loading"}>
+    <div
+      className="completion"
+      id={id}
+      role="listbox"
+      aria-label={
+        token.kind === "file"
+          ? "Project file completions"
+          : "Slash command completions"
+      }
+      aria-busy={status === "loading"}
+    >
       {items.map((item, index) => {
         const heading = item.group !== previousGroup;
         previousGroup = item.group;
         return (
           <div key={item.key}>
-            {heading ? <div className="completion__heading" aria-hidden>{item.group}</div> : null}
+            {heading ? (
+              <div className="completion__heading" aria-hidden>
+                {item.group}
+              </div>
+            ) : null}
             <div
-              ref={(element) => { refs.current[index] = element; }}
+              ref={(element) => {
+                refs.current[index] = element;
+              }}
               id={`${id}-option-${index}`}
               role="option"
               aria-selected={index === active}
@@ -68,14 +84,25 @@ function CompletionMenu({
               onClick={() => onPick(item)}
             >
               <span className="completion__title">{item.title}</span>
-              {item.hint ? <span className="completion__hint">{item.hint}</span> : null}
+              {item.hint ? (
+                <span className="completion__hint">{item.hint}</span>
+              ) : null}
             </div>
           </div>
         );
       })}
       {items.length === 0 ? (
-        <div className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`} role="status">
-          {status === "loading" ? "Searching project files…" : status === "error" ? "Project file search failed" : token.kind === "file" ? "No matching project files" : "No matching commands"}
+        <div
+          className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`}
+          role="status"
+        >
+          {status === "loading"
+            ? "Searching project files…"
+            : status === "error"
+              ? "Project file search failed"
+              : token.kind === "file"
+                ? "No matching project files"
+                : "No matching commands"}
         </div>
       ) : null}
     </div>
@@ -117,8 +144,12 @@ export function ComposerInput({
 }) {
   const completionId = useId();
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
-  const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>([]);
-  const [completionStatus, setCompletionStatus] = useState<"loading" | "ready" | "error">("ready");
+  const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
+    [],
+  );
+  const [completionStatus, setCompletionStatus] = useState<
+    "loading" | "ready" | "error"
+  >("ready");
   const [completionActive, setCompletionActive] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -149,7 +180,10 @@ export function ComposerInput({
     setCompletion(token?.kind === "file" && !searchProjectFiles ? null : token);
   };
 
-  const commandInventory = useMemo(() => resolveCommandInventory(commands), [commands]);
+  const commandInventory = useMemo(
+    () => resolveCommandInventory(commands),
+    [commands],
+  );
 
   useEffect(() => {
     if (completion?.kind !== "file" || !searchProjectFiles) {
@@ -192,33 +226,52 @@ export function ComposerInput({
     }
     const ranked = rankCommands(commandInventory, completion.query);
     if (!completion.query.trim()) {
-      const sourceOrder = new Map(["inspire", "extension", "prompt", "skill"].map((source, index) => [source, index]));
-      ranked.sort((left, right) =>
-        (sourceOrder.get(left.source ?? "") ?? 99) - (sourceOrder.get(right.source ?? "") ?? 99),
+      const sourceOrder = new Map(
+        ["inspire", "extension", "prompt", "skill"].map((source, index) => [
+          source,
+          index,
+        ]),
+      );
+      ranked.sort(
+        (left, right) =>
+          (sourceOrder.get(left.source ?? "") ?? 99) -
+          (sourceOrder.get(right.source ?? "") ?? 99),
       );
     }
     return ranked.map((command) => ({
       key: `${command.source ?? "command"}:${command.name}`,
       title: `/${command.name}`,
       hint: command.description,
-      group: command.source ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}` : "Command",
+      group: command.source
+        ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}`
+        : "Command",
       command,
     }));
   }, [commandInventory, completion, completionFiles]);
 
-  useEffect(() => setCompletionActive(0), [completion?.kind, completion?.query]);
-  const activeIndex = Math.min(completionActive, Math.max(0, completionItems.length - 1));
+  useEffect(
+    () => setCompletionActive(0),
+    [completion?.kind, completion?.query],
+  );
+  const activeIndex = Math.min(
+    completionActive,
+    Math.max(0, completionItems.length - 1),
+  );
 
   const pickCompletion = (item: CompletionItem | undefined) => {
     if (!item || !completion || completionDisabled) return;
     if (item.file) onPickProjectFile?.(item.file);
     const existingDelimiter = value[completion.end];
-    const reusesInlineDelimiter = Boolean(item.command && existingDelimiter && /[ \t]/.test(existingDelimiter));
+    const reusesInlineDelimiter = Boolean(
+      item.command && existingDelimiter && /[ \t]/.test(existingDelimiter),
+    );
     const replacement = item.command
       ? `/${item.command.name}${reusesInlineDelimiter ? "" : " "}`
       : "";
     const inserted = replaceCompletionToken(value, completion, replacement);
-    const next = reusesInlineDelimiter ? { ...inserted, caret: inserted.caret + 1 } : inserted;
+    const next = reusesInlineDelimiter
+      ? { ...inserted, caret: inserted.caret + 1 }
+      : inserted;
     inputValueRef.current = next.value;
     onChange(next.value);
     setCompletion(null);
@@ -239,7 +292,9 @@ export function ComposerInput({
       }
       if (event.key === "ArrowDown" && completionItems.length > 0) {
         event.preventDefault();
-        setCompletionActive((index) => Math.min(index + 1, completionItems.length - 1));
+        setCompletionActive((index) =>
+          Math.min(index + 1, completionItems.length - 1),
+        );
         return;
       }
       if (event.key === "ArrowUp" && completionItems.length > 0) {
@@ -247,7 +302,11 @@ export function ComposerInput({
         setCompletionActive((index) => Math.max(0, index - 1));
         return;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && completionItems[activeIndex]) {
+      if (
+        (event.key === "Enter" || event.key === "Tab") &&
+        !event.shiftKey &&
+        completionItems[activeIndex]
+      ) {
         event.preventDefault();
         pickCompletion(completionItems[activeIndex]);
         return;
@@ -271,7 +330,11 @@ export function ComposerInput({
           className="composer__input"
           aria-autocomplete="list"
           aria-controls={completion ? completionId : undefined}
-          aria-activedescendant={completion && completionItems[activeIndex] ? `${completionId}-option-${activeIndex}` : undefined}
+          aria-activedescendant={
+            completion && completionItems[activeIndex]
+              ? `${completionId}-option-${activeIndex}`
+              : undefined
+          }
           rows={rows}
           value={value}
           placeholder={placeholder}
@@ -280,16 +343,32 @@ export function ComposerInput({
             onChange(event.target.value);
             updateCompletion(event.target.value, event.target.selectionStart);
           }}
-          onSelect={(event) => updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onSelect={(event) =>
+            updateCompletion(
+              event.currentTarget.value,
+              event.currentTarget.selectionStart,
+            )
+          }
           onKeyUp={(event) => {
-            if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-              updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart);
+            if (
+              ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+            ) {
+              updateCompletion(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+              );
             }
           }}
-          onCompositionStart={() => { composingRef.current = true; setCompletion(null); }}
+          onCompositionStart={() => {
+            composingRef.current = true;
+            setCompletion(null);
+          }}
           onCompositionEnd={(event) => {
             composingRef.current = false;
-            updateCompletion(event.currentTarget.value, event.currentTarget.selectionStart);
+            updateCompletion(
+              event.currentTarget.value,
+              event.currentTarget.selectionStart,
+            );
           }}
           onKeyDown={handleKeyDown}
           onPaste={onPaste}

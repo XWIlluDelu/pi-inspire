@@ -25,6 +25,13 @@ export const recordBenchmarkCommit: ProfilerOnRenderCallback = (
   startTime,
   commitTime,
 ) => {
-  const sink = window.__INSPIRE_MAINTENANCE_BENCHMARK__ ??= { commits: [] };
-  sink.commits.push({ surface, phase, actualDuration, baseDuration, startTime, commitTime });
+  const sink = (window.__INSPIRE_MAINTENANCE_BENCHMARK__ ??= { commits: [] });
+  sink.commits.push({
+    surface,
+    phase,
+    actualDuration,
+    baseDuration,
+    startTime,
+    commitTime,
+  });
 };

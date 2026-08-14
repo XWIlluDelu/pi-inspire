@@ -38,7 +38,8 @@ export function ScrollRail({
     let resizeObserver: ResizeObserver | null = null;
     let hideTimer: number | null = null;
     let frame: number | null = null;
-    let drag: { y: number; top: number; maxTop: number; range: number } | null = null;
+    let drag: { y: number; top: number; maxTop: number; range: number } | null =
+      null;
     let geo: { maxTop: number; range: number } | null = null;
 
     const schedule = () => {
@@ -61,19 +62,35 @@ export function ScrollRail({
     const geometry = () => {
       const rect = el!.getBoundingClientRect();
       if (variant === "nav") {
-        return { x: root.getBoundingClientRect().right, top: rect.top + 6, height: rect.height - 12 };
+        return {
+          x: root.getBoundingClientRect().right,
+          top: rect.top + 6,
+          height: rect.height - 12,
+        };
       }
       if (variant === "ctx") {
-        return { x: root.getBoundingClientRect().left, top: rect.top + 6, height: rect.height - 12 };
+        return {
+          x: root.getBoundingClientRect().left,
+          top: rect.top + 6,
+          height: rect.height - 12,
+        };
       }
       // reading: a mid-height rail floating in the margin right of the
       // reading column — offset grows with the available whitespace so it
       // never crowds the text, and the long travel keeps dragging precise.
-      const column = el!.querySelector(".transcript__column")?.getBoundingClientRect();
+      const column = el!
+        .querySelector(".transcript__column")
+        ?.getBoundingClientRect();
       const columnRight = column ? column.right : rect.left + rect.width / 2;
       const gap = rect.right - columnRight;
-      const height = Math.max(280, Math.min(rect.height * 0.62, rect.height - 120));
-      const x = Math.min(columnRight + Math.max(28, Math.min(gap * 0.5, 72)), rect.right - 14);
+      const height = Math.max(
+        280,
+        Math.min(rect.height * 0.62, rect.height - 120),
+      );
+      const x = Math.min(
+        columnRight + Math.max(28, Math.min(gap * 0.5, 72)),
+        rect.right - 14,
+      );
       return { x, top: rect.top + (rect.height - height) / 2, height };
     };
 
@@ -94,7 +111,10 @@ export function ScrollRail({
         return;
       }
       const minThumb = variant === "reading" ? 48 : 32;
-      const th = Math.min(g.height, Math.max(minThumb, Math.round((g.height * ch) / sh)));
+      const th = Math.min(
+        g.height,
+        Math.max(minThumb, Math.round((g.height * ch) / sh)),
+      );
       const maxTop = g.height - th;
       rail.style.display = "block";
       rail.style.left = `${Math.round(g.x)}px`;
@@ -125,14 +145,22 @@ export function ScrollRail({
       if (event.button !== 0 || !geo || geo.maxTop <= 0) return;
       event.preventDefault();
       onUserScroll?.();
-      drag = { y: event.clientY, top: thumb.offsetTop, maxTop: geo.maxTop, range: geo.range };
+      drag = {
+        y: event.clientY,
+        top: thumb.offsetTop,
+        maxTop: geo.maxTop,
+        range: geo.range,
+      };
       rail.classList.add("srail--drag");
       document.body.classList.add("srail-dragging");
     };
     const onMove = (event: MouseEvent) => {
       if (!drag || !el) return;
       onUserScroll?.();
-      const top = Math.max(0, Math.min(drag.maxTop, drag.top + event.clientY - drag.y));
+      const top = Math.max(
+        0,
+        Math.min(drag.maxTop, drag.top + event.clientY - drag.y),
+      );
       el.scrollTop = (top / drag.maxTop) * drag.range;
     };
     const onUp = () => {
@@ -153,7 +181,11 @@ export function ScrollRail({
     // Content growth, row insertion, and scroller swaps all surface as
     // subtree mutations of the container.
     const mutationObserver = new MutationObserver(schedule);
-    mutationObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    mutationObserver.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
     document.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", schedule);
     window.addEventListener("mousemove", onMove);

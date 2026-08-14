@@ -19,8 +19,19 @@ const temporaryDirectories: string[] = [];
 const servers: Server[] = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(
+    servers
+      .splice(0)
+      .map(
+        (server) =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+      ),
+  );
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  );
 });
 
 async function temporaryStatePath(): Promise<string> {
@@ -50,7 +61,9 @@ describe("insπre instance state", () => {
     await writeInstanceState(path, value);
 
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
-    expect(instanceUrl({ ...value, token: "custom/token?" })).toContain("token=custom%2Ftoken%3F");
+    expect(instanceUrl({ ...value, token: "custom/token?" })).toContain(
+      "token=custom%2Ftoken%3F",
+    );
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     await removeInstanceState(path, value.pid + 1);
     await expect(stat(path)).resolves.toBeDefined();
@@ -67,7 +80,10 @@ describe("insπre instance state", () => {
   it("recognizes only a verified process with a healthy authenticated host", async () => {
     const path = await temporaryStatePath();
     const server = createServer((request, response) => {
-      if (request.headers.authorization !== "Bearer test-token-with-sufficient-entropy") {
+      if (
+        request.headers.authorization !==
+        "Bearer test-token-with-sufficient-entropy"
+      ) {
         response.writeHead(401).end();
         return;
       }
@@ -75,40 +91,62 @@ describe("insπre instance state", () => {
       response.end(JSON.stringify({ appName: "insπre", mock: false }));
     });
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
+    if (!address || typeof address === "string")
+      throw new Error("Expected a TCP test server");
     const value = state(path, address.port);
     value.processStartTime = await processStartIdentity(process.pid);
     await writeInstanceState(path, value);
     const processMarker = process.argv[0] as string;
 
     await expect(
-      inspectInstance(path, { root: value.root, host: value.host, port: value.port, mock: false }, { processMarker }),
+      inspectInstance(
+        path,
+        { root: value.root, host: value.host, port: value.port, mock: false },
+        { processMarker },
+      ),
     ).resolves.toMatchObject({ kind: "healthy", state: value });
     await expect(
-      inspectInstance(path, { root: value.root, host: value.host, port: value.port, mock: true }, { processMarker }),
+      inspectInstance(
+        path,
+        { root: value.root, host: value.host, port: value.port, mock: true },
+        { processMarker },
+      ),
     ).resolves.toMatchObject({ kind: "mode-conflict" });
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
     servers.splice(servers.indexOf(server), 1);
     await expect(
-      inspectInstance(path, { root: value.root, host: value.host, port: value.port }, { processMarker, healthTimeoutMs: 50 }),
+      inspectInstance(
+        path,
+        { root: value.root, host: value.host, port: value.port },
+        { processMarker, healthTimeoutMs: 50 },
+      ),
     ).resolves.toMatchObject({ kind: "unavailable" });
 
     value.processStartTime = `${value.processStartTime}-reused`;
     await writeInstanceState(path, value);
     await expect(
-      inspectInstance(path, { root: value.root, host: value.host, port: value.port }, { processMarker }),
+      inspectInstance(
+        path,
+        { root: value.root, host: value.host, port: value.port },
+        { processMarker },
+      ),
     ).resolves.toEqual({ kind: "stale" });
   });
 
   it("reports port ownership without disturbing the listener", async () => {
     const server = createServer();
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
+    if (!address || typeof address === "string")
+      throw new Error("Expected a TCP test server");
 
     await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(false);
     await new Promise<void>((resolve) => server.close(() => resolve()));

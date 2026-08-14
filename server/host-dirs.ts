@@ -16,16 +16,24 @@ export async function listHostRoots(
 ): Promise<HostRootsResponse> {
   if (hostPlatform !== "win32") return { roots: [{ name: "/", path: "/" }] };
 
-  const roots = await Promise.all([...WINDOWS_DRIVE_LETTERS].map(async (letter) => {
-    const path = `${letter}:\\`;
-    try {
-      return (await inspect(path)).isDirectory() ? { name: `${letter}:`, path } : null;
-    } catch {
-      // An absent, empty, or unreadable drive is not a navigable location.
-      return null;
-    }
-  }));
-  return { roots: roots.filter((root): root is NonNullable<typeof root> => root !== null) };
+  const roots = await Promise.all(
+    [...WINDOWS_DRIVE_LETTERS].map(async (letter) => {
+      const path = `${letter}:\\`;
+      try {
+        return (await inspect(path)).isDirectory()
+          ? { name: `${letter}:`, path }
+          : null;
+      } catch {
+        // An absent, empty, or unreadable drive is not a navigable location.
+        return null;
+      }
+    }),
+  );
+  return {
+    roots: roots.filter(
+      (root): root is NonNullable<typeof root> => root !== null,
+    ),
+  };
 }
 
 /** List the immediate subdirectories of one host directory for the
@@ -35,7 +43,9 @@ export async function listHostRoots(
  * none means the host user's home. Dotted names stay hidden; entries that
  * cannot be inspected are skipped; symlinks count when they resolve to
  * directories. */
-export async function listHostDirectories(requested?: string): Promise<HostDirListing> {
+export async function listHostDirectories(
+  requested?: string,
+): Promise<HostDirListing> {
   const path = await realpath(requested ?? homedir());
   const dirs: HostDirListing["dirs"] = [];
   for await (const entry of await opendir(path)) {
@@ -45,7 +55,8 @@ export async function listHostDirectories(requested?: string): Promise<HostDirLi
       dirs.push({ name: entry.name, path: absolute });
     } else if (entry.isSymbolicLink()) {
       try {
-        if ((await stat(absolute)).isDirectory()) dirs.push({ name: entry.name, path: absolute });
+        if ((await stat(absolute)).isDirectory())
+          dirs.push({ name: entry.name, path: absolute });
       } catch {
         // broken or unreadable link — not a browsable directory
       }

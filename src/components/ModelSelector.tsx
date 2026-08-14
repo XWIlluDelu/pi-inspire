@@ -10,7 +10,11 @@ export interface ModelGroupingMetrics {
   visits: number;
 }
 
-function fuzzyCategory(value: string, queryValue: string, metrics?: ModelGroupingMetrics): number | null {
+function fuzzyCategory(
+  value: string,
+  queryValue: string,
+  metrics?: ModelGroupingMetrics,
+): number | null {
   const query = queryValue.trim().toLocaleLowerCase();
   if (!query) return 0;
   const text = value.toLocaleLowerCase();
@@ -32,15 +36,25 @@ export interface ModelGroup {
 }
 
 /** Canonical comparison sorting is paid only when the available-model array changes. */
-export function prepareModelOptions(models: readonly ModelOption[], metrics?: ModelGroupingMetrics): ModelOption[] {
-  return models.map((model, order) => ({ model, order })).sort((left, right) => {
-    if (metrics) metrics.comparisons += 1;
-    return left.model.provider < right.model.provider ? -1
-      : left.model.provider > right.model.provider ? 1
-      : left.model.id < right.model.id ? -1
-      : left.model.id > right.model.id ? 1
-      : left.order - right.order;
-  }).map(({ model }) => model);
+export function prepareModelOptions(
+  models: readonly ModelOption[],
+  metrics?: ModelGroupingMetrics,
+): ModelOption[] {
+  return models
+    .map((model, order) => ({ model, order }))
+    .sort((left, right) => {
+      if (metrics) metrics.comparisons += 1;
+      return left.model.provider < right.model.provider
+        ? -1
+        : left.model.provider > right.model.provider
+          ? 1
+          : left.model.id < right.model.id
+            ? -1
+            : left.model.id > right.model.id
+              ? 1
+              : left.order - right.order;
+    })
+    .map(({ model }) => model);
 }
 
 /** Stable linear filtering and bounded relevance bucketing over prepared models. */
@@ -50,12 +64,21 @@ export function groupPreparedModels(
   query = "",
   metrics?: ModelGroupingMetrics,
 ): ModelGroup[] {
-  const recentRank = new Map(recent.map((model, index) => [modelIdentityKey(model), index]));
-  type Bucket = { recent: Array<ModelOption | undefined>; ordinary: ModelOption[] };
+  const recentRank = new Map(
+    recent.map((model, index) => [modelIdentityKey(model), index]),
+  );
+  type Bucket = {
+    recent: Array<ModelOption | undefined>;
+    ordinary: ModelOption[];
+  };
   const groups = new Map<string, Bucket[]>();
   for (const model of models) {
     if (metrics) metrics.visits += 1;
-    const category = fuzzyCategory(`${model.provider} ${model.id} ${model.name ?? ""}`, query, metrics);
+    const category = fuzzyCategory(
+      `${model.provider} ${model.id} ${model.name ?? ""}`,
+      query,
+      metrics,
+    );
     if (category === null) continue;
     let buckets = groups.get(model.provider);
     if (!buckets) {
@@ -69,12 +92,19 @@ export function groupPreparedModels(
   }
   return [...groups].map(([provider, buckets]) => ({
     provider,
-    models: buckets.flatMap((bucket) => [...bucket.recent.filter((model): model is ModelOption => Boolean(model)), ...bucket.ordinary]),
+    models: buckets.flatMap((bucket) => [
+      ...bucket.recent.filter((model): model is ModelOption => Boolean(model)),
+      ...bucket.ordinary,
+    ]),
   }));
 }
 
 /** Convenience owner for non-rendering callers; production prepares once with useMemo. */
-export function groupModels(models: readonly ModelOption[], recent: readonly ModelIdentity[], query = ""): ModelGroup[] {
+export function groupModels(
+  models: readonly ModelOption[],
+  recent: readonly ModelIdentity[],
+  query = "",
+): ModelGroup[] {
   return groupPreparedModels(prepareModelOptions(models), recent, query);
 }
 export function ModelSelector({
@@ -101,22 +131,37 @@ export function ModelSelector({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const currentKey = value ? modelIdentityKey(value) : "";
-  const recentKeys = useMemo(() => new Set(recent.map(modelIdentityKey)), [recent]);
+  const recentKeys = useMemo(
+    () => new Set(recent.map(modelIdentityKey)),
+    [recent],
+  );
   const preparedModels = useMemo(() => prepareModelOptions(models), [models]);
-  const groups = useMemo(() => groupPreparedModels(preparedModels, recent, query), [preparedModels, recent, query]);
+  const groups = useMemo(
+    () => groupPreparedModels(preparedModels, recent, query),
+    [preparedModels, recent, query],
+  );
   const { options, optionIndexes } = useMemo(() => {
     const flattened = groups.flatMap((group) => group.models);
     return {
       options: flattened,
-      optionIndexes: new Map(flattened.map((model, index) => [modelIdentityKey(model), index])),
+      optionIndexes: new Map(
+        flattened.map((model, index) => [modelIdentityKey(model), index]),
+      ),
     };
   }, [groups]);
 
   const show = () => {
     if (models.length === 0) return;
     setQuery("");
-    const unfiltered = groupPreparedModels(preparedModels, recent).flatMap((group) => group.models);
-    setActive(Math.max(0, unfiltered.findIndex((model) => modelIdentityKey(model) === currentKey)));
+    const unfiltered = groupPreparedModels(preparedModels, recent).flatMap(
+      (group) => group.models,
+    );
+    setActive(
+      Math.max(
+        0,
+        unfiltered.findIndex((model) => modelIdentityKey(model) === currentKey),
+      ),
+    );
     setOpen(true);
   };
 
@@ -131,7 +176,8 @@ export function ModelSelector({
     // transient search surface is already gone and keyboard focus belongs to
     // its stable trigger immediately after React commits that close.
     restoreTriggerFocus();
-    if (modelIdentityKey(model) !== currentKey) onChange(model.provider, model.id);
+    if (modelIdentityKey(model) !== currentKey)
+      onChange(model.provider, model.id);
   };
 
   useEffect(() => {
@@ -196,10 +242,17 @@ export function ModelSelector({
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled || models.length === 0}
-        title={reasoning === false ? `${display} — thinking is not supported` : `${display} — ${value?.provider ?? "no provider"}`}
+        title={
+          reasoning === false
+            ? `${display} — thinking is not supported`
+            : `${display} — ${value?.provider ?? "no provider"}`
+        }
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(event) => {
-          if (!open && ["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+          if (
+            !open &&
+            ["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)
+          ) {
             event.preventDefault();
             show();
           }
@@ -221,7 +274,9 @@ export function ModelSelector({
               aria-autocomplete="list"
               aria-expanded="true"
               aria-controls={`${id}-listbox`}
-              aria-activedescendant={options[active] ? `${id}-option-${active}` : undefined}
+              aria-activedescendant={
+                options[active] ? `${id}-option-${active}` : undefined
+              }
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
@@ -231,10 +286,21 @@ export function ModelSelector({
               placeholder="Search provider or model…"
             />
           </div>
-          <div id={`${id}-listbox`} role="listbox" aria-label="Available models" className="model-picker__list">
+          <div
+            id={`${id}-listbox`}
+            role="listbox"
+            aria-label="Available models"
+            className="model-picker__list"
+          >
             {groups.map((group) => (
-              <div key={group.provider} role="group" aria-label={group.provider}>
-                <div className="model-picker__heading" aria-hidden>{group.provider}</div>
+              <div
+                key={group.provider}
+                role="group"
+                aria-label={group.provider}
+              >
+                <div className="model-picker__heading" aria-hidden>
+                  {group.provider}
+                </div>
                 {group.models.map((model) => {
                   const key = modelIdentityKey(model);
                   const index = optionIndexes.get(key)!;
@@ -242,7 +308,9 @@ export function ModelSelector({
                   return (
                     <div
                       key={key}
-                      ref={(element) => { optionRefs.current[index] = element; }}
+                      ref={(element) => {
+                        optionRefs.current[index] = element;
+                      }}
                       id={`${id}-option-${index}`}
                       role="option"
                       aria-selected={selected}
@@ -253,12 +321,18 @@ export function ModelSelector({
                     >
                       <span className="model-picker__option-copy">
                         <span>{model.name ?? model.id}</span>
-                        {model.name ? <span className="model-picker__id">{model.id}</span> : null}
+                        {model.name ? (
+                          <span className="model-picker__id">{model.id}</span>
+                        ) : null}
                       </span>
                       <span className="model-picker__badges">
                         {selected ? <span>Active</span> : null}
-                        {!selected && recentKeys.has(key) ? <span>Recent</span> : null}
-                        {model.reasoning === false ? <span>No thinking</span> : null}
+                        {!selected && recentKeys.has(key) ? (
+                          <span>Recent</span>
+                        ) : null}
+                        {model.reasoning === false ? (
+                          <span>No thinking</span>
+                        ) : null}
                         {selected ? <Check size={12} aria-hidden /> : null}
                       </span>
                     </div>
@@ -266,7 +340,9 @@ export function ModelSelector({
                 })}
               </div>
             ))}
-            {options.length === 0 ? <div className="picker__empty">No matching models</div> : null}
+            {options.length === 0 ? (
+              <div className="picker__empty">No matching models</div>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -1,4 +1,12 @@
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,7 +15,11 @@ import { openDiagnosticLogger } from "../../server/diagnostics.js";
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 async function privateDirectory(): Promise<string> {
@@ -42,7 +54,10 @@ describe("diagnostic logging", () => {
     const fileMode = (await stat(path)).mode & 0o777;
     expect(directoryMode).toBe(0o700);
     expect(fileMode).toBe(0o600);
-    const line = JSON.parse((await readFile(path, "utf8")).trim()) as Record<string, unknown>;
+    const line = JSON.parse((await readFile(path, "utf8")).trim()) as Record<
+      string,
+      unknown
+    >;
     expect(line).toMatchObject({
       level: "warning",
       event: "projection_conflict",
@@ -66,9 +81,16 @@ describe("diagnostic logging", () => {
   it("rotates at the configured bound and retains only the requested generations", async () => {
     const directory = await privateDirectory();
     const path = join(directory, "runtime.jsonl");
-    const logger = await openDiagnosticLogger({ path, maxBytes: 64 * 1024, retainedFiles: 2 });
+    const logger = await openDiagnosticLogger({
+      path,
+      maxBytes: 64 * 1024,
+      retainedFiles: 2,
+    });
     for (let index = 0; index < 900; index += 1) {
-      logger.record("info", "sample", { index, fingerprint: `sha256:${"a".repeat(80)}` });
+      logger.record("info", "sample", {
+        index,
+        fingerprint: `sha256:${"a".repeat(80)}`,
+      });
     }
     await logger.close();
 
@@ -77,7 +99,9 @@ describe("diagnostic logging", () => {
     expect((await stat(`${path}.2`)).isFile()).toBe(true);
     await expect(stat(`${path}.3`)).rejects.toMatchObject({ code: "ENOENT" });
     for (const candidate of [path, `${path}.1`, `${path}.2`]) {
-      for (const line of (await readFile(candidate, "utf8")).trim().split("\n")) {
+      for (const line of (await readFile(candidate, "utf8"))
+        .trim()
+        .split("\n")) {
         expect(() => JSON.parse(line)).not.toThrow();
       }
     }
@@ -89,6 +113,8 @@ describe("diagnostic logging", () => {
     const link = join(directory, "runtime.jsonl");
     await writeFile(target, "");
     await symlink(target, link);
-    await expect(openDiagnosticLogger({ path: link })).rejects.toThrow(/regular file|symlink|symbolic links/i);
+    await expect(openDiagnosticLogger({ path: link })).rejects.toThrow(
+      /regular file|symlink|symbolic links/i,
+    );
   });
 });

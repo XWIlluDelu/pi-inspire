@@ -30,7 +30,11 @@ export function SessionDeleteDialog({
   };
 
   return (
-    <div className="overlay" role="presentation" onClick={deleting ? undefined : onClose}>
+    <div
+      className="overlay"
+      role="presentation"
+      onClick={deleting ? undefined : onClose}
+    >
       <div
         ref={dialogRef}
         className="dialog session-delete"
@@ -42,8 +46,12 @@ export function SessionDeleteDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <header className="session-delete__header">
-          <span className="session-delete__icon" aria-hidden><Trash2 size={17} /></span>
-          <h2 className="dialog__title" id="session-delete-title">Delete session?</h2>
+          <span className="session-delete__icon" aria-hidden>
+            <Trash2 size={17} />
+          </span>
+          <h2 className="dialog__title" id="session-delete-title">
+            Delete session?
+          </h2>
           <button
             type="button"
             className="icon-button"
@@ -59,7 +67,10 @@ export function SessionDeleteDialog({
         <div className="session-delete__session" title={session.title}>
           {session.title || "New session"}
         </div>
-        <p className="dialog__message session-delete__description" id="session-delete-description">
+        <p
+          className="dialog__message session-delete__description"
+          id="session-delete-description"
+        >
           <span>This session will be moved to Trash.</span>
           <span>If Trash is unavailable, it will be permanently deleted.</span>
           <span>Forked sessions remain; project files are unchanged.</span>
@@ -69,11 +80,20 @@ export function SessionDeleteDialog({
           Make sure this session is not open in another Pi process.
         </p>
         {state.sessionDeleteError ? (
-          <p className="session-delete__error" role="alert">{state.sessionDeleteError}</p>
+          <p className="session-delete__error" role="alert">
+            {state.sessionDeleteError}
+          </p>
         ) : null}
 
         <footer className="session-delete__actions">
-          <button type="button" className="button" onClick={onClose} disabled={deleting}>Cancel</button>
+          <button
+            type="button"
+            className="button"
+            onClick={onClose}
+            disabled={deleting}
+          >
+            Cancel
+          </button>
           <button
             type="button"
             className="button button--danger"
@@ -81,7 +101,11 @@ export function SessionDeleteDialog({
             disabled={deleting}
             aria-busy={deleting}
           >
-            {deleting ? <Loader2 size={14} className="spin" aria-hidden /> : <Trash2 size={14} aria-hidden />}
+            {deleting ? (
+              <Loader2 size={14} className="spin" aria-hidden />
+            ) : (
+              <Trash2 size={14} aria-hidden />
+            )}
             {deleting ? "Deleting…" : "Delete session"}
           </button>
         </footer>

@@ -14,7 +14,11 @@ const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(processes.splice(0).map((process) => process.stop()));
-  await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  );
 });
 
 describe("PiRpcProcess", () => {
@@ -50,14 +54,25 @@ process.stdin.on("data", chunk => {
     const events: unknown[] = [];
     rpc.on("event", (event) => events.push(event));
     await rpc.start();
-    const result = await rpc.request<{ value: string }>({ type: "echo", value: "ok" });
+    const result = await rpc.request<{ value: string }>({
+      type: "echo",
+      value: "ok",
+    });
     expect(result).toEqual({ value: "ok" });
     expect(events).toEqual([{ type: "notice", value: "left right" }]);
     expect(MAX_RPC_LINE_BYTES).toBeGreaterThan(MAX_RPC_OUTBOUND_LINE_BYTES);
 
-    await expect(rpc.request({ type: "oversized", value: "x".repeat(MAX_RPC_OUTBOUND_LINE_BYTES) }))
-      .rejects.toThrow(`Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`);
-    await expect(rpc.request({ type: "ping" })).resolves.toEqual({ isStreaming: false });
+    await expect(
+      rpc.request({
+        type: "oversized",
+        value: "x".repeat(MAX_RPC_OUTBOUND_LINE_BYTES),
+      }),
+    ).rejects.toThrow(
+      `Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`,
+    );
+    await expect(rpc.request({ type: "ping" })).resolves.toEqual({
+      isStreaming: false,
+    });
   });
 
   it("accepts a bounded Pi message echo above the former image-line ceiling", async () => {
@@ -88,10 +103,14 @@ process.stdin.on("data", chunk => {
 
     const rpc = new PiRpcProcess({ cwd: directory, cliPath });
     processes.push(rpc);
-    const event = new Promise<Record<string, unknown>>((resolveEvent) => rpc.once("event", resolveEvent));
+    const event = new Promise<Record<string, unknown>>((resolveEvent) =>
+      rpc.once("event", resolveEvent),
+    );
     await rpc.start();
     await rpc.request({ type: "echo-image" });
-    const message = (await event).message as { content: Array<{ data: string }> };
+    const message = (await event).message as {
+      content: Array<{ data: string }>;
+    };
     expect(message.content[0]?.data).toHaveLength(imageBytes);
   });
 
@@ -128,7 +147,9 @@ process.stdin.on("data", chunk => {
     await rpc.start();
     await rpc.request({ type: "ping" });
 
-    const failure = (await rpc.request({ type: "die" }).catch((error: Error) => error)) as Error & {
+    const failure = (await rpc
+      .request({ type: "die" })
+      .catch((error: Error) => error)) as Error & {
       detail?: string;
     };
     expect(failure).toBeInstanceOf(Error);
@@ -143,7 +164,9 @@ process.stdin.on("data", chunk => {
     directories.push(directory);
     const marker = join(directory, "persisted.txt");
     const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(cliPath, `import { writeFileSync } from "node:fs";
+    await writeFile(
+      cliPath,
+      `import { writeFileSync } from "node:fs";
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => {
@@ -158,17 +181,29 @@ process.stdin.on("data", chunk => {
       process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
     }
   }
-});`, "utf8");
+});`,
+      "utf8",
+    );
     const rpc = new PiRpcProcess({ cwd: directory, cliPath });
     processes.push(rpc);
     await rpc.start();
-    const exited = new Promise<Error>((resolveExit) => rpc.once("exit", resolveExit));
-    const failure = await rpc.request({ type: "late" }, 80).catch((error: Error) => error);
+    const exited = new Promise<Error>((resolveExit) =>
+      rpc.once("exit", resolveExit),
+    );
+    const failure = await rpc
+      .request({ type: "late" }, 80)
+      .catch((error: Error) => error);
     expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
     await (failure as PiRpcOutcomeUnknownError).stopped;
     expect(await exited).toBe(failure);
-    expect(await import("node:fs/promises").then(({ readFile }) => readFile(marker, "utf8"))).toBe("committed");
-    await expect(rpc.request({ type: "second" })).rejects.toThrow(/not available/);
+    expect(
+      await import("node:fs/promises").then(({ readFile }) =>
+        readFile(marker, "utf8"),
+      ),
+    ).toBe("committed");
+    await expect(rpc.request({ type: "second" })).rejects.toThrow(
+      /not available/,
+    );
   });
 
   it("terminates a child that emits an oversized unterminated JSONL line", async () => {
@@ -202,16 +237,26 @@ process.stdin.on("data", chunk => {
     rpc.on("exit", (error: Error) => exits.push(error));
     await rpc.start();
 
-    await expect(rpc.request({ type: "overflow" }, 10_000)).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
+    await expect(
+      rpc.request({ type: "overflow" }, 10_000),
+    ).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
     expect(exits).toHaveLength(1);
-    expect(exits[0]?.message).toContain(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`);
+    expect(exits[0]?.message).toContain(
+      `Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`,
+    );
   });
 
   it("starts the installed Pi RPC runtime without invoking a model", async () => {
-    const rpc = new PiRpcProcess({ cwd: process.cwd(), args: ["--no-session"] });
+    const rpc = new PiRpcProcess({
+      cwd: process.cwd(),
+      args: ["--no-session"],
+    });
     processes.push(rpc);
     await rpc.start();
-    const state = await rpc.request<{ sessionId: string; isStreaming: boolean }>({ type: "get_state" }, 60_000);
+    const state = await rpc.request<{
+      sessionId: string;
+      isStreaming: boolean;
+    }>({ type: "get_state" }, 60_000);
     expect(state.sessionId).toMatch(/^[0-9a-f-]+$/);
     expect(state.isStreaming).toBe(false);
   }, 90_000);

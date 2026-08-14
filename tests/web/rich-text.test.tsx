@@ -1,14 +1,24 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { RichText, projectKatexSelection, scanBackslashMath } from "../../src/components/RichText";
+import {
+  RichText,
+  projectKatexSelection,
+  scanBackslashMath,
+} from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
 
 class ClipboardDataTransfer {
   private readonly values = new Map<string, string>();
-  get types(): string[] { return [...this.values.keys()]; }
-  setData(type: string, value: string): void { this.values.set(type, value); }
-  getData(type: string): string { return this.values.get(type) ?? ""; }
+  get types(): string[] {
+    return [...this.values.keys()];
+  }
+  setData(type: string, value: string): void {
+    this.values.set(type, value);
+  }
+  getData(type: string): string {
+    return this.values.get(type) ?? "";
+  }
 }
 
 function textNode(root: Element): Text {
@@ -17,7 +27,10 @@ function textNode(root: Element): Text {
   return node;
 }
 
-function dispatchSelectionCopy(origin: Element, range: Range): { event: Event; data: ClipboardDataTransfer } {
+function dispatchSelectionCopy(
+  origin: Element,
+  range: Range,
+): { event: Event; data: ClipboardDataTransfer } {
   const selection = window.getSelection()!;
   selection.removeAllRanges();
   selection.addRange(range);
@@ -44,13 +57,17 @@ describe("formula rendering", () => {
   });
 
   it("renders inline mathematics through KaTeX", () => {
-    const { container } = render(<RichText text="The energy is $E=mc^2$ here." />);
+    const { container } = render(
+      <RichText text="The energy is $E=mc^2$ here." />,
+    );
     expect(container.querySelector(".katex")).toBeTruthy();
     expect(container.textContent).toContain("The energy is");
   });
 
   it("renders display mathematics", () => {
-    const { container } = render(<RichText text={"Before\n\n$$\\int_0^1 x^2\\,dx=\\frac13$$\n\nAfter"} />);
+    const { container } = render(
+      <RichText text={"Before\n\n$$\\int_0^1 x^2\\,dx=\\frac13$$\n\nAfter"} />,
+    );
     expect(container.querySelector(".katex-display")).toBeTruthy();
   });
 
@@ -75,7 +92,9 @@ x^2, & x\geq 0 \\
     expect(container.querySelectorAll(".katex-display")).toHaveLength(5);
     expect(container.querySelector(".sqrt svg path[d]")).toBeTruthy();
     expect(container.querySelectorAll(".katex-mathml mtable")).toHaveLength(3);
-    expect(container.querySelectorAll("annotation")[2]?.textContent).toContain("A =");
+    expect(container.querySelectorAll("annotation")[2]?.textContent).toContain(
+      "A =",
+    );
   });
 
   it.each([
@@ -91,7 +110,9 @@ x^2, & x\geq 0 \\
   });
 
   it("preserves non-path SVG geometry such as cancellation lines", () => {
-    const { container } = render(<RichText text={String.raw`$$\cancel{x}$$`} />);
+    const { container } = render(
+      <RichText text={String.raw`$$\cancel{x}$$`} />,
+    );
     const line = container.querySelector(".katex-display svg line");
     expect(line).toHaveAttribute("x1", "0");
     expect(line).toHaveAttribute("y2", "0");
@@ -107,7 +128,9 @@ x^2, & x\geq 0 \\
     expect(table?.getAttribute("rowspacing")).toBe("0.25em");
     expect(table?.getAttribute("columnalign")).toBe("right left");
     expect(table?.getAttribute("columnspacing")).toBe("0em");
-    expect(math?.querySelector("annotation")?.getAttribute("encoding")).toBe("application/x-tex");
+    expect(math?.querySelector("annotation")?.getAttribute("encoding")).toBe(
+      "application/x-tex",
+    );
   });
 
   it("keeps KaTeX trust-only commands inert", () => {
@@ -129,9 +152,13 @@ x^2, & x\geq 0 \\
   });
 
   it("supports TeX inline and display delimiters at tokenization level", () => {
-    const { container } = render(<RichText text={String.raw`Inline \(x+1\)
+    const { container } = render(
+      <RichText
+        text={String.raw`Inline \(x+1\)
 
-\[y^2\]`} />);
+\[y^2\]`}
+      />,
+    );
     expect(container.querySelectorAll(".katex")).toHaveLength(2);
     expect(container.querySelector(".katex-display")).toBeTruthy();
   });
@@ -168,7 +195,10 @@ $$z$$
   });
 
   it("preserves Markdown escapes and code without treating their delimiters as math", () => {
-    const source = String.raw`Escaped \$x and \\(x; code \`$$x\``.replaceAll("\\`", "`");
+    const source = String.raw`Escaped \$x and \\(x; code \`$$x\``.replaceAll(
+      "\\`",
+      "`",
+    );
     const { container } = render(<RichText text={source} />);
     expect(container.querySelector(".katex")).toBeNull();
     expect(container.textContent).toContain("Escaped $x and \\(x; code $$x");
@@ -199,11 +229,15 @@ w
 
 describe("selection copy", () => {
   it("projects source TeX with canonical delimiters while preserving selected HTML", () => {
-    const { container } = render(<RichText text={String.raw`Before $E=mc^2$
+    const { container } = render(
+      <RichText
+        text={String.raw`Before $E=mc^2$
 
 \[x^2\]
 
-After.`} />);
+After.`}
+      />,
+    );
     const root = container.querySelector(".rich-text") as HTMLElement;
     const range = document.createRange();
     range.selectNodeContents(root);
@@ -218,9 +252,20 @@ After.`} />);
   it("copies partial inline and display selections with their original delimiter identity", () => {
     const { container } = render(
       <Transcript
-        messages={[{ role: "assistant", content: [{ type: "text", text: String.raw`Inline $i+1$
+        messages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: String.raw`Inline $i+1$
 
-\[d+2\]` }], timestamp: 1 }]}
+\[d+2\]`,
+              },
+            ],
+            timestamp: 1,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -249,7 +294,15 @@ After.`} />);
   it("copies multiple formulas with surrounding text and selected HTML", () => {
     const { container } = render(
       <Transcript
-        messages={[{ role: "assistant", content: [{ type: "text", text: String.raw`Before $x$ middle \(y\) after` }], timestamp: 1 }]}
+        messages={[
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: String.raw`Before $x$ middle \(y\) after` },
+            ],
+            timestamp: 1,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -259,8 +312,12 @@ After.`} />);
     const range = document.createRange();
     range.selectNodeContents(paragraph);
     const copied = dispatchSelectionCopy(paragraph, range);
-    expect(copied.data.getData("text/plain")).toBe("Before $x$ middle $y$ after");
-    expect(copied.data.getData("text/html").match(/class=\"katex\"/g)).toHaveLength(2);
+    expect(copied.data.getData("text/plain")).toBe(
+      "Before $x$ middle $y$ after",
+    );
+    expect(
+      copied.data.getData("text/html").match(/class=\"katex\"/g),
+    ).toHaveLength(2);
     expect(copied.data.getData("text/html")).toContain("Before ");
     expect(copied.data.getData("text/html")).toContain(" after");
   });
@@ -268,7 +325,13 @@ After.`} />);
   it("handles a real DOM selection and writes both ClipboardEvent formats", () => {
     const { container } = render(
       <Transcript
-        messages={[{ role: "assistant", content: [{ type: "text", text: "Before $x+1$ after" }], timestamp: 1 }]}
+        messages={[
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Before $x+1$ after" }],
+            timestamp: 1,
+          },
+        ]}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -289,7 +352,9 @@ After.`} />);
     expect(copy.defaultPrevented).toBe(true);
     expect(clipboardData.getData("text/plain")).toBe("Before $x+1$ after");
     expect(clipboardData.getData("text/html")).toContain("katex");
-    expect(clipboardData.types).toEqual(expect.arrayContaining(["text/plain", "text/html"]));
+    expect(clipboardData.types).toEqual(
+      expect.arrayContaining(["text/plain", "text/html"]),
+    );
     selection.removeAllRanges();
   });
 });
@@ -299,18 +364,26 @@ describe("raw HTML and unsafe URL defense", () => {
     const html = 'Look <img src="x" onerror="window.__pwned = 1"> here';
     const { container } = render(<RichText text={html} />);
     expect(container.querySelector("img")).toBeNull();
-    expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
+    expect(
+      (window as unknown as Record<string, unknown>).__pwned,
+    ).toBeUndefined();
     expect(container.textContent).toContain("Look");
   });
 
   it("does not render script tags", () => {
-    const { container } = render(<RichText text={'before <script>window.__script = 1</script> after'} />);
+    const { container } = render(
+      <RichText text={"before <script>window.__script = 1</script> after"} />,
+    );
     expect(container.querySelector("script")).toBeNull();
-    expect((window as unknown as Record<string, unknown>).__script).toBeUndefined();
+    expect(
+      (window as unknown as Record<string, unknown>).__script,
+    ).toBeUndefined();
   });
 
   it("strips javascript: URLs from links", () => {
-    const { container } = render(<RichText text="[click me](javascript:window.__js=1)" />);
+    const { container } = render(
+      <RichText text="[click me](javascript:window.__js=1)" />,
+    );
     expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__js).toBeUndefined();
   });
@@ -324,7 +397,9 @@ describe("raw HTML and unsafe URL defense", () => {
   });
 
   it("renders remote markdown images as links instead of fetching them", () => {
-    const { container } = render(<RichText text="![tracking pixel](https://attacker.invalid/pixel.png)" />);
+    const { container } = render(
+      <RichText text="![tracking pixel](https://attacker.invalid/pixel.png)" />,
+    );
     // No <img>: rendering a message must not fire a request to an
     // attacker-chosen host. The reference stays reachable by choice.
     expect(container.querySelector("img")).toBeNull();
@@ -344,13 +419,23 @@ describe("local file references", () => {
   });
 
   it("marks absolute and file: URL links as file references", () => {
-    render(<RichText text="[log](/tmp/run.log) and [chart](file:///tmp/chart.png)" />);
-    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute("data-file-path", "/tmp/run.log");
-    expect(screen.getByRole("link", { name: "chart" })).toHaveAttribute("data-file-path", "file:///tmp/chart.png");
+    render(
+      <RichText text="[log](/tmp/run.log) and [chart](file:///tmp/chart.png)" />,
+    );
+    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
+      "data-file-path",
+      "/tmp/run.log",
+    );
+    expect(screen.getByRole("link", { name: "chart" })).toHaveAttribute(
+      "data-file-path",
+      "file:///tmp/chart.png",
+    );
   });
 
   it("keeps http(s) and mailto links as safe external links", () => {
-    render(<RichText text="[Pi](https://pi.dev) [mail](mailto:a@b.c) [paper](http://x.test/p.pdf)" />);
+    render(
+      <RichText text="[Pi](https://pi.dev) [mail](mailto:a@b.c) [paper](http://x.test/p.pdf)" />,
+    );
     for (const name of ["Pi", "mail", "paper"]) {
       const link = screen.getByRole("link", { name });
       expect(link).not.toHaveAttribute("data-file-path");
@@ -360,7 +445,9 @@ describe("local file references", () => {
   });
 
   it("makes local images open the preview and remote images click-through links", () => {
-    const { container } = render(<RichText text="![chart](./chart.png) and ![logo](https://pi.dev/logo.png)" />);
+    const { container } = render(
+      <RichText text="![chart](./chart.png) and ![logo](https://pi.dev/logo.png)" />,
+    );
     const local = screen.getByRole("button", { name: "Preview chart" });
     expect(local).toHaveAttribute("data-file-path", "./chart.png");
     // Remote images never auto-load; the reference becomes an explicit link.
@@ -371,7 +458,9 @@ describe("local file references", () => {
   });
 
   it("makes credible inline-code paths clickable without touching ordinary code", () => {
-    const { container } = render(<RichText text="Edit `src/store.ts` then run `npm test`." />);
+    const { container } = render(
+      <RichText text="Edit `src/store.ts` then run `npm test`." />,
+    );
     const ref = container.querySelector('[data-file-path="src/store.ts"]');
     expect(ref).toBeTruthy();
     expect(ref!.textContent).toBe("src/store.ts");
@@ -384,13 +473,21 @@ describe("markdown constructs", () => {
     const text = "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] done\n- [ ] todo";
     const { container } = render(<RichText text={text} />);
     expect(container.querySelector("table")).toBeTruthy();
-    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(
+      2,
+    );
   });
 
   it("renders fenced code with a language label and copy control", () => {
-    const { container } = render(<RichText text={"```python\nprint(1)\n```"} />);
-    expect(container.querySelector(".code-block__lang")?.textContent).toBe("python");
+    const { container } = render(
+      <RichText text={"```python\nprint(1)\n```"} />,
+    );
+    expect(container.querySelector(".code-block__lang")?.textContent).toBe(
+      "python",
+    );
     expect(container.querySelector("code.hljs")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy code" }),
+    ).toBeInTheDocument();
   });
 });

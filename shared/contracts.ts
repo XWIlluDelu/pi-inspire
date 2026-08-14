@@ -1,7 +1,26 @@
-export const VISIBILITY_PREFERENCES = ["dynamic", "expanded", "collapsed", "hidden"] as const;
-export const TOOL_VISIBILITY_PREFERENCES = ["dynamic", "expanded", "collapsed", "compact", "hidden"] as const;
+export const VISIBILITY_PREFERENCES = [
+  "dynamic",
+  "expanded",
+  "collapsed",
+  "hidden",
+] as const;
+export const TOOL_VISIBILITY_PREFERENCES = [
+  "dynamic",
+  "expanded",
+  "collapsed",
+  "compact",
+  "hidden",
+] as const;
 export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_UPLOAD_BYTES = 32 * 1024 * 1024;
@@ -20,8 +39,10 @@ export const MAX_SESSION_ID_HYDRATION_IDS = 600;
 export const MAX_SESSION_CWD_HYDRATION_CWDS = 100;
 
 export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
-export type ToolVisibilityPreference = (typeof TOOL_VISIBILITY_PREFERENCES)[number];
-export type AssistantRoundDisplayPreference = (typeof ASSISTANT_ROUND_DISPLAYS)[number];
+export type ToolVisibilityPreference =
+  (typeof TOOL_VISIBILITY_PREFERENCES)[number];
+export type AssistantRoundDisplayPreference =
+  (typeof ASSISTANT_ROUND_DISPLAYS)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type LaunchPreference = "welcome" | "continue";
@@ -54,13 +75,28 @@ export interface NewSessionDefaults {
   thinkingLevel: ThinkingLevel;
 }
 
-export function modelIdentityKey(model: Pick<ModelIdentity, "provider" | "id">): string {
+export function modelIdentityKey(
+  model: Pick<ModelIdentity, "provider" | "id">,
+): string {
   return JSON.stringify([model.provider, model.id]);
 }
-export type RunState = "idle" | "running" | "retrying" | "compacting" | "queued" | "aborted" | "failed" | "conflict";
+export type RunState =
+  | "idle"
+  | "running"
+  | "retrying"
+  | "compacting"
+  | "queued"
+  | "aborted"
+  | "failed"
+  | "conflict";
 /** Run states in which Pi owns an active or queued mutation. Browser controls
  * and host lifecycle/reclamation rules must use this one authority. */
-export const BUSY_RUN_STATES = ["running", "retrying", "compacting", "queued"] as const;
+export const BUSY_RUN_STATES = [
+  "running",
+  "retrying",
+  "compacting",
+  "queued",
+] as const;
 
 export function isBusyRunState(runState: RunState): boolean {
   return (BUSY_RUN_STATES as readonly RunState[]).includes(runState);
@@ -143,7 +179,6 @@ export function projectNameFromCwd(cwd: string): string {
   return normalized.split(/[\\/]/).pop() || cwd || "Unknown project";
 }
 
-
 export interface SessionSummary {
   id: string;
   cwd: string;
@@ -174,7 +209,15 @@ export interface SessionDeleteResponse {
   preferenceCleanupFailed?: true;
 }
 
-export type ResourceKind = "image" | "html" | "pdf" | "markdown" | "text" | "audio" | "video" | "binary";
+export type ResourceKind =
+  | "image"
+  | "html"
+  | "pdf"
+  | "markdown"
+  | "text"
+  | "audio"
+  | "video"
+  | "binary";
 
 /** One entry of a workspace-explorer directory level. */
 export interface ProjectDirEntry {
@@ -260,12 +303,20 @@ interface GitDiffBase {
 }
 
 export type GitDiffResponse =
-  | (GitDiffBase & { kind: "text"; lines: GitDiffLine[]; truncated: boolean; encodingLossy: boolean })
+  | (GitDiffBase & {
+      kind: "text";
+      lines: GitDiffLine[];
+      truncated: boolean;
+      encodingLossy: boolean;
+    })
   | (GitDiffBase & { kind: "binary" })
   | (GitDiffBase & { kind: "submodule"; state: GitSubmoduleState })
   | (GitDiffBase & { kind: "conflict"; code: string })
   | (GitDiffBase & { kind: "empty"; reason: "no-changes" })
-  | (GitDiffBase & { kind: "unsupported"; reason: "path-encoding" | "untracked-content" });
+  | (GitDiffBase & {
+      kind: "unsupported";
+      reason: "path-encoding" | "untracked-content";
+    });
 
 /** One subdirectory in the host directory picker. The host joins paths with
  * its own separator, so clients never do path arithmetic. */
@@ -304,7 +355,13 @@ export interface ResourceDescriptor {
   kind: ResourceKind;
 }
 
-export type ResourceAvailability = "available" | "missing" | "unavailable" | "ambiguous" | "invalid";
+export type ResourceAvailability =
+  | "available"
+  | "missing"
+  | "unavailable"
+  | "ambiguous"
+  | "invalid"
+  | "unknown";
 
 /** Lightweight preflight result for one bounded Files-pane reference. It
  * carries no resource handle and therefore grants no content access. */
@@ -318,11 +375,23 @@ export interface ResourceProbeResult {
 export interface ResourceProbeResponse {
   sessionId: string;
   viewId: string;
+  revision: number;
   results: ResourceProbeResult[];
 }
 
-const EXTENSION_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"] as const);
-export const EXTENSION_ONE_WAY_METHODS = new Set(["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]);
+const EXTENSION_DIALOG_METHODS = new Set([
+  "select",
+  "confirm",
+  "input",
+  "editor",
+] as const);
+export const EXTENSION_ONE_WAY_METHODS = new Set([
+  "notify",
+  "setStatus",
+  "setWidget",
+  "setTitle",
+  "set_editor_text",
+]);
 export const MAX_EXTENSION_UI_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 
 interface ExtensionUiRequestBase {
@@ -350,7 +419,9 @@ export interface UnsupportedExtensionUiRequest extends ExtensionUiRequestBase {
   payload: unknown;
 }
 
-export type ExtensionUiRequest = SupportedExtensionUiRequest | UnsupportedExtensionUiRequest;
+export type ExtensionUiRequest =
+  | SupportedExtensionUiRequest
+  | UnsupportedExtensionUiRequest;
 
 export interface GenericExtensionDisplay {
   id: string;
@@ -368,29 +439,53 @@ export function emptyPendingQueues(): PendingQueues {
   return { steering: [], followUp: [] };
 }
 
-function extensionUiExpiry(event: Record<string, unknown>, now = Date.now()): { timeout?: number; expiresAt?: number } {
-  const rawTimeout = typeof event.timeout === "number" && Number.isFinite(event.timeout) && event.timeout > 0
-    ? Math.min(MAX_EXTENSION_UI_TIMEOUT_MS, Math.max(1, Math.floor(event.timeout)))
-    : undefined;
-  const rawExpiry = typeof event.expiresAt === "number" && Number.isFinite(event.expiresAt) && event.expiresAt > 0
-    ? Math.floor(event.expiresAt)
-    : undefined;
-  const expiresAt = rawExpiry !== undefined
-    ? Math.min(rawExpiry, now + MAX_EXTENSION_UI_TIMEOUT_MS)
-    : rawTimeout !== undefined ? now + rawTimeout : undefined;
+function extensionUiExpiry(
+  event: Record<string, unknown>,
+  now = Date.now(),
+): { timeout?: number; expiresAt?: number } {
+  const rawTimeout =
+    typeof event.timeout === "number" &&
+    Number.isFinite(event.timeout) &&
+    event.timeout > 0
+      ? Math.min(
+          MAX_EXTENSION_UI_TIMEOUT_MS,
+          Math.max(1, Math.floor(event.timeout)),
+        )
+      : undefined;
+  const rawExpiry =
+    typeof event.expiresAt === "number" &&
+    Number.isFinite(event.expiresAt) &&
+    event.expiresAt > 0
+      ? Math.floor(event.expiresAt)
+      : undefined;
+  const expiresAt =
+    rawExpiry !== undefined
+      ? Math.min(rawExpiry, now + MAX_EXTENSION_UI_TIMEOUT_MS)
+      : rawTimeout !== undefined
+        ? now + rawTimeout
+        : undefined;
   return {
     ...(rawTimeout !== undefined ? { timeout: rawTimeout } : {}),
     ...(expiresAt !== undefined ? { expiresAt } : {}),
   };
 }
 
-export function parseExtensionUiRequest(value: unknown): SupportedExtensionUiRequest | null {
+export function parseExtensionUiRequest(
+  value: unknown,
+): SupportedExtensionUiRequest | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
   const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
   const id = typeof event.id === "string" ? event.id : "";
   const method = typeof event.method === "string" ? event.method : "";
-  if (!sessionId || !id || !EXTENSION_DIALOG_METHODS.has(method as SupportedExtensionUiRequest["method"])) return null;
+  if (
+    !sessionId ||
+    !id ||
+    !EXTENSION_DIALOG_METHODS.has(
+      method as SupportedExtensionUiRequest["method"],
+    )
+  )
+    return null;
   return {
     sessionId,
     id,
@@ -398,8 +493,11 @@ export function parseExtensionUiRequest(value: unknown): SupportedExtensionUiReq
     title: typeof event.title === "string" ? event.title : undefined,
     message: typeof event.message === "string" ? event.message : undefined,
     ...extensionUiExpiry(event),
-    options: Array.isArray(event.options) ? event.options.map(String) : undefined,
-    placeholder: typeof event.placeholder === "string" ? event.placeholder : undefined,
+    options: Array.isArray(event.options)
+      ? event.options.map(String)
+      : undefined,
+    placeholder:
+      typeof event.placeholder === "string" ? event.placeholder : undefined,
     prefill: typeof event.prefill === "string" ? event.prefill : undefined,
   };
 }
@@ -408,7 +506,9 @@ export function parseExtensionUiRequest(value: unknown): SupportedExtensionUiReq
  * explicitly identifies them as one-way display output. This prevents a
  * future dialog promise from hanging while still giving future display
  * methods a generic, inspectable projection. */
-export function parsePendingExtensionUiRequest(value: unknown): ExtensionUiRequest | null {
+export function parsePendingExtensionUiRequest(
+  value: unknown,
+): ExtensionUiRequest | null {
   const supported = parseExtensionUiRequest(value);
   if (supported) return supported;
   if (!value || typeof value !== "object") return null;
@@ -416,7 +516,14 @@ export function parsePendingExtensionUiRequest(value: unknown): ExtensionUiReque
   const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
   const id = typeof event.id === "string" ? event.id : "";
   const method = typeof event.method === "string" ? event.method : "";
-  if (!sessionId || !id || !method || EXTENSION_ONE_WAY_METHODS.has(method) || event.responseRequired === false) return null;
+  if (
+    !sessionId ||
+    !id ||
+    !method ||
+    EXTENSION_ONE_WAY_METHODS.has(method) ||
+    event.responseRequired === false
+  )
+    return null;
   return {
     sessionId,
     id,
@@ -450,7 +557,12 @@ export interface TranscriptPage {
   olderCursor: string | null;
 }
 
-export type BranchNodeRole = "user" | "assistant" | "tool" | "system" | "metadata";
+export type BranchNodeRole =
+  | "user"
+  | "assistant"
+  | "tool"
+  | "system"
+  | "metadata";
 
 export interface BranchTreeNode {
   id: string;
@@ -533,6 +645,9 @@ export interface ActiveSnapshot {
     transcriptPage: TranscriptPage;
     projectionHealth: ProjectionHealth;
     projectionConflict?: ProjectionConflict | null;
+    /** Durable projection leaf, distinct from effectiveLeafId while the
+     * worker is viewing an uncommitted earlier branch. */
+    durableLeafId?: string | null;
     effectiveLeafId?: string | null;
     navigationLeased?: boolean;
     stats?: unknown;
