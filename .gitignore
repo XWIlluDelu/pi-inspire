@@ -4,6 +4,7 @@
 /node_modules/
 /dist/
 /build/
+/.inspire-build
 *.tgz
 /coverage/
 /test-results/

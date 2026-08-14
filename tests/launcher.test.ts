@@ -19,13 +19,20 @@ async function freePort(): Promise<number> {
     server.listen(0, "127.0.0.1", () => resolveListen());
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
+  if (!address || typeof address === "string")
+    throw new Error("Expected a TCP test server");
   const port = address.port;
-  await new Promise<void>((resolveClose, reject) => server.close((error) => (error ? reject(error) : resolveClose())));
+  await new Promise<void>((resolveClose, reject) =>
+    server.close((error) => (error ? reject(error) : resolveClose())),
+  );
   return port;
 }
 
-function launcherEnv(statePath: string, port: number, home: string): NodeJS.ProcessEnv {
+function launcherEnv(
+  statePath: string,
+  port: number,
+  home: string,
+): NodeJS.ProcessEnv {
   return {
     ...process.env,
     HOME: home,
@@ -37,10 +44,18 @@ function launcherEnv(statePath: string, port: number, home: string): NodeJS.Proc
 }
 
 function runLauncher(args: string[], env: NodeJS.ProcessEnv): string {
-  return execFileSync(launcher, args, { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+  return execFileSync(launcher, args, {
+    cwd: root,
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 60_000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 60_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -63,7 +78,9 @@ afterEach(async () => {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -74,9 +91,19 @@ describe("production launcher", () => {
     const statePath = join(directory, "instance.json");
     const port = await freePort();
     const env = launcherEnv(statePath, port, join(directory, "home"));
-    expect(runLauncher(["stop"], env)).toContain("No managed insπre instance is running.");
+    expect(runLauncher(["stop"], env)).toContain(
+      "No managed insπre instance is running.",
+    );
+    // CI builds the browser before its parallel unit suite. Remove only this
+    // source-checkout stamp so this serial lifecycle test still proves that a
+    // stale build is rebuilt once, without competing with all Vitest workers.
+    await rm(join(root, ".inspire-build"), { force: true });
     const output: Buffer[] = [];
-    const child = spawn(launcher, ["restart"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(launcher, ["restart"], {
+      cwd: root,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     activeEnvironment = env;
     children.push(child);
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
@@ -89,18 +116,31 @@ describe("production launcher", () => {
         return false;
       }
     });
-    const firstState = JSON.parse(await readFile(statePath, "utf8")) as { schemaVersion: number; token: string };
+    const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
+      schemaVersion: number;
+      token: string;
+    };
     expect(firstState.schemaVersion).toBe(1);
-    expect(Buffer.concat(output).toString()).toContain("No managed insπre instance is running.");
+    expect(Buffer.concat(output).toString()).toContain(
+      "No managed insπre instance is running.",
+    );
 
     const stopOutput = runLauncher(["stop"], env);
     expect(stopOutput).toContain("Stopped insπre process");
-    const exitCode = await new Promise<number | null>((resolveExit) => child.once("close", (code) => resolveExit(code)));
+    const exitCode = await new Promise<number | null>((resolveExit) =>
+      child.once("close", (code) => resolveExit(code)),
+    );
     expect(exitCode).toBe(0);
     activeEnvironment = null;
-    await expect(readFile(statePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(statePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
-    const restarted = spawn(launcher, ["start"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    const restarted = spawn(launcher, ["start"], {
+      cwd: root,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     activeEnvironment = env;
     children.push(restarted);
     await waitFor(() => {
@@ -110,10 +150,16 @@ describe("production launcher", () => {
         return false;
       }
     });
-    const secondState = JSON.parse(await readFile(statePath, "utf8")) as { token: string };
+    const secondState = JSON.parse(await readFile(statePath, "utf8")) as {
+      token: string;
+    };
     expect(secondState.token).toBe(firstState.token);
     expect(runLauncher(["stop"], env)).toContain("Stopped insπre process");
-    const restartedExit = restarted.exitCode ?? await new Promise<number | null>((resolveExit) => restarted.once("close", resolveExit));
+    const restartedExit =
+      restarted.exitCode ??
+      (await new Promise<number | null>((resolveExit) =>
+        restarted.once("close", resolveExit),
+      ));
     expect(restartedExit).toBe(0);
     activeEnvironment = null;
   }, 120_000);

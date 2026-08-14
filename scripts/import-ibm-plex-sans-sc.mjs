@@ -1,6 +1,14 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -9,7 +17,8 @@ const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
 const archive = process.argv[2] ? resolve(process.argv[2]) : null;
 const packageIdentity = "@ibm/plex-sans-sc@1.1.0";
-const packageIntegrity = "sha512-IkhORwgw/CrsUss7uW9Rj6KKSsGQoIyIaNWjjju/7sV7SYS3yk0c/DgZN/leIG3Co5lN/X4Or/sQaL+SdvmSIg==";
+const packageIntegrity =
+  "sha512-IkhORwgw/CrsUss7uW9Rj6KKSsGQoIyIaNWjjju/7sV7SYS3yk0c/DgZN/leIG3Co5lN/X4Or/sQaL+SdvmSIg==";
 const packageGitHead = "222657a016f31e6d913ede88520de7dec84dc81b";
 const weights = new Map([
   ["Regular", 400],
@@ -41,11 +50,14 @@ function unicodeCodepoints(value) {
   const codepoints = new Set();
   for (const token of value.split(",").map((part) => part.trim())) {
     const match = token.match(/^U\+([A-F0-9]{1,6})(?:-([A-F0-9]{1,6}))?$/u);
-    if (!match) throw new Error(`Unsupported official unicode-range token: ${token}`);
+    if (!match)
+      throw new Error(`Unsupported official unicode-range token: ${token}`);
     const start = Number.parseInt(match[1], 16);
     const end = Number.parseInt(match[2] ?? match[1], 16);
-    if (end < start || end > 0x10ffff) throw new Error(`Invalid official unicode-range token: ${token}`);
-    for (let codepoint = start; codepoint <= end; codepoint += 1) codepoints.add(codepoint);
+    if (end < start || end > 0x10ffff)
+      throw new Error(`Invalid official unicode-range token: ${token}`);
+    for (let codepoint = start; codepoint <= end; codepoint += 1)
+      codepoints.add(codepoint);
   }
   return codepoints;
 }
@@ -54,27 +66,41 @@ function extractFaces(css) {
   const faces = [];
   for (const match of css.matchAll(/@font-face\s*\{[^}]+\}/gu)) {
     const block = match[0];
-    const source = block.match(/IBMPlexSansSC-(Regular|Medium|SemiBold)-(\d{3})\.woff2/u);
+    const source = block.match(
+      /IBMPlexSansSC-(Regular|Medium|SemiBold)-(\d{3})\.woff2/u,
+    );
     if (!source) continue;
     const unicodeRange = block.match(/unicode-range:\s*([^;]+);/u)?.[1];
-    if (!unicodeRange) throw new Error(`Missing unicode-range for ${source[0]}`);
+    if (!unicodeRange)
+      throw new Error(`Missing unicode-range for ${source[0]}`);
     faces.push({ style: source[1], index: source[2], unicodeRange });
   }
   const expected = Array.from({ length: 217 }, (_, index) => index)
     .filter((index) => index !== 99)
     .map((index) => String(index).padStart(3, "0"));
   for (const style of weights.keys()) {
-    const indexes = faces.filter((face) => face.style === style).map((face) => face.index);
+    const indexes = faces
+      .filter((face) => face.style === style)
+      .map((face) => face.index);
     if (indexes.join("\n") !== expected.join("\n")) {
-      throw new Error(`Official ${style} split is not the expected 216 ordered faces`);
+      throw new Error(
+        `Official ${style} split is not the expected 216 ordered faces`,
+      );
     }
   }
-  if (faces.length !== 648) throw new Error(`Expected 648 split faces, received ${faces.length}`);
+  if (faces.length !== 648)
+    throw new Error(`Expected 648 split faces, received ${faces.length}`);
 
-  const regular = new Map(faces.filter((face) => face.style === "Regular").map((face) => [face.index, face.unicodeRange]));
+  const regular = new Map(
+    faces
+      .filter((face) => face.style === "Regular")
+      .map((face) => [face.index, face.unicodeRange]),
+  );
   for (const face of faces) {
     if (regular.get(face.index) !== face.unicodeRange) {
-      throw new Error(`Official weights disagree on unicode range ${face.index}`);
+      throw new Error(
+        `Official weights disagree on unicode range ${face.index}`,
+      );
     }
   }
   const covered = new Set();
@@ -86,10 +112,14 @@ function extractFaces(css) {
     }
   }
   if (covered.size !== 29_286 || overlapCount !== 169) {
-    throw new Error("Official split coverage does not match the reviewed 1.1.0 release");
+    throw new Error(
+      "Official split coverage does not match the reviewed 1.1.0 release",
+    );
   }
-  return faces.sort((left, right) =>
-    (weights.get(left.style) - weights.get(right.style)) || left.index.localeCompare(right.index),
+  return faces.sort(
+    (left, right) =>
+      weights.get(left.style) - weights.get(right.style) ||
+      left.index.localeCompare(right.index),
   );
 }
 
@@ -100,42 +130,61 @@ function renderCss(faces) {
     `   npm integrity: ${packageIntegrity} */`,
     "",
   ].join("\n");
-  const blocks = faces.map(({ style, index, unicodeRange }) => [
-    "@font-face {",
-    '  font-family: "IBM Plex Sans SC";',
-    "  font-style: normal;",
-    `  font-weight: ${weights.get(style)};`,
-    "  font-display: swap;",
-    `  src: url("./IBMPlexSansSC-${style}-${index}.woff2") format("woff2");`,
-    "  unicode-range:",
-    `${formatUnicodeRange(unicodeRange)};`,
-    "}",
-  ].join("\n"));
+  const blocks = faces.map(({ style, index, unicodeRange }) =>
+    [
+      "@font-face {",
+      '  font-family: "IBM Plex Sans SC";',
+      "  font-style: normal;",
+      `  font-weight: ${weights.get(style)};`,
+      "  font-display: swap;",
+      `  src: url("./IBMPlexSansSC-${style}-${index}.woff2") format("woff2");`,
+      "  unicode-range:",
+      `${formatUnicodeRange(unicodeRange)};`,
+      "}",
+    ].join("\n"),
+  );
   return `${header}${blocks.join("\n\n")}\n`;
 }
 
 if (!archive) {
-  throw new Error(`Usage: node ${basename(import.meta.filename)} /path/to/ibm-plex-sans-sc-1.1.0.tgz`);
+  throw new Error(
+    `Usage: node ${basename(import.meta.filename)} /path/to/ibm-plex-sans-sc-1.1.0.tgz`,
+  );
 }
 
 const temporary = await mkdtemp(join(tmpdir(), "inspire-ibm-plex-sans-sc-"));
-const staging = join(root, "src/assets/fonts", `.ibm-plex-sans-sc-${process.pid}`);
+const staging = join(
+  root,
+  "src/assets/fonts",
+  `.ibm-plex-sans-sc-${process.pid}`,
+);
 const target = join(root, "src/assets/fonts/ibm-plex-sans-sc");
 try {
   const archiveBytes = await readFile(archive);
   const actualIntegrity = `sha512-${digest("sha512", archiveBytes, "base64")}`;
   if (actualIntegrity !== packageIntegrity) {
-    throw new Error(`Archive integrity mismatch: expected ${packageIntegrity}, received ${actualIntegrity}`);
+    throw new Error(
+      `Archive integrity mismatch: expected ${packageIntegrity}, received ${actualIntegrity}`,
+    );
   }
   await execFile("tar", ["-xzf", archive, "-C", temporary]);
   const packageRoot = join(temporary, "package");
-  const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
-  if (`${metadata.name}@${metadata.version}` !== packageIdentity || metadata.license !== "OFL-1.1") {
+  const metadata = JSON.parse(
+    await readFile(join(packageRoot, "package.json"), "utf8"),
+  );
+  if (
+    `${metadata.name}@${metadata.version}` !== packageIdentity ||
+    metadata.license !== "OFL-1.1"
+  ) {
     throw new Error("Archive has the wrong IBM Plex Sans SC package identity");
   }
-  if (metadata.gitHead !== packageGitHead) throw new Error("Archive has the wrong source gitHead");
+  if (metadata.gitHead !== packageGitHead)
+    throw new Error("Archive has the wrong source gitHead");
 
-  const officialCss = await readFile(join(packageRoot, "css/ibm-plex-sans-sc-all.css"), "utf8");
+  const officialCss = await readFile(
+    join(packageRoot, "css/ibm-plex-sans-sc-all.css"),
+    "utf8",
+  );
   const faces = extractFaces(officialCss);
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
@@ -143,7 +192,10 @@ try {
   const copied = [];
   for (const { style, index } of faces) {
     const filename = `IBMPlexSansSC-${style}-${index}.woff2`;
-    await copyFile(join(packageRoot, "fonts/split/woff2/hinted", filename), join(staging, filename));
+    await copyFile(
+      join(packageRoot, "fonts/split/woff2/hinted", filename),
+      join(staging, filename),
+    );
     copied.push(filename);
   }
   const css = renderCss(faces);
@@ -152,9 +204,15 @@ try {
 
   const manifest = [];
   for (const filename of copied.sort()) {
-    manifest.push(`${digest("sha256", await readFile(join(staging, filename)))}  ${filename}`);
+    manifest.push(
+      `${digest("sha256", await readFile(join(staging, filename)))}  ${filename}`,
+    );
   }
-  await writeFile(join(staging, "SHA256SUMS"), `${manifest.join("\n")}\n`, "ascii");
+  await writeFile(
+    join(staging, "SHA256SUMS"),
+    `${manifest.join("\n")}\n`,
+    "ascii",
+  );
 
   await rm(target, { recursive: true, force: true });
   await rename(staging, target);
@@ -162,8 +220,14 @@ try {
     .replace(/\r\n?/gu, "\n")
     .replace(/[\t ]+$/gmu, "")
     .trimEnd();
-  await writeFile(join(root, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), `${license}\n`, "utf8");
-  console.log(`Imported ${faces.length} untouched official split faces from ${packageIdentity}`);
+  await writeFile(
+    join(root, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"),
+    `${license}\n`,
+    "utf8",
+  );
+  console.log(
+    `Imported ${faces.length} untouched official split faces from ${packageIdentity}`,
+  );
 } finally {
   await rm(staging, { recursive: true, force: true });
   await rm(temporary, { recursive: true, force: true });

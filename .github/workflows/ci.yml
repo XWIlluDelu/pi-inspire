@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run ci
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-artifacts
+          path: |
+            output/playwright/
+            test-results/
+          if-no-files-found: ignore
+
+  size-report:
+    # Measurement remains visible when it breaks but must not mask the required
+    # correctness gate in `quality`.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # `size:report` builds the release client and compiled host before packing
+      # with lifecycle scripts disabled, so its inventory describes the release
+      # artifact rather than a clean-checkout source-only tarball.
+      - run: mkdir -p output && npm run size:report | tee output/size-report.json
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: size-report
+          path: output/size-report.json
+          if-no-files-found: ignore
+
+  release-verify:
+    # The full packaged-host smoke is release evidence. Run it on the main
+    # branch rather than making every pull-request edit pay for a second pack,
+    # install, mock host, and real Pi startup.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run release:verify

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "biome.jsonc",
+      "package.json",
+      "playwright.config.ts",
+      "scripts/**/*.{ts,mjs}",
+      "src/**/*.{ts,tsx}",
+      "server/**/*.ts",
+      "shared/**/*.ts",
+      "tests/**/*.{ts,tsx,mjs}",
+      "*.config.{ts,js,mjs}"
+    ],
+    "ignoreUnknown": true
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "a11y": {
+        "useAriaPropsSupportedByRole": "error"
+      },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "useExhaustiveDependencies": {
+          "level": "error",
+          "options": { "reportUnnecessaryDependencies": false }
+        }
+      },
+      "nursery": {
+        "noFloatingPromises": "error"
+      },
+      "suspicious": {
+        "noDuplicateCase": "error",
+        "noImportCycles": "error"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}
