@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>insπre — Trace workbench</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ======================= NAVIGATION LEDGER ======================= -->
+<div class="nav-scrim" id="nav-scrim" hidden></div>
+<aside class="nav" id="nav" aria-label="会话导航">
+  <header class="nav__brand">
+    <span class="reticle" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="16" height="16">
+        <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M8 0v4M8 12v4M0 8h4M12 8h4" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="8" cy="8" r="1.6" fill="currentColor"/>
+      </svg>
+    </span>
+    <span class="wordmark">ins<span class="wordmark__pi">π</span>re</span>
+    <button class="iconbtn nav__close" id="nav-close" type="button" aria-label="关闭导航" aria-controls="nav" title="关闭导航">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </header>
+
+  <div class="nav__scroll">
+    <section class="nav__section" aria-labelledby="folio-pinned">
+      <h2 class="folio" id="folio-pinned">置顶<span class="folio__count">2</span></h2>
+      <ul class="ledger">
+        <li class="ledger__row">
+          <span class="lamp lamp--signal lamp--live" title="运行中" aria-label="运行中"></span>
+          <span class="ledger__title">引用索引缓存键翻页漂移</span>
+          <span class="ledger__age">现在</span>
+        </li>
+        <li class="ledger__row">
+          <span class="lamp lamp--success" title="已完成" aria-label="已完成"></span>
+          <span class="ledger__title">KaTeX 复制投影的分界符</span>
+          <span class="ledger__age">2天</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="nav__section" aria-labelledby="folio-docdoki">
+      <h2 class="folio" id="folio-docdoki">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        doc-doki<span class="folio__count">3</span>
+      </h2>
+      <ul class="ledger">
+        <li class="ledger__row ledger__row--selected">
+          <span class="lamp lamp--signal lamp--live" title="运行中" aria-label="运行中"></span>
+          <span class="ledger__title">引用索引缓存键翻页漂移</span>
+          <span class="ledger__age">现在</span>
+        </li>
+        <li class="ledger__row">
+          <span class="lamp lamp--idle" title="空闲" aria-label="空闲"></span>
+          <span class="ledger__title">Changes 面板滚动轨优先级</span>
+          <span class="ledger__age">4时</span>
+        </li>
+        <li class="ledger__row">
+          <span class="lamp lamp--idle" title="空闲" aria-label="空闲"></span>
+          <span class="ledger__title">settings.json 损坏时的冲突投影</span>
+          <span class="ledger__age">1天</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="nav__section" aria-labelledby="folio-inspire">
+      <h2 class="folio" id="folio-inspire">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        inspire<span class="folio__count">4</span>
+      </h2>
+      <ul class="ledger">
+        <li class="ledger__row">
+          <span class="lamp lamp--warning" title="需要注意" aria-label="需要注意"></span>
+          <span class="ledger__title">模型切换被拒后的 MRU 回滚</span>
+          <span class="ledger__age">3天</span>
+        </li>
+        <li class="ledger__row">
+          <span class="lamp lamp--idle" title="已停止" aria-label="已停止"></span>
+          <span class="ledger__title">已停止 · 附件 32 MiB 批中止</span>
+          <span class="ledger__age">5天</span>
+        </li>
+        <li class="ledger__row">
+          <span class="lamp lamp--idle" title="空闲" aria-label="空闲"></span>
+          <span class="ledger__title">托盘通知的标题合成规则</span>
+          <span class="ledger__age">1周</span>
+        </li>
+      </ul>
+      <button class="load-older mono" type="button">加载更早会话 · 已显示 9 / 47</button>
+    </section>
+
+    <section class="nav__section" aria-labelledby="folio-hidden">
+      <h2 class="folio folio--toggle" id="folio-hidden">隐藏<span class="folio__count">1</span></h2>
+    </section>
+  </div>
+
+  <section class="explorer" aria-label="工作区文件">
+    <h2 class="folio">工作区<span class="folio__count">src/</span></h2>
+    <ul class="ledger ledger--tree mono">
+      <li class="ledger__row"><span class="git-mark git-mark--m">M</span><span class="ledger__title">session-projection.ts</span><span class="ledger__age">ts</span></li>
+      <li class="ledger__row"><span class="git-mark git-mark--m">M</span><span class="ledger__title">resources.ts</span><span class="ledger__age">ts</span></li>
+      <li class="ledger__row"><span class="git-mark git-mark--u">?</span><span class="ledger__title">cache-key.test.ts</span><span class="ledger__age">ts</span></li>
+      <li class="ledger__row"><span class="git-mark">·</span><span class="ledger__title">styles.css</span><span class="ledger__age">css</span></li>
+    </ul>
+  </section>
+</aside>
+
+<!-- ======================= CENTER COLUMN ======================= -->
+<main class="center">
+  <header class="topbar">
+    <button class="iconbtn topbar__navbtn" id="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="nav">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <h1 class="topbar__title" title="引用索引缓存键翻页漂移">引用索引缓存键翻页漂移</h1>
+    <div class="topbar__meta mono">
+      <button class="topbar__path" type="button" title="~/others/inspire — 点击复制绝对路径">inspire</button>
+      <button class="topbar__git" id="git-summary" type="button" title="打开 Changes 面板">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6M18 9a9 9 0 0 1-9 9"/></svg>
+        main <span class="git-dirty">±3</span>
+      </button>
+    </div>
+    <div class="topbar__status">
+      <span class="tag tag--live"><span class="lamp lamp--signal lamp--live" aria-hidden="true"></span>运行中</span>
+      <span class="tag tag--muted" title="扩展 channel 已连接">ext·2</span>
+    </div>
+    <div class="topbar__actions">
+      <button class="iconbtn" id="search-button" type="button" aria-label="搜索会话内容" title="搜索会话内容">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="iconbtn" id="pane-toggle" type="button" aria-label="切换资源面板" aria-expanded="true" aria-controls="pane" title="切换资源面板">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="0"/><path d="M15 4v16"/></svg>
+      </button>
+      <button class="iconbtn" id="theme-toggle" type="button" aria-label="切换明暗主题" aria-pressed="false" title="切换明暗主题">
+        <svg class="ico ico--sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ico ico--moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      </button>
+      <button class="iconbtn" id="settings-button" type="button" aria-label="设置" aria-haspopup="dialog" title="设置">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.24.6.86 1 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Reserved ruled search rail: occupies layout height only while active -->
+  <div class="search-rail" id="search-rail" role="search" hidden>
+    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input class="search-rail__input mono" id="search-input" type="search" placeholder="搜索会话文本…" aria-label="搜索会话文本">
+    <span class="search-rail__count mono" id="search-count">0 / 0</span>
+    <button class="iconbtn" type="button" aria-label="上一条结果" title="上一条结果">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+    </button>
+    <button class="iconbtn" type="button" aria-label="下一条结果" title="下一条结果">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button class="iconbtn" id="search-close" type="button" aria-label="关闭搜索" title="关闭搜索">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+
+  <div class="transcript" id="transcript">
+    <div class="transcript__fade" aria-hidden="true"></div>
+    <div class="reading">
+
+      <!-- user turn -->
+      <div class="turn turn--user">
+        <div class="bubble">
+          <p>帮我看一下 <code>src/resources.ts</code> 里引用索引的缓存键。现在 transcript 向上翻页之后，Resources 面板的引用列表偶尔会闪回旧数据，刷新才恢复。</p>
+        </div>
+      </div>
+
+      <!-- assistant round 1 -->
+      <div class="turn turn--assistant">
+        <div class="folio-line mono">
+          <span class="folio-line__id">Pi</span>
+          <span>kimi-k3</span><span>14:02</span><span>tool_use</span>
+        </div>
+
+        <!-- thinking plate, expanded -->
+        <section class="plate" data-tone="think">
+          <header class="plate__head">
+            <span class="specimen" aria-hidden="true"></span>
+            <svg class="ico plate__ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 20h6"/></svg>
+            <span class="plate__label">Thinking</span>
+            <span class="plate__summary">缓存键没有纳入 transcript revision，翻页 prepend 后索引被当成仍然有效……</span>
+            <svg class="ico chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </header>
+          <div class="plate__body plate__body--think">
+            <p>问题大概率出在引用索引的缓存键：<code>{session, branch view, projection revision}</code> 三元组里，revision 只跟踪 projection 的写版本，而向上翻页是一次 prepend —— 它不改变已有条目的相对顺序，却会让“按 transcript 顺序派生”的索引与面板已挂载的页错位。先读代码确认键的构成，再确认 prepend 路径是否递增 revision。</p>
+          </div>
+        </section>
+
+        <!-- tool plate, expanded, driven by #tool-toggle -->
+        <section class="plate plate--tool" data-tone="info">
+          <header class="plate__head">
+            <span class="specimen" aria-hidden="true"></span>
+            <svg class="ico plate__ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M8 9h8M8 13h5"/></svg>
+            <span class="plate__label">read</span>
+            <span class="plate__summary">src/resources.ts — 212 行</span>
+            <span class="plate__status" title="成功">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            </span>
+            <button class="iconbtn plate__toggle" id="tool-toggle" type="button" aria-expanded="true" aria-controls="tool-body" aria-label="折叠工具详情" title="折叠 / 展开工具详情">
+              <svg class="ico chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </header>
+          <div class="plate__body" id="tool-body">
+            <figure class="code">
+              <figcaption class="code__head mono"><span>typescript</span>
+                <button class="code__copy mono" type="button">复制</button>
+              </figcaption>
+              <pre><code><span class="tok-k">const</span> <span class="tok-f">indexKey</span> = (s: <span class="tok-t">SessionRef</span>) =&gt; [
+  s.sessionId,
+  s.branchView,          <span class="tok-c">//  opaque view generation</span>
+  s.projectionRevision,  <span class="tok-c">//  writes only — prepends excluded</span>
+].<span class="tok-f">join</span>(<span class="tok-s">"\u0000"</span>);</code></pre>
+            </figure>
+          </div>
+        </section>
+
+        <!-- compact tool batch -->
+        <div class="batch" role="list" aria-label="工具批次 · 4 个调用">
+          <button class="tile" type="button" role="listitem" title="grep · cacheKey · 成功">
+            <span class="specimen specimen--info" aria-hidden="true"></span>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <svg class="ico tile__ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+          </button>
+          <button class="tile" type="button" role="listitem" title="read · session-projection.ts · 成功">
+            <span class="specimen specimen--info" aria-hidden="true"></span>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M8 9h8M8 13h5"/></svg>
+            <svg class="ico tile__ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+          </button>
+          <button class="tile" type="button" role="listitem" title="edit · resources.ts · 成功">
+            <span class="specimen specimen--info" aria-hidden="true"></span>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            <svg class="ico tile__ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+          </button>
+          <button class="tile tile--error" type="button" role="listitem" title="bash · vitest run · 失败 (exit 1)">
+            <span class="specimen specimen--error" aria-hidden="true"></span>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6M12 19h8"/></svg>
+            <svg class="ico tile__err" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+          </button>
+        </div>
+
+        <!-- answer -->
+        <div class="prose">
+          <p>确认了：闪回不是面板的问题，是缓存键的定义漏掉了翻页这一维度。引用索引按 <code>{session, branch view, projection revision}</code> 缓存，而 <code>projectionRevision</code> 只在追加写时递增。向上翻页是一次 <em>prepend</em>：它不改写任何已有条目，所以 revision 不变，键命中，面板直接复用了按旧窗口派生的索引 —— 但其中“最近八条”的头几个位置已经属于新载入的历史。</p>
+
+          <h3>修复：把 prepend 纳入 revision</h3>
+          <p>最小的正确改法是让 revision 覆盖所有改变投影顺序的操作，而不是只覆盖追加。命中条件可以写成：</p>
+          <div class="math" aria-label="命中条件公式">
+            <span class="math__expr">hit&nbsp;&ThinSpace;⟺&ThinSpace;&nbsp;(s, v, r) = (s′, v′, r′),&nbsp;&nbsp;r ≔ writes + prepends</span>
+          </div>
+
+          <figure class="code">
+            <figcaption class="code__head mono"><span>diff · server/resources.ts</span>
+              <button class="code__copy mono" type="button">复制</button>
+            </figcaption>
+            <pre><code><span class="tok-h">@@ projection revision @@</span>
+<span class="tok-d">-  bump();            // append-only writes</span>
+<span class="tok-a">+  bump({ prepend });  // any order-changing op</span>
+<span class="tok-a">+  indexCache.invalidate(sessionId);</span></code></pre>
+          </figure>
+
+          <p>改动后的缓存语义对照：</p>
+          <table class="ledger-table">
+            <thead>
+              <tr><th>操作</th><th>revision</th><th>索引缓存</th><th>面板表现</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>追加写 (append)</td><td class="mono">+1</td><td>保留（键随 revision 前进）</td><td>正常</td></tr>
+              <tr><td>向上翻页 (prepend)</td><td class="mono">+1 <span class="ok-mark">← 新增</span></td><td>失效并重算</td><td>不再闪回</td></tr>
+              <tr><td>branch 切换</td><td class="mono">view 代际更换</td><td>整体作废</td><td>正常</td></tr>
+            </tbody>
+          </table>
+
+          <p>有一个测试失败了，但它证明的是旧行为而不是回归：<code>cache-key.test.ts</code> 里 “prepend 不改变缓存键” 的断言需要反过来写。<code>bash</code> 的退出码 1 就来自这条断言（见上方工具批次）。改完断言后 <code>vitest run</code> 本地 47 条全过。</p>
+        </div>
+      </div>
+
+      <!-- assistant round 2 folio -->
+      <div class="folio-line mono">
+        <span class="folio-line__id">Pi</span>
+        <span>kimi-k3</span><span>14:03</span><span>end_turn</span>
+      </div>
+      <div class="prose">
+        <p>结论：键里补一个 prepend 维度的 revision 即可，授权边界不动 —— 索引仍然只按 <em>完整索引</em> 做授权，翻页只影响展示派生。需要我顺手把这条修进 <code>server/resources.ts</code> 吗？</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- docked composer console -->
+  <footer class="composer">
+    <div class="composer__chips">
+      <span class="tag tag--file mono">@src/resources.ts
+        <button class="tag__x" type="button" aria-label="移除引用 src/resources.ts">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </span>
+    </div>
+    <textarea class="composer__input" rows="2" placeholder="发消息、@ 引用项目文件、/ 命令…" aria-label="消息输入">把修复写进去，断言反过来，跑一遍 vitest。</textarea>
+    <div class="composer__meta">
+      <div class="composer__tools">
+        <button class="ctl mono" type="button" aria-label="选择模型" title="模型">
+          kimi-k3
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="ctl mono" type="button" aria-label="思考强度" title="思考强度">
+          thinking·high
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="iconbtn" type="button" aria-label="引用项目文件" title="引用项目文件">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>
+        </button>
+        <button class="iconbtn" type="button" aria-label="添加附件" title="添加附件">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+      </div>
+      <div class="composer__right">
+        <span class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42"
+              aria-label="上下文占用 42%" title="上下文 42%（84,120 / 200,000 tokens）— 输入 /compact 可压缩">
+          <svg class="meter__ring" viewBox="0 0 14 14" aria-hidden="true">
+            <circle class="meter__track" cx="7" cy="7" r="5"/>
+            <circle class="meter__fill" cx="7" cy="7" r="5" stroke-dasharray="13.2 31.4" transform="rotate(-90 7 7)"/>
+          </svg>
+          <span class="mono">42%</span>
+        </span>
+        <button class="send" type="button" aria-label="发送" title="发送">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+        </button>
+      </div>
+    </div>
+  </footer>
+</main>
+
+<!-- ======================= CONTEXT / RESOURCES PANE ======================= -->
+<aside class="pane" id="pane" aria-label="上下文资源">
+  <div class="pane__modes" role="tablist" aria-label="面板模式">
+    <button class="mode mono is-active" role="tab" aria-selected="true" data-mode="files" type="button">Files</button>
+    <button class="mode mono" role="tab" aria-selected="false" data-mode="changes" type="button">Changes</button>
+    <button class="mode mono" role="tab" aria-selected="false" data-mode="history" type="button">History</button>
+  </div>
+
+  <div class="pane__list" id="pane-files" role="tabpanel" aria-label="会话引用的文件">
+    <h2 class="folio">最近引用<span class="folio__count">8</span></h2>
+    <ul class="ledger ledger--files">
+      <li class="ledger__row"><span class="ledger__title mono">src/resources.ts</span><span class="ledger__age">2分</span></li>
+      <li class="ledger__row"><span class="ledger__title mono">src/session-projection.ts</span><span class="ledger__age">2分</span></li>
+      <li class="ledger__row"><span class="ledger__title mono">tests/web/resources-pane.test.tsx</span><span class="ledger__age">9分</span></li>
+      <li class="ledger__row ledger__row--missing"><span class="ledger__title mono">/tmp/old-machine/cache.ts</span><span class="ledger__age" title="此路径在本机不存在">缺失</span></li>
+      <li class="ledger__row"><span class="ledger__title mono">shared/contracts.ts</span><span class="ledger__age">26分</span></li>
+      <li class="ledger__row"><span class="ledger__title mono">docdoki/specs/resource-preview.md</span><span class="ledger__age">1时</span></li>
+    </ul>
+    <button class="load-older mono" type="button">更早 · 64 行窗口</button>
+  </div>
+
+  <div class="pane__list" id="pane-changes" role="tabpanel" aria-label="Git 工作树变更" hidden>
+    <h2 class="folio">工作树<span class="folio__count">3</span></h2>
+    <ul class="ledger ledger--files">
+      <li class="ledger__row"><span class="git-mark git-mark--m">M</span><span class="ledger__title mono">server/resources.ts</span><span class="ledger__age">+12 −3</span></li>
+      <li class="ledger__row"><span class="git-mark git-mark--m">M</span><span class="ledger__title mono">src/session-projection.ts</span><span class="ledger__age">+4 −1</span></li>
+      <li class="ledger__row"><span class="git-mark git-mark--u">?</span><span class="ledger__title mono">tests/server/cache-key.test.ts</span><span class="ledger__age">新</span></li>
+    </ul>
+  </div>
+
+  <div class="pane__list" id="pane-history" role="tabpanel" aria-label="Pi 会话历史分支" hidden>
+    <h2 class="folio">分支树<span class="folio__count">当前路径</span></h2>
+    <ul class="ledger ledger--files">
+      <li class="ledger__row ledger__row--selected"><span class="ledger__title">引用索引缓存键翻页漂移</span><span class="ledger__age">叶</span></li>
+      <li class="ledger__row"><span class="ledger__title">↳ fork · 改用内容哈希键</span><span class="ledger__age">3条</span></li>
+    </ul>
+  </div>
+</aside>
+
+<!-- ======================= SETTINGS OVERLAY ======================= -->
+<div class="scrim" id="settings-scrim" hidden></div>
+<div class="dialog" id="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+  <header class="dialog__head">
+    <h2 id="settings-title">设置</h2>
+    <button class="iconbtn" id="settings-close" type="button" aria-label="关闭设置" title="关闭设置">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </header>
+  <div class="dialog__body">
+    <section class="field">
+      <div class="field__text">
+        <label for="f-theme">主题</label>
+        <p>浅色为调校基准；深色使用同一套组件架构与色相族。</p>
+      </div>
+      <select id="f-theme" class="ctl mono">
+        <option>跟随系统</option><option selected>浅色</option><option>深色</option>
+      </select>
+    </section>
+    <section class="field">
+      <div class="field__text">
+        <label for="f-thinking">思考卡片</label>
+        <p>Dynamic 在本轮 LLM 调用期间保持展开，下一轮开始或代理收尾时请求折叠。</p>
+      </div>
+      <select id="f-thinking" class="ctl mono">
+        <option selected>Dynamic（推荐）</option><option>展开</option><option>折叠</option><option>隐藏</option>
+      </select>
+    </section>
+    <section class="field">
+      <div class="field__text">
+        <label for="f-tools">工具卡片</label>
+        <p>Compact 把相邻调用收成一行图符；点选任一图符向下展开完整卡片。</p>
+      </div>
+      <select id="f-tools" class="ctl mono">
+        <option selected>Dynamic（推荐）</option><option>展开</option><option>折叠</option><option>Compact</option><option>隐藏</option>
+      </select>
+    </section>
+    <section class="field">
+      <div class="field__text">
+        <label for="f-attention">完成提醒</label>
+        <p>仅在浏览器观察到一次实时收尾跳转时触发；历史快照不产生提醒。</p>
+      </div>
+      <select id="f-attention" class="ctl mono">
+        <option selected>关闭</option><option>标题标记</option><option>桌面通知</option>
+      </select>
+    </section>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
