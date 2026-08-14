@@ -1,0 +1,164 @@
+import AxeBuilder from "@axe-core/playwright";
+import { expect, test } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const token = "inspire-browser-test-token";
+
+async function pairedPage(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Pair" }).click();
+  await expect(page.getByRole("main")).toBeVisible();
+}
+
+type FontTransfer = { url: string; encodedBytes: number };
+
+/** CDP's encodedDataLength is an observed cold-cache transfer metric. It is
+ * intentionally separate from the static package-candidate size report. */
+async function measureColdStartFonts(page: import("@playwright/test").Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const pending = new Map<string, string>();
+  const fonts: FontTransfer[] = [];
+  await cdp.send("Network.enable");
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+  cdp.on(
+    "Network.responseReceived",
+    (event: { requestId: string; type: string; response: { url: string } }) => {
+      if (event.type === "Font")
+        pending.set(event.requestId, event.response.url);
+    },
+  );
+  cdp.on(
+    "Network.loadingFinished",
+    (event: { requestId: string; encodedDataLength: number }) => {
+      const url = pending.get(event.requestId);
+      if (!url) return;
+      fonts.push({ url, encodedBytes: event.encodedDataLength });
+      pending.delete(event.requestId);
+    },
+  );
+  return async () => {
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForLoadState("networkidle");
+    await cdp.detach();
+    return {
+      measurement:
+        "CDP Network.loadingFinished encodedDataLength with cache disabled",
+      fonts,
+      totalEncodedBytes: fonts.reduce(
+        (total, font) => total + font.encodedBytes,
+        0,
+      ),
+    };
+  };
+}
+
+async function attachFontTransfer(
+  page: import("@playwright/test").Page,
+  testInfo: import("@playwright/test").TestInfo,
+  label: string,
+) {
+  const stop = await measureColdStartFonts(page);
+  return async () => {
+    const report = await stop();
+    // Keep the metric in the CI artifact even for a passing test; reporters
+    // are allowed to discard in-memory attachments for successful cases.
+    const directory = join("output", "playwright", "font-transfer");
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `${label}.json`);
+    await writeFile(path, JSON.stringify(report, null, 2));
+    await testInfo.attach(`cold-start-font-transfer-${label}.json`, {
+      path,
+      contentType: "application/json",
+    });
+    return report;
+  };
+}
+
+test("mock workbench pairs, clears its URL token, and opens context surfaces", async ({
+  page,
+}, testInfo) => {
+  const stopFontTransfer = await attachFontTransfer(page, testInfo, "desktop");
+  const externalRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost")
+      externalRequests.push(url.href);
+  });
+
+  await pairedPage(page);
+  await page
+    .getByRole("button", { name: "Review extension event lifecycle 2d" })
+    .click();
+  await expect(
+    page.getByText("Review extension event lifecycle").last(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Files and resources" }),
+  ).toBeVisible();
+  expect(externalRequests).toEqual([]);
+  const fontTransfer = await stopFontTransfer();
+  expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+});
+
+test("running composer exposes steer, queue-next, and abort controls", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const message = page.getByRole("textbox", { name: "Message" });
+  await message.fill("start a run for delivery controls");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("button", { name: "Steer", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Queue next", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Abort running task", exact: true }),
+  ).toBeVisible();
+
+  const queueNext = page.getByRole("button", {
+    name: "Queue next",
+    exact: true,
+  });
+  await queueNext.click();
+  await expect(queueNext).toHaveAttribute("aria-pressed", "true");
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Add a follow-up for after this task…",
+  );
+
+  await page.getByRole("button", { name: "Abort running task" }).click();
+  await expect(
+    page.getByRole("button", { name: "Abort running task" }),
+  ).toBeHidden();
+});
+
+test("narrow workbench keeps runtime status readable to accessibility tooling", async ({
+  page,
+}, testInfo) => {
+  const stopFontTransfer = await attachFontTransfer(
+    page,
+    testInfo,
+    "mobile-390px",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  const message = page.getByRole("textbox", { name: "Message" });
+  await message.fill("keep the status visible");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.locator(".topbar__status")).toContainText("Running");
+  const snapshot = await page.locator(".topbar__status").ariaSnapshot();
+  expect(snapshot).toContain("Running");
+
+  const results = await new AxeBuilder({ page })
+    .include(".topbar")
+    .include(".composer")
+    .analyze();
+  expect(results.violations).toEqual([]);
+  const fontTransfer = await stopFontTransfer();
+  expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+});

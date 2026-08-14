@@ -113,15 +113,16 @@ without creating a second browser store or Pi runtime authority.
 
 ## Current validation
 
-The accepted remote baseline is
-`d17b7ca`, whose `quality`, `size-report`, and `release-verify` jobs passed in
-GitHub Actions run
-[`31804910122`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/31804910122).
-The corresponding local worktree passed the expanded quality gate: Biome
-format/lint and import-boundary checks, TypeScript, 67 ordinary Vitest files /
-714 tests, 1 serial launcher test, production Vite build, and 3 mock-host
-Playwright scenarios. `npm run size:report`, `npm run release:verify`, and
-`git diff --check` also passed.
+The last pre-consolidation remote candidate, `62ff372`, passed `quality`,
+`size-report`, and `release-verify` in GitHub Actions run
+[`31805238878`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/31805238878).
+A consolidated delivery is accepted only after its exact pushed SHA passes
+`quality`, `size-report`, and `release-verify`; this stage intentionally does
+not self-identify a mutable commit SHA. Local verification covers Biome
+format/lint and import-boundary checks, TypeScript, 66 ordinary Vitest files /
+713 tests, one serial launcher test, the production Vite build, and three
+mock-host Playwright scenarios. `npm run size:report`, `npm run
+release:verify`, and `git diff --check` also pass.
 
 The new release verifier first exposed two runner-specific but real
 compatibility gaps: npm 10 emits a direct `npm publish --dry-run --json` record
@@ -132,12 +133,11 @@ local-only smoke model, and the product projects Pi's absent-model sentinel as
 no model instead of attempting a worker that must fail. Both fixes were
 validated by the exact remote run above.
 
-A subsequent local, uncommitted transport-ownership fence closes the resource
-probe re-pairing race: an old API's pending 401 cannot clear a fresh pairing
-that preserved the same session/view/revision. Its focused store test and full
-local gate passed with 67 ordinary Vitest files / 715 tests, 1 serial launcher
-test, and 3 Playwright scenarios; this paragraph must be replaced with an exact
-remote-SHA result when the change is shipped.
+The resource transport-ownership fence closes the probe re-pairing race: an old
+API's pending 401 cannot clear a fresh pairing that preserved the same
+session/view/revision. Resource list, probe, preview, and embedded-image work
+all require the initiating API identity and transport generation before
+committing state or reporting authentication failure.
 
 ## Next actions
 
