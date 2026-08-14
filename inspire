@@ -69,14 +69,9 @@ deps_hash() {
 
 # A fingerprint of every input that affects the built client, so a pulled
 # source or config change forces a rebuild instead of running an old bundle.
+# The build script uses this same Node implementation to stamp the checkout.
 source_hash() {
-  {
-    find src shared public index.html vite.config.ts tsconfig.json tsconfig.web.json tsconfig.server.json package-lock.json \
-      -type f 2>/dev/null | sort | while IFS= read -r file; do
-      printf '%s ' "$file"
-      hash_stdin < "$file" 2>/dev/null || true
-    done
-  } | hash_stdin
+  node "$root/scripts/source-build-hash.mjs"
 }
 
 ensure_deps() {
@@ -103,8 +98,7 @@ do_build() {
   echo "Building client…"
   # Retain build failures and warnings without printing hundreds of Unicode-range
   # font assets during an ordinary source launch.
-  npm run build -- --logLevel warn
-  printf '%s\n' "$(source_hash)" > dist/.inspire-build
+  npm run build
 }
 
 ensure_build() {
@@ -115,7 +109,7 @@ ensure_build() {
     fi
     return 0
   fi
-  if [[ ! -f dist/index.html || "$(cat dist/.inspire-build 2>/dev/null || true)" != "$(source_hash)" ]]; then
+  if [[ ! -f dist/index.html || "$(cat .inspire-build 2>/dev/null || true)" != "$(source_hash)" ]]; then
     do_build
   fi
 }

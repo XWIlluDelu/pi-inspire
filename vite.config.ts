@@ -5,7 +5,10 @@ import { defineConfig } from "vite";
 import { bundledLicenseNotices } from "./scripts/vite-license-notices.js";
 
 const require = createRequire(import.meta.url);
-const piTuiFuzzyModule = resolve(dirname(require.resolve("@earendil-works/pi-tui")), "fuzzy.js");
+const piTuiFuzzyModule = resolve(
+  dirname(require.resolve("@earendil-works/pi-tui")),
+  "fuzzy.js",
+);
 
 // Development proxy targets the local insπre host (server/index.ts, port 4587).
 // The host uses the deterministic development-only token INSPIRE_TOKEN=inspire-dev-token
@@ -15,7 +18,9 @@ export default defineConfig({
   resolve: {
     // pi-tui publicly exports fuzzyFilter from its Node-only package root. The
     // browser consumes that exact module without pulling in the terminal UI.
-    alias: [{ find: /^@earendil-works\/pi-tui$/, replacement: piTuiFuzzyModule }],
+    alias: [
+      { find: /^@earendil-works\/pi-tui$/, replacement: piTuiFuzzyModule },
+    ],
   },
   server: {
     port: 5173,
