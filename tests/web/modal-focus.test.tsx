@@ -44,15 +44,33 @@ describe("modal focus ownership", () => {
       const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
       return (
         <>
-          <button type="button" onClick={() => setOuterOpen(true)}>Open outer</button>
+          <button type="button" onClick={() => setOuterOpen(true)}>
+            Open outer
+          </button>
           {outerOpen ? (
-            <div ref={outerRef} role="dialog" aria-modal="true" aria-label="Outer" tabIndex={-1}>
-              <button type="button" onClick={() => setInnerOpen(true)}>Open inner</button>
+            <div
+              ref={outerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Outer"
+              tabIndex={-1}
+            >
+              <button type="button" onClick={() => setInnerOpen(true)}>
+                Open inner
+              </button>
             </div>
           ) : null}
           {innerOpen ? (
-            <div ref={innerRef} role="dialog" aria-modal="true" aria-label="Inner" tabIndex={-1}>
-              <button type="button" onClick={() => setInnerOpen(false)}>Close inner</button>
+            <div
+              ref={innerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Inner"
+              tabIndex={-1}
+            >
+              <button type="button" onClick={() => setInnerOpen(false)}>
+                Close inner
+              </button>
             </div>
           ) : null}
         </>
@@ -78,16 +96,36 @@ describe("modal focus ownership", () => {
       const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
       return (
         <>
-          <button type="button" onClick={() => setOuterOpen(true)}>Open outer</button>
+          <button type="button" onClick={() => setOuterOpen(true)}>
+            Open outer
+          </button>
           {outerOpen ? (
-            <div ref={outerRef} role="dialog" aria-modal="true" aria-label="Outer" tabIndex={-1}>
-              <button type="button" onClick={() => setInnerOpen(true)}>Open inner</button>
+            <div
+              ref={outerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Outer"
+              tabIndex={-1}
+            >
+              <button type="button" onClick={() => setInnerOpen(true)}>
+                Open inner
+              </button>
             </div>
           ) : null}
           {innerOpen ? (
-            <div ref={innerRef} role="dialog" aria-modal="true" aria-label="Inner" tabIndex={-1}>
-              <button type="button" onClick={() => setOuterOpen(false)}>Close outer first</button>
-              <button type="button" onClick={() => setInnerOpen(false)}>Close inner</button>
+            <div
+              ref={innerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Inner"
+              tabIndex={-1}
+            >
+              <button type="button" onClick={() => setOuterOpen(false)}>
+                Close outer first
+              </button>
+              <button type="button" onClick={() => setInnerOpen(false)}>
+                Close inner
+              </button>
             </div>
           ) : null}
         </>
@@ -101,7 +139,11 @@ describe("modal focus ownership", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open inner" }));
     fireEvent.click(screen.getByRole("button", { name: "Close outer first" }));
     expect(screen.queryByRole("dialog", { name: "Outer" })).toBeNull();
-    expect(screen.getByRole("dialog", { name: "Inner" }).contains(document.activeElement)).toBe(true);
+    expect(
+      screen
+        .getByRole("dialog", { name: "Inner" })
+        .contains(document.activeElement),
+    ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Close inner" }));
     await Promise.resolve();
     expect(document.activeElement).toBe(opener);
@@ -113,9 +155,17 @@ describe("modal focus ownership", () => {
       const ref = useModalFocus<HTMLDivElement>(open);
       return (
         <>
-          <button type="button" onClick={() => setOpen(true)}>Open</button>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
           {open ? (
-            <div ref={ref} role="dialog" aria-modal="true" aria-label="Delayed" tabIndex={-1}>
+            <div
+              ref={ref}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Delayed"
+              tabIndex={-1}
+            >
               <button type="button">Inside</button>
             </div>
           ) : null}
@@ -127,6 +177,8 @@ describe("modal focus ownership", () => {
     const opener = screen.getByRole("button", { name: "Open" });
     opener.focus();
     fireEvent.click(opener);
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Inside" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Inside" }),
+    );
   });
 });

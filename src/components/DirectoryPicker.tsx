@@ -31,7 +31,10 @@ export function DirectoryPicker({
 
   const load = (
     path?: string,
-    { fallbackHome = false, discoverRoots = false }: { fallbackHome?: boolean; discoverRoots?: boolean } = {},
+    {
+      fallbackHome = false,
+      discoverRoots = false,
+    }: { fallbackHome?: boolean; discoverRoots?: boolean } = {},
   ) => {
     const mine = ++ticket.current;
     setLoading(true);
@@ -40,7 +43,9 @@ export function DirectoryPicker({
       if (fallbackHome && path) return store.browseHostDirs();
       throw cause;
     });
-    const availableRoots = discoverRoots ? store.browseHostRoots() : Promise.resolve(null);
+    const availableRoots = discoverRoots
+      ? store.browseHostRoots()
+      : Promise.resolve(null);
     void Promise.all([listing, availableRoots])
       .then(([result, rootResult]) => {
         if (ticket.current !== mine) return;
@@ -48,17 +53,24 @@ export function DirectoryPicker({
         if (rootResult) setRoots(rootResult.roots);
       })
       .catch((cause: unknown) => {
-        if (ticket.current === mine) setError(cause instanceof Error ? cause.message : "Cannot open that directory");
+        if (ticket.current === mine)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Cannot open that directory",
+          );
       })
       .finally(() => {
         if (ticket.current === mine) setLoading(false);
       });
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initialization deliberately hands later navigation to the picker.
   useEffect(() => {
-    load(initial?.trim() || undefined, { fallbackHome: true, discoverRoots: true });
-    // mount only: the picker owns navigation after the first level
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load(initial?.trim() || undefined, {
+      fallbackHome: true,
+      discoverRoots: true,
+    });
   }, []);
 
   // Escape closes the picker before the global handlers can see it.
@@ -87,7 +99,11 @@ export function DirectoryPicker({
         <h2 className="dialog__title">Choose project directory</h2>
         <div className="dirpicker__path">{listing?.path ?? "…"}</div>
         {roots.length > 1 ? (
-          <div className="dirpicker__roots" role="group" aria-label="Filesystem roots">
+          <div
+            className="dirpicker__roots"
+            role="group"
+            aria-label="Filesystem roots"
+          >
             {roots.map((root) => (
               <button
                 key={root.path}
@@ -104,13 +120,22 @@ export function DirectoryPicker({
         ) : null}
         <div className="dirpicker__list">
           {listing?.parent ? (
-            <button type="button" className="dirpicker__row" onClick={() => load(listing.parent ?? undefined)}>
+            <button
+              type="button"
+              className="dirpicker__row"
+              onClick={() => load(listing.parent ?? undefined)}
+            >
               <CornerLeftUp size={13} aria-hidden />
               <span className="dirpicker__name">..</span>
             </button>
           ) : null}
           {listing?.dirs.map((entry) => (
-            <button key={entry.path} type="button" className="dirpicker__row" onClick={() => load(entry.path)}>
+            <button
+              key={entry.path}
+              type="button"
+              className="dirpicker__row"
+              onClick={() => load(entry.path)}
+            >
               <Folder size={13} aria-hidden />
               <span className="dirpicker__name">{entry.name}</span>
             </button>
@@ -120,7 +145,10 @@ export function DirectoryPicker({
               <Loader2 size={12} className="spin" aria-hidden /> Loading…
             </div>
           ) : error ? (
-            <div className="dirpicker__note dirpicker__note--error" role="alert">
+            <div
+              className="dirpicker__note dirpicker__note--error"
+              role="alert"
+            >
               {error}
             </div>
           ) : listing && listing.dirs.length === 0 ? (

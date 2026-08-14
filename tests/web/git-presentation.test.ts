@@ -5,7 +5,10 @@ import {
   gitDecorationForDirectory,
 } from "../../src/git-presentation";
 
-function change(overrides: Partial<GitFileChange>, workspacePath = "a/b.md"): GitFileChange {
+function change(
+  overrides: Partial<GitFileChange>,
+  workspacePath = "a/b.md",
+): GitFileChange {
   return {
     path: { id: "x", display: workspacePath, workspacePath },
     untracked: false,
@@ -13,7 +16,9 @@ function change(overrides: Partial<GitFileChange>, workspacePath = "a/b.md"): Gi
   };
 }
 
-function statusWith(files: GitFileChange[]): Extract<GitStatusResponse, { kind: "repository" }> {
+function statusWith(
+  files: GitFileChange[],
+): Extract<GitStatusResponse, { kind: "repository" }> {
   return {
     kind: "repository",
     head: { kind: "branch", name: "main", oid: "abc" },
@@ -27,10 +32,18 @@ function statusWith(files: GitFileChange[]): Extract<GitStatusResponse, { kind: 
 describe("gitDecorationForChange", () => {
   it("maps facets to decoration severity", () => {
     expect(gitDecorationForChange(undefined)).toBeNull();
-    expect(gitDecorationForChange(change({ conflict: { code: "UU" } }))).toBe("conflict");
-    expect(gitDecorationForChange(change({ untracked: true }))).toBe("untracked");
-    expect(gitDecorationForChange(change({ staged: { kind: "modified" } }))).toBe("modified");
-    expect(gitDecorationForChange(change({ unstaged: { kind: "modified" } }))).toBe("modified");
+    expect(gitDecorationForChange(change({ conflict: { code: "UU" } }))).toBe(
+      "conflict",
+    );
+    expect(gitDecorationForChange(change({ untracked: true }))).toBe(
+      "untracked",
+    );
+    expect(
+      gitDecorationForChange(change({ staged: { kind: "modified" } })),
+    ).toBe("modified");
+    expect(
+      gitDecorationForChange(change({ unstaged: { kind: "modified" } })),
+    ).toBe("modified");
     expect(gitDecorationForChange(change({}))).toBeNull();
   });
 });
@@ -38,8 +51,15 @@ describe("gitDecorationForChange", () => {
 describe("gitDecorationForDirectory", () => {
   it("returns null outside a repository or without matching descendants", () => {
     expect(gitDecorationForDirectory(null, "projects")).toBeNull();
-    expect(gitDecorationForDirectory({ kind: "not-repository" }, "projects")).toBeNull();
-    expect(gitDecorationForDirectory(statusWith([change({ untracked: true }, "other/x.md")]), "projects")).toBeNull();
+    expect(
+      gitDecorationForDirectory({ kind: "not-repository" }, "projects"),
+    ).toBeNull();
+    expect(
+      gitDecorationForDirectory(
+        statusWith([change({ untracked: true }, "other/x.md")]),
+        "projects",
+      ),
+    ).toBeNull();
   });
 
   it("rolls up the most severe descendant state (conflict > modified > untracked)", () => {
@@ -50,17 +70,23 @@ describe("gitDecorationForDirectory", () => {
     expect(gitDecorationForDirectory(status, "projects")).toBe("modified");
     expect(gitDecorationForDirectory(status, "projects/a")).toBe("modified");
     // Git represents a changed submodule by the directory path itself.
-    expect(gitDecorationForDirectory(
-      statusWith([change({ unstaged: { kind: "modified" } }, "vendor/module")]),
-      "vendor/module",
-    )).toBe("modified");
+    expect(
+      gitDecorationForDirectory(
+        statusWith([
+          change({ unstaged: { kind: "modified" } }, "vendor/module"),
+        ]),
+        "vendor/module",
+      ),
+    ).toBe("modified");
 
     const withConflict = statusWith([
       change({ untracked: true }, "projects/a/new.md"),
       change({ unstaged: { kind: "modified" } }, "projects/a/touched.md"),
       change({ conflict: { code: "UU" } }, "projects/deep/clash.md"),
     ]);
-    expect(gitDecorationForDirectory(withConflict, "projects")).toBe("conflict");
+    expect(gitDecorationForDirectory(withConflict, "projects")).toBe(
+      "conflict",
+    );
   });
 
   it("scopes by path prefix boundary and requires a safe workspace projection", () => {

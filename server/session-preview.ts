@@ -6,7 +6,9 @@ import { SessionProjection } from "./session-projection.js";
 export type ActiveSessionSnapshot = NonNullable<ActiveSnapshot["active"]>;
 
 /** One-shot compatibility facade over the sole Pi JSONL parser authority. */
-export async function loadSessionPreview(session: SessionRecord): Promise<ActiveSessionSnapshot> {
+export async function loadSessionPreview(
+  session: SessionRecord,
+): Promise<ActiveSessionSnapshot> {
   const projection = await SessionProjection.open(session);
   try {
     const page = projection.latestPage();

@@ -29,7 +29,8 @@ const META_PREFIXES = [
  * (Markdown bullets) or "+" never gets recolored.
  */
 export function parseUnifiedDiff(text: string): DiffLine[] | null {
-  if (!text.includes("@@") || !text.includes("---") || !text.includes("+++")) return null;
+  if (!text.includes("@@") || !text.includes("---") || !text.includes("+++"))
+    return null;
   const lines = text.split("\n");
   const parsed: DiffLine[] = [];
   let hunks = 0;

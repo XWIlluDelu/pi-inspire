@@ -5,12 +5,14 @@ type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
 function contentIndex(value: unknown): number | null {
-  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= MAX_STREAM_CONTENT_INDEX
+  return Number.isSafeInteger(value) &&
+    Number(value) >= 0 &&
+    Number(value) <= MAX_STREAM_CONTENT_INDEX
     ? Number(value)
     : null;
 }
@@ -21,7 +23,8 @@ function boundedText(value: unknown): string {
 
 function appendBounded(current: unknown, delta: unknown): string {
   const prefix = typeof current === "string" ? current : "";
-  if (typeof delta !== "string" || prefix.length >= MAX_STREAM_TEXT_CHARS) return prefix;
+  if (typeof delta !== "string" || prefix.length >= MAX_STREAM_TEXT_CHARS)
+    return prefix;
   return `${prefix}${delta}`.slice(0, MAX_STREAM_TEXT_CHARS);
 }
 
@@ -31,14 +34,25 @@ function appendBounded(current: unknown, delta: unknown): string {
  * `message` fields from message_update frames, so integrations must rebuild
  * the browser-safe partial from message_start plus this delta protocol.
  */
-export function applyAssistantMessageDelta(message: unknown, assistantMessageEvent: unknown): JsonRecord | null {
+export function applyAssistantMessageDelta(
+  message: unknown,
+  assistantMessageEvent: unknown,
+): JsonRecord | null {
   const base = record(message);
   const event = record(assistantMessageEvent);
-  if (!base || base.role !== "assistant" || !event || typeof event.type !== "string") return null;
+  if (
+    !base ||
+    base.role !== "assistant" ||
+    !event ||
+    typeof event.type !== "string"
+  )
+    return null;
 
   const index = contentIndex(event.contentIndex);
   if (index === null) return null;
-  const content = Array.isArray(base.content) ? base.content.slice(0, MAX_STREAM_CONTENT_INDEX + 1) : [];
+  const content = Array.isArray(base.content)
+    ? base.content.slice(0, MAX_STREAM_CONTENT_INDEX + 1)
+    : [];
   const existing = record(content[index]);
 
   switch (event.type) {
@@ -48,7 +62,8 @@ export function applyAssistantMessageDelta(message: unknown, assistantMessageEve
       break;
     case "thinking_delta": {
       const thinking = appendBounded(existing?.thinking, event.delta);
-      if (existing?.type === "thinking" && existing.thinking === thinking) return null;
+      if (existing?.type === "thinking" && existing.thinking === thinking)
+        return null;
       content[index] = {
         ...(existing?.type === "thinking" ? existing : {}),
         type: "thinking",
@@ -58,7 +73,8 @@ export function applyAssistantMessageDelta(message: unknown, assistantMessageEve
     }
     case "thinking_end": {
       const thinking = boundedText(event.content);
-      if (existing?.type === "thinking" && existing.thinking === thinking) return null;
+      if (existing?.type === "thinking" && existing.thinking === thinking)
+        return null;
       content[index] = {
         ...(existing?.type === "thinking" ? existing : {}),
         type: "thinking",
@@ -94,12 +110,20 @@ export function applyAssistantMessageDelta(message: unknown, assistantMessageEve
       const id = typeof event.id === "string" ? event.id : "";
       const name = typeof event.toolName === "string" ? event.toolName : "";
       if (!id || !name) return null;
-      if (existing?.type === "toolCall" && existing.id === id && existing.name === name) return null;
+      if (
+        existing?.type === "toolCall" &&
+        existing.id === id &&
+        existing.name === name
+      )
+        return null;
       content[index] = {
         type: "toolCall",
         id,
         name,
-        arguments: existing?.type === "toolCall" && record(existing.arguments) ? existing.arguments : {},
+        arguments:
+          existing?.type === "toolCall" && record(existing.arguments)
+            ? existing.arguments
+            : {},
       };
       break;
     }

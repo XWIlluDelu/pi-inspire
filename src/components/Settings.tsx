@@ -12,12 +12,20 @@ import {
   type ToolVisibilityPreference,
   type VisibilityPreference,
 } from "../../shared/contracts";
-import { installAvailability, requestInstall, subscribeInstallAvailability } from "../install-app";
+import {
+  installAvailability,
+  requestInstall,
+  subscribeInstallAvailability,
+} from "../install-app";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
 
-const THEMES: Array<{ value: ThemePreference; label: string; icon: React.ReactNode }> = [
+const THEMES: Array<{
+  value: ThemePreference;
+  label: string;
+  icon: React.ReactNode;
+}> = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
   { value: "dark", label: "Dark", icon: <Moon size={13} aria-hidden /> },
   { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
@@ -27,27 +35,40 @@ function preferenceLabel(value: string): string {
   return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
 }
 
-const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> = VISIBILITY_PREFERENCES.map((value) => ({
+const VISIBILITIES: Array<{ value: VisibilityPreference; label: string }> =
+  VISIBILITY_PREFERENCES.map((value) => ({
+    value,
+    label: preferenceLabel(value),
+  }));
+
+const TOOL_VISIBILITIES: Array<{
+  value: ToolVisibilityPreference;
+  label: string;
+}> = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
   value,
   label: preferenceLabel(value),
 }));
 
-const TOOL_VISIBILITIES: Array<{ value: ToolVisibilityPreference; label: string }> = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
+const ASSISTANT_ROUNDS: Array<{
+  value: AssistantRoundDisplayPreference;
+  label: string;
+}> = ASSISTANT_ROUND_DISPLAYS.map((value) => ({
   value,
   label: preferenceLabel(value),
 }));
 
-const ASSISTANT_ROUNDS: Array<{ value: AssistantRoundDisplayPreference; label: string }> = ASSISTANT_ROUND_DISPLAYS.map((value) => ({
-  value,
-  label: preferenceLabel(value),
-}));
-
-const PROJECT_DISPLAYS: Array<{ value: ProjectDisplayPreference; label: string }> = [
+const PROJECT_DISPLAYS: Array<{
+  value: ProjectDisplayPreference;
+  label: string;
+}> = [
   { value: "folder", label: "Folder name" },
   { value: "path", label: "Full path" },
 ];
 
-const COMPLETION_ATTENTION: Array<{ value: CompletionAttentionPreference; label: string }> = [
+const COMPLETION_ATTENTION: Array<{
+  value: CompletionAttentionPreference;
+  label: string;
+}> = [
   { value: "off", label: "Off" },
   { value: "title", label: "Mark browser title" },
   { value: "desktop", label: "Desktop notification" },
@@ -57,7 +78,10 @@ const COMPLETION_ATTENTION: Array<{ value: CompletionAttentionPreference; label:
  * thinking-level controls stay in the composer. */
 export function Settings({ onClose }: { onClose: () => void }) {
   const state = useAppState();
-  const install = useSyncExternalStore(subscribeInstallAvailability, installAvailability);
+  const install = useSyncExternalStore(
+    subscribeInstallAvailability,
+    installAvailability,
+  );
   const dialogRef = useModalFocus<HTMLDivElement>();
 
   useEffect(() => {
@@ -85,7 +109,13 @@ export function Settings({ onClose }: { onClose: () => void }) {
       >
         <header className="settings__header">
           <h2 className="settings__title">Settings</h2>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close settings" title="Close">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onClose}
+            aria-label="Close settings"
+            title="Close"
+          >
             <X size={15} aria-hidden />
           </button>
         </header>
@@ -112,7 +142,11 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
           <div className="settings__field">
             <span className="settings__field-label">Project location</span>
-            <div className="segmented" role="group" aria-label="Project location">
+            <div
+              className="segmented"
+              role="group"
+              aria-label="Project location"
+            >
               {PROJECT_DISPLAYS.map(({ value, label }) => (
                 <button
                   type="button"
@@ -137,7 +171,9 @@ export function Settings({ onClose }: { onClose: () => void }) {
               className="dropdown--field"
               value={state.prefs.thinkingVisibility}
               options={VISIBILITIES}
-              onChange={(value) => store.setThinkingVisibility(value as VisibilityPreference)}
+              onChange={(value) =>
+                store.setThinkingVisibility(value as VisibilityPreference)
+              }
             />
           </div>
           <div className="settings__field">
@@ -147,7 +183,9 @@ export function Settings({ onClose }: { onClose: () => void }) {
               className="dropdown--field"
               value={state.prefs.toolVisibility}
               options={TOOL_VISIBILITIES}
-              onChange={(value) => store.setToolVisibility(value as ToolVisibilityPreference)}
+              onChange={(value) =>
+                store.setToolVisibility(value as ToolVisibilityPreference)
+              }
             />
           </div>
           <div className="settings__field">
@@ -157,19 +195,30 @@ export function Settings({ onClose }: { onClose: () => void }) {
               className="dropdown--field"
               value={state.prefs.assistantRoundDisplay}
               options={ASSISTANT_ROUNDS}
-              onChange={(value) => store.setAssistantRoundDisplay(value as AssistantRoundDisplayPreference)}
+              onChange={(value) =>
+                store.setAssistantRoundDisplay(
+                  value as AssistantRoundDisplayPreference,
+                )
+              }
             />
           </div>
         </section>
 
-        <section className="settings__section" aria-label="Completion attention">
+        <section
+          className="settings__section"
+          aria-label="Completion attention"
+        >
           <h3 className="settings__section-title">Completion attention</h3>
           <div className="settings__field settings__field--stacked">
             <div>
-              <span className="settings__field-label">When unseen work ends</span>
+              <span className="settings__field-label">
+                When unseen work ends
+              </span>
               <p className="settings__field-help">
-                Off does nothing. Title marks the tab until you view the session. Desktop sends one privacy-safe
-                notification for background or hidden-tab completion; permission is requested only when you choose it.
+                Off does nothing. Title marks the tab until you view the
+                session. Desktop sends one privacy-safe notification for
+                background or hidden-tab completion; permission is requested
+                only when you choose it.
               </p>
             </div>
             <Dropdown
@@ -177,7 +226,11 @@ export function Settings({ onClose }: { onClose: () => void }) {
               className="dropdown--field"
               value={state.prefs.completionAttention}
               options={COMPLETION_ATTENTION}
-              onChange={(value) => void store.setCompletionAttention(value as CompletionAttentionPreference)}
+              onChange={(value) =>
+                void store.setCompletionAttention(
+                  value as CompletionAttentionPreference,
+                )
+              }
             />
           </div>
         </section>
@@ -204,7 +257,11 @@ export function Settings({ onClose }: { onClose: () => void }) {
           {install === "available" ? (
             <div className="settings__field">
               <span className="settings__field-label">Install as an app</span>
-              <button type="button" className="button" onClick={() => void requestInstall()}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => void requestInstall()}
+              >
                 Install insπre
               </button>
             </div>
@@ -225,8 +282,13 @@ export function Settings({ onClose }: { onClose: () => void }) {
         <section className="settings__section" aria-label="About">
           <h3 className="settings__section-title">About</h3>
           <p className="settings__about">
-            insπre {state.version ? <code>v{state.version}</code> : null} — a local workbench for{" "}
-            <a href="https://github.com/earendil-works/pi" target="_blank" rel="noreferrer noopener">
+            insπre {state.version ? <code>v{state.version}</code> : null} — a
+            local workbench for{" "}
+            <a
+              href="https://github.com/earendil-works/pi"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               Pi Coding Agent
             </a>
             . Pi remains the runtime and session authority.

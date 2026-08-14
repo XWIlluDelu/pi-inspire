@@ -40,7 +40,9 @@ export function installAvailability(): InstallAvailability {
 
 /** Returns the user's choice, or "unavailable" when the browser has not
  * offered installation (its heuristics require engagement first). */
-export async function requestInstall(): Promise<"accepted" | "dismissed" | "unavailable"> {
+export async function requestInstall(): Promise<
+  "accepted" | "dismissed" | "unavailable"
+> {
   const promptEvent = deferredPrompt;
   if (!promptEvent) return "unavailable";
   deferredPrompt = null;

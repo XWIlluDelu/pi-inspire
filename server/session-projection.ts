@@ -1,4 +1,9 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -12,10 +17,18 @@ import {
   type SessionEntry,
   type SessionHeader,
 } from "@earendil-works/pi-coding-agent";
-import type { BranchTreeResponse, ProjectionHealth, TranscriptPage } from "../shared/contracts.js";
+import type {
+  BranchTreeResponse,
+  ProjectionHealth,
+  TranscriptPage,
+} from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import type { SessionRecord } from "./session-catalog.js";
-import { BRANCH_TREE_MAX_BYTES, boundedUserText, projectSessionTree } from "./session-tree.js";
+import {
+  BRANCH_TREE_MAX_BYTES,
+  boundedUserText,
+  projectSessionTree,
+} from "./session-tree.js";
 import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
 
@@ -55,7 +68,10 @@ interface Candidate {
   leafId: string | null;
 }
 
-export type InitialMaterializationAttestation = "partial" | "complete" | "mismatch";
+export type InitialMaterializationAttestation =
+  | "partial"
+  | "complete"
+  | "mismatch";
 
 export type ProjectionMessageChange = "none" | "append" | "replace";
 
@@ -110,12 +126,23 @@ export interface SessionProjectionView {
   readonly committedBytes: number;
   readonly uncommittedBytes: number;
   readonly uncommittedFingerprint: string | null;
-  attestInitialMaterialization(cwd: string, workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation;
+  attestInitialMaterialization(
+    cwd: string,
+    workerEntries: readonly SessionEntry[],
+  ): InitialMaterializationAttestation;
   hasActiveEntryType(type: string): boolean;
   suspendReconciliation(): Promise<void>;
   resumeReconciliation(): void;
-  latestPage(overlay?: readonly unknown[], effectiveLeafId?: string | null, viewId?: string): TranscriptPage;
-  page(cursor: string, effectiveLeafId?: string | null, viewId?: string): TranscriptPage;
+  latestPage(
+    overlay?: readonly unknown[],
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
+  page(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
   userText(id: string, maxChars: number): string;
@@ -124,14 +151,29 @@ export interface SessionProjectionView {
   /** Host startup attestation only: reconcile while ordinary readers are suspended. */
   reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
   close(): Promise<void>;
-  on(event: "update", listener: (result: ProjectionReconcileResult) => void): this;
+  on(
+    event: "update",
+    listener: (result: ProjectionReconcileResult) => void,
+  ): this;
 }
 
-function identity(details: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>): FileIdentity {
+function identity(
+  details: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
+): FileIdentity {
   const value = details as unknown as {
-    dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint;
+    dev: bigint;
+    ino: bigint;
+    size: bigint;
+    mtimeNs: bigint;
+    ctimeNs: bigint;
   };
-  return { dev: value.dev, ino: value.ino, size: value.size, mtimeNs: value.mtimeNs, ctimeNs: value.ctimeNs };
+  return {
+    dev: value.dev,
+    ino: value.ino,
+    size: value.size,
+    mtimeNs: value.mtimeNs,
+    ctimeNs: value.ctimeNs,
+  };
 }
 
 function sameObject(left: FileIdentity, right: FileIdentity): boolean {
@@ -139,13 +181,19 @@ function sameObject(left: FileIdentity, right: FileIdentity): boolean {
 }
 
 function sameVersion(left: FileIdentity, right: FileIdentity): boolean {
-  return sameObject(left, right) &&
+  return (
+    sameObject(left, right) &&
     left.size === right.size &&
     left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs;
+    left.ctimeNs === right.ctimeNs
+  );
 }
 
-function contextMessages(entries: SessionEntry[], leafId: string | null, byId: Map<string, SessionEntry>): unknown[] {
+function contextMessages(
+  entries: SessionEntry[],
+  leafId: string | null,
+  byId: Map<string, SessionEntry>,
+): unknown[] {
   return buildContextEntries(entries, leafId, byId).flatMap((entry) =>
     sessionEntryToContextMessages(entry).map((message, index) => ({
       ...message,
@@ -177,13 +225,25 @@ function projectedMessageChange(
   return previous.length === next.length ? "none" : "append";
 }
 
-interface BoundedTranscriptItem { value: unknown; serialized: string }
+interface BoundedTranscriptItem {
+  value: unknown;
+  serialized: string;
+}
 
 /** Pi persists embedded image bytes in the canonical message. The browser only
  * needs their MIME and stable message/part coordinates: content is fetched
  * through the existing session-bound resource adapter when a thumbnail mounts. */
-function withoutPersistedImageData(value: unknown, persistedIndex: number | undefined): unknown {
-  if (persistedIndex === undefined || !value || typeof value !== "object" || Array.isArray(value)) return value;
+function withoutPersistedImageData(
+  value: unknown,
+  persistedIndex: number | undefined,
+): unknown {
+  if (
+    persistedIndex === undefined ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return value;
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.content)) return value;
   let changed = false;
@@ -200,24 +260,39 @@ function withoutPersistedImageData(value: unknown, persistedIndex: number | unde
 
 /** Browser projection, not persisted data: constrain breadth/depth and strings.
  * The optional persisted index is applied before the item's sole serialization. */
-function boundedTranscriptItem(value: unknown, persistedIndex?: number): BoundedTranscriptItem {
+function boundedTranscriptItem(
+  value: unknown,
+  persistedIndex?: number,
+): BoundedTranscriptItem {
   const browserValue = withoutPersistedImageData(value, persistedIndex);
-  const decorate = (projected: unknown): unknown => persistedIndex !== undefined && projected && typeof projected === "object" && !Array.isArray(projected)
-    ? { ...(projected as Record<string, unknown>), __inspireMessageIndex: persistedIndex }
-    : projected;
+  const decorate = (projected: unknown): unknown =>
+    persistedIndex !== undefined &&
+    projected &&
+    typeof projected === "object" &&
+    !Array.isArray(projected)
+      ? {
+          ...(projected as Record<string, unknown>),
+          __inspireMessageIndex: persistedIndex,
+        }
+      : projected;
   for (const limits of [
     { depth: 16, stringChars: 64_000, arrayItems: 256, objectEntries: 256 },
     { depth: 8, stringChars: 2_000, arrayItems: 32, objectEntries: 32 },
   ]) {
     const projected = decorate(projectSafeValue(browserValue, limits));
     const serialized = JSON.stringify(projected) ?? "null";
-    if (Buffer.byteLength(serialized) <= 256 * 1024) return { value: projected, serialized };
+    if (Buffer.byteLength(serialized) <= 256 * 1024)
+      return { value: projected, serialized };
   }
-  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const record =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
   const projected = decorate({
     role: typeof record.role === "string" ? record.role : "unknown",
     ...(record.timestamp !== undefined ? { timestamp: record.timestamp } : {}),
-    content: "[message omitted: projected content exceeded the transcript item limit]",
+    content:
+      "[message omitted: projected content exceeded the transcript item limit]",
   });
   return { value: projected, serialized: JSON.stringify(projected) };
 }
@@ -226,27 +301,64 @@ export function boundedTranscriptValue(value: unknown): unknown {
   return boundedTranscriptItem(value).value;
 }
 
-function cursorFor(sessionId: string, incarnation: string, fingerprint: string, revision: number, before: number, effectiveLeafId: string | null, viewId: string): string {
-  const payload = Buffer.from(JSON.stringify({ sessionId, incarnation, fingerprint, revision, before, effectiveLeafId, viewId })).toString("base64url");
-  const signature = createHmac("sha256", CURSOR_KEY).update(payload).digest("base64url");
+function cursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  before: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      sessionId,
+      incarnation,
+      fingerprint,
+      revision,
+      before,
+      effectiveLeafId,
+      viewId,
+    }),
+  ).toString("base64url");
+  const signature = createHmac("sha256", CURSOR_KEY)
+    .update(payload)
+    .digest("base64url");
   return `${payload}.${signature}`;
 }
 
-function parseCursor(cursor: string): { sessionId: string; incarnation: string; fingerprint: string; revision: number; before: number; effectiveLeafId: string | null; viewId: string } {
+function parseCursor(cursor: string): {
+  sessionId: string;
+  incarnation: string;
+  fingerprint: string;
+  revision: number;
+  before: number;
+  effectiveLeafId: string | null;
+  viewId: string;
+} {
   const [payload, supplied] = cursor.split(".");
-  if (!payload || !supplied) throw Object.assign(new Error("Transcript cursor is invalid"), { status: 400 });
+  if (!payload || !supplied)
+    throw Object.assign(new Error("Transcript cursor is invalid"), {
+      status: 400,
+    });
   const expected = createHmac("sha256", CURSOR_KEY).update(payload).digest();
   let actual: Buffer;
   try {
     actual = Buffer.from(supplied, "base64url");
   } catch {
-    throw Object.assign(new Error("Transcript cursor is invalid"), { status: 400 });
+    throw Object.assign(new Error("Transcript cursor is invalid"), {
+      status: 400,
+    });
   }
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw Object.assign(new Error("Transcript cursor is invalid"), { status: 400 });
+    throw Object.assign(new Error("Transcript cursor is invalid"), {
+      status: 400,
+    });
   }
   try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+    const parsed = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
     if (
       typeof parsed.sessionId !== "string" ||
       typeof parsed.incarnation !== "string" ||
@@ -254,9 +366,12 @@ function parseCursor(cursor: string): { sessionId: string; incarnation: string; 
       !Number.isSafeInteger(parsed.revision) ||
       !Number.isSafeInteger(parsed.before) ||
       Number(parsed.before) < 0 ||
-      (parsed.effectiveLeafId !== null && typeof parsed.effectiveLeafId !== "string") ||
-      typeof parsed.viewId !== "string" || !parsed.viewId
-    ) throw new Error("invalid");
+      (parsed.effectiveLeafId !== null &&
+        typeof parsed.effectiveLeafId !== "string") ||
+      typeof parsed.viewId !== "string" ||
+      !parsed.viewId
+    )
+      throw new Error("invalid");
     return {
       sessionId: parsed.sessionId,
       incarnation: parsed.incarnation,
@@ -267,7 +382,9 @@ function parseCursor(cursor: string): { sessionId: string; incarnation: string; 
       viewId: parsed.viewId,
     };
   } catch {
-    throw Object.assign(new Error("Transcript cursor is invalid"), { status: 400 });
+    throw Object.assign(new Error("Transcript cursor is invalid"), {
+      status: 400,
+    });
   }
 }
 
@@ -277,12 +394,15 @@ function healthError(error: unknown): ProjectionHealth {
 }
 
 function decodeJsonlObject(line: Buffer): Record<string, unknown> {
-  if (line.length === 0) throw new Error("Persisted session contains an empty JSONL entry");
+  if (line.length === 0)
+    throw new Error("Persisted session contains an empty JSONL entry");
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line));
   } catch (error) {
-    throw new Error(`Persisted session contains a malformed complete JSONL entry: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Persisted session contains a malformed complete JSONL entry: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Persisted session entry must be a JSON object");
@@ -294,18 +414,27 @@ function decodeJsonlObject(line: Buffer): Record<string, unknown> {
 class JsonlObjectDecoder {
   private pending: Buffer = Buffer.alloc(0);
   constructor(private readonly onFrame: (frame: Buffer) => void) {}
-  tail(): Buffer { return Buffer.from(this.pending); }
+  tail(): Buffer {
+    return Buffer.from(this.pending);
+  }
   push(chunk: Buffer): Record<string, unknown>[] {
-    this.pending = this.pending.length === 0 ? chunk : Buffer.concat([this.pending, chunk]);
+    this.pending =
+      this.pending.length === 0 ? chunk : Buffer.concat([this.pending, chunk]);
     const values: Record<string, unknown>[] = [];
     while (true) {
       const lf = this.pending.indexOf(0x0a);
       if (lf === -1) {
-        if (this.pending.length > MAX_PERSISTED_ENTRY_BYTES) throw new Error(`Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`);
+        if (this.pending.length > MAX_PERSISTED_ENTRY_BYTES)
+          throw new Error(
+            `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
+          );
         return values;
       }
       const line = this.pending.subarray(0, lf);
-      if (line.length > MAX_PERSISTED_ENTRY_BYTES) throw new Error(`Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`);
+      if (line.length > MAX_PERSISTED_ENTRY_BYTES)
+        throw new Error(
+          `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
+        );
       const frame = this.pending.subarray(0, lf + 1);
       this.onFrame(frame);
       this.pending = this.pending.subarray(lf + 1);
@@ -320,7 +449,10 @@ export interface SessionProjectionReadHooks {
   afterMessageProjection?(): void;
 }
 
-export class SessionProjection extends EventEmitter implements SessionProjectionView {
+export class SessionProjection
+  extends EventEmitter
+  implements SessionProjectionView
+{
   readonly sessionId: string;
   readonly path: string;
   private currentRevision = 0;
@@ -388,60 +520,115 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     readHooks: SessionProjectionReadHooks | undefined,
     initialMaterializationPending: boolean,
   ): Promise<SessionProjection> {
-    const projection = new SessionProjection(session, readHooks, initialMaterializationPending);
+    const projection = new SessionProjection(
+      session,
+      readHooks,
+      initialMaterializationPending,
+    );
     const result = await projection.reconcile(true);
-    const loaded = initialMaterializationPending ? projection.health.status !== "error" : projection.revision > 0;
+    const loaded = initialMaterializationPending
+      ? projection.health.status !== "error"
+      : projection.revision > 0;
     if (!loaded) {
       await projection.close();
-      throw Object.assign(new Error(projection.health.message ?? "Session projection could not be loaded"), { status: 422 });
+      throw Object.assign(
+        new Error(
+          projection.health.message ?? "Session projection could not be loaded",
+        ),
+        { status: 422 },
+      );
     }
     projection.startWatching();
     if (result.changed) projection.emit("update", result);
     return projection;
   }
 
-  static open(session: SessionRecord, readHooks?: SessionProjectionReadHooks): Promise<SessionProjection> {
+  static open(
+    session: SessionRecord,
+    readHooks?: SessionProjectionReadHooks,
+  ): Promise<SessionProjection> {
     return SessionProjection.openMode(session, readHooks, false);
   }
 
   /** Create the sole projection for a Pi-owned new session whose reported
    * path may not exist until Pi flushes its first assistant message. */
-  static openPending(session: SessionRecord, readHooks?: SessionProjectionReadHooks): Promise<SessionProjection> {
+  static openPending(
+    session: SessionRecord,
+    readHooks?: SessionProjectionReadHooks,
+  ): Promise<SessionProjection> {
     return SessionProjection.openMode(session, readHooks, true);
   }
 
-  get revision(): number { return this.currentRevision; }
-  get fingerprint(): string { return this.currentFingerprint; }
-  get health(): ProjectionHealth { return this.currentHealth; }
-  get messages(): readonly unknown[] { return this.currentMessages; }
-  get model(): unknown { return this.currentModel; }
-  get thinkingLevel(): string { return this.currentThinkingLevel; }
-  get leafId(): string | null { return this.currentLeafId; }
-  get tailEntryId(): string | null { return this.currentEntries.at(-1)?.id ?? null; }
+  get revision(): number {
+    return this.currentRevision;
+  }
+  get fingerprint(): string {
+    return this.currentFingerprint;
+  }
+  get health(): ProjectionHealth {
+    return this.currentHealth;
+  }
+  get messages(): readonly unknown[] {
+    return this.currentMessages;
+  }
+  get model(): unknown {
+    return this.currentModel;
+  }
+  get thinkingLevel(): string {
+    return this.currentThinkingLevel;
+  }
+  get leafId(): string | null {
+    return this.currentLeafId;
+  }
+  get tailEntryId(): string | null {
+    return this.currentEntries.at(-1)?.id ?? null;
+  }
   get sourceIdentity(): string | null {
-    return this.currentIdentity ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}` : null;
+    return this.currentIdentity
+      ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
+      : null;
   }
   get sourceVersion(): string | null {
     const value = this.currentIdentity;
-    return value ? `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}` : null;
+    return value
+      ? `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`
+      : null;
   }
-  attestInitialMaterialization(cwd: string, workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation {
+  attestInitialMaterialization(
+    cwd: string,
+    workerEntries: readonly SessionEntry[],
+  ): InitialMaterializationAttestation {
     const header = this.currentHeader;
     if (
-      !this.initialMaterializationPending || !header ||
+      !this.initialMaterializationPending ||
+      !header ||
       header.version !== CURRENT_SESSION_VERSION ||
       resolve(header.cwd) !== resolve(cwd) ||
       header.parentSession !== undefined ||
       this.currentEntries.length > workerEntries.length ||
-      !samePersistedJson(this.currentEntries, workerEntries.slice(0, this.currentEntries.length))
-    ) return "mismatch";
-    if (this.currentEntries.length < workerEntries.length || this.currentUncommittedBytes > 0) return "partial";
+      !samePersistedJson(
+        this.currentEntries,
+        workerEntries.slice(0, this.currentEntries.length),
+      )
+    )
+      return "mismatch";
+    if (
+      this.currentEntries.length < workerEntries.length ||
+      this.currentUncommittedBytes > 0
+    )
+      return "partial";
     this.initialMaterializationPending = false;
     return "complete";
   }
-  get committedBytes(): number { return this.currentCommittedBytes; }
-  get uncommittedBytes(): number { return this.currentUncommittedBytes; }
-  get uncommittedFingerprint(): string | null { return this.currentUncommittedFingerprint; }
+  get committedBytes(): number {
+    return this.currentCommittedBytes;
+  }
+  get uncommittedBytes(): number {
+    return this.currentUncommittedBytes;
+  }
+  get uncommittedFingerprint(): string | null {
+    return this.currentUncommittedFingerprint;
+  }
 
   hasActiveEntryType(type: string): boolean {
     const byId = new Map(this.currentEntries.map((entry) => [entry.id, entry]));
@@ -487,7 +674,8 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       id: found.id,
       parentId: found.parentId,
       type: found.type,
-      ...(found.type === "message" && typeof (found.message as { role?: unknown }).role === "string"
+      ...(found.type === "message" &&
+      typeof (found.message as { role?: unknown }).role === "string"
         ? { role: (found.message as { role: string }).role }
         : {}),
     };
@@ -495,13 +683,23 @@ export class SessionProjection extends EventEmitter implements SessionProjection
 
   userText(id: string, maxChars: number): string {
     const entry = this.currentEntries.find((candidate) => candidate.id === id);
-    if (!entry) throw Object.assign(new Error("Branch target does not exist"), { status: 404 });
+    if (!entry)
+      throw Object.assign(new Error("Branch target does not exist"), {
+        status: 404,
+      });
     return boundedUserText(entry, maxChars);
   }
 
-  branchTree(effectiveLeafId: string | null = this.currentLeafId): BranchTreeResponse {
-    if (effectiveLeafId !== null && !this.currentEntries.some((entry) => entry.id === effectiveLeafId)) {
-      throw Object.assign(new Error("Effective branch leaf does not exist"), { status: 409 });
+  branchTree(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): BranchTreeResponse {
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntries.some((entry) => entry.id === effectiveLeafId)
+    ) {
+      throw Object.assign(new Error("Effective branch leaf does not exist"), {
+        status: 409,
+      });
     }
     const tree = projectSessionTree(this.currentEntries, effectiveLeafId);
     const response: BranchTreeResponse = {
@@ -516,15 +714,25 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       health: this.health,
     };
     if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
-      throw Object.assign(new Error("Session tree response exceeds its serialized limit"), { status: 422 });
+      throw Object.assign(
+        new Error("Session tree response exceeds its serialized limit"),
+        { status: 422 },
+      );
     }
     return response;
   }
 
-  viewMessages(effectiveLeafId: string | null = this.currentLeafId): readonly unknown[] {
+  viewMessages(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): readonly unknown[] {
     if (effectiveLeafId === this.currentLeafId) return this.currentMessages;
-    if (effectiveLeafId !== null && !this.currentEntries.some((entry) => entry.id === effectiveLeafId)) {
-      throw Object.assign(new Error("Effective branch leaf does not exist"), { status: 409 });
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntries.some((entry) => entry.id === effectiveLeafId)
+    ) {
+      throw Object.assign(new Error("Effective branch leaf does not exist"), {
+        status: 409,
+      });
     }
     const byId = new Map(this.currentEntries.map((entry) => [entry.id, entry]));
     return contextMessages(this.currentEntries, effectiveLeafId, byId);
@@ -533,19 +741,25 @@ export class SessionProjection extends EventEmitter implements SessionProjection
   private startWatching(): void {
     if (this.closed || this.watcher || this.pollTimer) return;
     try {
-      this.watcher = watch(dirname(this.path), { persistent: false }, (_event, name) => {
-        if (name && String(name) !== basename(this.path)) return;
-        if (this.watchTimer) clearTimeout(this.watchTimer);
-        this.watchTimer = setTimeout(() => {
-          this.watchTimer = null;
-          this.reconcileFromHint();
-        }, WATCH_DEBOUNCE_MS);
-        this.watchTimer.unref?.();
-      });
+      this.watcher = watch(
+        dirname(this.path),
+        { persistent: false },
+        (_event, name) => {
+          if (name && String(name) !== basename(this.path)) return;
+          if (this.watchTimer) clearTimeout(this.watchTimer);
+          this.watchTimer = setTimeout(() => {
+            this.watchTimer = null;
+            this.reconcileFromHint();
+          }, WATCH_DEBOUNCE_MS);
+          this.watchTimer.unref?.();
+        },
+      );
       this.watcher.on("error", (error) => {
         if (this.closed) return;
         const previous = this.currentHealth;
-        this.currentHealth = healthError(new Error(`Session watch failed: ${error.message}`));
+        this.currentHealth = healthError(
+          new Error(`Session watch failed: ${error.message}`),
+        );
         if (JSON.stringify(previous) !== JSON.stringify(this.currentHealth)) {
           this.emit("update", {
             changed: false,
@@ -569,37 +783,43 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     } catch (error) {
       this.currentHealth = healthError(error);
     }
-    this.pollTimer = setInterval(() => this.reconcileFromHint(), RECONCILE_INTERVAL_MS);
+    this.pollTimer = setInterval(
+      () => this.reconcileFromHint(),
+      RECONCILE_INTERVAL_MS,
+    );
     this.pollTimer.unref?.();
   }
 
   private reconcileFromHint(): void {
-    void this.reconcile().then((result) => {
-      if (result.changed || result.healthChanged || result.sourceChanged) this.emit("update", result);
-    }).catch((error) => {
-      if (this.closed) return;
-      const previous = JSON.stringify(this.currentHealth);
-      this.currentHealth = healthError(error);
-      if (previous !== JSON.stringify(this.currentHealth)) {
-        this.emit("update", {
-          changed: false,
-          initialMaterialization: this.initialMaterializationPending,
-          kind: "none",
-          messageChange: "none",
-          previousRevision: this.revision,
-          revision: this.revision,
-          previousFingerprint: this.fingerprint,
-          fingerprint: this.fingerprint,
-          healthChanged: true,
-          sourceChanged: false,
-          previousSourceVersion: this.sourceVersion,
-          sourceVersion: this.sourceVersion,
-          uncommittedBytes: this.uncommittedBytes,
-          previousUncommittedBytes: this.uncommittedBytes,
-          previousTailVerified: true,
-        } satisfies ProjectionReconcileResult);
-      }
-    });
+    void this.reconcile()
+      .then((result) => {
+        if (result.changed || result.healthChanged || result.sourceChanged)
+          this.emit("update", result);
+      })
+      .catch((error) => {
+        if (this.closed) return;
+        const previous = JSON.stringify(this.currentHealth);
+        this.currentHealth = healthError(error);
+        if (previous !== JSON.stringify(this.currentHealth)) {
+          this.emit("update", {
+            changed: false,
+            initialMaterialization: this.initialMaterializationPending,
+            kind: "none",
+            messageChange: "none",
+            previousRevision: this.revision,
+            revision: this.revision,
+            previousFingerprint: this.fingerprint,
+            fingerprint: this.fingerprint,
+            healthChanged: true,
+            sourceChanged: false,
+            previousSourceVersion: this.sourceVersion,
+            sourceVersion: this.sourceVersion,
+            uncommittedBytes: this.uncommittedBytes,
+            previousUncommittedBytes: this.uncommittedBytes,
+            previousTailVerified: true,
+          } satisfies ProjectionReconcileResult);
+        }
+      });
   }
 
   async reconcile(force = false): Promise<ProjectionReconcileResult> {
@@ -613,12 +833,17 @@ export class SessionProjection extends EventEmitter implements SessionProjection
   }
 
   private enqueueReconcile(force: boolean): Promise<ProjectionReconcileResult> {
-    const run = this.reconcileTail.then(() => this.reconcileOnce(force), () => this.reconcileOnce(force));
+    const run = this.reconcileTail.then(
+      () => this.reconcileOnce(force),
+      () => this.reconcileOnce(force),
+    );
     this.reconcileTail = run;
     return run;
   }
 
-  private async reconcileOnce(force: boolean): Promise<ProjectionReconcileResult> {
+  private async reconcileOnce(
+    force: boolean,
+  ): Promise<ProjectionReconcileResult> {
     if (this.closed) throw new Error("Session projection is closed");
     const previousRevision = this.revision;
     const previousFingerprint = this.fingerprint;
@@ -638,18 +863,29 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           next.ctimeNs === this.currentIdentity.ctimeNs
         ) {
           return {
-            changed: false, initialMaterialization, kind: "none", messageChange: "none",
-            previousRevision, revision: this.revision,
-            previousFingerprint, fingerprint: this.fingerprint, healthChanged: false,
-            sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
+            changed: false,
+            initialMaterialization,
+            kind: "none",
+            messageChange: "none",
+            previousRevision,
+            revision: this.revision,
+            previousFingerprint,
+            fingerprint: this.fingerprint,
+            healthChanged: false,
+            sourceChanged: false,
+            previousSourceVersion: this.sourceVersion,
+            sourceVersion: this.sourceVersion,
             uncommittedBytes: this.uncommittedBytes,
-            previousUncommittedBytes: this.uncommittedBytes, previousTailVerified: true,
+            previousUncommittedBytes: this.uncommittedBytes,
+            previousTailVerified: true,
           };
         }
       }
 
-      const candidate = (await this.tryReadAppendCandidate()) ?? await this.readCandidate();
-      const initialFileAppearance = initialMaterialization && this.currentIdentity === null;
+      const candidate =
+        (await this.tryReadAppendCandidate()) ?? (await this.readCandidate());
+      const initialFileAppearance =
+        initialMaterialization && this.currentIdentity === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
       const previousEntries = this.currentEntries;
       const previousLeafId = this.currentLeafId;
@@ -657,24 +893,48 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       let messageChange: ProjectionMessageChange = "none";
       let appendedEntries: SessionEntry[] | undefined;
       if (changed) {
-        const prefixVerified = this.currentCommittedBytes === 0 || candidate.previousPrefixFingerprint === this.currentFingerprint;
-        const tailVerified = previousUncommittedBytes === 0 || candidate.previousTailFingerprint === previousUncommittedFingerprint;
-        kind = initialFileAppearance || (
-          this.currentIdentity && sameObject(candidate.identity, this.currentIdentity) &&
-          candidate.committedBytes >= this.currentCommittedBytes && this.currentFingerprint && prefixVerified && tailVerified
-        ) ? "append" : "rewrite";
+        const prefixVerified =
+          this.currentCommittedBytes === 0 ||
+          candidate.previousPrefixFingerprint === this.currentFingerprint;
+        const tailVerified =
+          previousUncommittedBytes === 0 ||
+          candidate.previousTailFingerprint === previousUncommittedFingerprint;
+        kind =
+          initialFileAppearance ||
+          (this.currentIdentity &&
+            sameObject(candidate.identity, this.currentIdentity) &&
+            candidate.committedBytes >= this.currentCommittedBytes &&
+            this.currentFingerprint &&
+            prefixVerified &&
+            tailVerified)
+            ? "append"
+            : "rewrite";
         if (
           kind === "append" &&
-          previousEntries.every((entry, index) => candidate.entries[index]?.id === entry.id)
+          previousEntries.every(
+            (entry, index) => candidate.entries[index]?.id === entry.id,
+          )
         ) {
-          appendedEntries = structuredClone(candidate.entries.slice(previousEntries.length));
+          appendedEntries = structuredClone(
+            candidate.entries.slice(previousEntries.length),
+          );
         }
-        messageChange = projectedMessageChange(kind, this.currentMessages, candidate.messages);
+        messageChange = projectedMessageChange(
+          kind,
+          this.currentMessages,
+          candidate.messages,
+        );
         this.currentRevision += 1;
-        if (messageChange === "replace") this.appendFromRevision = this.currentRevision;
-        this.revisionFingerprints.set(this.currentRevision, candidate.fingerprint);
+        if (messageChange === "replace")
+          this.appendFromRevision = this.currentRevision;
+        this.revisionFingerprints.set(
+          this.currentRevision,
+          candidate.fingerprint,
+        );
         while (this.revisionFingerprints.size > 256) {
-          this.revisionFingerprints.delete(this.revisionFingerprints.keys().next().value!);
+          this.revisionFingerprints.delete(
+            this.revisionFingerprints.keys().next().value!,
+          );
         }
         this.currentMessages = candidate.messages;
         this.currentModel = candidate.model;
@@ -689,9 +949,12 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       this.currentUncommittedBytes = candidate.uncommittedBytes;
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
       this.currentHealth = { status: "ok" };
-      const sourceChanged = previousSourceVersion !== this.sourceVersion ||
-        previousUncommittedBytes !== this.uncommittedBytes || previousUncommittedFingerprint !== this.uncommittedFingerprint;
-      const previousTailVerified = previousUncommittedBytes === 0 ||
+      const sourceChanged =
+        previousSourceVersion !== this.sourceVersion ||
+        previousUncommittedBytes !== this.uncommittedBytes ||
+        previousUncommittedFingerprint !== this.uncommittedFingerprint;
+      const previousTailVerified =
+        previousUncommittedBytes === 0 ||
         candidate.previousTailFingerprint === previousUncommittedFingerprint;
       return {
         changed,
@@ -759,24 +1022,43 @@ export class SessionProjection extends EventEmitter implements SessionProjection
 
   /** Verify the established prefix while parsing only newly appended lines. */
   private async tryReadAppendCandidate(): Promise<Candidate | null> {
-    if (!this.currentIdentity || !this.currentHeader || this.currentRevision === 0) return null;
-    const addressed = identity(await stat(this.path, { bigint: true }) as never);
-    if (!sameObject(addressed, this.currentIdentity) || addressed.size < BigInt(this.currentCommittedBytes)) return null;
+    if (
+      !this.currentIdentity ||
+      !this.currentHeader ||
+      this.currentRevision === 0
+    )
+      return null;
+    const addressed = identity(
+      (await stat(this.path, { bigint: true })) as never,
+    );
+    if (
+      !sameObject(addressed, this.currentIdentity) ||
+      addressed.size < BigInt(this.currentCommittedBytes)
+    )
+      return null;
     const handle = await open(this.path, "r");
     try {
-      const before = identity(await handle.stat({ bigint: true }) as never);
+      const before = identity((await handle.stat({ bigint: true })) as never);
       if (!sameObject(before, addressed)) return null;
       const hash = createHash("sha256");
       let prefixBytes = 0;
       if (this.currentCommittedBytes > 0) {
-        for await (const raw of handle.createReadStream({ start: 0, end: this.currentCommittedBytes - 1, autoClose: false })) {
+        for await (const raw of handle.createReadStream({
+          start: 0,
+          end: this.currentCommittedBytes - 1,
+          autoClose: false,
+        })) {
           const chunk = raw as Buffer;
           hash.update(chunk);
           await this.readHooks?.afterPrefixReadChunk?.();
           prefixBytes += chunk.length;
         }
       }
-      if (prefixBytes !== this.currentCommittedBytes || hash.copy().digest("hex") !== this.currentFingerprint) return null;
+      if (
+        prefixBytes !== this.currentCommittedBytes ||
+        hash.copy().digest("hex") !== this.currentFingerprint
+      )
+        return null;
 
       const appended: Record<string, unknown>[] = [];
       let committedBytes = this.currentCommittedBytes;
@@ -787,7 +1069,10 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         committedBytes += frame.length;
       });
       if (before.size > BigInt(this.currentCommittedBytes)) {
-        for await (const raw of handle.createReadStream({ start: this.currentCommittedBytes, autoClose: false })) {
+        for await (const raw of handle.createReadStream({
+          start: this.currentCommittedBytes,
+          autoClose: false,
+        })) {
           const chunk = raw as Buffer;
           if (previousTailRemaining > 0) {
             const used = chunk.subarray(0, previousTailRemaining);
@@ -795,16 +1080,26 @@ export class SessionProjection extends EventEmitter implements SessionProjection
             previousTailRemaining -= used.length;
           }
           for (const value of decoder.push(chunk)) {
-            if (value.type === "session") throw new Error("Persisted session contains a second session header");
+            if (value.type === "session")
+              throw new Error(
+                "Persisted session contains a second session header",
+              );
             appended.push(value);
           }
         }
       }
-      const after = identity(await handle.stat({ bigint: true }) as never);
-      const finalAddressed = identity(await stat(this.path, { bigint: true }) as never);
-      if (!sameVersion(before, after) || !sameVersion(after, finalAddressed)) return null;
+      const after = identity((await handle.stat({ bigint: true })) as never);
+      const finalAddressed = identity(
+        (await stat(this.path, { bigint: true })) as never,
+      );
+      if (!sameVersion(before, after) || !sameVersion(after, finalAddressed))
+        return null;
       const tail = decoder.tail();
-      const mutable = [structuredClone(this.currentHeader), ...structuredClone(this.currentEntries), ...appended] as Array<SessionHeader | SessionEntry>;
+      const mutable = [
+        structuredClone(this.currentHeader),
+        ...structuredClone(this.currentEntries),
+        ...appended,
+      ] as Array<SessionHeader | SessionEntry>;
       migrateSessionEntries(mutable);
       const entries = mutable.slice(1) as SessionEntry[];
       const leafId = entries.at(-1)?.id ?? null;
@@ -815,15 +1110,23 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         fingerprint: hash.digest("hex"),
         committedBytes,
         uncommittedBytes: tail.length,
-        uncommittedFingerprint: tail.length > 0 ? createHash("sha256").update(tail).digest("hex") : null,
+        uncommittedFingerprint:
+          tail.length > 0
+            ? createHash("sha256").update(tail).digest("hex")
+            : null,
         previousPrefixFingerprint: this.currentFingerprint,
-        previousTailFingerprint: previousTailRemaining === 0 && this.currentUncommittedBytes > 0
-          ? previousTailHash.digest("hex")
-          : this.currentUncommittedBytes === 0 ? null : "",
+        previousTailFingerprint:
+          previousTailRemaining === 0 && this.currentUncommittedBytes > 0
+            ? previousTailHash.digest("hex")
+            : this.currentUncommittedBytes === 0
+              ? null
+              : "",
         header: mutable[0] as SessionHeader,
         entries,
         messages: contextMessages(entries, leafId, byId),
-        model: context.model ? { provider: context.model.provider, id: context.model.modelId } : null,
+        model: context.model
+          ? { provider: context.model.provider, id: context.model.modelId }
+          : null,
         thinkingLevel: context.thinkingLevel,
         leafId,
       };
@@ -838,7 +1141,7 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const handle = await open(this.path, "r");
       try {
-        const before = identity(await handle.stat({ bigint: true }) as never);
+        const before = identity((await handle.stat({ bigint: true })) as never);
         const hash = createHash("sha256");
         const parsed: Record<string, unknown>[] = [];
         let committedBytes = 0;
@@ -862,28 +1165,46 @@ export class SessionProjection extends EventEmitter implements SessionProjection
             previousPrefixBytes += used.length;
           }
           const tailStart = Math.max(readOffset, this.currentCommittedBytes);
-          const tailEnd = Math.min(end, this.currentCommittedBytes + this.currentUncommittedBytes);
+          const tailEnd = Math.min(
+            end,
+            this.currentCommittedBytes + this.currentUncommittedBytes,
+          );
           if (tailEnd > tailStart) {
-            const used = chunk.subarray(tailStart - readOffset, tailEnd - readOffset);
+            const used = chunk.subarray(
+              tailStart - readOffset,
+              tailEnd - readOffset,
+            );
             previousTailHash.update(used);
             previousTailBytes += used.length;
           }
           readOffset = end;
           parsed.push(...decoder.push(chunk));
         }
-        const after = identity(await handle.stat({ bigint: true }) as never);
-        const addressed = identity(await stat(this.path, { bigint: true }) as never);
-        if (!sameVersion(before, after) || !sameVersion(after, addressed)) continue;
+        const after = identity((await handle.stat({ bigint: true })) as never);
+        const addressed = identity(
+          (await stat(this.path, { bigint: true })) as never,
+        );
+        if (!sameVersion(before, after) || !sameVersion(after, addressed))
+          continue;
         const tail = decoder.tail();
         const header = parsed[0] as SessionHeader | undefined;
-        if (!header || header.type !== "session") throw new Error("Session file is not a valid Pi session");
+        if (!header || header.type !== "session")
+          throw new Error("Session file is not a valid Pi session");
         if (header.id !== this.sessionId) {
-          throw new Error(`Session file belongs to ${String(header.id)}, expected ${this.sessionId}`);
+          throw new Error(
+            `Session file belongs to ${String(header.id)}, expected ${this.sessionId}`,
+          );
         }
-        if (parsed.slice(1).some((entry) => (entry as { type?: unknown }).type === "session")) {
+        if (
+          parsed
+            .slice(1)
+            .some((entry) => (entry as { type?: unknown }).type === "session")
+        ) {
           throw new Error("Persisted session contains a second session header");
         }
-        const mutable = parsed as unknown as Array<SessionHeader | SessionEntry>;
+        const mutable = parsed as unknown as Array<
+          SessionHeader | SessionEntry
+        >;
         migrateSessionEntries(mutable);
         const entries = mutable.slice(1) as SessionEntry[];
         const leafId = entries.at(-1)?.id ?? null;
@@ -894,17 +1215,30 @@ export class SessionProjection extends EventEmitter implements SessionProjection
           fingerprint: hash.digest("hex"),
           committedBytes,
           uncommittedBytes: tail.length,
-          uncommittedFingerprint: tail.length > 0 ? createHash("sha256").update(tail).digest("hex") : null,
-          previousPrefixFingerprint: previousPrefixBytes === this.currentCommittedBytes && this.currentCommittedBytes > 0
-            ? previousPrefixHash.digest("hex")
-            : this.currentCommittedBytes === 0 ? null : "",
-          previousTailFingerprint: previousTailBytes === this.currentUncommittedBytes && this.currentUncommittedBytes > 0
-            ? previousTailHash.digest("hex")
-            : this.currentUncommittedBytes === 0 ? null : "",
+          uncommittedFingerprint:
+            tail.length > 0
+              ? createHash("sha256").update(tail).digest("hex")
+              : null,
+          previousPrefixFingerprint:
+            previousPrefixBytes === this.currentCommittedBytes &&
+            this.currentCommittedBytes > 0
+              ? previousPrefixHash.digest("hex")
+              : this.currentCommittedBytes === 0
+                ? null
+                : "",
+          previousTailFingerprint:
+            previousTailBytes === this.currentUncommittedBytes &&
+            this.currentUncommittedBytes > 0
+              ? previousTailHash.digest("hex")
+              : this.currentUncommittedBytes === 0
+                ? null
+                : "",
           header,
           entries,
           messages: contextMessages(entries, leafId, byId),
-          model: context.model ? { provider: context.model.provider, id: context.model.modelId } : null,
+          model: context.model
+            ? { provider: context.model.provider, id: context.model.modelId }
+            : null,
           thinkingLevel: context.thinkingLevel,
           leafId,
         };
@@ -915,26 +1249,42 @@ export class SessionProjection extends EventEmitter implements SessionProjection
     throw new Error("Session file changed while it was being reconciled");
   }
 
-  latestPage(overlay: readonly unknown[] = [], effectiveLeafId: string | null = this.currentLeafId, viewId = this.incarnation): TranscriptPage {
+  latestPage(
+    overlay: readonly unknown[] = [],
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
     const persisted = this.viewMessages(effectiveLeafId);
-    const persistedCorrelation = new Set(persisted.map((value) => {
-      if (!value || typeof value !== "object") return null;
-      const record = value as Record<string, unknown>;
-      const copy = { ...record };
-      delete copy.__inspireMessageId;
-      return messageFallbackCorrelation(copy);
-    }).filter((key): key is string => key !== null));
-    const persistedIndexByEntryId = new Map(persisted.flatMap((value, index) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-      const entryId = (value as Record<string, unknown>).__inspireEntryId;
-      return typeof entryId === "string" ? [[entryId, index] as const] : [];
-    }));
+    const persistedCorrelation = new Set(
+      persisted
+        .map((value) => {
+          if (!value || typeof value !== "object") return null;
+          const record = value as Record<string, unknown>;
+          const copy = { ...record };
+          delete copy.__inspireMessageId;
+          return messageFallbackCorrelation(copy);
+        })
+        .filter((key): key is string => key !== null),
+    );
+    const persistedIndexByEntryId = new Map(
+      persisted.flatMap((value, index) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          return [];
+        const entryId = (value as Record<string, unknown>).__inspireEntryId;
+        return typeof entryId === "string" ? [[entryId, index] as const] : [];
+      }),
+    );
     const combined = [...persisted];
     for (const item of overlay) {
       if (item && typeof item === "object" && !Array.isArray(item)) {
         const overlayRecord = item as Record<string, unknown>;
-        const entryId = typeof overlayRecord.__inspireEntryId === "string" ? overlayRecord.__inspireEntryId : null;
-        const persistedIndex = entryId ? persistedIndexByEntryId.get(entryId) : undefined;
+        const entryId =
+          typeof overlayRecord.__inspireEntryId === "string"
+            ? overlayRecord.__inspireEntryId
+            : null;
+        const persistedIndex = entryId
+          ? persistedIndexByEntryId.get(entryId)
+          : undefined;
         if (persistedIndex !== undefined) {
           const durable = persisted[persistedIndex] as Record<string, unknown>;
           combined[persistedIndex] = {
@@ -956,22 +1306,45 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       }
       if (!key || !persistedCorrelation.has(key)) combined.push(item);
     }
-    return this.buildPage(combined, combined.length, persisted.length, effectiveLeafId, viewId);
+    return this.buildPage(
+      combined,
+      combined.length,
+      persisted.length,
+      effectiveLeafId,
+      viewId,
+    );
   }
 
-  page(cursor: string, effectiveLeafId: string | null = this.currentLeafId, viewId = this.incarnation): TranscriptPage {
+  page(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
     const decoded = parseCursor(cursor);
     if (decoded.sessionId !== this.sessionId) {
-      throw Object.assign(new Error("Transcript cursor belongs to another session"), { status: 409 });
+      throw Object.assign(
+        new Error("Transcript cursor belongs to another session"),
+        { status: 409 },
+      );
     }
     if (decoded.incarnation !== this.incarnation) {
-      throw Object.assign(new Error("Transcript cursor belongs to an expired projection incarnation"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "Transcript cursor belongs to an expired projection incarnation",
+        ),
+        { status: 409 },
+      );
     }
     if (decoded.viewId !== viewId) {
-      throw Object.assign(new Error("Transcript cursor belongs to another branch view"), { status: 409 });
+      throw Object.assign(
+        new Error("Transcript cursor belongs to another branch view"),
+        { status: 409 },
+      );
     }
     if (decoded.effectiveLeafId !== effectiveLeafId) {
-      const byId = new Map(this.currentEntries.map((entry) => [entry.id, entry]));
+      const byId = new Map(
+        this.currentEntries.map((entry) => [entry.id, entry]),
+      );
       let cursor = effectiveLeafId;
       let appendDescendant = decoded.effectiveLeafId === null;
       while (cursor && !appendDescendant) {
@@ -981,7 +1354,12 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       // Older-page cursors survive a strictly append-only continuation of the
       // same branch. A switch to a sibling/ancestor view remains stale.
       if (!appendDescendant || decoded.revision < this.appendFromRevision) {
-        throw Object.assign(new Error("Transcript cursor is stale or belongs to another branch view"), { status: 409 });
+        throw Object.assign(
+          new Error(
+            "Transcript cursor is stale or belongs to another branch view",
+          ),
+          { status: 409 },
+        );
       }
     }
     const knownFingerprint = this.revisionFingerprints.get(decoded.revision);
@@ -990,20 +1368,40 @@ export class SessionProjection extends EventEmitter implements SessionProjection
       decoded.revision < this.appendFromRevision ||
       knownFingerprint !== decoded.fingerprint
     ) {
-      throw Object.assign(new Error("Transcript cursor is stale; refresh the session"), { status: 409 });
+      throw Object.assign(
+        new Error("Transcript cursor is stale; refresh the session"),
+        { status: 409 },
+      );
     }
     const messages = this.viewMessages(effectiveLeafId);
     if (decoded.before > messages.length) {
-      throw Object.assign(new Error("Transcript cursor is invalid"), { status: 400 });
+      throw Object.assign(new Error("Transcript cursor is invalid"), {
+        status: 400,
+      });
     }
-    return this.buildPage(messages, decoded.before, messages.length, effectiveLeafId, viewId);
+    return this.buildPage(
+      messages,
+      decoded.before,
+      messages.length,
+      effectiveLeafId,
+      viewId,
+    );
   }
 
-  private buildPage(source: readonly unknown[], before: number, persistedLength: number, effectiveLeafId: string | null, viewId: string): TranscriptPage {
+  private buildPage(
+    source: readonly unknown[],
+    before: number,
+    persistedLength: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptPage {
     let start = before;
     const reversed: unknown[] = [];
     let messagesBytes = 2; // JSON array brackets; commas are added per accepted item.
-    const shell = (candidateStart: number, messages: unknown[]): TranscriptPage => {
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+    ): TranscriptPage => {
       const persistedStart = Math.min(candidateStart, persistedLength);
       return {
         sessionId: this.sessionId,
@@ -1014,26 +1412,52 @@ export class SessionProjection extends EventEmitter implements SessionProjection
         effectiveLeafId,
         messages,
         hasOlder: persistedStart > 0,
-        olderCursor: persistedStart > 0
-          ? cursorFor(this.sessionId, this.incarnation, this.currentFingerprint, this.revision, persistedStart, effectiveLeafId, viewId)
-          : null,
+        olderCursor:
+          persistedStart > 0
+            ? cursorFor(
+                this.sessionId,
+                this.incarnation,
+                this.currentFingerprint,
+                this.revision,
+                persistedStart,
+                effectiveLeafId,
+                viewId,
+              )
+            : null,
       };
     };
     while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
-      const item = boundedTranscriptItem(source[index], index < persistedLength ? index : undefined);
+      const item = boundedTranscriptItem(
+        source[index],
+        index < persistedLength ? index : undefined,
+      );
       this.readHooks?.afterMessageProjection?.();
       const projected = item.value;
       const serialized = item.serialized;
-      const candidateMessagesBytes = messagesBytes + Buffer.byteLength(serialized) + (reversed.length > 0 ? 1 : 0);
-      const emptyShellBytes = Buffer.byteLength(JSON.stringify(shell(index, [])));
-      if (emptyShellBytes - 2 + candidateMessagesBytes > TRANSCRIPT_PAGE_MAX_BYTES) break;
+      const candidateMessagesBytes =
+        messagesBytes +
+        Buffer.byteLength(serialized) +
+        (reversed.length > 0 ? 1 : 0);
+      const emptyShellBytes = Buffer.byteLength(
+        JSON.stringify(shell(index, [])),
+      );
+      if (
+        emptyShellBytes - 2 + candidateMessagesBytes >
+        TRANSCRIPT_PAGE_MAX_BYTES
+      )
+        break;
       reversed.push(projected);
       messagesBytes = candidateMessagesBytes;
       start = index;
     }
     if (reversed.length === 0 && before > 0) {
-      throw Object.assign(new Error("A projected transcript message exceeds the browser page budget"), { status: 422 });
+      throw Object.assign(
+        new Error(
+          "A projected transcript message exceeds the browser page budget",
+        ),
+        { status: 422 },
+      );
     }
     const page = shell(start, reversed.reverse());
     if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {

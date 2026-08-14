@@ -1,5 +1,14 @@
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -25,7 +34,9 @@ interface StoredAttachment extends UploadedAttachment {
 }
 
 function safeName(name: string): string {
-  const normalized = basename(name).replace(/[^\p{L}\p{N}._ -]+/gu, "_").slice(0, 160);
+  const normalized = basename(name)
+    .replace(/[^\p{L}\p{N}._ -]+/gu, "_")
+    .slice(0, 160);
   return normalized || "attachment";
 }
 
@@ -47,17 +58,27 @@ function processExists(pid: number): boolean {
 }
 
 function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
-  if (files.length > MAX_ATTACHMENTS) throw payloadTooLarge(`At most ${MAX_ATTACHMENTS} attachments per message`);
+  if (files.length > MAX_ATTACHMENTS)
+    throw payloadTooLarge(`At most ${MAX_ATTACHMENTS} attachments per message`);
   if (files.some((file) => file.size > MAX_ATTACHMENT_FILE_BYTES)) {
-    throw payloadTooLarge(`Each attachment must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`);
+    throw payloadTooLarge(
+      `Each attachment must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+    );
   }
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
   if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
-    throw payloadTooLarge(`Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`);
+    throw payloadTooLarge(
+      `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
+    );
   }
-  const imageBytes = files.reduce((sum, file) => sum + (isImage(file.mimetype) ? file.size : 0), 0);
+  const imageBytes = files.reduce(
+    (sum, file) => sum + (isImage(file.mimetype) ? file.size : 0),
+    0,
+  );
   if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
-    throw payloadTooLarge(`Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`);
+    throw payloadTooLarge(
+      `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
+    );
   }
 }
 
@@ -70,28 +91,51 @@ export class AttachmentStore {
   private initialization: Promise<void> | null = null;
 
   constructor(root?: string, cleanupParent?: string | null) {
-    this.root = resolve(root ?? join(DEFAULT_UPLOAD_PARENT, `${process.pid}-${Date.now()}-${randomUUID()}`));
-    this.cleanupParent = cleanupParent === undefined
-      ? root === undefined ? DEFAULT_UPLOAD_PARENT : null
-      : cleanupParent === null ? null : resolve(cleanupParent);
+    this.root = resolve(
+      root ??
+        join(
+          DEFAULT_UPLOAD_PARENT,
+          `${process.pid}-${Date.now()}-${randomUUID()}`,
+        ),
+    );
+    this.cleanupParent =
+      cleanupParent === undefined
+        ? root === undefined
+          ? DEFAULT_UPLOAD_PARENT
+          : null
+        : cleanupParent === null
+          ? null
+          : resolve(cleanupParent);
   }
 
   private async initializeRoot(): Promise<void> {
     if (this.cleanupParent) {
       await mkdir(this.cleanupParent, { recursive: true, mode: 0o700 });
-      const entries = await readdir(this.cleanupParent, { withFileTypes: true });
-      await Promise.all(entries.map(async (entry) => {
-        if (!entry.isDirectory()) return;
-        const match = /^(\d+)-(\d+)(?:-|$)/u.exec(entry.name);
-        if (!match || Number(match[1]) === process.pid || processExists(Number(match[1]))) return;
-        await rm(join(this.cleanupParent!, entry.name), { recursive: true, force: true });
-      }));
+      const entries = await readdir(this.cleanupParent, {
+        withFileTypes: true,
+      });
+      await Promise.all(
+        entries.map(async (entry) => {
+          if (!entry.isDirectory()) return;
+          const match = /^(\d+)-(\d+)(?:-|$)/u.exec(entry.name);
+          if (
+            !match ||
+            Number(match[1]) === process.pid ||
+            processExists(Number(match[1]))
+          )
+            return;
+          await rm(join(this.cleanupParent!, entry.name), {
+            recursive: true,
+            force: true,
+          });
+        }),
+      );
     }
     await mkdir(this.root, { recursive: true, mode: 0o700 });
   }
 
   private ensureRoot(): Promise<void> {
-    return this.initialization ??= this.initializeRoot();
+    return (this.initialization ??= this.initializeRoot());
   }
 
   async uploadDirectory(): Promise<string> {
@@ -107,38 +151,49 @@ export class AttachmentStore {
     const requestBytes = new WeakMap<Request, number>();
     return {
       _handleFile: (request, file, done) => {
-        void this.uploadDirectory().then((directory) => {
-          const filename = this.temporaryUploadName();
-          const path = join(directory, filename);
-          const output = createWriteStream(path, { flags: "wx", mode: 0o600 });
-          let size = 0;
-          let settled = false;
-          const finish = (error?: Error) => {
-            if (settled) return;
-            settled = true;
-            file.stream.unpipe(output);
-            if (error) {
-              output.destroy();
-              file.stream.resume();
-              void rm(path, { force: true });
-              done(error);
-              return;
-            }
-            done(null, { destination: directory, filename, path, size });
-          };
-          file.stream.on("data", (chunk: Buffer) => {
-            size += chunk.length;
-            const total = (requestBytes.get(request) ?? 0) + chunk.length;
-            requestBytes.set(request, total);
-            if (total > MAX_ATTACHMENT_UPLOAD_BYTES) {
-              finish(payloadTooLarge(`Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`));
-            }
-          });
-          file.stream.once("error", finish);
-          output.once("error", finish);
-          output.once("finish", () => finish());
-          file.stream.pipe(output);
-        }, (error) => done(error instanceof Error ? error : new Error(String(error))));
+        void this.uploadDirectory().then(
+          (directory) => {
+            const filename = this.temporaryUploadName();
+            const path = join(directory, filename);
+            const output = createWriteStream(path, {
+              flags: "wx",
+              mode: 0o600,
+            });
+            let size = 0;
+            let settled = false;
+            const finish = (error?: Error) => {
+              if (settled) return;
+              settled = true;
+              file.stream.unpipe(output);
+              if (error) {
+                output.destroy();
+                file.stream.resume();
+                void rm(path, { force: true });
+                done(error);
+                return;
+              }
+              done(null, { destination: directory, filename, path, size });
+            };
+            file.stream.on("data", (chunk: Buffer) => {
+              size += chunk.length;
+              const total = (requestBytes.get(request) ?? 0) + chunk.length;
+              requestBytes.set(request, total);
+              if (total > MAX_ATTACHMENT_UPLOAD_BYTES) {
+                finish(
+                  payloadTooLarge(
+                    `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
+                  ),
+                );
+              }
+            });
+            file.stream.once("error", finish);
+            output.once("error", finish);
+            output.once("finish", () => finish());
+            file.stream.pipe(output);
+          },
+          (error) =>
+            done(error instanceof Error ? error : new Error(String(error))),
+        );
       },
       _removeFile: (_request, file, done) => {
         const stored = file as Partial<Express.Multer.File>;
@@ -158,11 +213,17 @@ export class AttachmentStore {
   private async discardUpload(file: Express.Multer.File): Promise<void> {
     if (typeof file.path !== "string" || !file.path) return;
     const path = resolve(file.path);
-    if (escapesBase(relative(this.root, path)) || !basename(path).startsWith(".upload-")) return;
+    if (
+      escapesBase(relative(this.root, path)) ||
+      !basename(path).startsWith(".upload-")
+    )
+      return;
     await rm(path, { force: true });
   }
 
-  private async storeFile(file: Express.Multer.File): Promise<UploadedAttachment> {
+  private async storeFile(
+    file: Express.Multer.File,
+  ): Promise<UploadedAttachment> {
     await this.ensureRoot();
     const id = randomUUID();
     const fileName = safeName(file.originalname);
@@ -170,7 +231,8 @@ export class AttachmentStore {
     try {
       if (typeof file.path === "string" && file.path) {
         const temporary = resolve(file.path);
-        if (escapesBase(relative(this.root, temporary))) throw new Error("Uploaded attachment escaped its private cache root");
+        if (escapesBase(relative(this.root, temporary)))
+          throw new Error("Uploaded attachment escaped its private cache root");
         await rename(temporary, path);
         await chmod(path, 0o600);
       } else {
@@ -203,7 +265,9 @@ export class AttachmentStore {
     }
   }
 
-  async addMany(files: readonly Express.Multer.File[]): Promise<UploadedAttachment[]> {
+  async addMany(
+    files: readonly Express.Multer.File[],
+  ): Promise<UploadedAttachment[]> {
     const added: UploadedAttachment[] = [];
     try {
       assertAttachmentBudget(files);
@@ -222,35 +286,50 @@ export class AttachmentStore {
     files: StoredAttachment[];
     images: Array<{ type: "image"; data: string; mimeType: string }>;
   }> {
-    if (ids.length > MAX_ATTACHMENTS) throw payloadTooLarge(`At most ${MAX_ATTACHMENTS} attachments per message`);
+    if (ids.length > MAX_ATTACHMENTS)
+      throw payloadTooLarge(
+        `At most ${MAX_ATTACHMENTS} attachments per message`,
+      );
     const unique = [...new Set(ids)];
-    const files = unique.map((id) => this.values.get(id)).filter((item): item is StoredAttachment => Boolean(item));
-    if (files.length !== unique.length) throw new Error("One or more attachments expired; add them again");
+    const files = unique
+      .map((id) => this.values.get(id))
+      .filter((item): item is StoredAttachment => Boolean(item));
+    if (files.length !== unique.length)
+      throw new Error("One or more attachments expired; add them again");
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
-      throw payloadTooLarge(`Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`);
+      throw payloadTooLarge(
+        `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
+      );
     }
     const imageFiles = files.filter((item) => item.kind === "image");
     const imageBytes = imageFiles.reduce((sum, file) => sum + file.size, 0);
     if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
-      throw payloadTooLarge(`Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`);
+      throw payloadTooLarge(
+        `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
+      );
     }
     // One staging, one send: a file already leased to an in-flight prompt or
     // consumed by a delivered one cannot join a second message.
     if (files.some((file) => file.state !== "staged")) {
-      throw new Error("One or more attachments already belong to another message");
+      throw new Error(
+        "One or more attachments already belong to another message",
+      );
     }
     // Lease before the first await: from here the prompt owns these files,
     // and a concurrent withdrawal can no longer delete them mid-delivery.
     for (const file of files) file.state = "in-flight";
     try {
-      const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+      const images: Array<{ type: "image"; data: string; mimeType: string }> =
+        [];
       let encodedBytes = 0;
       for (const item of imageFiles) {
         const data = (await readFile(item.path)).toString("base64");
         encodedBytes += Buffer.byteLength(data);
         if (encodedBytes > MAX_PROMPT_IMAGE_ENCODED_BYTES) {
-          throw payloadTooLarge(`Encoded images exceed the ${MAX_PROMPT_IMAGE_ENCODED_BYTES}-byte prompt budget`);
+          throw payloadTooLarge(
+            `Encoded images exceed the ${MAX_PROMPT_IMAGE_ENCODED_BYTES}-byte prompt budget`,
+          );
         }
         images.push({ type: "image", data, mimeType: item.mimeType });
       }
@@ -316,7 +395,10 @@ export class AttachmentStore {
   }
 }
 
-export async function resolveProjectFiles(cwd: string, requested: string[] = []): Promise<string[]> {
+export async function resolveProjectFiles(
+  cwd: string,
+  requested: string[] = [],
+): Promise<string[]> {
   const root = await realpath(cwd);
   return Promise.all(
     [...new Set(requested)].slice(0, MAX_PROJECT_FILES).map(async (raw) => {
@@ -330,8 +412,14 @@ export async function resolveProjectFiles(cwd: string, requested: string[] = [])
   );
 }
 
-export function addAttachmentContext(message: string, files: StoredAttachment[], projectFiles: string[]): string {
-  const ordinary = files.filter((item) => item.kind === "file").map((item) => item.path);
+export function addAttachmentContext(
+  message: string,
+  files: StoredAttachment[],
+  projectFiles: string[],
+): string {
+  const ordinary = files
+    .filter((item) => item.kind === "file")
+    .map((item) => item.path);
   const references = [...projectFiles, ...ordinary];
   if (references.length === 0) return message;
   const lines = references.map((path) => `- ${path}`);

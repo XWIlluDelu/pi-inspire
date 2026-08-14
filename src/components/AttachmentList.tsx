@@ -34,17 +34,33 @@ export function AttachmentList({
               <>
                 <FileText size={13} aria-hidden />
                 <span className="attachment__name">{item.fileName}</span>
-                <span className="attachment__meta">{item.mimeType} · {formatBytes(item.size)}</span>
+                <span className="attachment__meta">
+                  {item.mimeType} · {formatBytes(item.size)}
+                </span>
               </>
             )}
-            {item.status === "uploading" ? <Loader2 size={12} className="spin attachment__status" aria-label="Uploading" /> : null}
-            {item.status === "error" ? <AlertTriangle size={12} className="status-error attachment__status" aria-label="Upload failed" /> : null}
+            {item.status === "uploading" ? (
+              <Loader2
+                size={12}
+                className="spin attachment__status"
+                aria-label="Uploading"
+              />
+            ) : null}
+            {item.status === "error" ? (
+              <AlertTriangle
+                size={12}
+                className="status-error attachment__status"
+                aria-label="Upload failed"
+              />
+            ) : null}
             <button
               type="button"
               className="attachment__remove"
               disabled={disabled}
               onClick={() => onRemove(item.localId)}
-              aria-label={image ? "Remove attached image" : `Remove ${item.fileName}`}
+              aria-label={
+                image ? "Remove attached image" : `Remove ${item.fileName}`
+              }
             >
               <X size={12} aria-hidden />
             </button>

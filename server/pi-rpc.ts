@@ -21,15 +21,25 @@ export class PiRpcOutcomeUnknownError extends Error {
   readonly outcomeUnknown = true;
   stopped: Promise<void> = Promise.resolve();
 
-  constructor(readonly command: string, message = `Pi command ${command} outcome is unknown`) {
+  constructor(
+    readonly command: string,
+    message = `Pi command ${command} outcome is unknown`,
+  ) {
     super(message);
     this.name = "PiRpcOutcomeUnknownError";
   }
 }
 
-export function isPiRpcOutcomeUnknown(error: unknown): error is PiRpcOutcomeUnknownError {
-  return error instanceof PiRpcOutcomeUnknownError || Boolean(
-    error && typeof error === "object" && (error as { outcomeUnknown?: unknown }).outcomeUnknown === true,
+export function isPiRpcOutcomeUnknown(
+  error: unknown,
+): error is PiRpcOutcomeUnknownError {
+  return (
+    error instanceof PiRpcOutcomeUnknownError ||
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        (error as { outcomeUnknown?: unknown }).outcomeUnknown === true,
+    )
   );
 }
 
@@ -51,7 +61,12 @@ function encodeOutboundFrame(value: Record<string, unknown>): string {
   const frame = `${JSON.stringify(value)}\n`;
   const bytes = Buffer.byteLength(frame);
   if (bytes > MAX_RPC_OUTBOUND_LINE_BYTES) {
-    throw Object.assign(new Error(`Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`), { status: 413 });
+    throw Object.assign(
+      new Error(
+        `Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`,
+      ),
+      { status: 413 },
+    );
   }
   return frame;
 }
@@ -62,11 +77,17 @@ export interface PiRpcOptions {
   env?: NodeJS.ProcessEnv;
   cliPath?: string;
   workerId?: string;
-  diagnostic?: (level: DiagnosticLevel, event: string, fields?: Record<string, unknown>) => void;
+  diagnostic?: (
+    level: DiagnosticLevel,
+    event: string,
+    fields?: Record<string, unknown>,
+  ) => void;
 }
 
 function resolvePiCliPath(): string {
-  const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+  const entry = fileURLToPath(
+    import.meta.resolve("@earendil-works/pi-coding-agent"),
+  );
   return join(dirname(entry), "cli.js");
 }
 
@@ -86,7 +107,11 @@ export class PiRpcProcess extends EventEmitter {
     return this.child?.pid ?? null;
   }
 
-  private diagnostic(level: DiagnosticLevel, event: string, fields: Record<string, unknown> = {}): void {
+  private diagnostic(
+    level: DiagnosticLevel,
+    event: string,
+    fields: Record<string, unknown> = {},
+  ): void {
     this.options.diagnostic?.(level, event, {
       workerId: this.options.workerId,
       childPid: this.pid,
@@ -98,15 +123,19 @@ export class PiRpcProcess extends EventEmitter {
     if (this.child) throw new Error("Pi RPC process is already running");
 
     const cliPath = this.options.cliPath ?? resolvePiCliPath();
-    const child = spawn(process.execPath, [cliPath, "--mode", "rpc", ...(this.options.args ?? [])], {
-      cwd: this.options.cwd,
-      env: {
-        ...process.env,
-        PI_SKIP_VERSION_CHECK: "1",
-        ...this.options.env,
+    const child = spawn(
+      process.execPath,
+      [cliPath, "--mode", "rpc", ...(this.options.args ?? [])],
+      {
+        cwd: this.options.cwd,
+        env: {
+          ...process.env,
+          PI_SKIP_VERSION_CHECK: "1",
+          ...this.options.env,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    );
     this.child = child;
     this.stopping = false;
     this.stopPromise = null;
@@ -120,7 +149,10 @@ export class PiRpcProcess extends EventEmitter {
     child.once("error", (error) => this.handleExit(child, error));
     child.once("exit", (code, signal) => {
       if (this.stopping) return;
-      this.handleExit(child, new Error(`Pi RPC exited (code=${code}, signal=${signal})`));
+      this.handleExit(
+        child,
+        new Error(`Pi RPC exited (code=${code}, signal=${signal})`),
+      );
     });
 
     this.attachLineReader(child);
@@ -138,7 +170,10 @@ export class PiRpcProcess extends EventEmitter {
       failed = true;
       parts = [];
       this.stopping = true; // suppress the duplicate process-exit notification
-      this.handleExit(child, new Error(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`));
+      this.handleExit(
+        child,
+        new Error(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`),
+      );
       child.kill("SIGKILL");
     };
 
@@ -202,11 +237,15 @@ export class PiRpcProcess extends EventEmitter {
         if (pending) {
           clearTimeout(pending.timer);
           this.pending.delete(record.id);
-          this.diagnostic(record.success === false ? "warning" : "debug", "rpc_response", {
-            requestId: record.id,
-            command: pending.command,
-            success: record.success !== false,
-          });
+          this.diagnostic(
+            record.success === false ? "warning" : "debug",
+            "rpc_response",
+            {
+              requestId: record.id,
+              command: pending.command,
+              success: record.success !== false,
+            },
+          );
           pending.resolve(record as unknown as RpcResponse);
         }
       }
@@ -215,7 +254,10 @@ export class PiRpcProcess extends EventEmitter {
     this.emit("event", value);
   }
 
-  private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
+  private handleExit(
+    child: ChildProcessWithoutNullStreams,
+    error: Error,
+  ): void {
     if (this.child !== child) return;
     this.diagnostic("error", "worker_exit", {
       errorName: error.name,
@@ -224,9 +266,16 @@ export class PiRpcProcess extends EventEmitter {
     });
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(pending.written
-        ? this.withStderr(new PiRpcOutcomeUnknownError(pending.command, `Pi command ${pending.command} outcome is unknown because the child exited`))
-        : this.withStderr(error));
+      pending.reject(
+        pending.written
+          ? this.withStderr(
+              new PiRpcOutcomeUnknownError(
+                pending.command,
+                `Pi command ${pending.command} outcome is unknown because the child exited`,
+              ),
+            )
+          : this.withStderr(error),
+      );
     }
     this.pending.clear();
     this.child = null;
@@ -239,10 +288,15 @@ export class PiRpcProcess extends EventEmitter {
    * anything the child process printed, credentials included. */
   private withStderr(error: Error): Error {
     const detail = this.stderr.trim();
-    return detail ? Object.assign(error, { detail: `Pi stderr: ${detail}` }) : error;
+    return detail
+      ? Object.assign(error, { detail: `Pi stderr: ${detail}` })
+      : error;
   }
 
-  async request<T = unknown>(command: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
+  async request<T = unknown>(
+    command: Record<string, unknown>,
+    timeoutMs = 30_000,
+  ): Promise<T> {
     const child = this.child;
     if (!child || child.exitCode !== null || !child.stdin.writable) {
       throw new Error("Pi RPC process is not available");
@@ -251,7 +305,10 @@ export class PiRpcProcess extends EventEmitter {
     const id = `inspire_${++this.requestSequence}`;
     const commandName = String(command.type);
     const frame = encodeOutboundFrame({ ...command, id });
-    this.diagnostic("debug", "rpc_request", { requestId: id, command: commandName });
+    this.diagnostic("debug", "rpc_request", {
+      requestId: id,
+      command: commandName,
+    });
     const response = await new Promise<RpcResponse>((resolve, reject) => {
       const pending: PendingRequest = {
         resolve,
@@ -270,13 +327,19 @@ export class PiRpcProcess extends EventEmitter {
           timeoutMs,
         });
         if (!pending.written) {
-          reject(this.withStderr(new Error(`Timed out before writing Pi command ${commandName}`)));
+          reject(
+            this.withStderr(
+              new Error(`Timed out before writing Pi command ${commandName}`),
+            ),
+          );
           return;
         }
-        const error = this.withStderr(new PiRpcOutcomeUnknownError(
-          commandName,
-          `Pi command ${commandName} outcome is unknown after its response timed out`,
-        )) as PiRpcOutcomeUnknownError;
+        const error = this.withStderr(
+          new PiRpcOutcomeUnknownError(
+            commandName,
+            `Pi command ${commandName} outcome is unknown after its response timed out`,
+          ),
+        ) as PiRpcOutcomeUnknownError;
         error.stopped = this.stopForUnknown(error);
         reject(error);
       }, timeoutMs);
@@ -288,11 +351,16 @@ export class PiRpcProcess extends EventEmitter {
           if (current !== pending) return;
           clearTimeout(pending.timer);
           this.pending.delete(id);
-          this.diagnostic("error", "rpc_write_failed", { requestId: id, command: commandName });
-          const unknown = this.withStderr(new PiRpcOutcomeUnknownError(
-            commandName,
-            `Pi command ${commandName} outcome is unknown after its stdin write failed`,
-          )) as PiRpcOutcomeUnknownError;
+          this.diagnostic("error", "rpc_write_failed", {
+            requestId: id,
+            command: commandName,
+          });
+          const unknown = this.withStderr(
+            new PiRpcOutcomeUnknownError(
+              commandName,
+              `Pi command ${commandName} outcome is unknown after its stdin write failed`,
+            ),
+          ) as PiRpcOutcomeUnknownError;
           unknown.stopped = this.stopForUnknown(unknown);
           pending.reject(unknown);
         });
@@ -302,20 +370,30 @@ export class PiRpcProcess extends EventEmitter {
       } catch (error) {
         clearTimeout(pending.timer);
         this.pending.delete(id);
-        pending.reject(error instanceof Error ? error : new Error(String(error)));
+        pending.reject(
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
     });
 
-    if (!response.success) throw new Error(response.error ?? `Pi command ${response.command} failed`);
+    if (!response.success)
+      throw new Error(
+        response.error ?? `Pi command ${response.command} failed`,
+      );
     return response.data as T;
   }
 
-  async sendExtensionUiResponse(response: Record<string, unknown>): Promise<void> {
+  async sendExtensionUiResponse(
+    response: Record<string, unknown>,
+  ): Promise<void> {
     const child = this.child;
     if (!child || child.exitCode !== null || !child.stdin.writable) {
       throw new Error("Pi RPC process is not available");
     }
-    const frame = encodeOutboundFrame({ type: "extension_ui_response", ...response });
+    const frame = encodeOutboundFrame({
+      type: "extension_ui_response",
+      ...response,
+    });
     this.diagnostic("debug", "rpc_extension_response", {
       requestId: typeof response.id === "string" ? response.id : undefined,
       command: "extension_ui_response",
@@ -327,10 +405,12 @@ export class PiRpcProcess extends EventEmitter {
             resolve();
             return;
           }
-          const unknown = this.withStderr(new PiRpcOutcomeUnknownError(
-            "extension_ui_response",
-            "Pi extension response outcome is unknown after its stdin write failed",
-          )) as PiRpcOutcomeUnknownError;
+          const unknown = this.withStderr(
+            new PiRpcOutcomeUnknownError(
+              "extension_ui_response",
+              "Pi extension response outcome is unknown after its stdin write failed",
+            ),
+          ) as PiRpcOutcomeUnknownError;
           unknown.stopped = this.stopForUnknown(unknown);
           reject(unknown);
         });
@@ -355,7 +435,10 @@ export class PiRpcProcess extends EventEmitter {
     if (this.stopPromise) return this.stopPromise;
     const child = this.child;
     if (!child) return;
-    this.diagnostic("info", "worker_stop_requested", { childPid: child.pid, pendingRequests: this.pending.size });
+    this.diagnostic("info", "worker_stop_requested", {
+      childPid: child.pid,
+      pendingRequests: this.pending.size,
+    });
     this.stopping = true;
     this.child = null;
 
@@ -397,7 +480,9 @@ export class PiRpcProcess extends EventEmitter {
         `Pi command ${pending.command} outcome is unknown because the child was stopped before its response`,
       );
       error.stopped = stopped;
-      pending.reject(pending.written ? error : new Error("Pi RPC process stopped"));
+      pending.reject(
+        pending.written ? error : new Error("Pi RPC process stopped"),
+      );
     }
     this.pending.clear();
     await stopped;

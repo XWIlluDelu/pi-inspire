@@ -23,7 +23,11 @@ import {
   type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
-import { gitDecorationForChange, gitDecorationForDirectory, presentGitFacet } from "../git-presentation";
+import {
+  gitDecorationForChange,
+  gitDecorationForDirectory,
+  presentGitFacet,
+} from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
@@ -51,17 +55,25 @@ export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
     groups.push({
       cwd,
       name: projectNameFromCwd(cwd),
-      sessions: [...list].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified)),
+      sessions: [...list].sort(
+        (a, b) => Date.parse(b.modified) - Date.parse(a.modified),
+      ),
     });
   }
-  groups.sort((a, b) => Date.parse(b.sessions[0]!.modified) - Date.parse(a.sessions[0]!.modified));
+  groups.sort(
+    (a, b) =>
+      Date.parse(b.sessions[0]!.modified) - Date.parse(a.sessions[0]!.modified),
+  );
   return groups;
 }
 
 /** The curated navigation identities, all of them preference-owned. */
 export type NavCuration = Pick<
   InspirePreferences,
-  "pinnedSessionIds" | "pinnedProjectCwds" | "hiddenProjectCwds" | "hiddenSessionIds"
+  | "pinnedSessionIds"
+  | "pinnedProjectCwds"
+  | "hiddenProjectCwds"
+  | "hiddenSessionIds"
 >;
 
 export interface NavSections {
@@ -80,21 +92,35 @@ export interface NavSections {
 /** Partition the list into navigation sections with one display owner per
  * session. A hidden folder outranks both session-level states; individual
  * hiding then outranks pinning, and an individual pin outranks a folder pin. */
-export function splitNavSections(sessions: SessionSummary[], curation: NavCuration): NavSections {
+export function splitNavSections(
+  sessions: SessionSummary[],
+  curation: NavCuration,
+): NavSections {
   const pinnedIds = new Set(curation.pinnedSessionIds);
   const hiddenIds = new Set(curation.hiddenSessionIds);
   const pinnedCwds = new Set(curation.pinnedProjectCwds);
   const hiddenCwds = new Set(curation.hiddenProjectCwds);
-  const byRecency = (a: SessionSummary, b: SessionSummary) => Date.parse(b.modified) - Date.parse(a.modified);
-  const visible = sessions.filter((session) => !hiddenCwds.has(session.cwd) && !hiddenIds.has(session.id));
-  const groups = groupSessionsByCwd(visible.filter((session) => !pinnedIds.has(session.id)));
+  const byRecency = (a: SessionSummary, b: SessionSummary) =>
+    Date.parse(b.modified) - Date.parse(a.modified);
+  const visible = sessions.filter(
+    (session) => !hiddenCwds.has(session.cwd) && !hiddenIds.has(session.id),
+  );
+  const groups = groupSessionsByCwd(
+    visible.filter((session) => !pinnedIds.has(session.id)),
+  );
   return {
-    pinned: visible.filter((session) => pinnedIds.has(session.id)).sort(byRecency),
+    pinned: visible
+      .filter((session) => pinnedIds.has(session.id))
+      .sort(byRecency),
     pinnedGroups: groups.filter((group) => pinnedCwds.has(group.cwd)),
     groups: groups.filter((group) => !pinnedCwds.has(group.cwd)),
-    hiddenGroups: groupSessionsByCwd(sessions.filter((session) => hiddenCwds.has(session.cwd))),
+    hiddenGroups: groupSessionsByCwd(
+      sessions.filter((session) => hiddenCwds.has(session.cwd)),
+    ),
     hidden: sessions
-      .filter((session) => !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id))
+      .filter(
+        (session) => !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id),
+      )
       .sort(byRecency),
   };
 }
@@ -117,7 +143,10 @@ export function compactAge(timestamp: string, now = Date.now()): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d`;
-  return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(time).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 const INDICATOR_LABELS: Record<SessionIndicator, string> = {
@@ -131,11 +160,17 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
  * single bar at the bottom of the nav; expanded it takes the lower half.
  * Levels come from the host's project index (same source as the composer's
  * file search), and clicking a file opens the session-bound preview. */
-function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | null }) {
+function WorkspaceExplorer({
+  selectedSessionId,
+}: {
+  selectedSessionId: string | null;
+}) {
   const state = useAppState();
   const cwd = selectedSessionId === state.sessionId ? state.cwd : null;
   const [open, setOpen] = useState(false);
-  const [levels, setLevels] = useState<Map<string, ProjectDirEntry[]>>(new Map());
+  const [levels, setLevels] = useState<Map<string, ProjectDirEntry[]>>(
+    new Map(),
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // The tree always reflects the visible session's workspace.
@@ -159,11 +194,9 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
     return () => store.setGitSurfaceVisible("workspace-explorer", false);
   }, [open, cwd]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the current render's loader is intentionally invoked only when this explorer opens or changes workspace.
   useEffect(() => {
     if (open && cwd !== null) load("");
-    // the reset effect above clears levels on cwd change; reloading the root
-    // on open/cwd keeps the visible tree fresh without polling
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cwd]);
 
   if (!cwd) return null;
@@ -181,8 +214,18 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
     const entries = levels.get(dir);
     const indent = { paddingLeft: `${12 + depth * 14}px` };
-    if (!entries) return <div className="explorer__note" style={indent}>Loading…</div>;
-    if (entries.length === 0) return <div className="explorer__note" style={indent}>Empty</div>;
+    if (!entries)
+      return (
+        <div className="explorer__note" style={indent}>
+          Loading…
+        </div>
+      );
+    if (entries.length === 0)
+      return (
+        <div className="explorer__note" style={indent}>
+          Empty
+        </div>
+      );
     return entries.map((entry) => {
       const path = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.type === "dir") {
@@ -197,14 +240,31 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
               aria-expanded={isOpen}
               onClick={() => toggleDir(path)}
             >
-              <ChevronRight size={11} className={`chev ${isOpen ? "chev--open" : ""}`} aria-hidden />
+              <ChevronRight
+                size={11}
+                className={`chev ${isOpen ? "chev--open" : ""}`}
+                aria-hidden
+              />
               <Folder size={12} aria-hidden />
-              <span className={`explorer__name ${rollup ? `git-deco--${rollup}` : ""}`}>{entry.name}</span>
+              <span
+                className={`explorer__name ${rollup ? `git-deco--${rollup}` : ""}`}
+              >
+                {entry.name}
+              </span>
               {rollup ? (
                 <span
                   className={`git-rollup git-deco--${rollup}`}
-                  aria-label={rollup === "conflict" ? "Contains conflicts" : `Contains ${rollup} files`}
-                  title={rollup === "conflict" ? "Contains conflicts" : `Contains ${rollup} files`}
+                  role="img"
+                  aria-label={
+                    rollup === "conflict"
+                      ? "Contains conflicts"
+                      : `Contains ${rollup} files`
+                  }
+                  title={
+                    rollup === "conflict"
+                      ? "Contains conflicts"
+                      : `Contains ${rollup} files`
+                  }
                 />
               ) : null}
             </button>
@@ -225,13 +285,20 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
           onClick={() => void store.openResource(path)}
         >
           <FileText size={12} aria-hidden />
-          <span className={`explorer__name ${decoration ? `git-deco--${decoration}` : ""}`}>{entry.name}</span>
+          <span
+            className={`explorer__name ${decoration ? `git-deco--${decoration}` : ""}`}
+          >
+            {entry.name}
+          </span>
           {facet ? (
             <span
               className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
+              role="img"
               aria-label={facet.label}
               title={facet.label}
-            >{facet.mark}</span>
+            >
+              {facet.mark}
+            </span>
           ) : null}
         </button>
       );
@@ -239,7 +306,10 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
   };
 
   return (
-    <section className={`explorer ${open ? "explorer--open" : ""}`} aria-label="Workspace files">
+    <section
+      className={`explorer ${open ? "explorer--open" : ""}`}
+      aria-label="Workspace files"
+    >
       <button
         type="button"
         className="explorer__header"
@@ -249,7 +319,11 @@ function WorkspaceExplorer({ selectedSessionId }: { selectedSessionId: string | 
       >
         <Folder size={13} aria-hidden />
         <span className="explorer__title">{state.project}</span>
-        <ChevronUp size={12} className={`chev-flip ${open ? "chev-flip--open" : ""}`} aria-hidden />
+        <ChevronUp
+          size={12}
+          className={`chev-flip ${open ? "chev-flip--open" : ""}`}
+          aria-hidden
+        />
       </button>
       {open ? <div className="explorer__tree">{renderLevel("", 0)}</div> : null}
     </section>
@@ -285,7 +359,8 @@ function SessionRow({
   const indicator = runtimeStatus?.indicator;
   const conflicted = runtimeStatus?.runState === "conflict";
   const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
-  const deleteDisabled = active || opening || busy || conflicted || state.deletingSessionId !== null;
+  const deleteDisabled =
+    active || opening || busy || conflicted || state.deletingSessionId !== null;
   const deleteTitle = active
     ? "Switch to another session before deleting"
     : conflicted
@@ -299,7 +374,12 @@ function SessionRow({
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
   const attention =
-    indicator === "completed" || indicator === "failed" ? (selected ? null : indicator) : (indicator ?? null);
+    indicator === "completed" || indicator === "failed"
+      ? selected
+        ? null
+        : indicator
+      : (indicator ?? null);
+  const attentionLabel = attention ? INDICATOR_LABELS[attention] : null;
   const title = session.title || "New session";
   return (
     <div className={`nav__row ${selected ? "nav__row--active" : ""}`}>
@@ -314,22 +394,33 @@ function SessionRow({
       >
         <span className="nav__row-title">
           {opening ? (
-            <Loader2 size={12} className="spin" aria-label="Opening session" />
+            <span
+              role="img"
+              aria-label="Opening session"
+              title="Opening session"
+            >
+              <Loader2 size={12} className="spin" aria-hidden />
+            </span>
           ) : attention ? (
             <span
               className={`nav__row-dot nav__row-dot--${attention}`}
               role="img"
-              aria-label={INDICATOR_LABELS[attention]}
-              title={INDICATOR_LABELS[attention]}
+              aria-label={attentionLabel!}
+              title={attentionLabel!}
             />
           ) : null}
           <span className="nav__row-name">{title}</span>
         </span>
         <span className="nav__row-meta">
           {showProject ? (
-            <span className="nav__row-project">{projectNameFromCwd(session.cwd)}</span>
+            <span className="nav__row-project">
+              {projectNameFromCwd(session.cwd)}
+            </span>
           ) : null}
-          <span className="nav__row-age" title={new Date(session.modified).toLocaleString()}>
+          <span
+            className="nav__row-age"
+            title={new Date(session.modified).toLocaleString()}
+          >
             {compactAge(session.modified)}
           </span>
         </span>
@@ -337,7 +428,9 @@ function SessionRow({
       <div className="nav__row-actions">
         {hidden ? (
           <>
-            {projectHidden ? <span className="nav__row-action-spacer" aria-hidden /> : (
+            {projectHidden ? (
+              <span className="nav__row-action-spacer" aria-hidden />
+            ) : (
               <button
                 type="button"
                 className="nav__row-action"
@@ -369,7 +462,11 @@ function SessionRow({
               title={pinned ? "Unpin session" : "Pin session"}
               onClick={() => store.toggleSessionPin(session.id)}
             >
-              {pinned ? <PinOff size={12} aria-hidden /> : <Pin size={12} aria-hidden />}
+              {pinned ? (
+                <PinOff size={12} aria-hidden />
+              ) : (
+                <Pin size={12} aria-hidden />
+              )}
             </button>
             <button
               type="button"
@@ -410,11 +507,14 @@ function ProjectGroup({
 }) {
   const state = useAppState();
   // Active search must never hide results inside a collapsed folder.
-  const expanded = searching || !state.prefs.navCollapsedGroups.includes(group.cwd);
+  const expanded =
+    searching || !state.prefs.navCollapsedGroups.includes(group.cwd);
   const pinned = state.prefs.pinnedProjectCwds.includes(group.cwd);
   // A collapsed folder that hides the active session carries the active
   // highlight itself.
-  const activeInside = group.sessions.some((session) => session.id === selectedSessionId);
+  const activeInside = group.sessions.some(
+    (session) => session.id === selectedSessionId,
+  );
   return (
     <section
       className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
@@ -432,11 +532,21 @@ function ProjectGroup({
           disabled={searching}
           onClick={() => store.toggleNavGroup(group.cwd)}
         >
-          <ChevronRight size={13} className={`chev ${expanded ? "chev--open" : ""}`} aria-hidden />
+          <ChevronRight
+            size={13}
+            className={`chev ${expanded ? "chev--open" : ""}`}
+            aria-hidden
+          />
           <Folder size={14} aria-hidden />
           <span className="nav__group-name">{group.name}</span>
-          {showContext ? <span className="nav__group-context">{parentSegment(group.cwd)}</span> : null}
-          <span className="nav__group-count" aria-hidden>{group.sessions.length}</span>
+          {showContext ? (
+            <span className="nav__group-context">
+              {parentSegment(group.cwd)}
+            </span>
+          ) : null}
+          <span className="nav__group-count" aria-hidden>
+            {group.sessions.length}
+          </span>
         </button>
         <span className="nav__group-actions">
           {hidden ? (
@@ -458,11 +568,19 @@ function ProjectGroup({
                 type="button"
                 className="nav__row-action"
                 aria-pressed={pinned}
-                aria-label={pinned ? `Unpin folder ${group.name}` : `Pin folder ${group.name}`}
+                aria-label={
+                  pinned
+                    ? `Unpin folder ${group.name}`
+                    : `Pin folder ${group.name}`
+                }
                 title={pinned ? "Unpin folder" : "Pin folder"}
                 onClick={() => store.toggleProjectPin(group.cwd)}
               >
-                {pinned ? <PinOff size={12} aria-hidden /> : <Pin size={12} aria-hidden />}
+                {pinned ? (
+                  <PinOff size={12} aria-hidden />
+                ) : (
+                  <Pin size={12} aria-hidden />
+                )}
               </button>
               <button
                 type="button"
@@ -504,10 +622,13 @@ export function Nav({
   onSelectSession: (id: string) => void;
 }) {
   const state = useAppState();
-  const visibleSessionId = selectedSessionId === undefined ? state.sessionId : selectedSessionId;
+  const visibleSessionId =
+    selectedSessionId === undefined ? state.sessionId : selectedSessionId;
   const navRef = useRef<HTMLElement>(null);
   const [hiddenOpen, setHiddenOpen] = useState(false);
-  const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
+    null,
+  );
 
   if (collapsed) {
     return (
@@ -525,38 +646,50 @@ export function Nav({
     );
   }
 
-  const { pinned, pinnedGroups, groups, hiddenGroups, hidden } = splitNavSections(state.sessions, state.prefs);
+  const { pinned, pinnedGroups, groups, hiddenGroups, hidden } =
+    splitNavSections(state.sessions, state.prefs);
   const folders = [...pinnedGroups, ...groups];
   const allFolders = [...folders, ...hiddenGroups];
   const nameCounts = new Map<string, number>();
-  for (const group of allFolders) nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
+  for (const group of allFolders)
+    nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
   const searching = state.sessionQuery.trim() !== "";
-  const shownBaseRows = Math.min(state.sessionListNextOffset, state.sessionListTotal);
+  const shownBaseRows = Math.min(
+    state.sessionListNextOffset,
+    state.sessionListTotal,
+  );
   const hasOlderSessions = state.sessionListNextOffset < state.sessionListTotal;
-  const sessionListBusy = state.sessionListLoading || state.sessionListLoadingOlder || state.sessionListHydrating;
-  const retrySessionLabel = state.sessionListOperation === "hydrate"
-    ? "Retry loading active sessions"
-    : state.sessionListOperation === "preserve"
-      ? "Retry refreshing the list"
-      : state.sessionListOperation === "refresh"
-        ? "Retry refreshing sessions"
-        : state.sessionListOperation === "older"
-          ? "Retry loading older sessions"
-          : "Retry loading sessions";
-  const loadingSessionLabel = state.sessionListOperation === "hydrate"
-    ? "Loading active sessions…"
-    : state.sessionListOperation === "preserve"
-      ? "Refreshing loaded sessions…"
-      : state.sessionListOperation === "refresh"
-        ? "Refreshing sessions…"
-        : state.sessionListOperation === "older"
-          ? "Loading older sessions…"
-          : "Loading sessions…";
+  const sessionListBusy =
+    state.sessionListLoading ||
+    state.sessionListLoadingOlder ||
+    state.sessionListHydrating;
+  const retrySessionLabel =
+    state.sessionListOperation === "hydrate"
+      ? "Retry loading active sessions"
+      : state.sessionListOperation === "preserve"
+        ? "Retry refreshing the list"
+        : state.sessionListOperation === "refresh"
+          ? "Retry refreshing sessions"
+          : state.sessionListOperation === "older"
+            ? "Retry loading older sessions"
+            : "Retry loading sessions";
+  const loadingSessionLabel =
+    state.sessionListOperation === "hydrate"
+      ? "Loading active sessions…"
+      : state.sessionListOperation === "preserve"
+        ? "Refreshing loaded sessions…"
+        : state.sessionListOperation === "refresh"
+          ? "Refreshing sessions…"
+          : state.sessionListOperation === "older"
+            ? "Loading older sessions…"
+            : "Loading sessions…";
   // Hidden is a curation drawer, not a browsing group: it opens on demand and
   // starts closed again next time. Search reveals matches inside it without
   // reclassifying them out of Hidden.
   const hiddenExpanded = searching || hiddenOpen;
-  const hiddenCount = hidden.length + hiddenGroups.reduce((total, group) => total + group.sessions.length, 0);
+  const hiddenCount =
+    hidden.length +
+    hiddenGroups.reduce((total, group) => total + group.sessions.length, 0);
 
   return (
     <nav className="nav" aria-label="Sessions" ref={navRef}>
@@ -569,7 +702,9 @@ export function Nav({
         >
           <span className="nav__brand-icon" aria-hidden />
           <Wordmark />
-          <span className="nav__brand-action"><Plus size={13} aria-hidden /> New session</span>
+          <span className="nav__brand-action">
+            <Plus size={13} aria-hidden /> New session
+          </span>
         </button>
         {state.mock ? <span className="nav__mock">mock</span> : null}
       </div>
@@ -586,11 +721,16 @@ export function Nav({
         </label>
       </div>
       {state.sessionActionError ? (
-        <p className="nav__error" role="alert">{state.sessionActionError}</p>
+        <p className="nav__error" role="alert">
+          {state.sessionActionError}
+        </p>
       ) : null}
       <div className="nav__list">
         {pinned.length > 0 ? (
-          <section className="nav__group nav__group--pinned" aria-labelledby="nav-pinned-title">
+          <section
+            className="nav__group nav__group--pinned"
+            aria-labelledby="nav-pinned-title"
+          >
             <h2 className="nav__group-title" id="nav-pinned-title">
               <Pin size={14} aria-hidden />
               <span className="nav__group-name">Pinned</span>
@@ -609,41 +749,63 @@ export function Nav({
             ))}
           </section>
         ) : null}
-        {folders.map((group, groupIndex) => (
-          <ProjectGroup
-            key={group.cwd}
-            group={group}
-            headingId={`nav-group-title-${groupIndex}`}
-            searching={searching}
-            showContext={(nameCounts.get(group.name) ?? 0) > 1}
-            selectedSessionId={visibleSessionId}
-            onSelectSession={onSelectSession}
-          />
-        ))}
+        {folders.map((group, groupIndex) => {
+          return (
+            <ProjectGroup
+              key={group.cwd}
+              group={group}
+              headingId={`nav-group-title-${groupIndex}`}
+              searching={searching}
+              showContext={(nameCounts.get(group.name) ?? 0) > 1}
+              selectedSessionId={visibleSessionId}
+              onSelectSession={onSelectSession}
+            />
+          );
+        })}
         {hasOlderSessions || sessionListBusy || state.sessionListError ? (
           <div className="nav__pagination">
-            <span className="nav__pagination-status" role="status" aria-live="polite">
+            <span
+              className="nav__pagination-status"
+              role="status"
+              aria-live="polite"
+            >
               Showing {shownBaseRows} of {state.sessionListTotal}
               {state.sessionListError ? ` · ${state.sessionListError}` : ""}
             </span>
             {state.sessionListError ? (
-              <button type="button" className="nav__pagination-button" onClick={() => void store.retrySessionList()}>
+              <button
+                type="button"
+                className="nav__pagination-button"
+                onClick={() => void store.retrySessionList()}
+              >
                 {retrySessionLabel}
               </button>
             ) : sessionListBusy ? (
-              <button type="button" className="nav__pagination-button" disabled aria-busy="true">
+              <button
+                type="button"
+                className="nav__pagination-button"
+                disabled
+                aria-busy="true"
+              >
                 <Loader2 size={12} className="spin" aria-hidden />
                 {loadingSessionLabel}
               </button>
             ) : hasOlderSessions ? (
-              <button type="button" className="nav__pagination-button" onClick={() => void store.loadOlderSessions()}>
+              <button
+                type="button"
+                className="nav__pagination-button"
+                onClick={() => void store.loadOlderSessions()}
+              >
                 Load older sessions
               </button>
             ) : null}
           </div>
         ) : null}
         {hiddenCount > 0 ? (
-          <section className="nav__group nav__group--hidden" aria-labelledby="nav-hidden-title">
+          <section
+            className="nav__group nav__group--hidden"
+            aria-labelledby="nav-hidden-title"
+          >
             <h2 className="nav__group-title" id="nav-hidden-title">
               <button
                 type="button"
@@ -652,7 +814,11 @@ export function Nav({
                 disabled={searching}
                 onClick={() => setHiddenOpen((value) => !value)}
               >
-                <ChevronRight size={13} className={`chev ${hiddenExpanded ? "chev--open" : ""}`} aria-hidden />
+                <ChevronRight
+                  size={13}
+                  className={`chev ${hiddenExpanded ? "chev--open" : ""}`}
+                  aria-hidden
+                />
                 <EyeOff size={14} aria-hidden />
                 <span className="nav__group-name">Hidden</span>
                 <span className="nav__group-count" aria-hidden>
@@ -696,9 +862,13 @@ export function Nav({
             ) : (
               <Inbox size={26} strokeWidth={1.5} aria-hidden />
             )}
-            <span className="empty-state__title">{searching ? "No sessions found" : "No sessions yet"}</span>
+            <span className="empty-state__title">
+              {searching ? "No sessions found" : "No sessions yet"}
+            </span>
             <span className="empty-state__hint">
-              {searching ? "Try a different keyword" : "Start a session to begin"}
+              {searching
+                ? "Try a different keyword"
+                : "Start a session to begin"}
             </span>
           </div>
         ) : null}

@@ -12,7 +12,8 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     unobserve(): void {}
     disconnect(): void {}
   }
-  globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+  globalThis.ResizeObserver =
+    ResizeObserverStub as unknown as typeof ResizeObserver;
 }
 
 if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {

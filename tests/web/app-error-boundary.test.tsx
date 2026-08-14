@@ -19,8 +19,12 @@ describe("AppErrorBoundary", () => {
     );
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "This view could not be rendered" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "This view could not be rendered" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reload page" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("private render detail")).not.toBeInTheDocument();
   });
 });
