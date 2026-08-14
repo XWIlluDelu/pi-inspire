@@ -531,6 +531,10 @@ a {
   white-space: nowrap;
 }
 
+.chip__label--responsive {
+  display: inline;
+}
+
 /* --- Left navigation --- */
 
 .nav {
@@ -1632,11 +1636,75 @@ a {
 
 /* --- Transcript --- */
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .transcript-wrap {
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.transcript-wrap--earlier-branch .transcript {
+  padding-top: calc(var(--space-16) + 84px);
+}
+
+.earlier-branch-banner {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--space-3) + 40px);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(680px, calc(100% - (var(--space-8) + var(--space-4))));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--hairline));
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--accent-deep);
+  transform: translateX(-50%);
+}
+
+.earlier-branch-banner__copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  flex: 1;
+  font-size: var(--text-xs);
+}
+
+.earlier-branch-banner__copy strong {
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.earlier-branch-banner__copy > span:not(.earlier-branch-banner__error) {
+  color: var(--muted);
+}
+
+.earlier-branch-banner__error {
+  color: var(--error);
+}
+
+.earlier-branch-banner__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+
+.earlier-branch-banner__actions .button {
+  min-height: 28px;
+  white-space: nowrap;
 }
 
 .transcript {
@@ -1657,6 +1725,21 @@ a {
 .transcript__content {
   min-height: 100%;
   display: flow-root;
+}
+
+@media (max-width: 640px) {
+  .transcript-wrap--earlier-branch .transcript {
+    padding-top: calc(var(--space-16) + 120px);
+  }
+
+  .earlier-branch-banner {
+    align-items: flex-start;
+    width: calc(100% - var(--space-6));
+  }
+
+  .earlier-branch-banner__actions {
+    flex-direction: column;
+  }
 }
 
 .transcript-search {
@@ -2139,6 +2222,12 @@ a {
   font-size: var(--text-sm);
   text-align: left;
   color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.card__header:hover {
+  background: var(--bg-inset);
 }
 
 .card__disclosure {
@@ -2157,7 +2246,6 @@ a {
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.card__disclosure:hover,
 .card__disclosure:focus-visible {
   background: var(--bg-inset);
 }
@@ -2870,6 +2958,18 @@ a {
   color: var(--faint);
 }
 
+.composer__delivery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.composer__delivery .segmented {
+  flex: 0 0 auto;
+}
+
 .composer__meta {
   display: flex;
   align-items: center;
@@ -3387,7 +3487,8 @@ a {
   color: var(--ink);
 }
 
-.picker__row:hover {
+.picker__row:hover,
+.picker__row--active {
   background: var(--bg-inset);
 }
 
@@ -3568,6 +3669,15 @@ a {
   gap: var(--space-2);
 }
 
+/* Only transient tool/retry text belongs to the live region. Queued input
+   stays concise here; its full host-projected text remains in the transcript. */
+.activity__live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* --- Context / resources pane ---
    Wide enough to genuinely preview documents: it scales with the viewport
    and the reading column yields while a preview is open. */
@@ -3729,8 +3839,25 @@ body.pane-resizing .nav {
   overflow-y: auto;
 }
 
-/* The list owns one bounded scroll region: a disclosure switches its recent
-   prefix to continuous history without exposing transport pagination. */
+/* Historical pages stay in this one bounded scroll region. Large loaded
+   prefixes mount only the rows around the viewport. */
+.res__virtual {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.res__virtual-row {
+  position: absolute;
+  inset: 0 0 auto;
+  width: 100%;
+  padding-bottom: 2px;
+}
+
+.res__virtual-row .res__row {
+  width: 100%;
+}
+
 .res__more {
   display: inline-flex;
   align-items: center;
@@ -3854,12 +3981,30 @@ button.res__more:hover {
   background: var(--bg-inset);
 }
 
+.res__row-retry {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
 .changes__stale {
   flex: 0 0 auto;
   padding: var(--space-1) var(--space-4);
   color: var(--warning);
   background: var(--warning-tint);
   font-size: var(--text-xs);
+}
+
+.changes__inline-action {
+  margin-left: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .changes__index {
@@ -4286,6 +4431,20 @@ button.res__more:hover {
   color: var(--error);
   font-size: var(--text-sm);
   text-align: left;
+}
+
+.welcome__readiness {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 20px;
+  padding: 0 var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.welcome__readiness--error {
+  color: var(--error);
 }
 
 .welcome__directory {
@@ -5178,9 +5337,18 @@ body.srail-dragging {
     max-width: none;
   }
 
-  .topbar__project,
-  .topbar__extension-status {
+  .topbar__project {
     display: none;
+  }
+
+  .topbar__extension-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   /* Preserve workspace-change awareness without competing with the session
@@ -5208,8 +5376,14 @@ body.srail-dragging {
     padding-inline: var(--space-1);
   }
 
-  .topbar__status .chip__label {
-    display: none;
+  .topbar__status .chip__label--responsive {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .topbar__actions {
@@ -5430,6 +5604,29 @@ button.branch-row__main:disabled { cursor: default; }
   background: var(--warning-tint);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-xs);
+}
+
+.branches__earlier {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-xs);
+}
+
+.branches__earlier-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.branches__earlier .changes__inline-action:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 @media (max-width: 520px) {

@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile, realpath } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+  realpath,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,13 +14,16 @@ import { listHostDirectories, listHostRoots } from "../../server/host-dirs.js";
 describe("listHostRoots", () => {
   it("returns the single POSIX root without probing drive letters", async () => {
     const inspect = vi.fn();
-    await expect(listHostRoots("linux", inspect)).resolves.toEqual({ roots: [{ name: "/", path: "/" }] });
+    await expect(listHostRoots("linux", inspect)).resolves.toEqual({
+      roots: [{ name: "/", path: "/" }],
+    });
     expect(inspect).not.toHaveBeenCalled();
   });
 
   it("discovers readable Windows drive roots in drive-letter order", async () => {
     const inspect = vi.fn(async (path: string) => {
-      if (path === "C:\\" || path === "D:\\") return { isDirectory: () => true };
+      if (path === "C:\\" || path === "D:\\")
+        return { isDirectory: () => true };
       throw Object.assign(new Error("unavailable drive"), { code: "ENOENT" });
     });
 
@@ -57,7 +67,11 @@ describe("listHostDirectories", () => {
     await symlink(join(root, "alpha"), join(root, "linked"));
     await symlink(join(root, "vanished"), join(root, "broken"));
     const listing = await listHostDirectories(root);
-    expect(listing.dirs.map((entry) => entry.name)).toEqual(["alpha", "beta", "linked"]);
+    expect(listing.dirs.map((entry) => entry.name)).toEqual([
+      "alpha",
+      "beta",
+      "linked",
+    ]);
   });
 
   it("defaults to the host home directory", async () => {
@@ -72,6 +86,8 @@ describe("listHostDirectories", () => {
   });
 
   it("rejects a missing directory", async () => {
-    await expect(listHostDirectories(join(root, "missing"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      listHostDirectories(join(root, "missing")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

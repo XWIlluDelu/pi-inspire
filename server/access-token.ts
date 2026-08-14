@@ -18,38 +18,61 @@ function accessTokenKey(root: string, host: string, port: number): string {
     .digest("hex");
 }
 
-export function defaultAccessTokenPath(root: string, host: string, port: number): string {
-  const stateHome = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
-  return join(stateHome, "inspire", `${accessTokenKey(root, host, port)}.token`);
+export function defaultAccessTokenPath(
+  root: string,
+  host: string,
+  port: number,
+): string {
+  const stateHome =
+    process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+  return join(
+    stateHome,
+    "inspire",
+    `${accessTokenKey(root, host, port)}.token`,
+  );
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error(`The insπre access-token directory is not a private directory: ${path}`);
+    throw new Error(
+      `The insπre access-token directory is not a private directory: ${path}`,
+    );
   }
   if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
-    throw new Error(`The insπre access-token directory is not owned by the current user: ${path}`);
+    throw new Error(
+      `The insπre access-token directory is not owned by the current user: ${path}`,
+    );
   }
   if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_DIRECTORY_MODE);
 }
 
 async function readPrivateToken(path: string): Promise<string> {
-  const noFollow = process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0);
+  const noFollow =
+    process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0);
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
     const info = await handle.stat();
-    if (!info.isFile()) throw new Error(`The insπre access-token path is not a regular file: ${path}`);
+    if (!info.isFile())
+      throw new Error(
+        `The insπre access-token path is not a regular file: ${path}`,
+      );
     if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
-      throw new Error(`The insπre access-token file is not owned by the current user: ${path}`);
+      throw new Error(
+        `The insπre access-token file is not owned by the current user: ${path}`,
+      );
     }
     if ((info.mode & 0o077) !== 0) {
-      throw new Error(`The insπre access-token file must not be accessible by other users: ${path}`);
+      throw new Error(
+        `The insπre access-token file must not be accessible by other users: ${path}`,
+      );
     }
-    if (info.size > 256) throw new Error(`The insπre access-token file is invalid: ${path}`);
+    if (info.size > 256)
+      throw new Error(`The insπre access-token file is invalid: ${path}`);
     const token = (await handle.readFile("utf8")).trim();
-    if (!TOKEN_PATTERN.test(token)) throw new Error(`The insπre access-token file is invalid: ${path}`);
+    if (!TOKEN_PATTERN.test(token))
+      throw new Error(`The insπre access-token file is invalid: ${path}`);
     return token;
   } finally {
     await handle.close();
@@ -59,7 +82,11 @@ async function readPrivateToken(path: string): Promise<string> {
 async function createPrivateToken(path: string): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   const temporary = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
-  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, PRIVATE_FILE_MODE);
+  const handle = await open(
+    temporary,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    PRIVATE_FILE_MODE,
+  );
   try {
     await handle.writeFile(`${token}\n`, "utf8");
     await handle.sync();
@@ -70,17 +97,23 @@ async function createPrivateToken(path: string): Promise<string> {
     await link(temporary, path);
     return token;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return readPrivateToken(path);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      return readPrivateToken(path);
     throw error;
   } finally {
     await rm(temporary, { force: true });
   }
 }
 
-export async function resolveAccessToken(explicitToken: string | undefined, path: string): Promise<string> {
+export async function resolveAccessToken(
+  explicitToken: string | undefined,
+  path: string,
+): Promise<string> {
   if (explicitToken !== undefined) {
     if (explicitToken.length < 1 || explicitToken.length > 256) {
-      throw new Error("INSPIRE_TOKEN must contain between 1 and 256 characters");
+      throw new Error(
+        "INSPIRE_TOKEN must contain between 1 and 256 characters",
+      );
     }
     return explicitToken;
   }

@@ -26,6 +26,10 @@ Keep one ordered selection surface for product work that is not yet true of the 
 - [x] [[follow-correctness-boundaries-2026-08-02]].
 - [ ] Priority 1 [[groom-personal-remote-relay-2026-08-01]] — product and trust-boundary planning selected; implementation remains gated by its unresolved decisions.
 
+## Unscheduled exploration
+
+- [ ] Square-style redesign — exploratory only; not selected for implementation. `docs/redesign/` preserves the Trace and Renault references. Any later work begins with fresh product evidence and feedback, not by copying the prototype.
+
 ## Decisions
 
 - This stage remains the sole ordering authority. Focused stages contain requirements and evidence so task text is not duplicated here.

@@ -32,7 +32,8 @@ describe("preference persistence", () => {
     installFakeWebSocket();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload() };
-      if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions"))
+        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
         saved.push(jsonBody(init));
         return { body: jsonBody(init) };
@@ -44,16 +45,27 @@ describe("preference persistence", () => {
   it("surfaces a host preference-validation warning after bootstrap", async () => {
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap")) {
-        return { body: bootstrapPayload({ preferencesWarning: "Saved preferences are invalid. The saved file was left unchanged." }) };
+        return {
+          body: bootstrapPayload({
+            preferencesWarning:
+              "Saved preferences are invalid. The saved file was left unchanged.",
+          }),
+        };
       }
-      if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions"))
+        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
       return undefined;
     });
     const store = new AppStore();
     await store.init("token");
-    expect(store.getState().notices).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "warning", text: expect.stringMatching(/left unchanged/) }),
-    ]));
+    expect(store.getState().notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "warning",
+          text: expect.stringMatching(/left unchanged/),
+        }),
+      ]),
+    );
   });
 
   it("setTheme updates local state and persists a field-scoped PATCH", async () => {
@@ -70,7 +82,10 @@ describe("preference persistence", () => {
     await store.init("token");
     store.setTheme("dark");
     store.setToolVisibility("hidden");
-    expect(store.getState().prefs).toMatchObject({ theme: "dark", toolVisibility: "hidden" });
+    expect(store.getState().prefs).toMatchObject({
+      theme: "dark",
+      toolVisibility: "hidden",
+    });
     await vi.waitFor(() => expect(saved).toHaveLength(2));
     expect(saved).toEqual([{ theme: "dark" }, { toolVisibility: "hidden" }]);
   });
@@ -80,7 +95,9 @@ describe("preference persistence", () => {
     await store.init("token");
     store.setLaunch("continue");
     expect(store.getState().prefs.launch).toBe("continue");
-    await vi.waitFor(() => expect(saved.some((body) => body.launch === "continue")).toBe(true));
+    await vi.waitFor(() =>
+      expect(saved.some((body) => body.launch === "continue")).toBe(true),
+    );
   });
 });
 
@@ -93,11 +110,18 @@ describe("launch behavior", () => {
     const summary = sessionSummary();
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap")) {
-        return { body: bootstrapPayload({ preferences: { ...DEFAULT_PREFS, launch: "continue" } }) };
+        return {
+          body: bootstrapPayload({
+            preferences: { ...DEFAULT_PREFS, launch: "continue" },
+          }),
+        };
       }
-      if (url.startsWith("/api/sessions/open")) return { body: activeSnapshot({ sessionId: summary.id }) };
+      if (url.startsWith("/api/sessions/open"))
+        return { body: activeSnapshot({ sessionId: summary.id }) };
       if (url.startsWith("/api/sessions")) {
-        return { body: { sessions: [summary], total: 1, offset: 0, limit: 40 } };
+        return {
+          body: { sessions: [summary], total: 1, offset: 0, limit: 40 },
+        };
       }
       return undefined;
     });
@@ -109,10 +133,21 @@ describe("launch behavior", () => {
   it("welcome: stays on the welcome page even with recent sessions", async () => {
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap")) {
-        return { body: bootstrapPayload({ preferences: { ...DEFAULT_PREFS, launch: "welcome" } }) };
+        return {
+          body: bootstrapPayload({
+            preferences: { ...DEFAULT_PREFS, launch: "welcome" },
+          }),
+        };
       }
       if (url.startsWith("/api/sessions")) {
-        return { body: { sessions: [sessionSummary()], total: 1, offset: 0, limit: 40 } };
+        return {
+          body: {
+            sessions: [sessionSummary()],
+            total: 1,
+            offset: 0,
+            limit: 40,
+          },
+        };
       }
       return undefined;
     });

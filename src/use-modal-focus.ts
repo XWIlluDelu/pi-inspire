@@ -19,14 +19,20 @@ const modalStack: ModalEntry[] = [];
 
 function focusableElements(dialog: HTMLElement): HTMLElement[] {
   return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.tabIndex >= 0,
+    (element) =>
+      !element.hidden &&
+      element.getAttribute("aria-hidden") !== "true" &&
+      element.tabIndex >= 0,
   );
 }
 
 /** Own keyboard focus while an aria-modal surface is mounted, then restore
  * the element that opened it. The stack keeps a newer modal authoritative if
  * an extension request appears over another overlay. */
-export function useModalFocus<T extends HTMLElement>(active = true, owner: unknown = active): RefObject<T | null> {
+export function useModalFocus<T extends HTMLElement>(
+  active = true,
+  owner: unknown = active,
+): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
 
   useLayoutEffect(() => {
@@ -34,7 +40,10 @@ export function useModalFocus<T extends HTMLElement>(active = true, owner: unkno
     if (!active || !dialog) return;
     const entry: ModalEntry = {
       dialog,
-      restore: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      restore:
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
     };
     modalStack.push(entry);
 
@@ -43,7 +52,8 @@ export function useModalFocus<T extends HTMLElement>(active = true, owner: unkno
     }
 
     const containFocus = (event: FocusEvent) => {
-      if (modalStack.at(-1) !== entry || dialog.contains(event.target as Node)) return;
+      if (modalStack.at(-1) !== entry || dialog.contains(event.target as Node))
+        return;
       (focusableElements(dialog)[0] ?? dialog).focus();
     };
 
@@ -61,7 +71,10 @@ export function useModalFocus<T extends HTMLElement>(active = true, owner: unkno
       if (event.shiftKey && (focused === first || !dialog.contains(focused))) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && (focused === last || !dialog.contains(focused))) {
+      } else if (
+        !event.shiftKey &&
+        (focused === last || !dialog.contains(focused))
+      ) {
         event.preventDefault();
         first.focus();
       }
@@ -78,7 +91,10 @@ export function useModalFocus<T extends HTMLElement>(active = true, owner: unkno
       if (remaining) {
         // If an underlying modal disappears first, preserve its opener as the
         // restoration target of the still-visible top modal.
-        if (!remaining.restore?.isConnected || dialog.contains(remaining.restore)) {
+        if (
+          !remaining.restore?.isConnected ||
+          dialog.contains(remaining.restore)
+        ) {
           remaining.restore = entry.restore?.isConnected ? entry.restore : null;
         }
         const target =
@@ -86,7 +102,8 @@ export function useModalFocus<T extends HTMLElement>(active = true, owner: unkno
             ? entry.restore
             : (focusableElements(remaining.dialog)[0] ?? remaining.dialog);
         queueMicrotask(() => {
-          if (modalStack.at(-1) === remaining && target.isConnected) target.focus();
+          if (modalStack.at(-1) === remaining && target.isConnected)
+            target.focus();
         });
       } else {
         const restore = entry.restore;

@@ -26,7 +26,10 @@ export function selectAttachmentFiles(
 ): { accepted: File[]; warning: string | null } {
   let count = existing.length;
   let totalBytes = existing.reduce((sum, item) => sum + item.size, 0);
-  let imageBytes = existing.reduce((sum, item) => sum + (isImage(item) ? item.size : 0), 0);
+  let imageBytes = existing.reduce(
+    (sum, item) => sum + (isImage(item) ? item.size : 0),
+    0,
+  );
   const accepted: File[] = [];
   let warning: string | null = null;
 

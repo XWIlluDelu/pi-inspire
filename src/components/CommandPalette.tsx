@@ -19,10 +19,15 @@ interface PaletteItem {
   run: () => void;
 }
 
-const THEME_LABELS: Record<ThemePreference, string> = { light: "Light", dark: "Dark", system: "System" };
+const THEME_LABELS: Record<ThemePreference, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "System",
+};
 
 function matches(item: PaletteItem, words: string[]): boolean {
-  const haystack = `${item.group} ${item.title} ${item.hint ?? ""}`.toLocaleLowerCase();
+  const haystack =
+    `${item.group} ${item.title} ${item.hint ?? ""}`.toLocaleLowerCase();
   return words.every((word) => haystack.includes(word));
 }
 
@@ -48,6 +53,11 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
   const dialogRef = useModalFocus<HTMLDivElement>();
   const abortable = isAbortableRunState(state.runState);
+  const hasEarlierBranch = Boolean(
+    state.transcriptDurableLeafId &&
+      state.transcriptEffectiveLeafId &&
+      state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
+  );
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -64,10 +74,67 @@ export function CommandPalette({
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
       { id: "new", group: "Actions", title: "New session", run: onNewSession },
-      { id: "refresh", group: "Actions", title: "Refresh session list", run: () => void store.refreshSessions() },
-      { id: "nav", group: "Actions", title: "Toggle navigation panel", hint: "Ctrl+B", run: onToggleNav },
-      { id: "ctx", group: "Actions", title: "Toggle resources panel", hint: "Ctrl+.", run: onToggleCtx },
+      {
+        id: "refresh",
+        group: "Actions",
+        title: "Refresh session list",
+        run: () => void store.refreshSessions(),
+      },
+      {
+        id: "nav",
+        group: "Actions",
+        title: "Toggle navigation panel",
+        hint: "Ctrl+B",
+        run: onToggleNav,
+      },
+      {
+        id: "ctx",
+        group: "Actions",
+        title: "Toggle resources panel",
+        hint: "Ctrl+.",
+        run: onToggleCtx,
+      },
     ];
+    if (state.sessionId) {
+      actions.push(
+        {
+          id: "files",
+          group: "Workspace",
+          title: "Open Files",
+          run: () => {
+            store.setResourcesOpen(true);
+            store.setContextMode("files");
+          },
+        },
+        {
+          id: "changes",
+          group: "Workspace",
+          title: "Open Changes",
+          run: () => {
+            store.setResourcesOpen(true);
+            store.setContextMode("changes");
+          },
+        },
+        {
+          id: "history",
+          group: "Workspace",
+          title: "Open History",
+          hint: "branches",
+          run: () => {
+            store.setResourcesOpen(true);
+            store.setContextMode("branches");
+          },
+        },
+      );
+      if (hasEarlierBranch) {
+        actions.push({
+          id: "latest-branch",
+          group: "Conversation",
+          title: "Back to latest branch",
+          run: () => void store.returnToLatestBranch(),
+        });
+      }
+    }
     if (state.sessionId) {
       actions.push({
         id: "rename",
@@ -81,7 +148,13 @@ export function CommandPalette({
       });
     }
     if (abortable) {
-      actions.push({ id: "abort", group: "Actions", title: "Abort running task", hint: "Esc", run: () => void store.abort() });
+      actions.push({
+        id: "abort",
+        group: "Actions",
+        title: "Abort running task",
+        hint: "Esc",
+        run: () => void store.abort(),
+      });
     }
     for (const theme of Object.keys(THEME_LABELS) as ThemePreference[]) {
       actions.push({
@@ -131,7 +204,8 @@ export function CommandPalette({
         id: `assistant-rounds-${value}`,
         group: "Preferences",
         title: `Assistant rounds: ${value}`,
-        hint: state.prefs.assistantRoundDisplay === value ? "current" : undefined,
+        hint:
+          state.prefs.assistantRoundDisplay === value ? "current" : undefined,
         run: () => store.setAssistantRoundDisplay(value),
       });
     }
@@ -155,28 +229,41 @@ export function CommandPalette({
       : [];
 
     return [...actions, ...sessions, ...commands];
-  }, [state, abortable, onToggleNav, onToggleCtx, onNewSession, onOpenSession]);
+  }, [
+    state,
+    abortable,
+    hasEarlierBranch,
+    onToggleNav,
+    onToggleCtx,
+    onNewSession,
+    onOpenSession,
+  ]);
 
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const filtered = words.length === 0 ? items : items.filter((item) => matches(item, words));
+  const filtered =
+    words.length === 0 ? items : items.filter((item) => matches(item, words));
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
 
   // Rows render under one header per group — the same grammar the model
   // selector and the composer completion use — rather than repeating the
   // group label on every row. Keyboard navigation still indexes the flat
   // filtered list, so headers are never selectable.
-  const sections: Array<{ group: string; rows: Array<{ item: PaletteItem; index: number }> }> = [];
+  const sections = new Map<
+    string,
+    Array<{ item: PaletteItem; index: number }>
+  >();
   filtered.forEach((item, itemIndex) => {
-    const last = sections[sections.length - 1];
-    if (last && last.group === item.group) last.rows.push({ item, index: itemIndex });
-    else sections.push({ group: item.group, rows: [{ item, index: itemIndex }] });
+    const rows = sections.get(item.group);
+    if (rows) rows.push({ item, index: itemIndex });
+    else sections.set(item.group, [{ item, index: itemIndex }]);
   });
 
   // Keyboard navigation must keep the active row visible (jsdom has no
   // scrollIntoView, hence the guard).
   useEffect(() => {
     const active = listRef.current?.querySelector('[aria-selected="true"]');
-    if (active && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest" });
+    if (active && typeof active.scrollIntoView === "function")
+      active.scrollIntoView({ block: "nearest" });
   }, [clamped, filtered.length]);
 
   const runItem = (item: PaletteItem | undefined) => {
@@ -207,7 +294,9 @@ export function CommandPalette({
           ref={inputRef}
           className="palette__input"
           value={query}
-          placeholder={renaming ? "New session name…" : "Type a command or search…"}
+          placeholder={
+            renaming ? "New session name…" : "Type a command or search…"
+          }
           aria-label={renaming ? "New session name" : "Filter commands"}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -238,15 +327,27 @@ export function CommandPalette({
           }}
         />
         {renaming ? (
-          <div className="palette__hint">Enter a new name and press Enter — Esc goes back.</div>
+          <div className="palette__hint">
+            Enter a new name and press Enter — Esc goes back.
+          </div>
         ) : (
-          <div className="palette__list" role="listbox" aria-label="Commands" ref={listRef}>
-            {sections.map((section) => (
-              <div className="palette__section" key={section.group} role="group" aria-label={section.group}>
+          <div
+            className="palette__list"
+            role="listbox"
+            aria-label="Commands"
+            ref={listRef}
+          >
+            {[...sections].map(([group, rows]) => (
+              <div
+                className="palette__section"
+                key={group}
+                role="group"
+                aria-label={group}
+              >
                 <div className="palette__group" aria-hidden="true">
-                  {section.group}
+                  {group}
                 </div>
-                {section.rows.map(({ item, index: itemIndex }) => (
+                {rows.map(({ item, index: itemIndex }) => (
                   <button
                     type="button"
                     role="option"
@@ -257,7 +358,9 @@ export function CommandPalette({
                     onClick={() => runItem(item)}
                   >
                     <span className="palette__title">{item.title}</span>
-                    {item.hint ? <span className="palette__hint-inline">{item.hint}</span> : null}
+                    {item.hint ? (
+                      <span className="palette__hint-inline">{item.hint}</span>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -266,7 +369,9 @@ export function CommandPalette({
               <div className="empty-state">
                 <SearchX size={26} strokeWidth={1.5} aria-hidden />
                 <span className="empty-state__title">No matching commands</span>
-                <span className="empty-state__hint">Shorter words match more</span>
+                <span className="empty-state__hint">
+                  Shorter words match more
+                </span>
               </div>
             ) : null}
           </div>

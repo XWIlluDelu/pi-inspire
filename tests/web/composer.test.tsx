@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
 import { clipboardFiles } from "../../src/clipboard-files";
+import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
 import { store } from "../../src/store";
 import {
@@ -28,22 +36,44 @@ beforeAll(async () => {
   slowSearchGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
-    if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
+    if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
     if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
-    if (url.startsWith("/api/sessions")) return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+    if (url.startsWith("/api/sessions"))
+      return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
     if (url.startsWith("/api/attachments")) {
       return {
         body: {
           attachments: [
-            { id: "att-1", fileName: "notes.txt", mimeType: "text/plain", size: 5, kind: "file" },
+            {
+              id: "att-1",
+              fileName: "notes.txt",
+              mimeType: "text/plain",
+              size: 5,
+              kind: "file",
+            },
           ],
         },
       };
     }
     if (url.startsWith("/api/files")) {
-      if (fileSearchFails) return { status: 500, body: { error: "index unavailable" } };
+      if (fileSearchFails)
+        return { status: 500, body: { error: "index unavailable" } };
       if (url.includes("q=slow") && slowSearchGate) {
-        return slowSearchGate.then(() => ({ body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] } }));
+        return slowSearchGate.then(() => ({
+          body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] },
+        }));
+      }
+      if (url.includes("q=keyboard")) {
+        return {
+          body: {
+            files: [
+              { path: "src/keyboard-a.ts", name: "keyboard-a.ts" },
+              { path: "src/keyboard-b.ts", name: "keyboard-b.ts" },
+              { path: "src/keyboard-c.ts", name: "keyboard-c.ts" },
+            ],
+          },
+        };
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
@@ -65,17 +95,26 @@ beforeAll(async () => {
 });
 
 async function attachFile(name = "notes.txt") {
-  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-  await userEvent.upload(input, new File(["hello"], name, { type: "text/plain" }));
+  const input = document.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement;
+  await userEvent.upload(
+    input,
+    new File(["hello"], name, { type: "text/plain" }),
+  );
 }
 
 function typeDraft(text: string) {
-  fireEvent.change(screen.getByLabelText("Message"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: text },
+  });
 }
 
 function clearLeftovers() {
-  for (const item of store.getState().attachments) store.removeAttachment(item.localId);
-  for (const path of store.getState().projectFiles) store.removeProjectFile(path);
+  for (const item of store.getState().attachments)
+    store.removeAttachment(item.localId);
+  for (const path of store.getState().projectFiles)
+    store.removeProjectFile(path);
   store.dismissError();
 }
 
@@ -89,20 +128,45 @@ describe("composer attachments", () => {
   });
 
   it("uses one clipboard projection without duplicating one paste or merging distinct files", () => {
-    const primary = new File(["png"], "image.png", { type: "image/png", lastModified: 7 });
-    const duplicateProjection = new File(["png"], "image.png", { type: "image/png", lastModified: 8 });
-    const fallbackItem = { kind: "file", getAsFile: () => duplicateProjection } as DataTransferItem;
-    expect(clipboardFiles({ files: [] as unknown as FileList, items: [fallbackItem] as unknown as DataTransferItemList }))
-      .toEqual([duplicateProjection]);
-    expect(clipboardFiles({ files: [primary] as unknown as FileList, items: [fallbackItem] as unknown as DataTransferItemList }))
-      .toEqual([primary]);
+    const primary = new File(["png"], "image.png", {
+      type: "image/png",
+      lastModified: 7,
+    });
+    const duplicateProjection = new File(["png"], "image.png", {
+      type: "image/png",
+      lastModified: 8,
+    });
+    const fallbackItem = {
+      kind: "file",
+      getAsFile: () => duplicateProjection,
+    } as DataTransferItem;
+    expect(
+      clipboardFiles({
+        files: [] as unknown as FileList,
+        items: [fallbackItem] as unknown as DataTransferItemList,
+      }),
+    ).toEqual([duplicateProjection]);
+    expect(
+      clipboardFiles({
+        files: [primary] as unknown as FileList,
+        items: [fallbackItem] as unknown as DataTransferItemList,
+      }),
+    ).toEqual([primary]);
 
-    const sameMetadataA = new File(["one"], "image.png", { type: "image/png", lastModified: 9 });
-    const sameMetadataB = new File(["two"], "image.png", { type: "image/png", lastModified: 9 });
-    expect(clipboardFiles({
-      files: [sameMetadataA, sameMetadataB] as unknown as FileList,
-      items: [] as unknown as DataTransferItemList,
-    })).toEqual([sameMetadataA, sameMetadataB]);
+    const sameMetadataA = new File(["one"], "image.png", {
+      type: "image/png",
+      lastModified: 9,
+    });
+    const sameMetadataB = new File(["two"], "image.png", {
+      type: "image/png",
+      lastModified: 9,
+    });
+    expect(
+      clipboardFiles({
+        files: [sameMetadataA, sameMetadataB] as unknown as FileList,
+        items: [] as unknown as DataTransferItemList,
+      }),
+    ).toEqual([sameMetadataA, sameMetadataB]);
   });
 
   it("uploads a selected file and sends its attachment id, then clears on accept", async () => {
@@ -117,7 +181,10 @@ describe("composer attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(promptBodies.length).toBeGreaterThan(0));
-    expect(promptBodies.at(-1)).toMatchObject({ message: "check this", attachmentIds: ["att-1"] });
+    expect(promptBodies.at(-1)).toMatchObject({
+      message: "check this",
+      attachmentIds: ["att-1"],
+    });
     // accepted submission clears the draft and attachments
     expect(screen.getByLabelText("Message")).toHaveValue("");
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
@@ -142,6 +209,23 @@ describe("composer attachments", () => {
 });
 
 describe("queued composer controls", () => {
+  it("shows a concise queued count outside the live region", () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const queued = activeSnapshot();
+    queued.pendingQueues = {
+      steering: ["clarify the constraints"],
+      followUp: ["then summarize"],
+    };
+    act(() => socket.emit({ type: "snapshot", data: queued }));
+
+    render(<ActivityBar />);
+    expect(screen.getByText("2 queued")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Queued input")).not.toBeInTheDocument();
+
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+  });
+
   it("treats queued work as busy for steer, follow-up, and abort", async () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;
@@ -152,23 +236,49 @@ describe("queued composer controls", () => {
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
-    expect(textarea).toHaveAttribute("placeholder", "Steer the running task — Ctrl+Enter queues a follow-up");
-    expect(screen.getByRole("button", { name: "Abort running task" })).toBeInTheDocument();
+    expect(textarea).toHaveAttribute(
+      "placeholder",
+      "Add direction to the running task…",
+    );
+    expect(screen.getByRole("button", { name: "Steer" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByRole("button", { name: "Abort running task" }),
+    ).toBeInTheDocument();
 
     typeDraft("steer queued work");
     fireEvent.keyDown(textarea, { key: "Enter" });
-    await waitFor(() => expect(promptBodies.at(-1)).toMatchObject({
-      sessionId: "s1", message: "steer queued work", behavior: "steer",
-    }));
+    await waitFor(() =>
+      expect(promptBodies.at(-1)).toMatchObject({
+        sessionId: "s1",
+        message: "steer queued work",
+        behavior: "steer",
+      }),
+    );
 
+    fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+    expect(textarea).toHaveAttribute(
+      "placeholder",
+      "Add a follow-up for after this task…",
+    );
     typeDraft("follow up queued work");
-    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
-    await waitFor(() => expect(promptBodies.at(-1)).toMatchObject({
-      sessionId: "s1", message: "follow up queued work", behavior: "followUp",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Queue after current task" }),
+    );
+    await waitFor(() =>
+      expect(promptBodies.at(-1)).toMatchObject({
+        sessionId: "s1",
+        message: "follow up queued work",
+        behavior: "followUp",
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Abort running task" }));
-    await waitFor(() => expect(abortBodies.at(-1)).toEqual({ sessionId: "s1" }));
+    await waitFor(() =>
+      expect(abortBodies.at(-1)).toEqual({ sessionId: "s1" }),
+    );
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
@@ -180,7 +290,10 @@ describe("composer meta row", () => {
     render(<Composer />);
     const meter = screen.getByLabelText("Context 10 percent full");
     expect(meter).toHaveTextContent("10%");
-    expect(meter).toHaveAttribute("title", expect.stringContaining("12,640 / 131,072 tokens"));
+    expect(meter).toHaveAttribute(
+      "title",
+      expect.stringContaining("12,640 / 131,072 tokens"),
+    );
     expect(meter.getAttribute("title")).toContain("/compact");
   });
 
@@ -189,8 +302,12 @@ describe("composer meta row", () => {
     render(<Composer />);
     fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
     const listbox = screen.getByRole("listbox", { name: "Thinking level" });
-    expect(within(listbox).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
-    expect(within(listbox).queryByRole("option", { name: /thinking:/ })).not.toBeInTheDocument();
+    expect(
+      within(listbox).getByRole("option", { name: "xhigh" }),
+    ).toBeInTheDocument();
+    expect(
+      within(listbox).queryByRole("option", { name: /thinking:/ }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -204,8 +321,12 @@ describe("caret completion", () => {
     textarea.setSelectionRange(11, 11);
     fireEvent.select(textarea);
 
-    const fileOption = await screen.findByRole("option", { name: /index\.ts.*src\/index\.ts/ });
-    const fileList = screen.getByRole("listbox", { name: "Project file completions" });
+    const fileOption = await screen.findByRole("option", {
+      name: /index\.ts.*src\/index\.ts/,
+    });
+    const fileList = screen.getByRole("listbox", {
+      name: "Project file completions",
+    });
     expect(document.activeElement).toBe(textarea);
     expect(textarea).toHaveAttribute("aria-autocomplete", "list");
     expect(textarea).toHaveAttribute("aria-controls", fileList.id);
@@ -215,7 +336,9 @@ describe("caret completion", () => {
     expect(textarea).toHaveAttribute("aria-activedescendant", fileOption.id);
     fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
     expect(textarea).toHaveValue("before @ind after");
-    expect(screen.getByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /index\.ts/ }),
+    ).toBeInTheDocument();
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(textarea).toHaveValue("before  after");
     await waitFor(() => expect(textarea.selectionStart).toBe(7));
@@ -224,7 +347,9 @@ describe("caret completion", () => {
     typeDraft("@ind");
     textarea.setSelectionRange(4, 4);
     fireEvent.select(textarea);
-    const duplicateOption = await screen.findByRole("option", { name: /index\.ts/ });
+    const duplicateOption = await screen.findByRole("option", {
+      name: /index\.ts/,
+    });
     fireEvent.click(duplicateOption);
     expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
     clearLeftovers();
@@ -252,7 +377,8 @@ describe("caret completion", () => {
           value: originalScrollIntoView,
         });
       } else {
-        delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+          .scrollIntoView;
       }
     }
   });
@@ -266,8 +392,12 @@ describe("caret completion", () => {
     typeDraft("/com");
     textarea.setSelectionRange(4, 4);
     fireEvent.select(textarea);
-    const commandOption = await screen.findByRole("option", { name: /\/compact.*Compact the current context/ });
-    const commandList = screen.getByRole("listbox", { name: "Slash command completions" });
+    const commandOption = await screen.findByRole("option", {
+      name: /\/compact.*Compact the current context/,
+    });
+    const commandList = screen.getByRole("listbox", {
+      name: "Slash command completions",
+    });
     expect(document.activeElement).toBe(textarea);
     expect(textarea).toHaveAttribute("aria-controls", commandList.id);
     const commandComposite = textarea.closest("[role='combobox']");
@@ -293,12 +423,30 @@ describe("caret completion", () => {
     act(() => {
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",
-        data: activeSnapshot({ commands: [
-          { name: "deploy", description: "Ship extension output", source: "extension" },
-          { name: "review", description: "Run review prompt", source: "prompt" },
-          { name: "skill:docs", description: "Open docs skill", source: "skill" },
-          { name: "future", description: "Future command", source: "custom-source" },
-        ] }),
+        data: activeSnapshot({
+          commands: [
+            {
+              name: "deploy",
+              description: "Ship extension output",
+              source: "extension",
+            },
+            {
+              name: "review",
+              description: "Run review prompt",
+              source: "prompt",
+            },
+            {
+              name: "skill:docs",
+              description: "Open docs skill",
+              source: "skill",
+            },
+            {
+              name: "future",
+              description: "Future command",
+              source: "custom-source",
+            },
+          ],
+        }),
       });
     });
     render(<Composer />);
@@ -306,7 +454,9 @@ describe("caret completion", () => {
     typeDraft("/");
     textarea.setSelectionRange(1, 1);
     fireEvent.select(textarea);
-    const list = await screen.findByRole("listbox", { name: "Slash command completions" });
+    const list = await screen.findByRole("listbox", {
+      name: "Slash command completions",
+    });
     expect(list).toHaveTextContent("Extension");
     expect(list).toHaveTextContent("Prompt");
     expect(list).toHaveTextContent("Skill");
@@ -320,13 +470,31 @@ describe("caret completion", () => {
     act(() => {
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",
-        data: activeSnapshot({ commands: [
-          { name: "shared", description: "Extension owner", source: "extension" },
-          { name: "shared", description: "Prompt collision", source: "prompt" },
-          { name: "shared", description: "Skill collision", source: "skill" },
-          { name: "compact", description: "Extension compact collision", source: "extension" },
-          { name: "compact", description: "Prompt compact collision", source: "prompt" },
-        ] }),
+        data: activeSnapshot({
+          commands: [
+            {
+              name: "shared",
+              description: "Extension owner",
+              source: "extension",
+            },
+            {
+              name: "shared",
+              description: "Prompt collision",
+              source: "prompt",
+            },
+            { name: "shared", description: "Skill collision", source: "skill" },
+            {
+              name: "compact",
+              description: "Extension compact collision",
+              source: "extension",
+            },
+            {
+              name: "compact",
+              description: "Prompt compact collision",
+              source: "prompt",
+            },
+          ],
+        }),
       });
     });
     render(<Composer />);
@@ -335,13 +503,33 @@ describe("caret completion", () => {
     typeDraft("/");
     textarea.setSelectionRange(1, 1);
     fireEvent.select(textarea);
-    const list = await screen.findByRole("listbox", { name: "Slash command completions" });
-    expect(within(list).getAllByRole("option").filter((option) => option.textContent?.startsWith("/shared"))).toHaveLength(1);
-    expect(within(list).getByRole("option", { name: /\/shared.*Extension owner/ })).toBeInTheDocument();
-    expect(within(list).queryByText(/Prompt collision|Skill collision/)).not.toBeInTheDocument();
-    expect(within(list).getAllByRole("option").filter((option) => option.textContent?.startsWith("/compact"))).toHaveLength(1);
-    expect(within(list).getByRole("option", { name: /\/compact.*Compact the current context/ })).toBeInTheDocument();
-    expect(within(list).queryByText(/compact collision/)).not.toBeInTheDocument();
+    const list = await screen.findByRole("listbox", {
+      name: "Slash command completions",
+    });
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .filter((option) => option.textContent?.startsWith("/shared")),
+    ).toHaveLength(1);
+    expect(
+      within(list).getByRole("option", { name: /\/shared.*Extension owner/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(list).queryByText(/Prompt collision|Skill collision/),
+    ).not.toBeInTheDocument();
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .filter((option) => option.textContent?.startsWith("/compact")),
+    ).toHaveLength(1);
+    expect(
+      within(list).getByRole("option", {
+        name: /\/compact.*Compact the current context/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(list).queryByText(/compact collision/),
+    ).not.toBeInTheDocument();
   });
 
   it("defers completion until IME composition commits", async () => {
@@ -349,17 +537,25 @@ describe("caret completion", () => {
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
     fireEvent.compositionStart(textarea);
-    fireEvent.change(textarea, { target: { value: "@ind", selectionStart: 4 } });
-    expect(screen.queryByRole("listbox", { name: "Project file completions" })).not.toBeInTheDocument();
+    fireEvent.change(textarea, {
+      target: { value: "@ind", selectionStart: 4 },
+    });
+    expect(
+      screen.queryByRole("listbox", { name: "Project file completions" }),
+    ).not.toBeInTheDocument();
     textarea.setSelectionRange(4, 4);
     fireEvent.compositionEnd(textarea);
-    expect(await screen.findByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: /index\.ts/ }),
+    ).toBeInTheDocument();
   });
 
   it("suppresses an obsolete file-search response after the caret query changes", async () => {
     clearLeftovers();
     let releaseSlow!: () => void;
-    slowSearchGate = new Promise<void>((resolve) => { releaseSlow = resolve; });
+    slowSearchGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
     typeDraft("@slow");
@@ -370,10 +566,14 @@ describe("caret completion", () => {
     typeDraft("@ind");
     textarea.setSelectionRange(4, 4);
     fireEvent.select(textarea);
-    expect(await screen.findByRole("option", { name: /index\.ts/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: /index\.ts/ }),
+    ).toBeInTheDocument();
     releaseSlow();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByRole("option", { name: /slow\.ts/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /slow\.ts/ }),
+    ).not.toBeInTheDocument();
     slowSearchGate = null;
   });
 
@@ -385,13 +585,17 @@ describe("caret completion", () => {
     textarea.setSelectionRange(8, 8);
     fireEvent.select(textarea);
     expect(screen.getByText("Searching project files…")).toBeInTheDocument();
-    expect(await screen.findByText("No matching project files")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No matching project files"),
+    ).toBeInTheDocument();
 
     fileSearchFails = true;
     typeDraft("@fail");
     textarea.setSelectionRange(5, 5);
     fireEvent.select(textarea);
-    expect(await screen.findByText("Project file search failed")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Project file search failed"),
+    ).toBeInTheDocument();
     fileSearchFails = false;
   });
 
@@ -415,7 +619,9 @@ describe("caret completion", () => {
     });
 
     expect(textarea).toHaveValue("replacement draft");
-    expect(screen.queryByRole("listbox", { name: "Slash command completions" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).not.toBeInTheDocument();
   });
 
   it("closes completion on Escape without reaching the global shortcut", async () => {
@@ -427,7 +633,9 @@ describe("caret completion", () => {
     fireEvent.select(textarea);
     await screen.findByRole("listbox", { name: "Slash command completions" });
     expect(fireEvent.keyDown(textarea, { key: "Escape" })).toBe(false);
-    expect(screen.queryByRole("listbox", { name: "Slash command completions" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -439,8 +647,12 @@ describe("project file picker", () => {
     const controls = Array.from(meta.querySelectorAll("button"));
     expect([
       controls.indexOf(screen.getByRole("button", { name: "Model" })),
-      controls.indexOf(screen.getByRole("combobox", { name: "Thinking level" })),
-      controls.indexOf(screen.getByRole("button", { name: "Add project files" })),
+      controls.indexOf(
+        screen.getByRole("combobox", { name: "Thinking level" }),
+      ),
+      controls.indexOf(
+        screen.getByRole("button", { name: "Add project files" }),
+      ),
       controls.indexOf(screen.getByRole("button", { name: "Attach files" })),
     ]).toEqual([0, 1, 2, 3]);
   });
@@ -449,7 +661,9 @@ describe("project file picker", () => {
     clearLeftovers();
     render(<Composer />);
     fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
-    fireEvent.change(screen.getByLabelText("Search project files"), { target: { value: "index" } });
+    fireEvent.change(screen.getByLabelText("Search project files"), {
+      target: { value: "index" },
+    });
 
     const row = await screen.findByRole("option", { name: /index\.ts/ });
     fireEvent.click(row);
@@ -459,10 +673,56 @@ describe("project file picker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() =>
-      expect(promptBodies.at(-1)).toMatchObject({ message: "with context", projectFiles: ["src/index.ts"] }),
+      expect(promptBodies.at(-1)).toMatchObject({
+        message: "with context",
+        projectFiles: ["src/index.ts"],
+      }),
     );
     // accepted submission clears the referenced files
-    expect(screen.queryByLabelText("Remove src/index.ts")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Remove src/index.ts"),
+    ).not.toBeInTheDocument();
+    clearLeftovers();
+  });
+
+  it("navigates options from the search field, skips selected rows, and restores trigger focus", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const trigger = screen.getByRole("button", { name: "Add project files" });
+    fireEvent.click(trigger);
+    const input = screen.getByRole("combobox", {
+      name: "Search project files",
+    }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "keyboard" } });
+    const [first, second, third] = await screen.findAllByRole("option", {
+      name: /keyboard-[abc]\.ts/,
+    });
+    expect(input).toHaveAttribute("aria-activedescendant", first!.id);
+
+    expect(fireEvent.keyDown(input, { key: "ArrowDown" })).toBe(false);
+    expect(input).toHaveAttribute("aria-activedescendant", second!.id);
+    input.setSelectionRange(2, 2);
+    fireEvent.keyDown(input, { key: "Home" });
+    expect(input.selectionStart).toBe(2);
+    fireEvent.keyDown(input, { key: "End" });
+    expect(input.selectionStart).toBe(2);
+    expect(input).toHaveAttribute("aria-activedescendant", second!.id);
+
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+    expect(
+      screen.getByLabelText("Remove src/keyboard-b.ts"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(second).toBeDisabled());
+    expect(input).toHaveAttribute("aria-activedescendant", first!.id);
+    expect(fireEvent.keyDown(input, { key: "ArrowUp" })).toBe(false);
+    expect(input).toHaveAttribute("aria-activedescendant", third!.id);
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(
+      screen.getByLabelText("Remove src/keyboard-c.ts"),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
     clearLeftovers();
   });
 
@@ -473,6 +733,8 @@ describe("project file picker", () => {
     const input = screen.getByLabelText("Search project files");
     // fireEvent returns false when preventDefault was called
     expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(false);
-    expect(screen.queryByLabelText("Search project files")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Search project files"),
+    ).not.toBeInTheDocument();
   });
 });

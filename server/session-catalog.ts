@@ -1,4 +1,8 @@
-import { SessionManager, SettingsManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  SettingsManager,
+  type SessionInfo,
+} from "@earendil-works/pi-coding-agent";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,
@@ -28,13 +32,17 @@ function compareText(a: string, b: string): number {
 }
 
 function compareSessionRecords(a: SessionRecord, b: SessionRecord): number {
-  return b.modified.getTime() - a.modified.getTime()
-    || b.created.getTime() - a.created.getTime()
-    || compareText(a.id, b.id)
-    || compareText(a.path, b.path);
+  return (
+    b.modified.getTime() - a.modified.getTime() ||
+    b.created.getTime() - a.created.getTime() ||
+    compareText(a.id, b.id) ||
+    compareText(a.path, b.path)
+  );
 }
 
-export function orderSessionRecords(sessions: readonly SessionRecord[]): SessionRecord[] {
+export function orderSessionRecords(
+  sessions: readonly SessionRecord[],
+): SessionRecord[] {
   return [...sessions].sort(compareSessionRecords);
 }
 
@@ -46,7 +54,10 @@ function displayTitle(session: SessionRecord): string {
 }
 
 function slimSession(session: SessionInfo): SessionRecord {
-  const firstMessage = session.firstMessage.slice(0, SEARCHABLE_FIRST_MESSAGE_CHARS);
+  const firstMessage = session.firstMessage.slice(
+    0,
+    SEARCHABLE_FIRST_MESSAGE_CHARS,
+  );
   return {
     path: session.path,
     id: session.id,
@@ -57,7 +68,10 @@ function slimSession(session: SessionInfo): SessionRecord {
     modified: session.modified,
     messageCount: session.messageCount,
     firstMessage,
-    searchText: [session.name, firstMessage, session.cwd].filter(Boolean).join("\n").toLowerCase(),
+    searchText: [session.name, firstMessage, session.cwd]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase(),
   };
 }
 
@@ -85,9 +99,16 @@ export function newestPerCwd(
 export interface SessionCatalogLike {
   refresh(force?: boolean): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
-  list(options?: { query?: string; offset?: number; limit?: number }): Promise<SessionListResponse>;
+  list(options?: {
+    query?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<SessionListResponse>;
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
-  listByCwds(cwds: readonly string[], limitPerCwd?: number): Promise<SessionSummary[]>;
+  listByCwds(
+    cwds: readonly string[],
+    limitPerCwd?: number,
+  ): Promise<SessionSummary[]>;
   invalidate(): void;
 }
 
@@ -101,17 +122,24 @@ export class SessionCatalog implements SessionCatalogLike {
   constructor(private readonly startupCwd: string) {}
 
   async refresh(force = false): Promise<readonly SessionRecord[]> {
-    if (!force && this.loadedAt > 0 && Date.now() - this.loadedAt < CACHE_MS) return this.cached;
+    if (!force && this.loadedAt > 0 && Date.now() - this.loadedAt < CACHE_MS)
+      return this.cached;
     if (this.loading) return this.loading;
 
     this.loading = (async () => {
-      const sessionDir = SettingsManager.create(this.startupCwd).getSessionDir();
-      const sessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.listAll();
+      const sessionDir = SettingsManager.create(
+        this.startupCwd,
+      ).getSessionDir();
+      const sessions = sessionDir
+        ? await SessionManager.listAll(sessionDir)
+        : await SessionManager.listAll();
       // Pi storage enumeration is not an ordering contract. Page boundaries
       // require one deterministic newest-first order with stable tie-breakers.
       this.cached = orderSessionRecords(sessions.map(slimSession));
       this.byId = new Map(this.cached.map((session) => [session.id, session]));
-      this.idByPath = new Map(this.cached.map((session) => [session.path, session.id]));
+      this.idByPath = new Map(
+        this.cached.map((session) => [session.path, session.id]),
+      );
       this.loadedAt = Date.now();
       return this.cached;
     })();
@@ -133,17 +161,33 @@ export class SessionCatalog implements SessionCatalogLike {
     return this.byId.get(id);
   }
 
-  async list(options: { query?: string; offset?: number; limit?: number } = {}): Promise<SessionListResponse> {
+  async list(
+    options: { query?: string; offset?: number; limit?: number } = {},
+  ): Promise<SessionListResponse> {
     const sessions = await this.refresh();
     const query = options.query?.trim().toLowerCase().slice(0, 200) ?? "";
-    const requestedOffset = Number.isFinite(options.offset) ? Math.floor(options.offset!) : 0;
-    const requestedLimit = Number.isFinite(options.limit) ? Math.floor(options.limit!) : 40;
-    const offset = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, requestedOffset));
-    const limit = Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, requestedLimit));
-    const filtered = query ? sessions.filter((session) => session.searchText.includes(query)) : sessions;
+    const requestedOffset = Number.isFinite(options.offset)
+      ? Math.floor(options.offset!)
+      : 0;
+    const requestedLimit = Number.isFinite(options.limit)
+      ? Math.floor(options.limit!)
+      : 40;
+    const offset = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(0, requestedOffset),
+    );
+    const limit = Math.min(
+      MAX_SESSION_LIST_PAGE_SIZE,
+      Math.max(1, requestedLimit),
+    );
+    const filtered = query
+      ? sessions.filter((session) => session.searchText.includes(query))
+      : sessions;
 
     return {
-      sessions: filtered.slice(offset, offset + limit).map((session) => this.project(session)),
+      sessions: filtered
+        .slice(offset, offset + limit)
+        .map((session) => this.project(session)),
       total: filtered.length,
       offset,
       limit,
@@ -161,13 +205,20 @@ export class SessionCatalog implements SessionCatalogLike {
   /** The newest sessions of each named working directory. A folder pinned as
    * a whole is a complete navigation section, so it cannot depend on which of
    * its sessions happen to fall inside the first chronological page. */
-  async listByCwds(cwds: readonly string[], limitPerCwd = 40): Promise<SessionSummary[]> {
+  async listByCwds(
+    cwds: readonly string[],
+    limitPerCwd = 40,
+  ): Promise<SessionSummary[]> {
     if (cwds.length === 0) return [];
-    return newestPerCwd(await this.refresh(), cwds, limitPerCwd).map((session) => this.project(session));
+    return newestPerCwd(await this.refresh(), cwds, limitPerCwd).map(
+      (session) => this.project(session),
+    );
   }
 
   project(session: SessionRecord): SessionSummary {
-    const parentSessionId = session.parentSessionPath ? this.idByPath.get(session.parentSessionPath) : undefined;
+    const parentSessionId = session.parentSessionPath
+      ? this.idByPath.get(session.parentSessionPath)
+      : undefined;
     return {
       id: session.id,
       cwd: session.cwd,

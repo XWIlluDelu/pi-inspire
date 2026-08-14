@@ -1,4 +1,11 @@
-import { ChevronRight, FolderOpen, FolderSearch, Loader2, Paperclip, Send } from "lucide-react";
+import {
+  ChevronRight,
+  FolderOpen,
+  FolderSearch,
+  Loader2,
+  Paperclip,
+  Send,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PROJECT_FILES,
@@ -12,7 +19,12 @@ import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
-import { store, useAppState, type PendingAttachment, type PiCommand } from "../store";
+import {
+  store,
+  useAppState,
+  type PendingAttachment,
+  type PiCommand,
+} from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -35,7 +47,10 @@ function localAttachment(file: File): WelcomeAttachment {
     mimeType: file.type || "application/octet-stream",
     size: file.size,
     kind: image ? "image" : "file",
-    previewUrl: image && typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined,
+    previewUrl:
+      image && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : undefined,
     status: "ready",
   };
 }
@@ -58,15 +73,18 @@ export function Welcome({
   inherited?: WelcomeInheritance | null;
 }) {
   const state = useAppState();
-  const liveInheritance = state.cwd ? {
-    cwd: state.cwd,
-    model: state.model,
-    thinkingLevel: state.thinkingLevel,
-    commands: state.commands,
-  } satisfies WelcomeInheritance : null;
+  const liveInheritance = state.cwd
+    ? ({
+        cwd: state.cwd,
+        model: state.model,
+        thinkingLevel: state.thinkingLevel,
+        commands: state.commands,
+      } satisfies WelcomeInheritance)
+    : null;
   const inheritance = liveInheritance ?? inherited ?? null;
   const inheritedModel = inheritance?.model ?? null;
-  const inheritedThinkingLevel = inheritance?.thinkingLevel ?? state.thinkingLevel;
+  const inheritedThinkingLevel =
+    inheritance?.thinkingLevel ?? state.thinkingLevel;
   const [draft, setDraft] = useState("");
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
@@ -78,16 +96,20 @@ export function Welcome({
   const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
-  const [modelKey, setModelKey] = useState(() => inheritedModel ? modelIdentityKey(inheritedModel) : "");
-  const [resolvedDefaultModel, setResolvedDefaultModel] = useState<ModelOption | null>(null);
-  const [modelTouched, setModelTouched] = useState(false);
-  const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready" | "error">(
-    inheritedModel ? "ready" : "idle",
+  const [modelKey, setModelKey] = useState(() =>
+    inheritedModel ? modelIdentityKey(inheritedModel) : "",
   );
+  const [resolvedDefaultModel, setResolvedDefaultModel] =
+    useState<ModelOption | null>(null);
+  const [modelTouched, setModelTouched] = useState(false);
+  const [modelResolveAttempt, setModelResolveAttempt] = useState(0);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >(inheritedModel ? "ready" : "idle");
   const [thinkingTouched, setThinkingTouched] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
     THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
-      ? inheritedThinkingLevel as ThinkingLevel
+      ? (inheritedThinkingLevel as ThinkingLevel)
       : "off",
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,26 +118,43 @@ export function Welcome({
   const recent = state.sessions.slice(0, 6);
   const effectiveDirectory = directory.trim();
   const availableModels = useMemo(() => {
-    if (!resolvedDefaultModel || state.availableModels.some((model) => modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel))) {
+    if (
+      !resolvedDefaultModel ||
+      state.availableModels.some(
+        (model) =>
+          modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel),
+      )
+    ) {
       return state.availableModels;
     }
     return [...state.availableModels, resolvedDefaultModel];
   }, [resolvedDefaultModel, state.availableModels]);
   const selectedModel = useMemo<ModelOption | null>(() => {
-    const catalogModel = availableModels.find((model) => modelIdentityKey(model) === modelKey);
+    const catalogModel = availableModels.find(
+      (model) => modelIdentityKey(model) === modelKey,
+    );
     if (catalogModel) return catalogModel;
-    return inheritedModel && modelIdentityKey(inheritedModel) === modelKey ? inheritedModel : null;
+    return inheritedModel && modelIdentityKey(inheritedModel) === modelKey
+      ? inheritedModel
+      : null;
   }, [availableModels, inheritedModel, modelKey]);
-  const thinkingLevels = useMemo(() => supportedThinkingLevels(selectedModel), [selectedModel]);
+  const thinkingLevels = useMemo(
+    () => supportedThinkingLevels(selectedModel),
+    [selectedModel],
+  );
 
-  useEffect(() => () => {
-    for (const attachment of attachmentsRef.current) {
-      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (!thinkingLevels.includes(thinkingLevel)) setThinkingLevel(thinkingLevels[0] ?? "off");
+    if (!thinkingLevels.includes(thinkingLevel))
+      setThinkingLevel(thinkingLevels[0] ?? "off");
   }, [thinkingLevel, thinkingLevels]);
 
   // Until the user chooses explicitly, an inherited session model is the
@@ -125,7 +164,10 @@ export function Welcome({
     if (modelTouched || !inheritedModel) return;
     setModelKey(modelIdentityKey(inheritedModel));
     setModelStatus("ready");
-    if (!thinkingTouched && THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)) {
+    if (
+      !thinkingTouched &&
+      THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
+    ) {
       setThinkingLevel(inheritedThinkingLevel as ThinkingLevel);
     }
   }, [inheritedModel, inheritedThinkingLevel, modelTouched, thinkingTouched]);
@@ -135,7 +177,8 @@ export function Welcome({
   // a later path or an explicit user selection.
   useEffect(() => {
     if (modelTouched || inheritedModel || !effectiveDirectory) {
-      if (!effectiveDirectory && !inheritedModel && !modelTouched) setModelStatus("idle");
+      if (!effectiveDirectory && !inheritedModel && !modelTouched)
+        setModelStatus("idle");
       return;
     }
     let cancelled = false;
@@ -149,7 +192,7 @@ export function Welcome({
           setResolvedDefaultModel(defaults.model);
           setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
           if (!thinkingTouched) setThinkingLevel(defaults.thinkingLevel);
-          setModelStatus("ready");
+          setModelStatus(defaults.model ? "ready" : "error");
         },
         () => {
           if (!cancelled) setModelStatus("error");
@@ -160,13 +203,26 @@ export function Welcome({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [effectiveDirectory, inheritedModel, modelTouched, thinkingTouched]);
+  }, [
+    effectiveDirectory,
+    inheritedModel,
+    modelResolveAttempt,
+    modelTouched,
+    thinkingTouched,
+  ]);
 
   const addFiles = (files: File[]) => {
     if (starting || files.length === 0) return;
-    const { accepted, warning } = selectAttachmentFiles(attachmentsRef.current, files);
+    const { accepted, warning } = selectAttachmentFiles(
+      attachmentsRef.current,
+      files,
+    );
     setAttachmentError(warning);
-    if (accepted.length > 0) setAttachments((current) => [...current, ...accepted.map(localAttachment)]);
+    if (accepted.length > 0)
+      setAttachments((current) => [
+        ...current,
+        ...accepted.map(localAttachment),
+      ]);
   };
 
   const removeAttachment = (localId: string) => {
@@ -180,14 +236,19 @@ export function Welcome({
 
   const addProjectFile = (file: ProjectFileResult) => {
     const nextRoot = file.workspaceCwd ?? projectFileRoot;
-    const sameWorkspace = projectFileRoot && nextRoot && projectFileRoot !== nextRoot ? [] : projectFiles;
+    const sameWorkspace =
+      projectFileRoot && nextRoot && projectFileRoot !== nextRoot
+        ? []
+        : projectFiles;
     if (!file.path || sameWorkspace.includes(file.path)) {
       if (sameWorkspace !== projectFiles) setProjectFiles(sameWorkspace);
       if (nextRoot) setProjectFileRoot(nextRoot);
       return;
     }
     if (sameWorkspace.length >= MAX_PROJECT_FILES) {
-      setAttachmentError(`At most ${MAX_PROJECT_FILES} project files per message`);
+      setAttachmentError(
+        `At most ${MAX_PROJECT_FILES} project files per message`,
+      );
       return;
     }
     setAttachmentError(null);
@@ -202,9 +263,10 @@ export function Welcome({
   };
 
   const searchProjectFiles = useCallback(
-    (query: string) => effectiveDirectory
-      ? store.searchNewSessionProjectFiles(effectiveDirectory, query)
-      : Promise.resolve([]),
+    (query: string) =>
+      effectiveDirectory
+        ? store.searchNewSessionProjectFiles(effectiveDirectory, query)
+        : Promise.resolve([]),
     [effectiveDirectory],
   );
 
@@ -217,9 +279,32 @@ export function Welcome({
 
   // Inherited runtime commands apply only while the visible directory still
   // names the workspace they came from.
-  const commandScopeMatches = Boolean(inheritance && effectiveDirectory === inheritance.cwd);
-  const hasInput = Boolean(draft.trim() || attachments.length > 0 || projectFiles.length > 0);
-  const canStart = Boolean(hasInput && effectiveDirectory && selectedModel && !starting);
+  const commandScopeMatches = Boolean(
+    inheritance && effectiveDirectory === inheritance.cwd,
+  );
+  const hasInput = Boolean(
+    draft.trim() || attachments.length > 0 || projectFiles.length > 0,
+  );
+  const startReadiness = starting
+    ? "Starting session…"
+    : !effectiveDirectory
+      ? "Choose a project"
+      : !hasInput
+        ? "Enter an instruction or add a file"
+        : modelStatus === "loading"
+          ? "Resolving model…"
+          : modelStatus === "error"
+            ? "Model resolution failed"
+            : !selectedModel
+              ? "Select a model"
+              : null;
+  const canStart = Boolean(
+    hasInput &&
+      effectiveDirectory &&
+      selectedModel &&
+      modelStatus !== "loading" &&
+      !starting,
+  );
 
   const start = async () => {
     if (!canStart) return;
@@ -275,7 +360,10 @@ export function Welcome({
           event.preventDefault();
           void start();
         }}
-        onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDropActive(true);
+        }}
         onDragLeave={() => setDropActive(false)}
         onDrop={(event) => {
           event.preventDefault();
@@ -295,7 +383,11 @@ export function Welcome({
             event.target.value = "";
           }}
         />
-        <AttachmentList items={attachments} disabled={starting} onRemove={removeAttachment} />
+        <AttachmentList
+          items={attachments}
+          disabled={starting}
+          onRemove={removeAttachment}
+        />
         <ProjectFileChips
           paths={projectFiles}
           disabled={starting}
@@ -304,10 +396,12 @@ export function Welcome({
         <ComposerInput
           value={draft}
           onChange={setDraft}
-          commands={commandScopeMatches ? inheritance?.commands ?? [] : []}
+          commands={commandScopeMatches ? (inheritance?.commands ?? []) : []}
           completionDisabled={starting}
           completionScope={`new-session:${effectiveDirectory}`}
-          searchProjectFiles={effectiveDirectory ? searchProjectFiles : undefined}
+          searchProjectFiles={
+            effectiveDirectory ? searchProjectFiles : undefined
+          }
           onPickProjectFile={addProjectFile}
           rows={3}
           maxHeightRatio={0.45}
@@ -333,10 +427,15 @@ export function Welcome({
             value={selectedModel}
             models={availableModels}
             recent={state.prefs.recentModelIds}
-            emptyLabel={modelStatus === "loading" || (modelStatus === "idle" && effectiveDirectory && !modelTouched)
-              ? "Resolving model…"
-              : "Select model"}
-            disabled={starting}
+            emptyLabel={
+              modelStatus === "loading" ||
+              (modelStatus === "idle" && effectiveDirectory && !modelTouched)
+                ? "Resolving model…"
+                : modelStatus === "error"
+                  ? "Model unavailable"
+                  : "Select model"
+            }
+            disabled={starting || modelStatus === "loading"}
             onChange={(provider, id) => {
               setModelTouched(true);
               setModelStatus("ready");
@@ -345,12 +444,25 @@ export function Welcome({
           />
           <Dropdown
             label="Thinking level"
-            title={selectedModel?.reasoning === false ? "The selected model does not support thinking" : "Thinking level"}
+            title={
+              selectedModel?.reasoning === false
+                ? "The selected model does not support thinking"
+                : "Thinking level"
+            }
             direction="up"
             value={thinkingLevel}
-            display={selectedModel?.reasoning === false ? "thinking unavailable" : thinkingLevel}
-            disabled={starting || !selectedModel || selectedModel.reasoning === false}
-            options={thinkingLevels.map((level) => ({ value: level, label: level }))}
+            display={
+              selectedModel?.reasoning === false
+                ? "thinking unavailable"
+                : thinkingLevel
+            }
+            disabled={
+              starting || !selectedModel || selectedModel.reasoning === false
+            }
+            options={thinkingLevels.map((level) => ({
+              value: level,
+              label: level,
+            }))}
             onChange={(value) => {
               setThinkingTouched(true);
               setThinkingLevel(value as ThinkingLevel);
@@ -385,7 +497,11 @@ export function Welcome({
             aria-label="Start session"
             title="Start session"
           >
-            {starting ? <Loader2 size={14} className="spin" aria-hidden /> : <Send size={14} aria-hidden />}
+            {starting ? (
+              <Loader2 size={14} className="spin" aria-hidden />
+            ) : (
+              <Send size={14} aria-hidden />
+            )}
           </button>
         </div>
         <div className="welcome__directory">
@@ -409,6 +525,23 @@ export function Welcome({
             disabled={starting}
           />
         </div>
+        {startReadiness ? (
+          <div
+            className={`welcome__readiness ${modelStatus === "error" ? "welcome__readiness--error" : ""}`}
+            role="status"
+          >
+            <span>{startReadiness}</span>
+            {modelStatus === "error" && effectiveDirectory ? (
+              <button
+                type="button"
+                className="changes__inline-action"
+                onClick={() => setModelResolveAttempt((attempt) => attempt + 1)}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {pickerOpen && effectiveDirectory ? (
           <ProjectFilePicker
             scope={effectiveDirectory}
@@ -420,9 +553,15 @@ export function Welcome({
           />
         ) : null}
       </form>
-      {attachmentError ? <p className="welcome__error" role="alert">{attachmentError}</p> : null}
+      {attachmentError ? (
+        <p className="welcome__error" role="alert">
+          {attachmentError}
+        </p>
+      ) : null}
       {state.sessionActionError ? (
-        <p className="welcome__error" role="alert">{state.sessionActionError}</p>
+        <p className="welcome__error" role="alert">
+          {state.sessionActionError}
+        </p>
       ) : null}
 
       {browsing ? (
@@ -445,7 +584,11 @@ export function Welcome({
               aria-expanded={recentOpen}
               onClick={() => setRecentOpen((value) => !value)}
             >
-              <ChevronRight size={12} className={`chev ${recentOpen ? "chev--open" : ""}`} aria-hidden />
+              <ChevronRight
+                size={12}
+                className={`chev ${recentOpen ? "chev--open" : ""}`}
+                aria-hidden
+              />
               Recent sessions
             </button>
           </h2>
@@ -459,9 +602,15 @@ export function Welcome({
                     title={session.title || "New session"}
                     onClick={() => void store.openSession(session.id)}
                   >
-                    <span className="welcome__row-title">{session.title || "New session"}</span>
-                    <span className="welcome__row-project">{session.project}</span>
-                    <span className="welcome__row-time">{relativeTime(session.modified)}</span>
+                    <span className="welcome__row-title">
+                      {session.title || "New session"}
+                    </span>
+                    <span className="welcome__row-project">
+                      {session.project}
+                    </span>
+                    <span className="welcome__row-time">
+                      {relativeTime(session.modified)}
+                    </span>
                   </button>
                 </div>
               ))}

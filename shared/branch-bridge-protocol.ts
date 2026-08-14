@@ -25,8 +25,12 @@ export interface BranchBridgeResult {
 }
 
 /** Structural framing only. Endpoints remain responsible for validating fields. */
-export function decodeBranchBridgeJson(encodedValue: unknown, limit: number): unknown {
-  if (typeof encodedValue !== "string") throw new Error("invalid bridge encoding");
+export function decodeBranchBridgeJson(
+  encodedValue: unknown,
+  limit: number,
+): unknown {
+  if (typeof encodedValue !== "string")
+    throw new Error("invalid bridge encoding");
   const encoded = encodedValue.trim();
   if (!encoded || encoded.length > limit || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
     throw new Error("invalid bridge encoding");
@@ -35,14 +39,18 @@ export function decodeBranchBridgeJson(encodedValue: unknown, limit: number): un
   if (decoded.length > limit || decoded.toString("base64url") !== encoded) {
     throw new Error("invalid bridge encoding");
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded)) as unknown;
+  return JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(decoded),
+  ) as unknown;
 }
 
 /** Enforces both decoded UTF-8 bytes and encoded base64url characters. */
 export function encodeBranchBridgeJson(value: unknown, limit: number): string {
   const decoded = Buffer.from(JSON.stringify(value), "utf8");
-  if (decoded.length > limit) throw new Error("bridge payload exceeds decoded byte limit");
+  if (decoded.length > limit)
+    throw new Error("bridge payload exceeds decoded byte limit");
   const encoded = decoded.toString("base64url");
-  if (encoded.length > limit) throw new Error("bridge payload exceeds encoded character limit");
+  if (encoded.length > limit)
+    throw new Error("bridge payload exceeds encoded character limit");
   return encoded;
 }

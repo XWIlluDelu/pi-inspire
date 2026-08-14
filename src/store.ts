@@ -1,10 +1,6 @@
 import { useSyncExternalStore } from "react";
 import {
   defaultPreferences,
-  MAX_PROJECT_FILES,
-  MAX_SESSION_CWD_HYDRATION_CWDS,
-  MAX_SESSION_ID_HYDRATION_IDS,
-  MAX_SESSION_LIST_PAGE_SIZE,
   modelIdentityKey,
   projectNameFromCwd,
   THINKING_LEVELS,
@@ -12,7 +8,6 @@ import {
   type AssistantRoundDisplayPreference,
   type BranchTreeResponse,
   type CompletionAttentionPreference,
-  type GitDiffResponse,
   type GitDiffSide,
   type GitFileChange,
   type GitStatusResponse,
@@ -29,7 +24,6 @@ import {
   projectionConflictSeverity,
   type ProjectionConflict,
   type ProjectionHealth,
-  type ResourceDescriptor,
   type ResourceProbeResult,
   type RunState,
   type SessionDeleteDisposition,
@@ -40,22 +34,26 @@ import {
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
-import type { SessionResourceListResponse } from "../shared/resource-references";
-import { deleteSessionDraft } from "./session-drafts";
-import { selectAttachmentFiles } from "./attachment-selection";
-import { ApiError, createApi, eventsUrl, type Api, type ProjectFileResult } from "./api";
+import { ApiError, createApi, type Api, type ProjectFileResult } from "./api";
+import { BranchController } from "./controllers/branch-controller";
+import {
+  ComposerController,
+  type PendingAttachment,
+} from "./controllers/composer-controller";
+import { ConnectionController } from "./controllers/connection-controller";
+import { GitController, type GitDiffView } from "./controllers/git-controller";
+import { ResourceController } from "./controllers/resource-controller";
+import { SessionCatalogController } from "./controllers/session-catalog-controller";
+import { SessionSelectionController } from "./controllers/session-selection-controller";
+import type { ResourcePreview } from "./resource-preview";
 import {
   asMessage,
   emptyEventSlice,
   messageKey,
   reduceEvent,
-  type ActivityTool,
   type ChatMessage,
   type EventSlice,
-  type ExtensionUiRequest,
   type Notice,
-  type QueueInfo,
-  type RetryInfo,
   type WireEvent,
 } from "./events";
 
@@ -75,82 +73,36 @@ export {
   type ToolCallContent,
 } from "./events";
 export { THINKING_LEVELS };
-export type { ActivityTool, ExtensionUiRequest, Notice, QueueInfo, RetryInfo, WireEvent } from "./events";
+export type {
+  ActivityTool,
+  ExtensionUiRequest,
+  Notice,
+  QueueInfo,
+  RetryInfo,
+  WireEvent,
+} from "./events";
 
 // --- Store state ---
 
-export type ConnectionState = "connecting" | "open" | "reconnecting" | "offline";
+export type ConnectionState =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "offline";
 export type ConnectionProblem =
   | { kind: "host-unreachable" }
   | { kind: "host-error"; message: string }
   | { kind: "stream-interrupted" }
   | null;
 
-/** Text-like previews are range-capped; a body shorter than the file's
- * size marks the preview truncated. */
-export const TEXT_PREVIEW_BYTES = 256 * 1024;
-/** Blob-backed image/PDF/audio/video previews must fit in browser memory.
- * Fetch one sentinel byte beyond the limit so a same-inode file growth cannot
- * masquerade as a complete preview. */
-export const MAX_MEDIA_PREVIEW_BYTES = 32 * 1024 * 1024;
-const GIT_REFRESH_INTERVAL_MS = 4_000;
+export {
+  injectHtmlPreviewCsp,
+  MAX_MEDIA_PREVIEW_BYTES,
+  TEXT_PREVIEW_BYTES,
+} from "./resource-preview";
+export type { ResourcePreview } from "./resource-preview";
 
-/** In-document CSP injected into sandboxed HTML previews: no scripts (the
- * iframe sandbox enforces that too), no remote subresources. */
-const HTML_PREVIEW_CSP =
-  "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'";
-
-export function injectHtmlPreviewCsp(html: string): string {
-  // Sandbox blocks script execution and privilege; the injected CSP removes
-  // network reach and navigation primitives. Parse rather than regex-splice:
-  // a fake "<head>" inside a comment must not choose the injection point.
-  // parseFromString is inert — nothing loads or executes during parsing.
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  for (const element of [...parsed.querySelectorAll("base")]) element.remove();
-  for (const element of [...parsed.querySelectorAll("meta[http-equiv]")]) {
-    if (/^refresh$/i.test(element.getAttribute("http-equiv") ?? "")) element.remove();
-  }
-  const meta = parsed.createElement("meta");
-  meta.setAttribute("http-equiv", "Content-Security-Policy");
-  meta.setAttribute("content", HTML_PREVIEW_CSP);
-  parsed.head.insertBefore(meta, parsed.head.firstChild);
-  return `<!DOCTYPE html>${parsed.documentElement.outerHTML}`;
-}
-
-export type GitDiffView =
-  | { status: "loading"; pathId: string; side: GitDiffSide }
-  | { status: "error"; pathId: string; side: GitDiffSide; message: string }
-  | { status: "ready"; result: GitDiffResponse };
-
-export type ResourcePreview =
-  | { status: "loading"; reference: string }
-  | { status: "error"; reference: string; message: string }
-  /** A bare reference the host refused to guess about: the candidates it
-   * found are offered for the user to choose. */
-  | { status: "ambiguous"; reference: string; message: string; matches: string[] }
-  | {
-      status: "ready";
-      reference: string;
-      descriptor: ResourceDescriptor;
-      /** Decoded text for text/markdown/html previews. */
-      text?: string;
-      truncated?: boolean;
-      /** Object URL for binary-backed previews (image/pdf/audio/video/html). */
-      objectUrl?: string;
-      /** The descriptor remains inspectable even when its bytes are withheld. */
-      contentUnavailable?: "too-large";
-    };
-
-function classifiedResourceFailure(reference: string, error: unknown): ResourceProbeResult | null {
-  if (!(error instanceof ApiError)) return null;
-  if (error.status === 409 && error.matches) {
-    return { reference, availability: "ambiguous", message: error.message, matches: error.matches };
-  }
-  if (error.status === 404) return { reference, availability: "missing", message: error.message };
-  if (error.status === 403) return { reference, availability: "unavailable", message: error.message };
-  if (error.status === 400) return { reference, availability: "invalid", message: error.message };
-  return null;
-}
+export type { GitDiffView } from "./controllers/git-controller";
 
 export type { ModelOption } from "../shared/contracts";
 
@@ -177,11 +129,16 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const contextWindow =
-    typeof record.contextWindow === "number" && Number.isFinite(record.contextWindow) && record.contextWindow > 0
+    typeof record.contextWindow === "number" &&
+    Number.isFinite(record.contextWindow) &&
+    record.contextWindow > 0
       ? record.contextWindow
       : null;
   if (contextWindow === null) return null;
-  const tokens = typeof record.tokens === "number" && Number.isFinite(record.tokens) ? record.tokens : null;
+  const tokens =
+    typeof record.tokens === "number" && Number.isFinite(record.tokens)
+      ? record.tokens
+      : null;
   const percent =
     typeof record.percent === "number" && Number.isFinite(record.percent)
       ? record.percent
@@ -191,25 +148,7 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-export interface PendingAttachment {
-  localId: string;
-  fileName: string;
-  mimeType: string;
-  size: number;
-  kind: "image" | "file";
-  previewUrl?: string;
-  status: "uploading" | "ready" | "error";
-  uploadedId?: string;
-  error?: string;
-}
-
-/** One session's staged composer work; AppState.attachments/projectFiles/
- * sending mirror the visible session's partition. */
-interface ComposerPartition {
-  attachments: PendingAttachment[];
-  projectFiles: string[];
-  sending: boolean;
-}
+export type { PendingAttachment } from "./controllers/composer-controller";
 
 export interface AppState extends EventSlice {
   needsToken: boolean;
@@ -234,6 +173,9 @@ export interface AppState extends EventSlice {
   transcriptRevision: number;
   transcriptIncarnation: string | null;
   transcriptViewId: string | null;
+  /** Durable Pi projection leaf. It differs from effective only while the
+   * visible session is inspecting an earlier branch. */
+  transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
   hasOlderMessages: boolean;
   olderMessagesCursor: string | null;
@@ -255,7 +197,13 @@ export interface AppState extends EventSlice {
   sessionListLoadingOlder: boolean;
   sessionListHydrating: boolean;
   /** Current operation, retained after failure so retry copy stays truthful. */
-  sessionListOperation: "reset" | "older" | "refresh" | "preserve" | "hydrate" | null;
+  sessionListOperation:
+    | "reset"
+    | "older"
+    | "refresh"
+    | "preserve"
+    | "hydrate"
+    | null;
   sessionListError: string | null;
   /** Selection failures stay with the session navigation/start surface rather
    * than competing with transcript integrity errors in the topbar. */
@@ -306,7 +254,6 @@ export interface AppState extends EventSlice {
 }
 
 const NOTICE_TTL_MS = 8_000;
-const SESSION_PAGE_SIZE = 40;
 
 const initialState: AppState = {
   ...emptyEventSlice(),
@@ -329,6 +276,7 @@ const initialState: AppState = {
   transcriptRevision: 0,
   transcriptIncarnation: null,
   transcriptViewId: null,
+  transcriptDurableLeafId: null,
   transcriptEffectiveLeafId: null,
   hasOlderMessages: false,
   olderMessagesCursor: null,
@@ -376,30 +324,156 @@ const initialState: AppState = {
   error: null,
 };
 
-type SessionHydrationOwner = { id: string; query: string; ticket: number };
-type SessionListRetry =
-  | { kind: "reset"; query: string }
-  | { kind: "older"; query: string; offset: number }
-  | { kind: "refresh"; query: string }
-  | { kind: "preserve"; query: string; offset: number; total: number }
-  | { kind: "hydrate"; owner: SessionHydrationOwner };
-
 export class AppStore {
   private state: AppState = initialState;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  /** ResourceController owns request lifecycles only. AppStore supplies every
+   * state read/write, so it remains the one browser snapshot authority. */
+  private readonly resources = new ResourceController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    handleAuthFailure: () => this.handleAuthFailure(),
+    prepareGitForResourceOpen: (contextMode) =>
+      this.git.prepareResourceOpen(contextMode),
+  });
+  /** GitController owns polling, selection, and diff request lifecycles.
+   * AppStore remains the sole state publisher and cross-domain transaction
+   * facade, including resource previews opened from a Git path. */
+  private readonly git = new GitController({
+    state: () => ({
+      ...this.state,
+      selectionGeneration: this.selectionGeneration,
+    }),
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    cancelResourcePreview: () => this.resources.cancelRequest(),
+    openResourceFromGit: (workspacePath) =>
+      this.resources.openResource(workspacePath, "changes"),
+  });
+  /** BranchController owns branch-tree/action generations. AppStore applies
+   * snapshots and selection transfers at the controller's verified commit
+   * boundary, so no branch path becomes a second session authority. */
+  private readonly branches = new BranchController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    selectionGeneration: () => this.selectionGeneration,
+    selectionRequest: () => this.selectionRequest,
+    beginForkSelection: () => ++this.selectionRequest,
+    transportGeneration: () => this.transportGeneration,
+    handleAuthFailure: () => this.handleAuthFailure(),
+    applyNavigation: (response) => {
+      this.applySnapshot(response.snapshot);
+      if (response.editorText !== undefined) {
+        this.set({
+          editorText: {
+            text: response.editorText,
+            nonce: (this.state.editorText?.nonce ?? 0) + 1,
+          },
+        });
+      }
+    },
+    applyFork: (response) => {
+      this.applySnapshot(response.snapshot);
+      this.ensureSessionVisible(response.sessionId);
+      this.set({
+        editorText: {
+          text: response.editorText,
+          nonce: (this.state.editorText?.nonce ?? 0) + 1,
+        },
+      });
+    },
+    refreshSessionCatalog: () => void this.refreshLoadedSessions(),
+    notify: (kind, text) => this.notify(kind, text),
+  });
+  /** SessionCatalogController owns pagination, curation/live hydration, and
+   * retry lifecycles. AppStore remains the only catalog snapshot publisher and
+   * selection authority. */
+  private readonly catalog = new SessionCatalogController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    confirmedPreferences: () => this.confirmedPrefs,
+    handleAuthFailure: () => this.handleAuthFailure(),
+  });
+  /** SessionSelectionController owns only latest-wins open/new/deselect
+   * requests. Snapshot publication, branch invalidation, and visible composer
+   * partition changes stay with AppStore. */
+  private readonly selection = new SessionSelectionController({
+    state: () => this.state,
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    beginOpening: (sessionId) => {
+      this.invalidateBranchForSelectionIntent();
+      this.set({ sessionActionError: null });
+      const ticket = ++this.selectionRequest;
+      this.claimOpening(ticket, sessionId);
+      return ticket;
+    },
+    invalidateOpening: () => {
+      this.selectionRequest += 1;
+      this.releaseOpening();
+    },
+    ownsOpening: (ticket, api, transportGeneration) =>
+      ticket === this.selectionRequest &&
+      this.openingOwner === ticket &&
+      this.api === api &&
+      this.transportGeneration === transportGeneration,
+    releaseOpening: (ticket) => this.releaseOpening(ticket),
+    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
+    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
+    consumeReadyWhileOpening: (sessionId, ticket) => {
+      if (this.readyWhileOpening.get(sessionId) !== ticket) return false;
+      this.readyWhileOpening.delete(sessionId);
+      return true;
+    },
+    resyncSelected: (sessionId) =>
+      void this.resync(sessionId, this.selectionGeneration),
+    setActionError: (sessionActionError) => this.set({ sessionActionError }),
+    rememberModel: (model) => this.rememberModel(model),
+    refreshSessionCatalog: () => void this.refreshLoadedSessions(),
+    notify: (kind, text) => this.notify(kind, text),
+  });
+  /** ComposerController owns session-partitioned staged attachments, project
+   * files, and delivery lifetime. AppStore remains the snapshot owner. */
+  private readonly composer = new ComposerController({
+    state: () => this.state,
+    api: () => this.api,
+    patch: (slice) => this.set(slice),
+    notify: (kind, text) => this.notify(kind, text),
+    clearVisibleError: (sessionId) => {
+      if (this.state.sessionId === sessionId) this.set({ error: null });
+    },
+    failVisible: (sessionId, message) => {
+      if (this.state.sessionId === sessionId) this.fail(message);
+    },
+  });
   private authToken: string | null = null;
-  private socket: WebSocket | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectDelay = 1_000;
+  /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
+   * continues to publish connection state and owns every stream consequence. */
+  private readonly connectionController = new ConnectionController({
+    state: () => ({ bootstrapped: this.state.bootstrapped }),
+    patch: (patch) => this.set(patch),
+    applyEvent: (event) => this.applyEvent(event),
+    onTransportReplaced: () => this.attentionArms.clear(),
+    onTransportClosed: () => {
+      // A later terminal event cannot be correlated across a lost stream.
+      // The reconnect snapshot may remove stale state but must not recreate
+      // ownership from historical active status.
+      this.attentionArms.clear();
+      this.branches.markConnectionInterrupted();
+      this.set({
+        connection: "reconnecting",
+        connectionProblem: { kind: "stream-interrupted" },
+      });
+    },
+    reconnect: (token) => void this.init(token),
+  });
   private settledKeys = new Set<string>();
-  private searchTimer: ReturnType<typeof setTimeout> | null = null;
-  private sessionBasePages: SessionSummary[] = [];
-  private sessionHydration = new Map<string, SessionSummary>();
-  private sessionLoadTicket = 0;
-  private sessionOlderPromise: Promise<void> | null = null;
-  private sessionListRetry: SessionListRetry | null = null;
-  private sessionHydrationInFlight = new Set<string>();
   private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
   private selectionGeneration = 0;
@@ -412,19 +486,7 @@ export class AppStore {
   private openingOwner: number | null = null;
   private resyncRequest = 0;
   private readyWhileOpening = new Map<string, number>();
-  private previewObjectUrl: string | null = null;
-  private resourceRequest: AbortController | null = null;
-  private resourceProbeRequest: AbortController | null = null;
-  private resourceProbeKey: string | null = null;
   private olderTranscriptRequest: AbortController | null = null;
-  private gitStatusRequest: AbortController | null = null;
-  private gitStatusPromise: Promise<void> | null = null;
-  private gitRefreshQueued = false;
-  private gitDiffRequest: AbortController | null = null;
-  private gitSurfaces = new Set<string>();
-  private gitRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private branchTreeRequest = 0;
-  private branchActionRequest = 0;
   private transportGeneration = 0;
   /** Live operation kinds own their own terminal attention. Nested automatic
    * compaction must never consume the agent run that owns it. */
@@ -453,19 +515,29 @@ export class AppStore {
       notices: [...this.state.notices, { id, kind, text }],
       nextNoticeId: id + 1,
     });
-    this.noticeTimers.set(id, setTimeout(() => this.dismissNotice(id), NOTICE_TTL_MS));
+    this.noticeTimers.set(
+      id,
+      setTimeout(() => this.dismissNotice(id), NOTICE_TTL_MS),
+    );
   }
 
   private isForeground(): boolean {
-    return typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus();
+    return (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    );
   }
 
   private publishTitleAttention(): void {
     const attentionSessionIds = [...this.titleAttention];
     if (
       attentionSessionIds.length === this.state.attentionSessionIds.length &&
-      attentionSessionIds.every((id, index) => id === this.state.attentionSessionIds[index])
-    ) return;
+      attentionSessionIds.every(
+        (id, index) => id === this.state.attentionSessionIds[index],
+      )
+    )
+      return;
     this.set({ attentionSessionIds });
   }
 
@@ -481,16 +553,23 @@ export class AppStore {
   };
 
   private armAttention(sessionId: string, kind: "agent" | "compaction"): void {
-    const arms = this.attentionArms.get(sessionId) ?? new Set<"agent" | "compaction">();
+    const arms =
+      this.attentionArms.get(sessionId) ?? new Set<"agent" | "compaction">();
     arms.add(kind);
     this.attentionArms.set(sessionId, arms);
   }
 
-  private hasAttentionArm(sessionId: string, kind: "agent" | "compaction"): boolean {
+  private hasAttentionArm(
+    sessionId: string,
+    kind: "agent" | "compaction",
+  ): boolean {
     return this.attentionArms.get(sessionId)?.has(kind) ?? false;
   }
 
-  private consumeAttentionArm(sessionId: string, kind: "agent" | "compaction"): boolean {
+  private consumeAttentionArm(
+    sessionId: string,
+    kind: "agent" | "compaction",
+  ): boolean {
     const arms = this.attentionArms.get(sessionId);
     if (!arms?.delete(kind)) return false;
     if (arms.size === 0) this.attentionArms.delete(sessionId);
@@ -500,60 +579,99 @@ export class AppStore {
   /** Snapshots never create attention ownership, but they are authoritative
    * evidence that an observed live operation either still exists or ended
    * outside this socket's event stream. */
-  private reconcileAttentionArms(sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>): void {
-    const liveAgentStates = new Set(["running", "retrying", "queued", "compacting"]);
+  private reconcileAttentionArms(
+    sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
+  ): void {
+    const liveAgentStates = new Set([
+      "running",
+      "retrying",
+      "queued",
+      "compacting",
+    ]);
     for (const [sessionId, arms] of this.attentionArms) {
       const runState = sessionStatuses[sessionId]?.runState;
       if (!runState) {
         this.attentionArms.delete(sessionId);
         continue;
       }
-      if (arms.has("agent") && !liveAgentStates.has(runState)) arms.delete("agent");
-      if (arms.has("compaction") && runState !== "compacting") arms.delete("compaction");
+      if (arms.has("agent") && !liveAgentStates.has(runState))
+        arms.delete("agent");
+      if (arms.has("compaction") && runState !== "compacting")
+        arms.delete("compaction");
       if (arms.size === 0) this.attentionArms.delete(sessionId);
     }
   }
 
   private statusOutcome(event: WireEvent): "completed" | "failed" | "aborted" {
-    const status = event.sessionStatus as Partial<SessionRuntimeStatus> | undefined;
-    if (event.type === "runtime_error" || status?.runState === "failed" || status?.runState === "conflict") return "failed";
+    const status = event.sessionStatus as
+      | Partial<SessionRuntimeStatus>
+      | undefined;
+    if (
+      event.type === "runtime_error" ||
+      status?.runState === "failed" ||
+      status?.runState === "conflict"
+    )
+      return "failed";
     if (status?.runState === "aborted") return "aborted";
     return "completed";
   }
 
-  private compactionOutcome(event: WireEvent): "completed" | "failed" | "aborted" {
+  private compactionOutcome(
+    event: WireEvent,
+  ): "completed" | "failed" | "aborted" {
     if (event.aborted === true) return "aborted";
-    if (typeof event.errorMessage === "string" && event.errorMessage.trim()) return "failed";
+    if (typeof event.errorMessage === "string" && event.errorMessage.trim())
+      return "failed";
     if (event.result === undefined || event.result === null) return "failed";
     return this.statusOutcome(event);
   }
 
-  private attendToOutcome(sessionId: string, outcome: "completed" | "failed" | "aborted"): void {
-    const foregroundOwner = sessionId === this.state.sessionId && this.isForeground();
-    if (foregroundOwner || this.state.prefs.completionAttention === "off") return;
+  private attendToOutcome(
+    sessionId: string,
+    outcome: "completed" | "failed" | "aborted",
+  ): void {
+    const foregroundOwner =
+      sessionId === this.state.sessionId && this.isForeground();
+    if (foregroundOwner || this.state.prefs.completionAttention === "off")
+      return;
     if (this.state.prefs.completionAttention === "title") {
       this.titleAttention.add(sessionId);
       this.publishTitleAttention();
       return;
     }
     if (this.state.prefs.completionAttention !== "desktop") return;
-    const NotificationApi = typeof window !== "undefined" ? window.Notification : undefined;
+    const NotificationApi =
+      typeof window !== "undefined" ? window.Notification : undefined;
     if (!NotificationApi || NotificationApi.permission !== "granted") return;
-    const project = this.state.sessions.find((candidate) => candidate.id === sessionId)?.project;
-    const title = outcome === "completed" ? "Task completed" : outcome === "aborted" ? "Task aborted" : "Task failed";
+    const project = this.state.sessions.find(
+      (candidate) => candidate.id === sessionId,
+    )?.project;
+    const title =
+      outcome === "completed"
+        ? "Task completed"
+        : outcome === "aborted"
+          ? "Task aborted"
+          : "Task failed";
     // A catalog title can be the first prompt. OS-visible fields therefore use
     // only fixed copy, opaque session identity, and cwd-derived project data.
     const body = project ? `Project: ${project}` : "Pi task";
     try {
-      const notification = new NotificationApi(title, { body, tag: `inspire-task:${sessionId}:${outcome}` });
+      const notification = new NotificationApi(title, {
+        body,
+        tag: `inspire-task:${sessionId}:${outcome}`,
+      });
       notification.onclick = () => {
         window.focus();
-        if (this.state.sessionId !== sessionId) void this.openSession(sessionId);
+        if (this.state.sessionId !== sessionId)
+          void this.openSession(sessionId);
         else this.acknowledgeVisibleSession();
         notification.close();
       };
     } catch {
-      this.notify("warning", "Desktop notifications are unavailable in this browser context");
+      this.notify(
+        "warning",
+        "Desktop notifications are unavailable in this browser context",
+      );
     }
   }
 
@@ -563,31 +681,38 @@ export class AppStore {
    * by branch editing. The welcome flow uses this only after Pi assigns the
    * new session identity, preserving its first message if upload/send fails. */
   replaceComposerText = (text: string): void => {
-    this.set({ editorText: { text, nonce: (this.state.editorText?.nonce ?? 0) + 1 } });
+    this.set({
+      editorText: { text, nonce: (this.state.editorText?.nonce ?? 0) + 1 },
+    });
   };
 
+  private invalidateSessionListRequests(): void {
+    this.catalog.invalidate();
+  }
+
   private handleAuthFailure(): void {
-    // Null the owned socket first so its close handler cannot schedule a
-    // retry with the rejected token.
-    const socket = this.socket;
-    this.socket = null;
+    // Stop detaches its owned socket before closing it, so the close handler
+    // cannot schedule a retry with the rejected token.
+    this.connectionController.stop();
     this.transportGeneration += 1;
+    this.resources.invalidateForTransportReplacement();
+    this.selection.invalidateForReplacement();
+    this.branches.invalidateForTransportReplacement();
+    this.invalidateSessionListRequests();
     this.attentionArms.clear();
-    socket?.close();
     this.authToken = null;
-    this.set({ needsToken: true, error: null, connection: "offline", connectionProblem: null });
+    this.set({
+      needsToken: true,
+      error: null,
+      connection: "offline",
+      connectionProblem: null,
+    });
   }
 
   // --- Bootstrap ---
 
   private invalidateBranchForSelectionIntent(): void {
-    this.branchTreeRequest += 1;
-    this.branchActionRequest += 1;
-    this.set({
-      branchTreeLoading: false,
-      branchActionId: null,
-      branchTreeError: this.state.branchTree ? "Branch history is stale — reload after the session selection settles" : null,
-    });
+    this.branches.invalidateForSelectionIntent();
   }
 
   private claimOpening(owner: number, sessionId: string | null): void {
@@ -600,29 +725,42 @@ export class AppStore {
     if (owner !== undefined && this.openingOwner !== owner) return;
     this.readyWhileOpening.clear();
     this.openingOwner = null;
-    if (this.state.openingSessionId !== null) this.set({ openingSessionId: null });
+    if (this.state.openingSessionId !== null)
+      this.set({ openingSessionId: null });
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
+    const api = createApi(token);
+    const generation = ++this.transportGeneration;
+    this.resources.invalidateForTransportReplacement();
+    this.selection.invalidateForReplacement();
+    this.branches.invalidateForTransportReplacement();
     this.authToken = token;
-    this.api = createApi(token);
-    this.transportGeneration += 1;
+    this.api = api;
+    this.invalidateSessionListRequests();
+    const ownsBootstrap = (): boolean =>
+      generation === this.transportGeneration && this.api === api;
     try {
-      const boot = await this.api.bootstrap();
+      const boot = await api.bootstrap();
+      if (!ownsBootstrap()) return;
       this.confirmedPrefs = boot.preferences;
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
         version: boot.version,
-        availableModels: Array.isArray(boot.availableModels) ? boot.availableModels : [],
+        availableModels: Array.isArray(boot.availableModels)
+          ? boot.availableModels
+          : [],
         bootstrapped: true,
         needsToken: false,
         connectionProblem: null,
       });
       this.applySnapshot(boot.snapshot);
-      if (boot.preferencesWarning) this.notify("warning", boot.preferencesWarning);
-      this.connect(token);
+      if (boot.preferencesWarning)
+        this.notify("warning", boot.preferencesWarning);
+      this.connectionController.connect(token);
       void this.loadSessions(this.state.sessionQuery).then(() => {
+        if (!ownsBootstrap()) return;
         // The remembered launch preference applies once per store lifetime so
         // reconnects never hijack a deliberate navigation.
         if (this.autoContinued) return;
@@ -633,83 +771,104 @@ export class AppStore {
         }
       });
     } catch (error) {
+      if (!ownsBootstrap()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
           connection: "offline",
-          connectionProblem: error instanceof ApiError
-            ? { kind: "host-error", message: error.message }
-            : { kind: "host-unreachable" },
+          connectionProblem:
+            error instanceof ApiError
+              ? { kind: "host-error", message: error.message }
+              : { kind: "host-unreachable" },
           error: null,
           errorSeverity: "error",
         });
-        this.scheduleReconnect(token);
+        this.connectionController.scheduleReconnect(token);
       }
     }
   }
 
   // --- Snapshot & event reconciliation ---
 
-  private applySnapshot(snapshot: ActiveSnapshot, mode: "replace" | "preserve" = "preserve"): void {
+  private applySnapshot(
+    snapshot: ActiveSnapshot,
+    mode: "replace" | "preserve" = "preserve",
+  ): void {
     const active = snapshot.active;
     const nextSessionId = active?.sessionId ?? null;
     const sessionChanged = nextSessionId !== this.state.sessionId;
     const page = active?.transcriptPage;
-    const pageHasAuthoritativeView = typeof page?.viewId === "string" && page.viewId.length > 0;
-    const nextViewId = page ? (page.viewId ?? `legacy-view:${page.incarnation ?? nextSessionId ?? "none"}`) : null;
-    const nextEffectiveLeafId = page?.effectiveLeafId ?? active?.effectiveLeafId ?? null;
+    const nextTranscriptRevision = page?.revision ?? 0;
+    const revisionChanged =
+      nextTranscriptRevision !== this.state.transcriptRevision;
+    const pageHasAuthoritativeView =
+      typeof page?.viewId === "string" && page.viewId.length > 0;
+    const nextViewId = page
+      ? (page.viewId ??
+        `legacy-view:${page.incarnation ?? nextSessionId ?? "none"}`)
+      : null;
+    const nextDurableLeafId = active?.durableLeafId ?? null;
+    const nextEffectiveLeafId =
+      page?.effectiveLeafId ?? active?.effectiveLeafId ?? null;
     const viewChanged = Boolean(
-      !sessionChanged && nextSessionId && (
-        (nextViewId && nextViewId !== this.state.transcriptViewId) ||
-        (!pageHasAuthoritativeView && nextEffectiveLeafId !== this.state.transcriptEffectiveLeafId)
-      ),
+      !sessionChanged &&
+        nextSessionId &&
+        ((nextViewId && nextViewId !== this.state.transcriptViewId) ||
+          (!pageHasAuthoritativeView &&
+            nextEffectiveLeafId !== this.state.transcriptEffectiveLeafId)),
     );
     if (sessionChanged || viewChanged) {
       this.selectionGeneration += 1;
-      this.branchTreeRequest += 1;
-      this.branchActionRequest += 1;
+      this.branches.invalidateForViewChange();
       // Conversation-derived previews and older-page requests are authorized
       // against one opaque branch view, not merely a session id.
-      this.cancelResourceRequest();
-      this.cancelResourceProbes();
-      this.revokePreviewObjectUrl();
+      this.resources.invalidate();
       this.olderTranscriptRequest?.abort();
       this.olderTranscriptRequest = null;
-      if (sessionChanged) this.cancelGitRequests();
+      if (sessionChanged) this.git.cancelAll();
+    } else if (revisionChanged) {
+      // Availability is a filesystem observation made against one transcript
+      // generation; do not expose its old standing during the next render.
+      this.resources.cancelProbes();
     }
-    const newestMessages = (page?.messages ?? active?.messages ?? []).map(asMessage);
+    const newestMessages = (page?.messages ?? active?.messages ?? []).map(
+      asMessage,
+    );
     const historyCompatible = Boolean(
       mode === "preserve" &&
-      !sessionChanged &&
-      !viewChanged &&
-      page &&
-      nextViewId === this.state.transcriptViewId &&
-      page.incarnation &&
-      page.incarnation === this.state.transcriptIncarnation &&
-      (
-        (
-          page.revision === this.state.transcriptRevision &&
-          (
-            this.state.hasOlderMessages !== Boolean(page.hasOlder) ||
-            this.state.olderMessagesCursor !== (page.olderCursor ?? null)
-          )
-        ) ||
-        (
-          page.revision > this.state.transcriptRevision &&
-          (page.appendFromRevision ?? page.revision) <= this.state.transcriptRevision
-        )
-      ),
+        !sessionChanged &&
+        !viewChanged &&
+        page &&
+        nextViewId === this.state.transcriptViewId &&
+        page.incarnation &&
+        page.incarnation === this.state.transcriptIncarnation &&
+        ((page.revision === this.state.transcriptRevision &&
+          (this.state.hasOlderMessages !== Boolean(page.hasOlder) ||
+            this.state.olderMessagesCursor !== (page.olderCursor ?? null))) ||
+          (page.revision > this.state.transcriptRevision &&
+            (page.appendFromRevision ?? page.revision) <=
+              this.state.transcriptRevision)),
     );
     let messages = newestMessages;
     if (historyCompatible) {
-      const newestKeys = new Set(newestMessages.map((message) => messageKey(message) ?? JSON.stringify(message)));
+      const newestKeys = new Set(
+        newestMessages.map(
+          (message) => messageKey(message) ?? JSON.stringify(message),
+        ),
+      );
       const persistedCorrelations = new Map<string, number>();
       for (const message of newestMessages) {
-        const record = message as ChatMessage & { __inspireMessageId?: unknown };
+        const record = message as ChatMessage & {
+          __inspireMessageId?: unknown;
+        };
         if (typeof record.__inspireMessageId !== "string") continue;
         const key = messageFallbackCorrelation(message);
-        if (key) persistedCorrelations.set(key, (persistedCorrelations.get(key) ?? 0) + 1);
+        if (key)
+          persistedCorrelations.set(
+            key,
+            (persistedCorrelations.get(key) ?? 0) + 1,
+          );
       }
       messages = [
         ...this.state.messages.filter((message) => {
@@ -727,14 +886,25 @@ export class AppStore {
         ...newestMessages,
       ];
     }
-    this.settledKeys = new Set(messages.map(messageKey).filter((key): key is string => key !== null));
+    this.settledKeys = new Set(
+      messages.map(messageKey).filter((key): key is string => key !== null),
+    );
     const cwd = active?.cwd ?? null;
-    const projectionHealth = active?.projectionHealth ?? { status: "ok" as const };
+    const projectionHealth = active?.projectionHealth ?? {
+      status: "ok" as const,
+    };
     const projectionConflict = active?.projectionConflict ?? null;
-    const projectionError = projectionConflict?.message ??
-      (projectionHealth.status === "error" ? projectionHealth.message ?? "Session projection failed" : null);
-    const projectionSeverity = projectionConflictSeverity(projectionConflict) === "attention" ? "warning" : "error";
-    const clearedProjectionError = !projectionError && this.state.error === this.state.projectionError;
+    const projectionError =
+      projectionConflict?.message ??
+      (projectionHealth.status === "error"
+        ? (projectionHealth.message ?? "Session projection failed")
+        : null);
+    const projectionSeverity =
+      projectionConflictSeverity(projectionConflict) === "attention"
+        ? "warning"
+        : "error";
+    const clearedProjectionError =
+      !projectionError && this.state.error === this.state.projectionError;
     const sessionStatuses = snapshot.sessionStatuses ?? {};
     this.reconcileAttentionArms(sessionStatuses);
     this.set({
@@ -743,31 +913,49 @@ export class AppStore {
       cwd,
       project: cwd ? projectNameFromCwd(cwd) : null,
       model: (active?.model as AppState["model"]) ?? null,
-      thinkingLevel: typeof active?.thinkingLevel === "string" ? active.thinkingLevel : this.state.thinkingLevel,
-      availableModels: active && Array.isArray(active.availableModels) && active.availableModels.length > 0
-        ? (active.availableModels as ModelOption[])
-        : this.state.availableModels,
-      commands: Array.isArray(active?.commands) ? (active.commands as PiCommand[]) : [],
+      thinkingLevel:
+        typeof active?.thinkingLevel === "string"
+          ? active.thinkingLevel
+          : this.state.thinkingLevel,
+      availableModels:
+        active &&
+        Array.isArray(active.availableModels) &&
+        active.availableModels.length > 0
+          ? (active.availableModels as ModelOption[])
+          : this.state.availableModels,
+      commands: Array.isArray(active?.commands)
+        ? (active.commands as PiCommand[])
+        : [],
       contextUsage: contextUsage(active?.stats ?? null),
       messages,
-      transcriptRevision: page?.revision ?? 0,
+      transcriptRevision: nextTranscriptRevision,
       transcriptIncarnation: page?.incarnation ?? null,
       transcriptViewId: nextViewId,
+      transcriptDurableLeafId: nextDurableLeafId,
       transcriptEffectiveLeafId: nextEffectiveLeafId,
-      hasOlderMessages: historyCompatible ? this.state.hasOlderMessages : Boolean(page?.hasOlder),
-      olderMessagesCursor: historyCompatible ? this.state.olderMessagesCursor : (page?.olderCursor ?? null),
+      hasOlderMessages: historyCompatible
+        ? this.state.hasOlderMessages
+        : Boolean(page?.hasOlder),
+      olderMessagesCursor: historyCompatible
+        ? this.state.olderMessagesCursor
+        : (page?.olderCursor ?? null),
       loadingOlderMessages: false,
-      olderMessagesError: historyCompatible ? this.state.olderMessagesError : null,
+      olderMessagesError: historyCompatible
+        ? this.state.olderMessagesError
+        : null,
       projectionHealth,
       projectionConflict,
       projectionError,
       ...(projectionError
         ? { error: projectionError, errorSeverity: projectionSeverity }
-        : clearedProjectionError ? { error: null, errorSeverity: "error" } : {}),
+        : clearedProjectionError
+          ? { error: null, errorSeverity: "error" }
+          : {}),
       streaming: Boolean(active?.isStreaming),
-      activeAssistantMessageKey: typeof active?.activeAssistantMessageKey === "string"
-        ? active.activeAssistantMessageKey
-        : null,
+      activeAssistantMessageKey:
+        typeof active?.activeAssistantMessageKey === "string"
+          ? active.activeAssistantMessageKey
+          : null,
       runState: active?.projectionConflict ? "conflict" : snapshot.runState,
       // Wholesale replace: the host clears completion attention for the
       // session that was just viewed, so stale client state must not linger.
@@ -780,17 +968,26 @@ export class AppStore {
       retry: null,
       queue: {
         steering: Array.isArray(snapshot.pendingQueues?.steering)
-          ? snapshot.pendingQueues.steering.filter((item): item is string => typeof item === "string")
+          ? snapshot.pendingQueues.steering.filter(
+              (item): item is string => typeof item === "string",
+            )
           : [],
         followUp: Array.isArray(snapshot.pendingQueues?.followUp)
-          ? snapshot.pendingQueues.followUp.filter((item): item is string => typeof item === "string")
+          ? snapshot.pendingQueues.followUp.filter(
+              (item): item is string => typeof item === "string",
+            )
           : [],
       },
       extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
         ? snapshot.pendingExtensionUiRequests
         : [],
-      extensionUiRespondingId: sessionChanged || viewChanged ? null : this.state.extensionUiRespondingId,
-      extensionDisplays: Array.isArray(snapshot.extensionDisplays) ? snapshot.extensionDisplays : [],
+      extensionUiRespondingId:
+        sessionChanged || viewChanged
+          ? null
+          : this.state.extensionUiRespondingId,
+      extensionDisplays: Array.isArray(snapshot.extensionDisplays)
+        ? snapshot.extensionDisplays
+        : [],
       ...(sessionChanged
         ? {
             statuses: {},
@@ -814,23 +1011,29 @@ export class AppStore {
             resourceAvailability: {},
             // Composer work belongs to its session; the switch swaps in the
             // destination's staged slice.
-            ...this.composerSlice(nextSessionId),
+            ...this.composer.slice(nextSessionId),
           }
         : viewChanged
           ? {
               branchTreeLoading: false,
-              branchTreeError: this.state.branchTree ? "Branch history is stale — refresh to use branch actions" : null,
+              branchTreeError: this.state.branchTree
+                ? "Branch history is stale — refresh to use branch actions"
+                : null,
               branchActionId: null,
               selectedResourceReference: null,
               resourcePreview: null,
               resourceAvailability: {},
             }
-          : {}),
+          : revisionChanged
+            ? { resourceAvailability: {} }
+            : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
-    if (nextSessionId && this.isForeground()) this.clearAttentionFor(nextSessionId);
-    if (sessionChanged && nextSessionId && this.gitSurfaces.size > 0) void this.refreshGitStatus();
+    if (nextSessionId && this.isForeground())
+      this.clearAttentionFor(nextSessionId);
+    if (sessionChanged && nextSessionId && this.git.hasVisibleSurface())
+      void this.git.refreshStatus();
   }
 
   private eventSlice(): EventSlice {
@@ -861,28 +1064,38 @@ export class AppStore {
         // open/new response still in flight so it cannot overwrite this. The
         // push also immediately releases the old opening marker; stale
         // finally blocks are fenced by their operation owner.
-        this.selectionRequest += 1;
-        this.releaseOpening();
+        this.selection.invalidateForReplacement();
         const snapshot = event.data as ActiveSnapshot;
         this.applySnapshot(snapshot);
-        if (snapshot.active?.sessionId) this.ensureSessionVisible(snapshot.active.sessionId);
+        if (snapshot.active?.sessionId)
+          this.ensureSessionVisible(snapshot.active.sessionId);
       }
       return;
     }
 
     // Every live event carries its authoritative per-session status; merge it
     // into the map before any transcript routing.
-    const eventSessionId = typeof event.sessionId === "string" ? event.sessionId : null;
+    const eventSessionId =
+      typeof event.sessionId === "string" ? event.sessionId : null;
     if (eventSessionId) this.ensureSessionVisible(eventSessionId);
-    const priorRunState = eventSessionId ? this.state.sessionStatuses[eventSessionId]?.runState : undefined;
-    const sessionStatuses = this.mergeSessionStatus(eventSessionId, event.sessionStatus);
+    const priorRunState = eventSessionId
+      ? this.state.sessionStatuses[eventSessionId]?.runState
+      : undefined;
+    const sessionStatuses = this.mergeSessionStatus(
+      eventSessionId,
+      event.sessionStatus,
+    );
     if (eventSessionId) {
       if (event.type === "agent_start" || event.type === "auto_retry_start") {
         this.armAttention(eventSessionId, "agent");
       } else if (event.type === "compaction_start") {
-        const nestedInAgent = this.hasAttentionArm(eventSessionId, "agent") ||
-          priorRunState === "running" || priorRunState === "retrying" || priorRunState === "queued";
-        if (event.reason === "manual" && !nestedInAgent) this.armAttention(eventSessionId, "compaction");
+        const nestedInAgent =
+          this.hasAttentionArm(eventSessionId, "agent") ||
+          priorRunState === "running" ||
+          priorRunState === "retrying" ||
+          priorRunState === "queued";
+        if (event.reason === "manual" && !nestedInAgent)
+          this.armAttention(eventSessionId, "compaction");
       } else if (event.type === "compaction_end") {
         if (this.consumeAttentionArm(eventSessionId, "compaction")) {
           this.attendToOutcome(eventSessionId, this.compactionOutcome(event));
@@ -892,7 +1105,8 @@ export class AppStore {
           this.attendToOutcome(eventSessionId, this.statusOutcome(event));
         }
       } else if (event.type === "runtime_error") {
-        const armed = this.consumeAttentionArm(eventSessionId, "agent") ||
+        const armed =
+          this.consumeAttentionArm(eventSessionId, "agent") ||
           this.consumeAttentionArm(eventSessionId, "compaction");
         // Runtime death terminates every operation owned by this worker.
         this.attentionArms.delete(eventSessionId);
@@ -906,44 +1120,72 @@ export class AppStore {
       // changes; a settle refreshes the list so folder/time ordering catches
       // up. Unchanged statuses (token-level chatter) publish nothing.
       if (sessionStatuses) this.set({ sessionStatuses });
-      if (event.type === "runtime_ready" && eventSessionId === this.state.openingSessionId && this.openingOwner !== null) {
+      if (
+        event.type === "runtime_ready" &&
+        eventSessionId === this.state.openingSessionId &&
+        this.openingOwner !== null
+      ) {
         this.readyWhileOpening.set(eventSessionId, this.openingOwner);
       }
-      if (event.type === "runtime_error") this.readyWhileOpening.delete(eventSessionId);
+      if (event.type === "runtime_error")
+        this.readyWhileOpening.delete(eventSessionId);
       if (event.type === "agent_settled") void this.refreshLoadedSessions();
       return;
     }
 
-    if (event.type === "tool_execution_end" && this.gitSurfaces.size > 0) {
-      void this.refreshGitStatus();
+    if (event.type === "tool_execution_end" && this.git.hasVisibleSurface()) {
+      void this.git.refreshStatus();
     }
 
     if (event.type === "session_projection_changed") {
       const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
-      const health: ProjectionHealth = rawHealth?.status === "error"
-        ? { status: "error", ...(typeof rawHealth.message === "string" ? { message: rawHealth.message } : {}) }
-        : rawHealth?.status === "ok" ? { status: "ok" } : this.state.projectionHealth;
-      const conflict = event.conflict === null
-        ? null
-        : event.conflict && typeof event.conflict === "object"
-          ? event.conflict as ProjectionConflict
-          : this.state.projectionConflict;
-      const projectionError = conflict?.message ??
-        (health.status === "error" ? health.message ?? "Session projection failed" : null);
-      const projectionSeverity = projectionConflictSeverity(conflict) === "attention" ? "warning" : "error";
-      const clearedProjectionError = !projectionError && this.state.error === this.state.projectionError;
+      const health: ProjectionHealth =
+        rawHealth?.status === "error"
+          ? {
+              status: "error",
+              ...(typeof rawHealth.message === "string"
+                ? { message: rawHealth.message }
+                : {}),
+            }
+          : rawHealth?.status === "ok"
+            ? { status: "ok" }
+            : this.state.projectionHealth;
+      const conflict =
+        event.conflict === null
+          ? null
+          : event.conflict && typeof event.conflict === "object"
+            ? (event.conflict as ProjectionConflict)
+            : this.state.projectionConflict;
+      const projectionError =
+        conflict?.message ??
+        (health.status === "error"
+          ? (health.message ?? "Session projection failed")
+          : null);
+      const projectionSeverity =
+        projectionConflictSeverity(conflict) === "attention"
+          ? "warning"
+          : "error";
+      const clearedProjectionError =
+        !projectionError && this.state.error === this.state.projectionError;
       this.set({
         ...(sessionStatuses ? { sessionStatuses } : {}),
-        ...(this.state.branchTree ? { branchTreeError: "Branch history is stale — refresh to use branch actions" } : {}),
         projectionHealth: health,
         projectionConflict: conflict,
         projectionError,
         ...(projectionError
           ? { error: projectionError, errorSeverity: projectionSeverity }
-          : clearedProjectionError ? { error: null, errorSeverity: "error" } : {}),
+          : clearedProjectionError
+            ? { error: null, errorSeverity: "error" }
+            : {}),
       });
-      const revision = typeof event.revision === "number" ? event.revision : undefined;
-      void this.resync(eventSessionId ?? this.state.sessionId, this.selectionGeneration, revision);
+      this.branches.markProjectionStale();
+      const revision =
+        typeof event.revision === "number" ? event.revision : undefined;
+      void this.resync(
+        eventSessionId ?? this.state.sessionId,
+        this.selectionGeneration,
+        revision,
+      );
       return;
     }
 
@@ -956,7 +1198,10 @@ export class AppStore {
           projectionError: conflict.message,
           runState: "conflict",
           error: conflict.message,
-          errorSeverity: projectionConflictSeverity(conflict) === "attention" ? "warning" : "error",
+          errorSeverity:
+            projectionConflictSeverity(conflict) === "attention"
+              ? "warning"
+              : "error",
         });
       }
       return;
@@ -972,7 +1217,11 @@ export class AppStore {
     }
 
     const before = this.state.notices.length;
-    const { slice, settle, resync, changed } = reduceEvent(this.eventSlice(), this.settledKeys, event);
+    const { slice, settle, resync, changed } = reduceEvent(
+      this.eventSlice(),
+      this.settledKeys,
+      event,
+    );
     for (const key of settle) this.settledKeys.add(key);
     if (changed) {
       this.set(sessionStatuses ? { ...slice, sessionStatuses } : slice);
@@ -985,7 +1234,11 @@ export class AppStore {
     } else if (sessionStatuses) {
       this.set({ sessionStatuses });
     }
-    if (resync) void this.resync(eventSessionId ?? this.state.sessionId, this.selectionGeneration);
+    if (resync)
+      void this.resync(
+        eventSessionId ?? this.state.sessionId,
+        this.selectionGeneration,
+      );
   }
 
   /** Merge an event's sessionStatus into the map; null when nothing changed. */
@@ -1001,7 +1254,12 @@ export class AppStore {
       ...(record.indicator ? { indicator: record.indicator } : {}),
     };
     const existing = this.state.sessionStatuses[sessionId];
-    if (existing && existing.runState === next.runState && existing.indicator === next.indicator) return null;
+    if (
+      existing &&
+      existing.runState === next.runState &&
+      existing.indicator === next.indicator
+    )
+      return null;
     return { ...this.state.sessionStatuses, [sessionId]: next };
   }
 
@@ -1023,14 +1281,17 @@ export class AppStore {
         this.state.sessionId !== expectedSessionId ||
         this.selectionGeneration !== expectedGeneration ||
         snapshotSessionId !== expectedSessionId ||
-        (minimumRevision !== undefined && (page?.revision ?? -1) < minimumRevision) ||
-        (
-          page?.incarnation &&
+        (minimumRevision !== undefined &&
+          (page?.revision ?? -1) < minimumRevision) ||
+        (page?.incarnation &&
           page.incarnation === this.state.transcriptIncarnation &&
-          page.revision < this.state.transcriptRevision
-        )
-      ) return;
-      this.applySnapshot(snapshot, preserveAppendHistory ? "preserve" : "replace");
+          page.revision < this.state.transcriptRevision)
+      )
+        return;
+      this.applySnapshot(
+        snapshot,
+        preserveAppendHistory ? "preserve" : "replace",
+      );
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
@@ -1038,8 +1299,12 @@ export class AppStore {
         const currentProjectionError = this.state.projectionError;
         this.fail(
           currentProjectionError ??
-            (error instanceof Error ? `Failed to refresh session: ${error.message}` : "Failed to refresh session"),
-          currentProjectionError && projectionConflictSeverity(this.state.projectionConflict) === "error"
+            (error instanceof Error
+              ? `Failed to refresh session: ${error.message}`
+              : "Failed to refresh session"),
+          currentProjectionError &&
+            projectionConflictSeverity(this.state.projectionConflict) ===
+              "error"
             ? "error"
             : "warning",
         );
@@ -1054,12 +1319,23 @@ export class AppStore {
     const viewId = this.state.transcriptViewId;
     const effectiveLeafId = this.state.transcriptEffectiveLeafId;
     const generation = this.selectionGeneration;
-    if (!this.api || !sessionId || !cursor || !viewId || this.state.loadingOlderMessages) return false;
+    if (
+      !this.api ||
+      !sessionId ||
+      !cursor ||
+      !viewId ||
+      this.state.loadingOlderMessages
+    )
+      return false;
     const request = new AbortController();
     this.olderTranscriptRequest = request;
     this.set({ loadingOlderMessages: true, olderMessagesError: null });
     try {
-      const page = await this.api.olderTranscript(sessionId, cursor, request.signal);
+      const page = await this.api.olderTranscript(
+        sessionId,
+        cursor,
+        request.signal,
+      );
       if (
         this.state.sessionId !== sessionId ||
         this.selectionGeneration !== generation ||
@@ -1070,8 +1346,13 @@ export class AppStore {
         page.revision !== revision ||
         (page.viewId ?? viewId) !== viewId ||
         (page.effectiveLeafId ?? effectiveLeafId) !== effectiveLeafId
-      ) return false;
-      const existing = new Set(this.state.messages.map((message) => messageKey(message) ?? JSON.stringify(message)));
+      )
+        return false;
+      const existing = new Set(
+        this.state.messages.map(
+          (message) => messageKey(message) ?? JSON.stringify(message),
+        ),
+      );
       const older = page.messages.map(asMessage).filter((message) => {
         const key = messageKey(message) ?? JSON.stringify(message);
         if (existing.has(key)) return false;
@@ -1091,7 +1372,11 @@ export class AppStore {
       });
       return true;
     } catch (error) {
-      if (request.signal.aborted || this.selectionGeneration !== generation || this.state.transcriptViewId !== viewId) {
+      if (
+        request.signal.aborted ||
+        this.selectionGeneration !== generation ||
+        this.state.transcriptViewId !== viewId
+      ) {
         return false;
       }
       if (error instanceof ApiError && error.status === 409) {
@@ -1100,639 +1385,69 @@ export class AppStore {
         this.handleAuthFailure();
       } else {
         this.set({
-          olderMessagesError: error instanceof Error ? error.message : "Failed to load earlier messages",
-          ...(this.state.projectionError ? { error: this.state.projectionError } : {}),
+          olderMessagesError:
+            error instanceof Error
+              ? error.message
+              : "Failed to load earlier messages",
+          ...(this.state.projectionError
+            ? { error: this.state.projectionError }
+            : {}),
         });
       }
       return false;
     } finally {
-      if (this.olderTranscriptRequest === request) this.olderTranscriptRequest = null;
+      if (this.olderTranscriptRequest === request)
+        this.olderTranscriptRequest = null;
       if (
-        this.state.sessionId === sessionId && this.selectionGeneration === generation &&
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === generation &&
         this.state.transcriptViewId === viewId
-      ) this.set({ loadingOlderMessages: false });
+      )
+        this.set({ loadingOlderMessages: false });
     }
   };
 
-  // --- WebSocket lifecycle ---
+  // --- Connection lifecycle ---
 
-  private connect(token: string | null): void {
-    if (this.socket) {
-      // Replacing a transport forfeits any operation evidence owned by it.
-      this.attentionArms.clear();
-      this.socket.close();
-    }
-    this.set({ connection: this.state.bootstrapped ? "reconnecting" : "connecting" });
-    const socket = new WebSocket(eventsUrl(token));
-    this.socket = socket;
-    socket.onopen = () => {
-      if (this.socket !== socket) return;
-      this.reconnectDelay = 1_000;
-      // The host pushes an authoritative snapshot as the first frame, so no
-      // redundant HTTP resync is needed here.
-      this.set({ connection: "open", connectionProblem: null });
-    };
-    socket.onmessage = (frame) => {
-      if (this.socket !== socket) return;
-      try {
-        this.applyEvent(JSON.parse(String(frame.data)) as WireEvent);
-      } catch {
-        // ignore malformed frames
-      }
-    };
-    socket.onclose = () => {
-      if (this.socket !== socket) return;
-      // A later terminal event cannot be correlated across a lost stream.
-      // The reconnect snapshot may remove stale state but must not recreate
-      // ownership from historical active status.
-      this.attentionArms.clear();
-      this.branchTreeRequest += 1;
-      this.branchActionRequest += 1;
-      this.set({
-        connection: "reconnecting",
-        connectionProblem: { kind: "stream-interrupted" },
-        branchTreeLoading: false,
-        branchActionId: null,
-        branchTreeError: this.state.branchTree ? "Branch history is stale — refresh after reconnecting" : null,
-      });
-      this.scheduleReconnect(token);
-    };
-    socket.onerror = () => socket.close();
-  }
-
-  private scheduleReconnect(token: string | null): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
-    this.reconnectTimer = setTimeout(() => {
-      void this.init(token);
-    }, delay);
-  }
-
-  retryConnection = (): void => {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
-    this.reconnectDelay = 1_000;
-    void this.init(this.authToken);
-  };
+  retryConnection = (): void => this.connectionController.retry(this.authToken);
 
   // --- Sessions ---
 
-  /** Publish the display union without letting curated/live hydration alter
-   * the chronological cursor. Base rows always retain server order. */
-  private publishSessionUnion(): void {
-    const sessions: SessionSummary[] = [];
-    const seen = new Set<string>();
-    for (const session of this.sessionBasePages) {
-      if (seen.has(session.id)) continue;
-      seen.add(session.id);
-      sessions.push(session);
-    }
-    if (!this.state.sessionQuery.trim()) {
-      for (const session of this.sessionHydration.values()) {
-        if (seen.has(session.id)) continue;
-        seen.add(session.id);
-        sessions.push(session);
-      }
-    }
-    this.set({ sessions });
-  }
-
-  private curationIds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
-  }
-
-  private hydrationFailure(kind: "session ids" | "curated folders", error: unknown): Error {
-    const message = error instanceof Error ? error.message : "Unknown hydration failure";
-    const label = kind === "session ids" ? "active sessions" : "curated folders";
-    if (error instanceof ApiError) {
-      return new ApiError(error.status, `Failed to load ${label}: ${message}`, error.matches);
-    }
-    return new Error(`Failed to load ${label}: ${message}`);
-  }
-
-  /** Hydration is a separate atomic union. During an optimistic preference
-   * write, rows owned by the last confirmed curation remain until the host
-   * accepts or rejects the patch. Every request stays within its route cap. */
-  private async hydrateSessionUnion(
-    base: readonly SessionSummary[],
-    prefs: InspirePreferences,
-    isCurrent: () => boolean,
-  ): Promise<Map<string, SessionSummary> | null> {
-    if (!this.api) return new Map();
-    if (!isCurrent()) return null;
-    const ids = this.curationIds(prefs);
-    for (const id of this.curationIds(this.confirmedPrefs)) ids.add(id);
-    if (this.state.sessionId) ids.add(this.state.sessionId);
-    for (const id of Object.keys(this.state.sessionStatuses)) ids.add(id);
-    const cwds = new Set([
-      ...prefs.pinnedProjectCwds,
-      ...prefs.hiddenProjectCwds,
-      ...this.confirmedPrefs.pinnedProjectCwds,
-      ...this.confirmedPrefs.hiddenProjectCwds,
-    ]);
-    const baseIds = new Set(base.map((session) => session.id));
-    const hydration = new Map<string, SessionSummary>();
-    for (const session of this.sessionHydration.values()) {
-      if ((ids.has(session.id) || cwds.has(session.cwd)) && !baseIds.has(session.id)) {
-        hydration.set(session.id, session);
-      }
-    }
-
-    const missingIds = [...ids].filter((id) => !baseIds.has(id) && !hydration.has(id));
-    for (let index = 0; index < missingIds.length; index += MAX_SESSION_ID_HYDRATION_IDS) {
-      if (!isCurrent()) return null;
-      const chunk = missingIds.slice(index, index + MAX_SESSION_ID_HYDRATION_IDS);
-      try {
-        const response = await this.api.sessionsByIds(chunk);
-        if (!isCurrent()) return null;
-        for (const session of response.sessions) {
-          if (!baseIds.has(session.id)) hydration.set(session.id, session);
-        }
-      } catch (error) {
-        throw this.hydrationFailure("session ids", error);
-      }
-    }
-
-    const wantedCwds = [...cwds];
-    for (let index = 0; index < wantedCwds.length; index += MAX_SESSION_CWD_HYDRATION_CWDS) {
-      if (!isCurrent()) return null;
-      const chunk = wantedCwds.slice(index, index + MAX_SESSION_CWD_HYDRATION_CWDS);
-      try {
-        const response = await this.api.sessionsByCwds(chunk);
-        if (!isCurrent()) return null;
-        for (const session of response.sessions) {
-          if (!baseIds.has(session.id)) hydration.set(session.id, session);
-        }
-      } catch (error) {
-        throw this.hydrationFailure("curated folders", error);
-      }
-    }
-    return hydration;
-  }
-
-  private async requestSessionReset(
-    query: string,
-    ticket: number,
-    preserveOffset = 0,
-    preserveTotal = 0,
-    operation: "reset" | "preserve" = "reset",
-  ): Promise<void> {
-    if (!this.api) return;
-    try {
-      const rows: SessionSummary[] = [];
-      let page = await this.api.sessions(query, 0, preserveOffset > 0
-        ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, preserveOffset))
-        : SESSION_PAGE_SIZE);
-      rows.push(...page.sessions);
-      let nextOffset = page.offset + page.sessions.length;
-      let total = page.total;
-      if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      // New sessions inserted ahead of the old cursor must not displace an
-      // already loaded row. Consume the positive total delta as well as the
-      // prior extent; deletions simply stop at the new total.
-      const targetOffset = preserveOffset > 0
-        ? Math.min(total, preserveOffset + Math.max(0, total - preserveTotal))
-        : 0;
-      // A background settlement refreshes every already-consumed base row.
-      // It therefore preserves the loaded extent without pretending a new
-      // offset-zero page can safely describe an older cursor.
-      while (targetOffset > 0 && nextOffset < targetOffset && nextOffset < total) {
-        if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-        const priorOffset = nextOffset;
-        page = await this.api.sessions(
-          query,
-          nextOffset,
-          Math.min(MAX_SESSION_LIST_PAGE_SIZE, targetOffset - nextOffset),
-        );
-        if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-        rows.push(...page.sessions);
-        nextOffset = page.offset + page.sessions.length;
-        total = page.total;
-        if (nextOffset <= priorOffset) {
-          throw new Error(`Session refresh stopped at ${nextOffset} before the preserved extent ${targetOffset}`);
-        }
-      }
-      if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      const prefs = this.state.prefs;
-      const hydration = query.trim()
-        ? new Map<string, SessionSummary>()
-        : await this.hydrateSessionUnion(
-            rows,
-            prefs,
-            () => ticket === this.sessionLoadTicket && query === this.state.sessionQuery,
-          );
-      if (!hydration || ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      const deduped: SessionSummary[] = [];
-      const seen = new Set<string>();
-      for (const session of rows) {
-        if (seen.has(session.id)) continue;
-        seen.add(session.id);
-        deduped.push(session);
-      }
-      this.sessionBasePages = deduped;
-      this.sessionHydration = hydration;
-      this.sessionListRetry = null;
-      this.set({
-        sessionListTotal: total,
-        sessionListNextOffset: nextOffset,
-        sessionListLoading: false,
-        sessionListLoadingOlder: false,
-        sessionListOperation: null,
-        sessionListError: null,
-      });
-      this.publishSessionUnion();
-    } catch (error) {
-      if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      if (error instanceof ApiError && error.status === 401) {
-        this.sessionListRetry = null;
-        this.set({ sessionListLoading: false, sessionListLoadingOlder: false, sessionListOperation: null });
-        this.handleAuthFailure();
-        return;
-      }
-      this.sessionListRetry = operation === "preserve"
-        ? { kind: "preserve", query, offset: preserveOffset, total: preserveTotal }
-        : { kind: "reset", query };
-      this.set({
-        sessionListLoading: false,
-        sessionListLoadingOlder: false,
-        sessionListOperation: operation,
-        sessionListError: error instanceof Error ? error.message : "Failed to list sessions",
-      });
-    }
-  }
-
-  /** Reset/latest-wins list load. Prior confirmed rows remain visible until
-   * the replacement page and its curation hydration are both owned. */
-  loadSessions = (query: string): Promise<void> => {
-    if (!this.api) return Promise.resolve();
-    const queryChanged = query !== this.state.sessionQuery;
-    const ticket = ++this.sessionLoadTicket;
-    // The prior append is now obsolete. It may still finish on the wire, but
-    // it must neither block nor coalesce with this generation's append.
-    this.sessionOlderPromise = null;
-    this.sessionListRetry = null;
-    if (queryChanged) this.sessionBasePages = [];
-    this.set({
-      ...(queryChanged
-        ? {
-            sessionQuery: query,
-            sessions: query.trim() ? [] : [...this.sessionHydration.values()],
-            sessionListTotal: 0,
-            sessionListNextOffset: 0,
-          }
-        : {}),
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "reset",
-      sessionListError: null,
-    });
-    return this.requestSessionReset(query, ticket);
-  };
+  /** Public facades retain the established AppStore surface while the catalog
+   * controller owns query generations, pagination, hydration, and retries. */
+  loadSessions = (query: string): Promise<void> => this.catalog.load(query);
 
   private preserveLoadedSessions = (
     query: string,
     preserveOffset: number,
     preserveTotal: number,
-  ): Promise<void> => {
-    if (!this.api || query !== this.state.sessionQuery) return Promise.resolve();
-    const ticket = ++this.sessionLoadTicket;
-    this.sessionOlderPromise = null;
-    this.sessionListRetry = null;
-    this.set({
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "preserve",
-      sessionListError: null,
-    });
-    return this.requestSessionReset(query, ticket, preserveOffset, preserveTotal, "preserve");
-  };
+  ): Promise<void> =>
+    this.catalog.preserve(query, preserveOffset, preserveTotal);
 
-  /** Background runtime hints preserve the consumed chronological extent by
-   * refetching that extent from offset zero under one atomic generation. */
-  private refreshLoadedSessions = (): Promise<void> => this.preserveLoadedSessions(
-    this.state.sessionQuery,
-    this.state.sessionListNextOffset,
-    this.state.sessionListTotal,
-  );
+  private refreshLoadedSessions = (): Promise<void> =>
+    this.catalog.refreshLoaded();
 
-  loadOlderSessions = (retry?: Extract<SessionListRetry, { kind: "older" }>): Promise<void> => {
-    if (!this.api) return Promise.resolve();
-    if (retry && (retry.query !== this.state.sessionQuery || retry.offset !== this.state.sessionListNextOffset)) {
-      if (this.sessionListRetry === retry) this.sessionListRetry = null;
-      return Promise.resolve();
-    }
-    if (this.sessionOlderPromise) return this.sessionOlderPromise;
-    if (this.state.sessionListLoading || this.state.sessionListLoadingOlder) return Promise.resolve();
-    const offset = retry?.offset ?? this.state.sessionListNextOffset;
-    if (offset >= this.state.sessionListTotal && !retry) return Promise.resolve();
-    const query = retry?.query ?? this.state.sessionQuery;
-    const ticket = ++this.sessionLoadTicket;
-    this.sessionListRetry = null;
-    this.set({
-      sessionListLoadingOlder: true,
-      sessionListHydrating: false,
-      sessionListOperation: "older",
-      sessionListError: null,
-    });
-    const request = (async () => {
-      try {
-        const page = await this.api!.sessions(query, offset, SESSION_PAGE_SIZE);
-        if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-        const seen = new Set(this.sessionBasePages.map((session) => session.id));
-        const appended = [...this.sessionBasePages];
-        for (const session of page.sessions) {
-          if (seen.has(session.id)) continue;
-          seen.add(session.id);
-          appended.push(session);
-        }
-        this.sessionBasePages = appended;
-        this.sessionListRetry = null;
-        this.set({
-          sessionListTotal: page.total,
-          // Consumed server rows, including duplicate identities, own the
-          // cursor. Rendered/union length is deliberately irrelevant.
-          sessionListNextOffset: page.offset + page.sessions.length,
-          sessionListLoadingOlder: false,
-          sessionListOperation: null,
-          sessionListError: null,
-        });
-        this.publishSessionUnion();
-      } catch (error) {
-        if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-        if (error instanceof ApiError && error.status === 401) {
-          this.sessionListRetry = null;
-          this.set({ sessionListLoadingOlder: false, sessionListOperation: null });
-          this.handleAuthFailure();
-          return;
-        }
-        this.sessionListRetry = { kind: "older", query, offset };
-        this.set({
-          sessionListLoadingOlder: false,
-          sessionListOperation: "older",
-          sessionListError: error instanceof Error ? error.message : "Failed to load older sessions",
-        });
-      }
-    })();
-    const tracked = request.finally(() => {
-      if (this.sessionOlderPromise === tracked) this.sessionOlderPromise = null;
-    });
-    this.sessionOlderPromise = tracked;
-    return tracked;
-  };
+  loadOlderSessions = (): Promise<void> => this.catalog.loadOlder();
 
-  private clearSessionHydrationRetry(): void {
-    if (this.sessionListRetry?.kind === "hydrate") this.sessionListRetry = null;
-  }
+  retrySessionList = (): Promise<void> => this.catalog.retryCurrent();
 
-  private hydrationOwnerIsCurrent(owner: SessionHydrationOwner): boolean {
-    const stillOwned = this.state.sessionId === owner.id || Object.hasOwn(this.state.sessionStatuses, owner.id);
-    return stillOwned && !owner.query.trim() && owner.query === this.state.sessionQuery && owner.ticket === this.sessionLoadTicket;
-  }
+  searchSessions = (query: string): void => this.catalog.search(query);
 
-  private hydrationRetryMatches(owner: SessionHydrationOwner): boolean {
-    const retry = this.sessionListRetry;
-    return retry?.kind === "hydrate" && retry.owner.id === owner.id &&
-      retry.owner.query === owner.query && retry.owner.ticket === owner.ticket;
-  }
-
-  private hydrateVisibleSession(
-    owner: SessionHydrationOwner,
-    retrying = false,
-  ): Promise<void> {
-    if (
-      !this.api ||
-      owner.query.trim() ||
-      owner.query !== this.state.sessionQuery ||
-      owner.ticket !== this.sessionLoadTicket ||
-      (retrying && !this.hydrationOwnerIsCurrent(owner))
-    ) return Promise.resolve();
-    if (this.sessionBasePages.some((session) => session.id === owner.id) || this.sessionHydration.has(owner.id)) {
-      if (this.hydrationRetryMatches(owner)) {
-        this.clearSessionHydrationRetry();
-        this.set({ sessionListHydrating: false, sessionListOperation: null, sessionListError: null });
-      }
-      return Promise.resolve();
-    }
-    if (this.sessionHydrationInFlight.has(owner.id)) return Promise.resolve();
-    this.sessionHydrationInFlight.add(owner.id);
-    if (retrying) {
-      this.set({ sessionListHydrating: true, sessionListOperation: "hydrate", sessionListError: null });
-    }
-    const request = (async () => {
-      try {
-        const { sessions } = await this.api!.sessionsByIds([owner.id]);
-        if (!this.hydrationOwnerIsCurrent(owner)) return;
-        const session = sessions.find((candidate) => candidate.id === owner.id);
-        if (!session) throw new Error("Session is not yet available in the catalog");
-        if (!this.sessionBasePages.some((candidate) => candidate.id === owner.id)) {
-          this.sessionHydration.set(owner.id, session);
-        }
-        const ownsHydrationRetry = this.hydrationRetryMatches(owner);
-        if (ownsHydrationRetry) {
-          this.clearSessionHydrationRetry();
-          this.set({ sessionListHydrating: false, sessionListOperation: null, sessionListError: null });
-        } else if (retrying) {
-          this.set({ sessionListHydrating: false });
-        }
-        this.publishSessionUnion();
-      } catch (error) {
-        if (!this.hydrationOwnerIsCurrent(owner) || this.state.sessionListLoading || this.state.sessionListLoadingOlder) return;
-        if (error instanceof ApiError && error.status === 401) {
-          this.clearSessionHydrationRetry();
-          this.set({ sessionListHydrating: false, sessionListOperation: null, sessionListError: null });
-          this.handleAuthFailure();
-          return;
-        }
-        this.sessionListRetry = { kind: "hydrate", owner };
-        this.set({
-          sessionListHydrating: false,
-          sessionListOperation: "hydrate",
-          sessionListError: this.hydrationFailure("session ids", error).message,
-        });
-      } finally {
-        this.sessionHydrationInFlight.delete(owner.id);
-      }
-    })();
-    return request;
-  }
+  refreshSessions = (retryQuery = this.state.sessionQuery): Promise<void> =>
+    this.catalog.refresh(retryQuery);
 
   private ensureSessionVisible(id: string): void {
-    if (!this.api || this.state.sessionQuery.trim()) return;
-    const owner = { id, query: this.state.sessionQuery, ticket: this.sessionLoadTicket };
-    void this.hydrateVisibleSession(owner);
+    this.catalog.ensureVisible(id);
   }
 
-  retrySessionList = (): Promise<void> => {
-    const retry = this.sessionListRetry;
-    if (!retry) return this.loadSessions(this.state.sessionQuery);
-    switch (retry.kind) {
-      case "older": return this.loadOlderSessions(retry);
-      case "refresh": return this.refreshSessions(retry.query);
-      case "preserve": return this.preserveLoadedSessions(retry.query, retry.offset, retry.total);
-      case "reset": return this.loadSessions(retry.query);
-      case "hydrate":
-        if (!this.hydrationOwnerIsCurrent(retry.owner)) {
-          this.clearSessionHydrationRetry();
-          this.set({ sessionListHydrating: false, sessionListOperation: null, sessionListError: null });
-          return Promise.resolve();
-        }
-        return this.hydrateVisibleSession(retry.owner, true);
-    }
-  };
+  openSession = (id: string): Promise<void> => this.selection.open(id);
 
-  searchSessions = (query: string): void => {
-    // Query ownership changes synchronously, before the debounce. Old-query
-    // pages cannot remain rendered or win while the user is typing.
-    ++this.sessionLoadTicket;
-    this.sessionOlderPromise = null;
-    this.sessionListRetry = null;
-    this.sessionBasePages = [];
-    this.set({
-      sessionQuery: query,
-      sessions: query.trim() ? [] : [...this.sessionHydration.values()],
-      sessionListTotal: 0,
-      sessionListNextOffset: 0,
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "reset",
-      sessionListError: null,
-    });
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.searchTimer = setTimeout(() => void this.loadSessions(query), 180);
-  };
+  deselectSession = (): Promise<boolean> => this.selection.deselect();
 
-  refreshSessions = async (retryQuery = this.state.sessionQuery): Promise<void> => {
-    if (!this.api) return;
-    if (retryQuery !== this.state.sessionQuery) {
-      if (this.sessionListRetry?.kind === "refresh" && this.sessionListRetry.query === retryQuery) this.sessionListRetry = null;
-      return;
-    }
-    const query = retryQuery;
-    const ticket = ++this.sessionLoadTicket;
-    this.sessionOlderPromise = null;
-    this.sessionListRetry = null;
-    this.set({
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "refresh",
-      sessionListError: null,
-    });
-    try {
-      await this.api.refreshSessions();
-      if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      await this.requestSessionReset(query, ticket);
-    } catch (error) {
-      if (ticket !== this.sessionLoadTicket || query !== this.state.sessionQuery) return;
-      if (error instanceof ApiError && error.status === 401) {
-        this.set({ sessionListLoading: false, sessionListOperation: null });
-        this.handleAuthFailure();
-      } else {
-        this.sessionListRetry = { kind: "refresh", query };
-        this.set({
-          sessionListLoading: false,
-          sessionListOperation: "refresh",
-          sessionListError: error instanceof Error ? error.message : "Failed to refresh sessions",
-        });
-      }
-    }
-  };
-
-  openSession = async (id: string): Promise<void> => {
-    if (!this.api) return;
-    // Re-selecting the already visible session is a no-op only when there is no
-    // older operation to supersede. A newer intent must be able to invalidate
-    // an in-flight open even when it points at the current session.
-    if (id === this.state.sessionId && this.openingOwner === null) return;
-    if (id === this.state.openingSessionId) return; // duplicate pending target
-    this.invalidateBranchForSelectionIntent();
-    this.set({ sessionActionError: null });
-    const ticket = ++this.selectionRequest;
-    this.claimOpening(ticket, id);
-    try {
-      const snapshot = await this.api.openSession(id);
-      // A newer selection (another open/new, or an authoritative push) won the
-      // race; this stale response must not reinstate its session.
-      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return;
-      this.applySnapshot(snapshot);
-      this.ensureSessionVisible(id);
-      this.set({ sessionActionError: null });
-      if (this.readyWhileOpening.get(id) === ticket) {
-        this.readyWhileOpening.delete(id);
-        void this.resync(id, this.selectionGeneration);
-      }
-    } catch (error) {
-      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
-        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to open session" });
-      }
-    } finally {
-      if (this.readyWhileOpening.get(id) === ticket) this.readyWhileOpening.delete(id);
-      this.releaseOpening(ticket);
-    }
-  };
-
-  deselectSession = async (): Promise<boolean> => {
-    if (!this.api) return false;
-    this.invalidateBranchForSelectionIntent();
-    this.set({ sessionActionError: null });
-    const ticket = ++this.selectionRequest;
-    this.claimOpening(ticket, null);
-    try {
-      const snapshot = await this.api.deselectSession();
-      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return false;
-      this.applySnapshot(snapshot);
-      this.set({ sessionActionError: null });
-      return snapshot.active === null;
-    } catch (error) {
-      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
-        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to open New session" });
-      }
-      return false;
-    } finally {
-      this.releaseOpening(ticket);
-    }
-  };
-
-  /** Creates a session. Never falls back to "/": without an active or explicit
-   * project directory the caller must collect one (the welcome page does). */
-  newSession = async (cwd?: string, nameOrOptions: string | NewSessionOptions = {}): Promise<string | null> => {
-    if (!this.api) return null;
-    const options = typeof nameOrOptions === "string" ? { name: nameOrOptions } : nameOrOptions;
-    const target = cwd?.trim() || this.state.cwd;
-    if (!target) {
-      this.notify("warning", "Enter a project directory to start a session");
-      return null;
-    }
-    this.invalidateBranchForSelectionIntent();
-    this.set({ sessionActionError: null });
-    const ticket = ++this.selectionRequest;
-    // A new-session intent supersedes any opener immediately. There is no
-    // destination id to show until the host returns the new session identity,
-    // but the old opening owner must not remain visible during that handoff.
-    this.claimOpening(ticket, null);
-    try {
-      const snapshot = await this.api.newSession(target, options);
-      if (ticket !== this.selectionRequest || this.openingOwner !== ticket) return null; // superseded by a newer selection
-      this.applySnapshot(snapshot);
-      const sessionId = snapshot.active?.sessionId ?? null;
-      if (sessionId) this.ensureSessionVisible(sessionId);
-      if (options.model) this.rememberModel(options.model);
-      this.set({ sessionActionError: null });
-      void this.refreshLoadedSessions();
-      return sessionId;
-    } catch (error) {
-      if (ticket === this.selectionRequest && this.openingOwner === ticket) {
-        this.set({ sessionActionError: error instanceof Error ? error.message : "Failed to create session" });
-      }
-      return null;
-    } finally {
-      this.releaseOpening(ticket);
-    }
-  };
+  newSession = (
+    cwd?: string,
+    nameOrOptions: string | NewSessionOptions = {},
+  ): Promise<string | null> => this.selection.create(cwd, nameOrOptions);
 
   renameSession = async (sessionId: string, name: string): Promise<boolean> => {
     if (!this.api || !sessionId || !name.trim()) return false;
@@ -1741,14 +1456,18 @@ export class AppStore {
       await this.api.renameSession(sessionId, trimmedName);
       // The response may return after a session switch; only the owning
       // session's visible title updates.
-      if (this.state.sessionId === sessionId) this.set({ sessionName: trimmedName });
+      if (this.state.sessionId === sessionId)
+        this.set({ sessionName: trimmedName });
       void this.refreshLoadedSessions();
       return true;
     } catch (error) {
       // A background rename must not surface its failure over another visible
       // session. The caller still receives false for its owning editor.
       if (this.state.sessionId === sessionId) {
-        this.notify("warning", error instanceof Error ? error.message : "Failed to rename session");
+        this.notify(
+          "warning",
+          error instanceof Error ? error.message : "Failed to rename session",
+        );
       }
       return false;
     }
@@ -1756,11 +1475,16 @@ export class AppStore {
 
   clearSessionDeleteError = (): void => this.set({ sessionDeleteError: null });
 
-  deleteSession = async (sessionId: string): Promise<SessionDeleteDisposition | null> => {
+  deleteSession = async (
+    sessionId: string,
+  ): Promise<SessionDeleteDisposition | null> => {
     if (
-      !this.api || this.state.deletingSessionId || sessionId === this.state.sessionId ||
+      !this.api ||
+      this.state.deletingSessionId ||
+      sessionId === this.state.sessionId ||
       !this.state.prefs.hiddenSessionIds.includes(sessionId)
-    ) return null;
+    )
+      return null;
     const preserveQuery = this.state.sessionQuery;
     const preserveOffset = this.state.sessionListNextOffset;
     const preserveTotal = this.state.sessionListTotal;
@@ -1770,13 +1494,14 @@ export class AppStore {
       // late PATCH cannot resurrect the deleted id in durable navigation data.
       await this.prefsWrites;
       if (!this.state.prefs.hiddenSessionIds.includes(sessionId)) {
-        this.set({ sessionDeleteError: "The session must remain in Hidden before it can be deleted" });
+        this.set({
+          sessionDeleteError:
+            "The session must remain in Hidden before it can be deleted",
+        });
         return null;
       }
       const result = await this.api.deleteSession(sessionId);
-      this.sessionBasePages = this.sessionBasePages.filter((session) => session.id !== sessionId);
-      this.sessionHydration.delete(sessionId);
-      this.sessionHydrationInFlight.delete(sessionId);
+      this.catalog.remove(sessionId);
       this.attentionArms.delete(sessionId);
       this.titleAttention.delete(sessionId);
       this.publishTitleAttention();
@@ -1785,92 +1510,56 @@ export class AppStore {
 
       const fallbackPrefs = {
         ...this.state.prefs,
-        pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter((id) => id !== sessionId),
-        hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter((id) => id !== sessionId),
+        pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
+          (id) => id !== sessionId,
+        ),
+        hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
+          (id) => id !== sessionId,
+        ),
       };
       const prefs = result.preferences ?? fallbackPrefs;
       if (result.preferences) this.confirmedPrefs = result.preferences;
       this.discardSessionComposer(sessionId);
       this.set({ prefs, sessionStatuses });
-      this.publishSessionUnion();
-      this.notify("info", result.disposition === "trashed" ? "Session moved to Trash" : "Session permanently deleted");
+      this.notify(
+        "info",
+        result.disposition === "trashed"
+          ? "Session moved to Trash"
+          : "Session permanently deleted",
+      );
       if (result.preferenceCleanupFailed) {
-        this.notify("warning", "Session was deleted, but its navigation metadata could not be saved");
+        this.notify(
+          "warning",
+          "Session was deleted, but its navigation metadata could not be saved",
+        );
       }
       // Rebuild the already-consumed chronological extent under one fresh
       // generation. The optimistic row removal keeps the destructive result
       // immediate while offset-based pagination is repaired authoritatively.
-      void this.preserveLoadedSessions(preserveQuery, preserveOffset, preserveTotal);
+      void this.preserveLoadedSessions(
+        preserveQuery,
+        preserveOffset,
+        preserveTotal,
+      );
       return result.disposition;
     } catch (error) {
-      this.set({ sessionDeleteError: error instanceof Error ? error.message : "Failed to delete session" });
+      this.set({
+        sessionDeleteError:
+          error instanceof Error ? error.message : "Failed to delete session",
+      });
       return null;
     } finally {
-      if (this.state.deletingSessionId === sessionId) this.set({ deletingSessionId: null });
+      if (this.state.deletingSessionId === sessionId)
+        this.set({ deletingSessionId: null });
     }
   };
 
   // --- Prompting ---
 
-  sendPrompt = async (message: string, behavior?: "steer" | "followUp"): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return false;
-    const composer = this.composerFor(sessionId);
-    if (composer.sending) return false;
-    if (composer.attachments.some((item) => item.status === "uploading")) {
-      this.notify("warning", "Attachments are still uploading");
-      return false;
-    }
-    if (composer.attachments.some((item) => item.status === "error")) {
-      this.notify("warning", "Remove failed attachments before sending");
-      return false;
-    }
-    const included = composer.attachments;
-    const attachmentIds = included
-      .map((item) => item.uploadedId)
-      .filter((id): id is string => Boolean(id));
-    const projectFiles = composer.projectFiles;
-    if (!message.trim() && attachmentIds.length === 0 && projectFiles.length === 0) return false;
-    composer.sending = true;
-    this.publishComposer(sessionId);
-    try {
-      await this.api.prompt({
-        sessionId,
-        message,
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-        ...(projectFiles.length > 0 ? { projectFiles } : {}),
-        behavior,
-      });
-      // Accepted: clear exactly what was delivered, from the owner session's
-      // partition — never from whichever session is visible by now.
-      // Artifacts staged while the request was in flight belong to the next
-      // message. Failures keep everything.
-      const sentIds = new Set(included.map((item) => item.localId));
-      const sentPaths = new Set(projectFiles);
-      for (const item of composer.attachments) {
-        if (!sentIds.has(item.localId)) continue;
-        if (item.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(item.previewUrl);
-      }
-      composer.attachments = composer.attachments.filter((item) => !sentIds.has(item.localId));
-      composer.projectFiles = composer.projectFiles.filter((path) => !sentPaths.has(path));
-      // A background completion may clear only an error owned by its visible
-      // session; another session's alert is an independent surface.
-      if (this.state.sessionId === sessionId) this.set({ error: null });
-      return true;
-    } catch (error) {
-      // Keep failures attached to the session that sent the prompt. A switch
-      // before the HTTP result arrives must not overwrite the new session's
-      // visible error.
-      if (this.state.sessionId === sessionId) {
-        this.fail(error instanceof Error ? error.message : "Failed to send");
-      }
-      return false;
-    } finally {
-      composer.sending = false;
-      this.pruneComposer(sessionId, composer);
-      this.publishComposer(sessionId);
-    }
-  };
+  sendPrompt = (
+    message: string,
+    behavior?: "steer" | "followUp",
+  ): Promise<boolean> => this.composer.send(message, behavior);
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
@@ -1885,7 +1574,9 @@ export class AppStore {
   private rememberModel(model: ModelIdentity): void {
     const recentModelIds = [
       model,
-      ...this.state.prefs.recentModelIds.filter((candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model)),
+      ...this.state.prefs.recentModelIds.filter(
+        (candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model),
+      ),
     ].slice(0, 8);
     this.savePrefs({ recentModelIds });
   }
@@ -1900,7 +1591,10 @@ export class AppStore {
       this.rememberModel({ provider, id: modelId });
       await this.resync(sessionId, this.selectionGeneration);
     } catch (error) {
-      this.notify("warning", error instanceof Error ? error.message : "Failed to set model");
+      this.notify(
+        "warning",
+        error instanceof Error ? error.message : "Failed to set model",
+      );
     }
   };
 
@@ -1919,160 +1613,28 @@ export class AppStore {
         this.set({ thinkingLevel: previous });
         void this.resync();
       }
-      this.notify("warning", error instanceof Error ? error.message : "Failed to set thinking level");
+      this.notify(
+        "warning",
+        error instanceof Error ? error.message : "Failed to set thinking level",
+      );
     }
   };
 
   // --- Composer attachments & project files ---
 
-  /** Authoritative per-session composer partitions; AppState carries only
-   * the visible session's slice. */
-  private readonly composers = new Map<string, ComposerPartition>();
-
   private discardSessionComposer(sessionId: string): void {
-    const composer = this.composers.get(sessionId);
-    if (composer) {
-      for (const attachment of composer.attachments) {
-        if (attachment.previewUrl && typeof URL.revokeObjectURL === "function") {
-          URL.revokeObjectURL(attachment.previewUrl);
-        }
-        if (attachment.uploadedId) void this.api?.deleteAttachment(attachment.uploadedId).catch(() => undefined);
-      }
-      // Uploads still in flight retain this object. Emptying it makes their
-      // completion path reclaim any host copy rather than resurrecting the
-      // deleted partition.
-      composer.attachments = [];
-      composer.projectFiles = [];
-      composer.sending = false;
-      this.composers.delete(sessionId);
-    }
-    deleteSessionDraft(sessionId);
+    this.composer.discard(sessionId);
   }
 
-  private composerFor(sessionId: string): ComposerPartition {
-    let composer = this.composers.get(sessionId);
-    if (!composer) {
-      composer = { attachments: [], projectFiles: [], sending: false };
-      this.composers.set(sessionId, composer);
-    }
-    return composer;
-  }
+  addFiles = (files: File[]): Promise<void> => this.composer.addFiles(files);
 
-  private composerSlice(sessionId: string | null): Pick<AppState, "attachments" | "projectFiles" | "sending"> {
-    const composer = sessionId ? this.composers.get(sessionId) : undefined;
-    return composer
-      ? { attachments: composer.attachments, projectFiles: composer.projectFiles, sending: composer.sending }
-      : { attachments: [], projectFiles: [], sending: false };
-  }
+  removeAttachment = (localId: string): void =>
+    this.composer.removeAttachment(localId);
 
-  private pruneComposer(sessionId: string, composer: ComposerPartition): void {
-    if (!composer.sending && composer.attachments.length === 0 && composer.projectFiles.length === 0) {
-      this.composers.delete(sessionId);
-    }
-  }
+  addProjectFile = (path: string): void => this.composer.addProjectFile(path);
 
-  /** Republish a partition into visible state when it belongs to the
-   * visible session; background sessions' staged work stays put. */
-  private publishComposer(sessionId: string): void {
-    if (this.state.sessionId !== sessionId) return;
-    this.set(this.composerSlice(sessionId));
-  }
-
-  addFiles = async (files: File[]): Promise<void> => {
-    const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId || files.length === 0) return;
-    const composer = this.composerFor(sessionId);
-    const { accepted, warning } = selectAttachmentFiles(composer.attachments, files);
-    if (warning) this.notify("warning", warning);
-    if (accepted.length === 0) return;
-
-    const pending: PendingAttachment[] = accepted.map((file) => {
-      const isImage = /^image\//i.test(file.type);
-      return {
-        localId: crypto.randomUUID(),
-        fileName: file.name || "pasted-image",
-        mimeType: file.type || "application/octet-stream",
-        size: file.size,
-        kind: isImage ? ("image" as const) : ("file" as const),
-        previewUrl:
-          isImage && typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined,
-        status: "uploading" as const,
-      };
-    });
-    composer.attachments = [...composer.attachments, ...pending];
-    this.publishComposer(sessionId);
-
-    try {
-      const { attachments: uploaded } = await this.api.uploadAttachments(accepted);
-      composer.attachments = composer.attachments.map((item) => {
-        const index = pending.findIndex((candidate) => candidate.localId === item.localId);
-        const result = index >= 0 ? uploaded[index] : undefined;
-        return result
-          ? { ...item, status: "ready" as const, uploadedId: result.id, fileName: result.fileName, kind: result.kind }
-          : item;
-      });
-      this.publishComposer(sessionId);
-      // An item removed while its upload was in flight never got a chance to
-      // delete its host copy; reclaim it now.
-      pending.forEach((candidate, index) => {
-        const id = uploaded[index]?.id;
-        if (id && !composer.attachments.some((item) => item.localId === candidate.localId)) {
-          void this.api?.deleteAttachment(id).catch(() => undefined);
-        }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Upload failed";
-      composer.attachments = composer.attachments.map((item) =>
-        pending.some((candidate) => candidate.localId === item.localId)
-          ? { ...item, status: "error" as const, error: message }
-          : item,
-      );
-      this.publishComposer(sessionId);
-    }
-  };
-
-  removeAttachment = (localId: string): void => {
-    const sessionId = this.state.sessionId;
-    if (!sessionId) return;
-    const composer = this.composers.get(sessionId);
-    if (!composer) return;
-    // Frozen while a prompt is delivering: the host may be resolving these
-    // very files into the outgoing message.
-    if (composer.sending) return;
-    const target = composer.attachments.find((item) => item.localId === localId);
-    if (target?.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(target.previewUrl);
-    composer.attachments = composer.attachments.filter((item) => item.localId !== localId);
-    this.pruneComposer(sessionId, composer);
-    this.publishComposer(sessionId);
-    // A withdrawn upload is unreferenced; reclaim its host cache file too.
-    if (target?.uploadedId) void this.api?.deleteAttachment(target.uploadedId).catch(() => undefined);
-  };
-
-  addProjectFile = (path: string): void => {
-    const sessionId = this.state.sessionId;
-    if (!sessionId || !path) return;
-    const composer = this.composerFor(sessionId);
-    if (composer.sending || composer.projectFiles.includes(path)) return;
-    if (composer.projectFiles.length >= MAX_PROJECT_FILES) {
-      this.notify("warning", `At most ${MAX_PROJECT_FILES} project files per message`);
-      return;
-    }
-    composer.projectFiles = [...composer.projectFiles, path];
-    this.publishComposer(sessionId);
-  };
-
-  removeProjectFile = (path: string): void => {
-    const sessionId = this.state.sessionId;
-    if (!sessionId) return;
-    const composer = this.composers.get(sessionId);
-    if (!composer) return;
-    // Frozen while delivering: a sent path removed and re-added mid-flight
-    // would otherwise be swept by the delivery's scoped clear.
-    if (composer.sending) return;
-    composer.projectFiles = composer.projectFiles.filter((item) => item !== path);
-    this.pruneComposer(sessionId, composer);
-    this.publishComposer(sessionId);
-  };
+  removeProjectFile = (path: string): void =>
+    this.composer.removeProjectFile(path);
 
   searchProjectFiles = async (query: string): Promise<ProjectFileResult[]> => {
     const sessionId = this.state.sessionId;
@@ -2081,12 +1643,17 @@ export class AppStore {
     return result.files;
   };
 
-  resolveNewSessionDefaults = async (cwd: string): Promise<NewSessionDefaults> => {
+  resolveNewSessionDefaults = async (
+    cwd: string,
+  ): Promise<NewSessionDefaults> => {
     if (!this.api) throw new Error("Not connected to the insπre host");
     return this.api.newSessionDefaults(cwd);
   };
 
-  searchNewSessionProjectFiles = async (cwd: string, query: string): Promise<ProjectFileResult[]> => {
+  searchNewSessionProjectFiles = async (
+    cwd: string,
+    query: string,
+  ): Promise<ProjectFileResult[]> => {
     if (!this.api) return [];
     const result = await this.api.searchNewSessionFiles(cwd, query);
     return result.files.map((file) => ({ ...file, workspaceCwd: result.cwd }));
@@ -2117,16 +1684,23 @@ export class AppStore {
 
   // --- Extension UI ---
 
-  respondExtensionUi = async (payload: Record<string, unknown>): Promise<void> => {
+  respondExtensionUi = async (
+    payload: Record<string, unknown>,
+  ): Promise<void> => {
     if (!this.api || this.state.extensionUiRespondingId) return;
     const request = this.state.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return;
     this.set({ extensionUiRespondingId: request.id });
     try {
-      await this.api.respondExtensionUi({ ...payload, sessionId: request.sessionId });
+      await this.api.respondExtensionUi({
+        ...payload,
+        sessionId: request.sessionId,
+      });
       if (this.state.sessionId === request.sessionId) {
         this.set({
-          extensionUiRequests: this.state.extensionUiRequests.filter((candidate) => candidate.id !== request.id),
+          extensionUiRequests: this.state.extensionUiRequests.filter(
+            (candidate) => candidate.id !== request.id,
+          ),
         });
       }
     } catch (error) {
@@ -2135,12 +1709,19 @@ export class AppStore {
       // completion must not turn a later dialog into a global error.
       if (
         this.state.sessionId === request.sessionId &&
-        this.state.extensionUiRequests.some((candidate) => candidate.id === request.id)
+        this.state.extensionUiRequests.some(
+          (candidate) => candidate.id === request.id,
+        )
       ) {
-        this.fail(error instanceof Error ? error.message : "Failed to answer the extension");
+        this.fail(
+          error instanceof Error
+            ? error.message
+            : "Failed to answer the extension",
+        );
       }
     } finally {
-      if (this.state.extensionUiRespondingId === request.id) this.set({ extensionUiRespondingId: null });
+      if (this.state.extensionUiRespondingId === request.id)
+        this.set({ extensionUiRespondingId: null });
     }
   };
 
@@ -2151,7 +1732,9 @@ export class AppStore {
       this.noticeTimers.delete(id);
     }
     if (!this.state.notices.some((notice) => notice.id === id)) return;
-    this.set({ notices: this.state.notices.filter((notice) => notice.id !== id) });
+    this.set({
+      notices: this.state.notices.filter((notice) => notice.id !== id),
+    });
   };
 
   // --- Preferences ---
@@ -2167,7 +1750,12 @@ export class AppStore {
   private confirmedPrefs: InspirePreferences = defaultPreferences;
 
   private isCurationPatch(patch: Partial<InspirePreferences>): boolean {
-    return "pinnedSessionIds" in patch || "hiddenSessionIds" in patch || "pinnedProjectCwds" in patch || "hiddenProjectCwds" in patch;
+    return (
+      "pinnedSessionIds" in patch ||
+      "hiddenSessionIds" in patch ||
+      "pinnedProjectCwds" in patch ||
+      "hiddenProjectCwds" in patch
+    );
   }
 
   private curationChanged(): void {
@@ -2193,9 +1781,9 @@ export class AppStore {
         // its change. Only fields still carrying this patch's value roll
         // back — anything a newer local edit has replaced belongs to that
         // edit and its own write.
-        const stale = (Object.keys(patch) as Array<keyof InspirePreferences>).filter(
-          (field) => this.state.prefs[field] === patch[field],
-        );
+        const stale = (
+          Object.keys(patch) as Array<keyof InspirePreferences>
+        ).filter((field) => this.state.prefs[field] === patch[field]);
         if (stale.length > 0) {
           const restored = Object.fromEntries(
             stale.map((field) => [field, this.confirmedPrefs[field]]),
@@ -2203,17 +1791,28 @@ export class AppStore {
           this.set({ prefs: { ...this.state.prefs, ...restored } });
         }
         if (curationPatch) this.curationChanged();
-        this.notify("warning", error instanceof Error ? error.message : "Failed to save the preference");
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to save the preference",
+        );
       });
   }
 
   setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
   setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
-  setCompletionAttention = async (completionAttention: CompletionAttentionPreference): Promise<boolean> => {
+  setCompletionAttention = async (
+    completionAttention: CompletionAttentionPreference,
+  ): Promise<boolean> => {
     if (completionAttention === "desktop") {
-      const NotificationApi = typeof window !== "undefined" ? window.Notification : undefined;
+      const NotificationApi =
+        typeof window !== "undefined" ? window.Notification : undefined;
       if (!NotificationApi) {
-        this.notify("warning", "Desktop notifications are not supported by this browser");
+        this.notify(
+          "warning",
+          "Desktop notifications are not supported by this browser",
+        );
         return false;
       }
       let permission = NotificationApi.permission;
@@ -2223,12 +1822,20 @@ export class AppStore {
           // never request permission during bootstrap or background events.
           permission = await NotificationApi.requestPermission();
         } catch {
-          this.notify("warning", "The browser could not request notification permission");
+          this.notify(
+            "warning",
+            "The browser could not request notification permission",
+          );
           return false;
         }
       }
       if (permission !== "granted") {
-        this.notify("warning", permission === "denied" ? "Desktop notification permission was denied" : "Desktop notification permission was not granted");
+        this.notify(
+          "warning",
+          permission === "denied"
+            ? "Desktop notification permission was denied"
+            : "Desktop notification permission was not granted",
+        );
         return false;
       }
     }
@@ -2239,16 +1846,21 @@ export class AppStore {
     this.savePrefs({ completionAttention });
     return true;
   };
-  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void => this.savePrefs({ projectDisplay });
+  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void =>
+    this.savePrefs({ projectDisplay });
   setThinkingVisibility = (thinkingVisibility: VisibilityPreference): void =>
     this.savePrefs({ thinkingVisibility });
-  setToolVisibility = (toolVisibility: ToolVisibilityPreference): void => this.savePrefs({ toolVisibility });
-  setAssistantRoundDisplay = (assistantRoundDisplay: AssistantRoundDisplayPreference): void =>
-    this.savePrefs({ assistantRoundDisplay });
+  setToolVisibility = (toolVisibility: ToolVisibilityPreference): void =>
+    this.savePrefs({ toolVisibility });
+  setAssistantRoundDisplay = (
+    assistantRoundDisplay: AssistantRoundDisplayPreference,
+  ): void => this.savePrefs({ assistantRoundDisplay });
 
   toggleNavGroup = (cwd: string): void => {
     const current = this.state.prefs.navCollapsedGroups;
-    const navCollapsedGroups = current.includes(cwd) ? current.filter((item) => item !== cwd) : [...current, cwd];
+    const navCollapsedGroups = current.includes(cwd)
+      ? current.filter((item) => item !== cwd)
+      : [...current, cwd];
     this.savePrefs({ navCollapsedGroups });
   };
 
@@ -2263,7 +1875,11 @@ export class AppStore {
         ? pinnedSessionIds.filter((candidate) => candidate !== id)
         : [id, ...pinnedSessionIds],
       ...(!pinned && hiddenSessionIds.includes(id)
-        ? { hiddenSessionIds: hiddenSessionIds.filter((candidate) => candidate !== id) }
+        ? {
+            hiddenSessionIds: hiddenSessionIds.filter(
+              (candidate) => candidate !== id,
+            ),
+          }
         : {}),
     });
   };
@@ -2276,7 +1892,11 @@ export class AppStore {
         ? hiddenSessionIds.filter((candidate) => candidate !== id)
         : [id, ...hiddenSessionIds],
       ...(!hidden && pinnedSessionIds.includes(id)
-        ? { pinnedSessionIds: pinnedSessionIds.filter((candidate) => candidate !== id) }
+        ? {
+            pinnedSessionIds: pinnedSessionIds.filter(
+              (candidate) => candidate !== id,
+            ),
+          }
         : {}),
     });
   };
@@ -2292,7 +1912,9 @@ export class AppStore {
         ? pinnedProjectCwds.filter((item) => item !== cwd)
         : [cwd, ...pinnedProjectCwds],
       ...(!pinned && hiddenProjectCwds.includes(cwd)
-        ? { hiddenProjectCwds: hiddenProjectCwds.filter((item) => item !== cwd) }
+        ? {
+            hiddenProjectCwds: hiddenProjectCwds.filter((item) => item !== cwd),
+          }
         : {}),
     });
   };
@@ -2305,7 +1927,9 @@ export class AppStore {
         ? hiddenProjectCwds.filter((item) => item !== cwd)
         : [cwd, ...hiddenProjectCwds],
       ...(!hidden && pinnedProjectCwds.includes(cwd)
-        ? { pinnedProjectCwds: pinnedProjectCwds.filter((item) => item !== cwd) }
+        ? {
+            pinnedProjectCwds: pinnedProjectCwds.filter((item) => item !== cwd),
+          }
         : {}),
     });
   };
@@ -2314,595 +1938,80 @@ export class AppStore {
 
   setResourcesOpen = (resourcesOpen: boolean): void => {
     if (!resourcesOpen) {
-      this.clearResourceSelection();
-      this.cancelGitDiffRequest();
-      this.set({ selectedGitPathId: null, selectedGitSide: null, gitDiff: null });
+      this.resources.clearSelection();
+      this.git.clearDiffSelection();
     }
     this.set({ resourcesOpen });
   };
 
   setContextMode = (contextMode: "files" | "changes" | "branches"): void => {
-    this.set({ contextMode, detailMode: contextMode === "changes" ? "diff" : "file" });
-    if (contextMode === "changes") void this.refreshGitStatus();
+    this.set({
+      contextMode,
+      detailMode: contextMode === "changes" ? "diff" : "file",
+    });
+    if (contextMode === "changes") void this.git.refreshStatus();
     if (contextMode === "branches") void this.loadBranchTree();
   };
 
-  private ownsBranchView(ticket: {
-    sessionId: string;
-    generation: number;
-    viewId: string | null;
-    effectiveLeafId: string | null;
-    selectionRequest: number;
-  }): boolean {
-    return this.state.sessionId === ticket.sessionId &&
-      this.selectionGeneration === ticket.generation &&
-      this.state.transcriptViewId === ticket.viewId &&
-      this.state.transcriptEffectiveLeafId === ticket.effectiveLeafId &&
-      this.selectionRequest === ticket.selectionRequest;
-  }
+  loadBranchTree = (): Promise<void> => this.branches.loadTree();
 
-  loadBranchTree = async (): Promise<void> => {
-    const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId || this.state.branchTreeLoading) return;
-    const request = ++this.branchTreeRequest;
-    const transportGeneration = this.transportGeneration;
-    const ticket = {
-      sessionId,
-      generation: this.selectionGeneration,
-      viewId: this.state.transcriptViewId,
-      effectiveLeafId: this.state.transcriptEffectiveLeafId,
-      selectionRequest: this.selectionRequest,
-    };
-    this.set({ branchTreeLoading: true, branchTreeError: null });
-    try {
-      const tree = await this.api.branchTree(sessionId);
-      if (request !== this.branchTreeRequest || !this.ownsBranchView(ticket)) return;
-      if (tree.sessionId !== ticket.sessionId || tree.effectiveLeafId !== ticket.effectiveLeafId) {
-        this.set({ branchTreeError: "Branch history belongs to a different view — refresh the session before using branch actions" });
-        return;
-      }
-      this.set({ branchTree: tree, branchTreeError: null });
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        if (transportGeneration === this.transportGeneration) this.handleAuthFailure();
-        return;
-      }
-      if (request !== this.branchTreeRequest || !this.ownsBranchView(ticket)) return;
-      this.set({ branchTreeError: error instanceof Error ? error.message : "Failed to load branch history" });
-    } finally {
-      if (request === this.branchTreeRequest && this.ownsBranchView(ticket)) this.set({ branchTreeLoading: false });
-    }
-  };
+  navigateBranch = (
+    targetId: string,
+    mode: "switch" | "edit",
+  ): Promise<boolean> => this.branches.navigate(targetId, mode);
 
-  private branchActionsBlocked(): boolean {
-    return Boolean(
-      this.state.branchActionId ||
-      this.state.branchTreeLoading ||
-      this.state.branchTreeError ||
-      this.state.branchTree?.health.status === "error" ||
-      this.state.projectionHealth.status === "error" ||
-      this.state.projectionConflict
-    );
-  }
+  forkFromEntry = (targetId: string): Promise<boolean> =>
+    this.branches.forkFromEntry(targetId);
 
-  navigateBranch = async (targetId: string, mode: "switch" | "edit"): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const tree = this.state.branchTree;
-    if (!this.api || !sessionId || !tree || this.branchActionsBlocked()) return false;
-    const actionId = `${mode}:${targetId}`;
-    const actionRequest = ++this.branchActionRequest;
-    const transportGeneration = this.transportGeneration;
-    const ticket = {
-      sessionId,
-      generation: this.selectionGeneration,
-      viewId: this.state.transcriptViewId,
-      effectiveLeafId: this.state.transcriptEffectiveLeafId,
-      selectionRequest: this.selectionRequest,
-    };
-    const owns = (): boolean => actionRequest === this.branchActionRequest && this.ownsBranchView(ticket);
-    this.set({ branchActionId: actionId, branchTreeError: null });
-    try {
-      const response = await this.api.navigateBranch({ sessionId, revision: tree.revision, targetId, mode });
-      if (!owns()) return false;
-      this.applySnapshot(response.snapshot);
-      if (response.editorText !== undefined) {
-        this.set({ editorText: { text: response.editorText, nonce: (this.state.editorText?.nonce ?? 0) + 1 } });
-      }
-      await this.loadBranchTree();
-      return true;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        if (transportGeneration === this.transportGeneration) this.handleAuthFailure();
-        return false;
-      }
-      if (!owns()) return false;
-      const message = error instanceof Error ? error.message : "Branch navigation failed";
-      this.set({ branchTreeError: message });
-      return false;
-    } finally {
-      if (owns() && this.state.branchActionId === actionId) this.set({ branchActionId: null });
-    }
-  };
+  forkBranch = (targetId: string): Promise<boolean> =>
+    this.branches.fork(targetId);
 
-  /** Fork directly from a settled transcript input. The tree is still the
-   * revision/capability authority; the bubble supplies only its owning entry
-   * id and never bypasses the normal branch validation path. */
-  forkFromEntry = async (targetId: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    if (!sessionId || !targetId) return false;
-    await this.loadBranchTree();
-    if (this.state.sessionId !== sessionId) return false;
-    const node = this.state.branchTree?.nodes.find((candidate) => candidate.id === targetId);
-    if (!node?.canFork) {
-      this.notify("warning", this.state.branchTreeError ?? "That input is no longer available to fork");
-      return false;
-    }
-    const forked = await this.forkBranch(targetId);
-    if (!forked && this.state.sessionId === sessionId) {
-      this.notify("warning", this.state.branchTreeError ?? "Fork failed");
-    }
-    return forked;
-  };
+  returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
 
-  forkBranch = async (targetId: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const tree = this.state.branchTree;
-    if (!this.api || !sessionId || !tree || this.branchActionsBlocked()) return false;
-    const actionId = `fork:${targetId}`;
-    const selectionRequest = ++this.selectionRequest;
-    const actionRequest = ++this.branchActionRequest;
-    const transportGeneration = this.transportGeneration;
-    const ticket = {
-      sessionId,
-      generation: this.selectionGeneration,
-      viewId: this.state.transcriptViewId,
-      effectiveLeafId: this.state.transcriptEffectiveLeafId,
-      selectionRequest,
-    };
-    const owns = (): boolean => actionRequest === this.branchActionRequest && this.ownsBranchView(ticket);
-    this.set({ branchActionId: actionId, branchTreeError: null });
-    try {
-      const response = await this.api.forkBranch({ sessionId, revision: tree.revision, targetId });
-      if (!owns()) return false;
-      this.applySnapshot(response.snapshot);
-      this.ensureSessionVisible(response.sessionId);
-      this.set({ editorText: { text: response.editorText, nonce: (this.state.editorText?.nonce ?? 0) + 1 } });
-      void this.refreshLoadedSessions();
-      return true;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        if (transportGeneration === this.transportGeneration) this.handleAuthFailure();
-        return false;
-      }
-      if (!owns()) return false;
-      const message = error instanceof Error ? error.message : "Fork failed";
-      this.set({ branchTreeError: message });
-      return false;
-    } finally {
-      if (owns() && this.state.branchActionId === actionId) this.set({ branchActionId: null });
-    }
-  };
-
-  private clearGitRefreshTimer(): void {
-    if (this.gitRefreshTimer) clearTimeout(this.gitRefreshTimer);
-    this.gitRefreshTimer = null;
-  }
-
-  private scheduleGitRefresh(): void {
-    if (this.gitSurfaces.size === 0 || this.gitRefreshTimer) return;
-    this.gitRefreshTimer = setTimeout(() => {
-      this.gitRefreshTimer = null;
-      void this.refreshGitStatus();
-    }, GIT_REFRESH_INTERVAL_MS);
-  }
+  forkCurrentBranch = (): Promise<boolean> => this.branches.forkCurrent();
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
-    const wasVisible = this.gitSurfaces.size > 0;
-    if (visible) this.gitSurfaces.add(surface);
-    else this.gitSurfaces.delete(surface);
-    if (this.gitSurfaces.size > 0) {
-      if (!wasVisible) void this.refreshGitStatus();
-    } else {
-      this.clearGitRefreshTimer();
-      this.gitRefreshQueued = false;
-      this.gitStatusRequest?.abort();
-      this.gitStatusRequest = null;
-      if (this.state.gitStatusLoading || this.state.gitStatusRefreshing) {
-        this.set({ gitStatusLoading: false, gitStatusRefreshing: false });
-      }
-    }
+    this.git.setSurfaceVisible(surface, visible);
   };
 
-  refreshGitStatus = (): Promise<void> => {
-    if (!this.api || !this.state.sessionId) return Promise.resolve();
-    if (this.gitStatusPromise) {
-      this.gitRefreshQueued = true;
-      return this.gitStatusPromise;
-    }
-    this.clearGitRefreshTimer();
-    this.gitStatusPromise = this.runGitStatusRefresh().finally(() => {
-      this.gitStatusPromise = null;
-      this.scheduleGitRefresh();
-    });
-    return this.gitStatusPromise;
-  };
+  refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
-  private async runGitStatusRefresh(): Promise<void> {
-    do {
-      this.gitRefreshQueued = false;
-      const sessionId = this.state.sessionId;
-      const generation = this.selectionGeneration;
-      if (!this.api || !sessionId) return;
-      const request = new AbortController();
-      this.gitStatusRequest = request;
-      this.set({
-        gitStatusLoading: this.state.gitStatus === null,
-        gitStatusRefreshing: this.state.gitStatus !== null,
-      });
-      try {
-        const status = await this.api.gitStatus(sessionId, request.signal);
-        if (
-          this.gitStatusRequest !== request ||
-          request.signal.aborted ||
-          this.state.sessionId !== sessionId ||
-          this.selectionGeneration !== generation
-        ) continue;
-        const selectedExists = status.kind === "repository" && status.files.some((file) =>
-          file.path.id === this.state.selectedGitPathId && (
-            file.conflict ||
-            (this.state.selectedGitSide === "staged" ? file.staged : file.unstaged || file.untracked)
-          ),
-        );
-        const selectedPathId = this.state.selectedGitPathId;
-        const selectedSide = this.state.selectedGitSide;
-        const refreshSelectedDiff = Boolean(
-          selectedExists && selectedPathId && selectedSide &&
-          this.state.resourcesOpen && this.state.contextMode === "changes" && this.state.detailMode === "diff",
-        );
-        this.set({
-          gitStatus: status,
-          gitStatusError: null,
-          ...(!selectedExists && selectedPathId
-            ? { selectedGitPathId: null, selectedGitSide: null, gitDiff: null }
-            : {}),
-        });
-        if (refreshSelectedDiff) void this.openGitDiff(selectedPathId!, selectedSide!);
-      } catch (error) {
-        if (
-          this.gitStatusRequest !== request ||
-          request.signal.aborted ||
-          this.state.sessionId !== sessionId ||
-          this.selectionGeneration !== generation
-        ) continue;
-        this.set({ gitStatusError: error instanceof Error ? error.message : "Git status refresh failed" });
-      } finally {
-        if (this.gitStatusRequest === request) {
-          this.gitStatusRequest = null;
-          this.set({ gitStatusLoading: false, gitStatusRefreshing: false });
-        }
-      }
-    } while (this.gitRefreshQueued && this.gitSurfaces.size > 0);
-  }
-
-  openGitDiff = async (pathId: string, requestedSide?: GitDiffSide): Promise<void> => {
-    const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return;
-    let status = this.state.gitStatus;
-    if (!status) {
-      await this.refreshGitStatus();
-      status = this.state.gitStatus;
-    }
-    if (!status || status.kind !== "repository") return;
-    const change = status.files.find((candidate) => candidate.path.id === pathId);
-    if (!change) return;
-    const side = requestedSide ?? (change.unstaged || change.untracked || change.conflict ? "unstaged" : "staged");
-    this.cancelGitDiffRequest();
-    this.cancelResourceRequest();
-    const request = new AbortController();
-    this.gitDiffRequest = request;
-    const generation = this.selectionGeneration;
-    this.set({
-      resourcesOpen: true,
-      contextMode: "changes",
-      detailMode: "diff",
-      selectedGitPathId: pathId,
-      selectedGitSide: side,
-      gitDiff: { status: "loading", pathId, side },
-    });
-    try {
-      const result = await this.api.gitDiff(sessionId, pathId, side, request.signal);
-      if (
-        this.gitDiffRequest !== request || request.signal.aborted ||
-        this.state.sessionId !== sessionId || this.selectionGeneration !== generation ||
-        this.state.selectedGitPathId !== pathId || this.state.selectedGitSide !== side
-      ) return;
-      this.set({ gitDiff: { status: "ready", result } });
-    } catch (error) {
-      if (
-        this.gitDiffRequest !== request || request.signal.aborted ||
-        this.state.sessionId !== sessionId || this.selectionGeneration !== generation ||
-        this.state.selectedGitPathId !== pathId || this.state.selectedGitSide !== side
-      ) return;
-      this.set({
-        gitDiff: { status: "error", pathId, side, message: error instanceof Error ? error.message : "Diff failed" },
-      });
-    } finally {
-      if (this.gitDiffRequest === request) this.gitDiffRequest = null;
-    }
-  };
+  openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
+    this.git.openDiff(pathId, requestedSide);
 
   setGitDiffSide = (side: GitDiffSide): void => {
-    const pathId = this.state.selectedGitPathId;
-    if (pathId && side !== this.state.selectedGitSide) void this.openGitDiff(pathId, side);
+    this.git.setDiffSide(side);
   };
 
-  private cancelGitDiffRequest(): void {
-    this.gitDiffRequest?.abort();
-    this.gitDiffRequest = null;
-  }
-
-  private cancelGitRequests(): void {
-    this.gitRefreshQueued = false;
-    this.gitStatusRequest?.abort();
-    this.gitStatusRequest = null;
-    this.cancelGitDiffRequest();
-  }
-
-  private cancelResourceRequest(): void {
-    this.resourceRequest?.abort();
-    this.resourceRequest = null;
-  }
-
-  cancelResourceProbes = (): void => {
-    this.resourceProbeRequest?.abort();
-    this.resourceProbeRequest = null;
-    this.resourceProbeKey = null;
+  cancelResourceProbes = (clearStanding = false): void => {
+    this.resources.cancelProbes(clearStanding);
   };
 
-  private recordResourceAvailability(result: ResourceProbeResult): void {
-    const resourceAvailability = { ...this.state.resourceAvailability };
-    if (result.availability === "available") delete resourceAvailability[result.reference];
-    else resourceAvailability[result.reference] = result;
-    this.set({ resourceAvailability });
-  }
-
-  /** Load one bounded page from the reference projection for the currently
-   * visible branch revision. The host returns labels and references only. */
-  loadSessionResources = async (
+  loadSessionResources = (
     options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
-  ): Promise<SessionResourceListResponse | null> => {
-    const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
-    const revision = this.state.transcriptRevision;
-    if (!this.api || !sessionId || !viewId) return null;
-    const response = await this.api.listResources(sessionId, options);
-    if (
-      options.signal?.aborted || this.state.sessionId !== sessionId ||
-      this.state.transcriptViewId !== viewId || this.state.transcriptRevision !== revision ||
-      response.sessionId !== sessionId || response.viewId !== viewId || response.revision !== revision
-    ) return null;
-    return response;
-  };
+  ) => this.resources.loadSessionResources(options);
 
-  /** Preflight only the Files-pane's visible prefix. The host returns
-   * standing, not content handles; repeated message updates with the same
-   * reference set reuse the completed result. */
-  probeResources = async (references: string[]): Promise<void> => {
-    const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
-    if (!this.api || !sessionId || !viewId) return;
-    const unique = [...new Set(references)].slice(0, 16);
-    const key = JSON.stringify([sessionId, viewId, unique]);
-    if (this.resourceProbeKey === key) return;
-    this.cancelResourceProbes();
-    this.resourceProbeKey = key;
-    if (unique.length === 0) {
-      if (Object.keys(this.state.resourceAvailability).length > 0) this.set({ resourceAvailability: {} });
-      return;
-    }
-    const request = new AbortController();
-    this.resourceProbeRequest = request;
-    let completed = false;
-    try {
-      const response = await this.api.probeResources(sessionId, unique, request.signal);
-      if (
-        this.resourceProbeRequest !== request || request.signal.aborted ||
-        this.state.sessionId !== sessionId || this.state.transcriptViewId !== viewId ||
-        response.sessionId !== sessionId || response.viewId !== viewId
-      ) return;
-      const expected = new Set(unique);
-      this.set({
-        resourceAvailability: Object.fromEntries(
-          response.results
-            .filter((result) => expected.has(result.reference) && result.availability !== "available")
-            .map((result) => [result.reference, result]),
-        ),
-      });
-      completed = true;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) this.handleAuthFailure();
-    } finally {
-      if (this.resourceProbeRequest === request) {
-        this.resourceProbeRequest = null;
-        if (!completed) this.resourceProbeKey = null;
-      }
-    }
-  };
-
-  private revokePreviewObjectUrl(): void {
-    if (this.previewObjectUrl && typeof URL.revokeObjectURL === "function") {
-      URL.revokeObjectURL(this.previewObjectUrl);
-    }
-    this.previewObjectUrl = null;
-  }
+  probeResources = (references: string[]): Promise<void> =>
+    this.resources.probeResources(references);
 
   clearResourceSelection = (): void => {
-    this.cancelResourceRequest();
-    this.revokePreviewObjectUrl();
-    if (this.state.selectedResourceReference === null && this.state.resourcePreview === null) return;
-    this.set({ selectedResourceReference: null, resourcePreview: null });
+    this.resources.clearSelection();
   };
 
-  private resolveReference(
-    sessionId: string,
-    reference: string,
-    signal: AbortSignal,
-  ): Promise<ResourceDescriptor> {
-    return this.api!.resolveResource(sessionId, reference, signal);
-  }
-
-  /** Load one Pi-persisted embedded image without selecting the Files pane.
-   * The session and branch-view identity are rechecked across both authenticated
-   * requests so a late thumbnail can never cross a navigation boundary. */
-  loadEmbeddedImage = async (
+  loadEmbeddedImage = (
     sessionId: string,
     viewId: string,
     reference: string,
     signal: AbortSignal,
-  ): Promise<Blob> => {
-    if (!this.api || !/^pi-embedded:\/\/\d+\/\d+$/.test(reference)) {
-      throw new Error("The embedded image reference is invalid");
-    }
-    const stale = () => signal.aborted || this.state.sessionId !== sessionId || this.state.transcriptViewId !== viewId;
-    const descriptor = await this.api.resolveResource(sessionId, reference, signal);
-    if (stale()) throw Object.assign(new Error("The image request is no longer current"), { name: "AbortError" });
-    if (descriptor.kind !== "image" || (descriptor.viewId !== undefined && descriptor.viewId !== viewId)) {
-      throw new Error("The embedded image is unavailable in this conversation view");
-    }
-    if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES) throw new Error("The image is too large to preview");
-    const content = await this.api.resourceContent(descriptor.id, sessionId, {
-      byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
-      signal,
-    });
-    if (stale()) throw Object.assign(new Error("The image request is no longer current"), { name: "AbortError" });
-    if (content.totalSize > MAX_MEDIA_PREVIEW_BYTES || content.blob.size > MAX_MEDIA_PREVIEW_BYTES) {
-      throw new Error("The image is too large to preview");
-    }
-    return content.blob;
-  };
+  ): Promise<Blob> =>
+    this.resources.loadEmbeddedImage(sessionId, viewId, reference, signal);
 
-  /** Resolve a conversation reference through the authenticated host endpoint
-   * and load its preview. Replaces any current preview and revokes its URL. */
-  openResource = async (reference: string, contextMode: "files" | "changes" = "files"): Promise<void> => {
-    if (!this.api) return;
-    const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
-    if (!sessionId || !viewId) return;
-    this.cancelResourceRequest();
-    this.cancelGitDiffRequest();
-    const request = new AbortController();
-    this.resourceRequest = request;
-    this.revokePreviewObjectUrl();
-    this.set({
-      resourcesOpen: true,
-      contextMode,
-      detailMode: "file",
-      selectedResourceReference: reference,
-      resourcePreview: { status: "loading", reference },
-      ...(contextMode === "files" ? { selectedGitPathId: null, selectedGitSide: null, gitDiff: null } : {}),
-    });
-    const stale = () =>
-      this.resourceRequest !== request ||
-      this.state.selectedResourceReference !== reference ||
-      this.state.sessionId !== sessionId ||
-      this.state.transcriptViewId !== viewId;
-    let resolvedReference = false;
-    try {
-      const descriptor = await this.resolveReference(sessionId, reference, request.signal);
-      if (stale() || (descriptor.viewId ?? viewId) !== viewId) return;
-      // Resolution confirms or corrects preflight standing. A later transfer
-      // failure leaves this availability intact.
-      resolvedReference = true;
-      this.recordResourceAvailability({ reference, availability: "available" });
-      if (descriptor.kind === "binary") {
-        this.set({ resourcePreview: { status: "ready", reference, descriptor } });
-        return;
-      }
-      const textLike = descriptor.kind === "text" || descriptor.kind === "markdown" || descriptor.kind === "html";
-      if (!textLike && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
-        this.set({ resourcePreview: { status: "ready", reference, descriptor, contentUnavailable: "too-large" } });
-        return;
-      }
-      const content = await this.api.resourceContent(descriptor.id, sessionId, {
-        byteLimit: textLike ? TEXT_PREVIEW_BYTES : MAX_MEDIA_PREVIEW_BYTES + 1,
-        signal: request.signal,
-      });
-      if (stale()) return;
-      const blob = content.blob;
-      // Resolve metadata authorizes discovery only. Once bytes arrive, the
-      // content response's current total is the sole size authority for both
-      // the descriptor shown to the user and truncation decisions.
-      const currentDescriptor = content.totalSize === descriptor.size
-        ? descriptor
-        : { ...descriptor, size: content.totalSize };
-      if (textLike) {
-        const text = await blob.text();
-        if (stale()) return;
-        if (descriptor.kind === "html" && typeof URL.createObjectURL === "function") {
-          this.previewObjectUrl = URL.createObjectURL(
-            new Blob([injectHtmlPreviewCsp(text)], { type: "text/html" }),
-          );
-        }
-        this.set({
-          resourcePreview: {
-            status: "ready",
-            reference,
-            descriptor: currentDescriptor,
-            text,
-            // A 206 also answers full-coverage ranges, so judge truncation
-            // by what actually arrived against the transfer's current total.
-            truncated: blob.size < content.totalSize,
-            ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
-          },
-        });
-        return;
-      }
-      if (content.totalSize > MAX_MEDIA_PREVIEW_BYTES || blob.size > MAX_MEDIA_PREVIEW_BYTES) {
-        this.set({ resourcePreview: { status: "ready", reference, descriptor: currentDescriptor, contentUnavailable: "too-large" } });
-        return;
-      }
-      if (typeof URL.createObjectURL === "function") {
-        this.previewObjectUrl = URL.createObjectURL(blob);
-      }
-      this.set({
-        resourcePreview: {
-          status: "ready",
-          reference,
-          descriptor: currentDescriptor,
-          ...(this.previewObjectUrl ? { objectUrl: this.previewObjectUrl } : {}),
-        },
-      });
-    } catch (error) {
-      if (stale()) return;
-      const availability = resolvedReference ? null : classifiedResourceFailure(reference, error);
-      if (availability) this.recordResourceAvailability(availability);
-      if (error instanceof ApiError && error.matches && error.matches.length > 0) {
-        this.set({
-          resourcePreview: { status: "ambiguous", reference, message: error.message, matches: error.matches },
-        });
-        return;
-      }
-      this.set({
-        resourcePreview: {
-          status: "error",
-          reference,
-          message: error instanceof Error ? error.message : "Preview failed",
-        },
-      });
-    } finally {
-      if (this.resourceRequest === request) this.resourceRequest = null;
-    }
-  };
+  openResource = (
+    reference: string,
+    contextMode: "files" | "changes" = "files",
+  ): Promise<void> => this.resources.openResource(reference, contextMode);
 
-  openGitFile = async (pathId: string): Promise<void> => {
-    const status = this.state.gitStatus;
-    if (!status || status.kind !== "repository") return;
-    const change = status.files.find((candidate) => candidate.path.id === pathId);
-    const workingTreeDeleted = change?.unstaged?.kind === "deleted" ||
-      (change?.staged?.kind === "deleted" && !change.unstaged && !change.untracked);
-    if (!change?.path.workspacePath || !change.path.utf8Path || workingTreeDeleted) return;
-    await this.openResource(change.path.workspacePath, "changes");
-  };
+  openGitFile = (pathId: string): Promise<void> => this.git.openFile(pathId);
 }
 
 export function gitChangeForWorkspacePath(

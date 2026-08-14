@@ -1,9 +1,14 @@
 import type { GitFileChange, GitStatusResponse } from "../shared/contracts";
 
-export interface GitFacetPresentation { mark: string; label: string }
+export interface GitFacetPresentation {
+  mark: string;
+  label: string;
+}
 
 /** Compact, user-facing repository identity shared by the topbar and context pane. */
-export function gitHeadLabel(status: GitStatusResponse | null | undefined): string | null {
+export function gitHeadLabel(
+  status: GitStatusResponse | null | undefined,
+): string | null {
   if (!status || status.kind !== "repository") return null;
   if (status.head.kind === "branch") return status.head.name;
   if (status.head.kind === "unborn") return `${status.head.name} · unborn`;
@@ -11,17 +16,26 @@ export function gitHeadLabel(status: GitStatusResponse | null | undefined): stri
 }
 
 /** `total` remains authoritative even when the right-pane file projection is bounded. */
-export function gitChangeCount(status: GitStatusResponse | null | undefined): number | null {
+export function gitChangeCount(
+  status: GitStatusResponse | null | undefined,
+): number | null {
   return status?.kind === "repository" ? status.total : null;
 }
 
-export function presentGitFacet(change: GitFileChange | undefined): GitFacetPresentation | null {
+export function presentGitFacet(
+  change: GitFileChange | undefined,
+): GitFacetPresentation | null {
   if (!change) return null;
-  if (change.conflict) return { mark: "!", label: `conflict ${change.conflict.code}` };
-  if (change.untracked) return { mark: "U", label: "Untracked — not yet added to Git" };
-  if (change.staged && change.unstaged) return { mark: "±", label: "staged and unstaged changes" };
-  if (change.staged) return { mark: "S", label: `staged ${change.staged.kind}` };
-  if (change.unstaged) return { mark: "M", label: `unstaged ${change.unstaged.kind}` };
+  if (change.conflict)
+    return { mark: "!", label: `conflict ${change.conflict.code}` };
+  if (change.untracked)
+    return { mark: "U", label: "Untracked — not yet added to Git" };
+  if (change.staged && change.unstaged)
+    return { mark: "±", label: "staged and unstaged changes" };
+  if (change.staged)
+    return { mark: "S", label: `staged ${change.staged.kind}` };
+  if (change.unstaged)
+    return { mark: "M", label: `unstaged ${change.unstaged.kind}` };
   return null;
 }
 
@@ -31,7 +45,9 @@ export function presentGitFacet(change: GitFileChange | undefined): GitFacetPres
  * ignored file is intentionally invisible, not a state to act on. */
 export type GitDecoration = "conflict" | "modified" | "untracked";
 
-export function gitDecorationForChange(change: GitFileChange | undefined): GitDecoration | null {
+export function gitDecorationForChange(
+  change: GitFileChange | undefined,
+): GitDecoration | null {
   if (!change) return null;
   if (change.conflict) return "conflict";
   if (change.untracked) return "untracked";
@@ -52,7 +68,11 @@ export function gitDecorationForDirectory(
   let best: GitDecoration | null = null;
   for (const file of status.files) {
     const workspacePath = file.path.workspacePath;
-    if (!workspacePath || (workspacePath !== dirPath && !workspacePath.startsWith(prefix))) continue;
+    if (
+      !workspacePath ||
+      (workspacePath !== dirPath && !workspacePath.startsWith(prefix))
+    )
+      continue;
     const decoration = gitDecorationForChange(file);
     if (decoration === "conflict") return "conflict";
     if (decoration === "modified") best = "modified";

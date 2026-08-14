@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { emptyEventSlice, reduceEvent, type EventSlice, type WireEvent } from "../../src/events";
+import {
+  emptyEventSlice,
+  reduceEvent,
+  type EventSlice,
+  type WireEvent,
+} from "../../src/events";
 
-function reduce(slice: EventSlice, settled: ReadonlySet<string>, event: WireEvent) {
+function reduce(
+  slice: EventSlice,
+  settled: ReadonlySet<string>,
+  event: WireEvent,
+) {
   return reduceEvent(slice, settled, event);
 }
 
@@ -24,14 +33,24 @@ describe("message reconciliation", () => {
     const slice = emptyEventSlice();
     const start = reduce(slice, new Set(), {
       type: "message_start",
-      message: { role: "assistant", content: [{ type: "text", text: "a" }], timestamp: 2 },
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "a" }],
+        timestamp: 2,
+      },
     });
     const update = reduce(start.slice, new Set(), {
       type: "message_update",
-      message: { role: "assistant", content: [{ type: "text", text: "ab" }], timestamp: 2 },
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ab" }],
+        timestamp: 2,
+      },
     });
     expect(update.slice.messages).toHaveLength(1);
-    expect(update.slice.messages[0]!.content).toEqual([{ type: "text", text: "ab" }]);
+    expect(update.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "ab" },
+    ]);
     expect(start.slice.streaming).toBe(true);
     expect(start.slice.activeAssistantMessageKey).toBe("assistant:2");
     expect(start.slice.runState).toBe("running");
@@ -51,20 +70,74 @@ describe("message reconciliation", () => {
     });
 
     const updates: WireEvent[] = [
-      { type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } },
-      { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "check " } },
-      { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "state" } },
-      { type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "check state" } },
-      { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } },
-      { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "hel" } },
-      { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "lo" } },
       {
         type: "message_update",
-        assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, id: "tool-1", toolName: "read" },
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
       },
-      { type: "message_update", assistantMessageEvent: { type: "toolcall_delta", contentIndex: 2, delta: "{\"path\":" } },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "check ",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "state",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: "check state",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 1,
+          delta: "hel",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 1,
+          delta: "lo",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_start",
+          contentIndex: 2,
+          id: "tool-1",
+          toolName: "read",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 2,
+          delta: '{"path":',
+        },
+      },
     ];
-    for (const update of updates) result = reduce(result.slice, new Set(), update);
+    for (const update of updates)
+      result = reduce(result.slice, new Set(), update);
 
     expect(result.slice.messages[0]!.content).toMatchObject([
       { type: "thinking", thinking: "check state" },
@@ -77,7 +150,12 @@ describe("message reconciliation", () => {
       assistantMessageEvent: {
         type: "toolcall_end",
         contentIndex: 2,
-        toolCall: { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "README.md" } },
+        toolCall: {
+          type: "toolCall",
+          id: "tool-1",
+          name: "read",
+          arguments: { path: "README.md" },
+        },
       },
     });
     expect(result.slice.messages).toHaveLength(1);
@@ -94,14 +172,26 @@ describe("message reconciliation", () => {
 
   it("resyncs rather than applying a delta when no assistant call is active", () => {
     const slice = emptyEventSlice();
-    slice.messages = [{ role: "assistant", content: [{ type: "text", text: "settled" }], timestamp: 1 }];
+    slice.messages = [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "settled" }],
+        timestamp: 1,
+      },
+    ];
     const result = reduce(slice, new Set(["assistant:1"]), {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "orphan" },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "orphan",
+      },
     });
     expect(result.resync).toBe(true);
     expect(result.slice.messages).toBe(slice.messages);
-    expect(result.slice.messages[0]!.content).toEqual([{ type: "text", text: "settled" }]);
+    expect(result.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "settled" },
+    ]);
   });
 
   it("settles message keys on message_end so later duplicates are dropped", () => {
@@ -125,17 +215,32 @@ describe("message reconciliation", () => {
   it("keeps the current assistant key through its tool batch and replaces it at the next LLM call", () => {
     const firstStart = reduce(emptyEventSlice(), new Set(), {
       type: "message_start",
-      message: { role: "assistant", content: [], timestamp: 2, __inspireLiveId: "call-1" },
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-1",
+      },
     });
     const firstEnd = reduce(firstStart.slice, new Set(), {
       type: "message_end",
-      message: { role: "assistant", content: [], timestamp: 2, __inspireLiveId: "call-1" },
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-1",
+      },
     });
     expect(firstEnd.slice.activeAssistantMessageKey).toBe("live:call-1");
 
     const secondStart = reduce(firstEnd.slice, new Set(firstEnd.settle), {
       type: "message_start",
-      message: { role: "assistant", content: [], timestamp: 3, __inspireLiveId: "call-2" },
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 3,
+        __inspireLiveId: "call-2",
+      },
     });
     expect(secondStart.slice.activeAssistantMessageKey).toBe("live:call-2");
   });
@@ -143,46 +248,80 @@ describe("message reconciliation", () => {
   it("keeps same-role same-timestamp ordinary lifecycles distinct by host live identity", () => {
     let slice = emptyEventSlice();
     const settled = new Set<string>();
-    for (const [id, content] of [["live-1", "first"], ["live-2", "second"]] as const) {
+    for (const [id, content] of [
+      ["live-1", "first"],
+      ["live-2", "second"],
+    ] as const) {
       const start = reduce(slice, settled, {
         type: "message_start",
-        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+        message: {
+          role: "assistant",
+          content,
+          timestamp: 2,
+          __inspireLiveId: id,
+        },
       });
       const end = reduce(start.slice, settled, {
         type: "message_end",
-        message: { role: "assistant", content, timestamp: 2, __inspireLiveId: id },
+        message: {
+          role: "assistant",
+          content,
+          timestamp: 2,
+          __inspireLiveId: id,
+        },
       });
       for (const key of end.settle) settled.add(key);
       slice = end.slice;
     }
-    expect(slice.messages.map((message) => message.content)).toEqual(["first", "second"]);
+    expect(slice.messages.map((message) => message.content)).toEqual([
+      "first",
+      "second",
+    ]);
     expect(settled).toEqual(new Set(["live:live-1", "live:live-2"]));
   });
 
   it("appends genuinely new messages in source order", () => {
     const slice = emptyEventSlice();
-    const first = reduce(slice, new Set(), { type: "message_start", message: { role: "user", content: "a", timestamp: 1 } });
+    const first = reduce(slice, new Set(), {
+      type: "message_start",
+      message: { role: "user", content: "a", timestamp: 1 },
+    });
     const second = reduce(first.slice, new Set(), {
       type: "message_start",
       message: { role: "assistant", content: [], timestamp: 2 },
     });
-    expect(second.slice.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(second.slice.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
   });
 
   it("does not overwrite an older keyed turn when its end event is absent", () => {
     const slice = emptyEventSlice();
     slice.messages = [
-      { role: "assistant", content: [{ type: "text", text: "first answer" }], timestamp: 2 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "first answer" }],
+        timestamp: 2,
+      },
       { role: "user", content: "second question", timestamp: 3 },
     ];
 
     const next = reduce(slice, new Set(), {
       type: "message_start",
-      message: { role: "assistant", content: [{ type: "text", text: "second answer" }], timestamp: 4 },
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "second answer" }],
+        timestamp: 4,
+      },
     });
 
-    expect(next.slice.messages.map((message) => message.timestamp)).toEqual([2, 3, 4]);
-    expect(next.slice.messages[0]!.content).toEqual([{ type: "text", text: "first answer" }]);
+    expect(next.slice.messages.map((message) => message.timestamp)).toEqual([
+      2, 3, 4,
+    ]);
+    expect(next.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "first answer" },
+    ]);
   });
 
   it("requests an authoritative resync on settle and clears transient activity", () => {
@@ -191,7 +330,9 @@ describe("message reconciliation", () => {
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
     slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
     slice.queue = { steering: ["steer"], followUp: ["later one", "later two"] };
-    const { slice: next, resync } = reduce(slice, new Set(), { type: "agent_settled" });
+    const { slice: next, resync } = reduce(slice, new Set(), {
+      type: "agent_settled",
+    });
     expect(resync).toBe(true);
     expect(next.streaming).toBe(false);
     expect(next.activeAssistantMessageKey).toBeNull();
@@ -210,16 +351,25 @@ describe("transient tool/retry/queue activity", () => {
       toolName: "read",
       args: { path: "src/index.ts" },
     });
-    expect(started.slice.tools.t1).toMatchObject({ name: "read", phase: "running", detail: "src/index.ts" });
+    expect(started.slice.tools.t1).toMatchObject({
+      name: "read",
+      phase: "running",
+      detail: "src/index.ts",
+    });
 
     const updated = reduce(started.slice, new Set(), {
       type: "tool_execution_update",
       toolCallId: "t1",
       toolName: "read",
       args: {},
-      partialResult: { content: [{ type: "text", text: "reading lines 1-40" }] },
+      partialResult: {
+        content: [{ type: "text", text: "reading lines 1-40" }],
+      },
     });
-    expect(updated.slice.tools.t1).toMatchObject({ phase: "running", detail: "reading lines 1-40" });
+    expect(updated.slice.tools.t1).toMatchObject({
+      phase: "running",
+      detail: "reading lines 1-40",
+    });
 
     const failed = reduce(updated.slice, new Set(), {
       type: "tool_execution_end",
@@ -242,9 +392,17 @@ describe("transient tool/retry/queue activity", () => {
       errorMessage: "rate limited",
     });
     expect(started.slice.runState).toBe("retrying");
-    expect(started.slice.retry).toEqual({ attempt: 2, maxAttempts: 5, message: "rate limited" });
+    expect(started.slice.retry).toEqual({
+      attempt: 2,
+      maxAttempts: 5,
+      message: "rate limited",
+    });
 
-    const recovered = reduce(started.slice, new Set(), { type: "auto_retry_end", success: true, attempt: 2 });
+    const recovered = reduce(started.slice, new Set(), {
+      type: "auto_retry_end",
+      success: true,
+      attempt: 2,
+    });
     expect(recovered.slice.runState).toBe("running");
     expect(recovered.slice.retry).toBeNull();
 
@@ -255,7 +413,10 @@ describe("transient tool/retry/queue activity", () => {
       finalError: "overloaded",
     });
     expect(failed.slice.runState).toBe("failed");
-    expect(failed.slice.notices.at(-1)).toMatchObject({ kind: "error", text: "Retry failed: overloaded" });
+    expect(failed.slice.notices.at(-1)).toMatchObject({
+      kind: "error",
+      text: "Retry failed: overloaded",
+    });
   });
 
   it("preserves queued steering and follow-up input in separate source order", () => {
@@ -291,30 +452,53 @@ describe("extension_ui_request mapping", () => {
       title: "Pick one",
       options: ["a", "b"],
     });
-    expect(slice.extensionUiRequests).toEqual([{
-      sessionId: "s1",
-      id: "r1",
-      method: "select",
-      title: "Pick one",
-      message: undefined,
-      options: ["a", "b"],
-      placeholder: undefined,
-      prefill: undefined,
-    }]);
+    expect(slice.extensionUiRequests).toEqual([
+      {
+        sessionId: "s1",
+        id: "r1",
+        method: "select",
+        title: "Pick one",
+        message: undefined,
+        options: ["a", "b"],
+        placeholder: undefined,
+        prefill: undefined,
+      },
+    ]);
   });
 
   it("queues concurrent dialogs in arrival order and removes only the addressed request", () => {
     let slice = reduce(emptyEventSlice(), new Set(), {
-      type: "extension_ui_request", sessionId: "s1", id: "first", method: "confirm", timeout: 1_000, expiresAt: 2_000,
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "first",
+      method: "confirm",
+      timeout: 1_000,
+      expiresAt: 2_000,
     }).slice;
     slice = reduce(slice, new Set(), {
-      type: "extension_ui_request", sessionId: "s1", id: "second", method: "input",
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "second",
+      method: "input",
     }).slice;
-    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual(["first", "second"]);
-    expect(slice.extensionUiRequests[0]).toMatchObject({ timeout: 1_000, expiresAt: 2_000 });
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(slice.extensionUiRequests[0]).toMatchObject({
+      timeout: 1_000,
+      expiresAt: 2_000,
+    });
 
-    slice = reduce(slice, new Set(), { type: "extension_ui_remove", sessionId: "s1", id: "first", reason: "responded" }).slice;
-    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual(["second"]);
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_remove",
+      sessionId: "s1",
+      id: "first",
+      reason: "responded",
+    }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "second",
+    ]);
     slice = reduce(slice, new Set(), { type: "agent_settled" }).slice;
     expect(slice.extensionUiRequests).toEqual([]);
   });
@@ -326,7 +510,10 @@ describe("extension_ui_request mapping", () => {
       id: "r1",
       method: "confirm",
     }).slice;
-    const failed = reduce(pending, new Set(), { type: "runtime_error", error: "crashed" }).slice;
+    const failed = reduce(pending, new Set(), {
+      type: "runtime_error",
+      error: "crashed",
+    }).slice;
     expect(failed.extensionUiRequests).toEqual([]);
     expect(failed.runState).toBe("failed");
   });
@@ -340,7 +527,10 @@ describe("extension_ui_request mapping", () => {
       notifyType: "warning",
     });
     expect(slice.extensionUiRequests).toEqual([]);
-    expect(slice.notices.at(-1)).toMatchObject({ kind: "warning", text: "Indexed 12 files" });
+    expect(slice.notices.at(-1)).toMatchObject({
+      kind: "warning",
+      text: "Indexed 12 files",
+    });
   });
 
   it("tracks setStatus entries and removes them when cleared", () => {
@@ -401,7 +591,10 @@ describe("truthful change reporting", () => {
 
   it("returns the same slice reference and changed=false for unknown events", () => {
     const slice = emptyEventSlice();
-    const result = reduce(slice, new Set(), { type: "future_wire_event", data: 1 });
+    const result = reduce(slice, new Set(), {
+      type: "future_wire_event",
+      data: 1,
+    });
     expect(result.changed).toBe(false);
     expect(result.resync).toBe(false);
     expect(result.slice).toBe(slice);
@@ -416,13 +609,22 @@ describe("truthful change reporting", () => {
       widgetKey: "plan",
       widgetLines: ["one", "two"],
       extensionPath: "extensions/plan.ts",
-      extensionDisplays: [{
-        id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan", payload: { widgetLines: ["one", "two"] },
-      }],
+      extensionDisplays: [
+        {
+          id: "setWidget:plan",
+          method: "setWidget",
+          attribution: "extensions/plan.ts · plan",
+          payload: { widgetLines: ["one", "two"] },
+        },
+      ],
     });
     expect(shown.changed).toBe(true);
     expect(shown.slice.extensionDisplays).toEqual([
-      expect.objectContaining({ id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan" }),
+      expect.objectContaining({
+        id: "setWidget:plan",
+        method: "setWidget",
+        attribution: "extensions/plan.ts · plan",
+      }),
     ]);
     expect(shown.slice.extensionUiRequests).toEqual([]);
 
@@ -432,12 +634,19 @@ describe("truthful change reporting", () => {
       method: "setWidget",
       widgetKey: "plan",
       widgetLines: ["unbounded wire value"],
-      extensionDisplays: [{
-        id: "setWidget:plan", method: "setWidget", attribution: "extensions/plan.ts · plan",
-        payload: { truncated: true, preview: "bounded" },
-      }],
+      extensionDisplays: [
+        {
+          id: "setWidget:plan",
+          method: "setWidget",
+          attribution: "extensions/plan.ts · plan",
+          payload: { truncated: true, preview: "bounded" },
+        },
+      ],
     });
-    expect(bounded.slice.extensionDisplays[0]?.payload).toEqual({ truncated: true, preview: "bounded" });
+    expect(bounded.slice.extensionDisplays[0]?.payload).toEqual({
+      truncated: true,
+      preview: "bounded",
+    });
 
     const cleared = reduce(bounded.slice, new Set(), {
       type: "extension_ui_request",
@@ -476,15 +685,28 @@ describe("truthful change reporting", () => {
       method: "showPanel",
       responseRequired: false,
       content: { title: "Build", lines: ["passing"] },
-      extensionDisplays: [{ id: "showPanel:display-1", method: "showPanel", attribution: "Pi extension · display-1", payload: { title: "Build" } }],
+      extensionDisplays: [
+        {
+          id: "showPanel:display-1",
+          method: "showPanel",
+          attribution: "Pi extension · display-1",
+          payload: { title: "Build" },
+        },
+      ],
     });
     expect(result.slice.extensionUiRequests).toEqual([]);
-    expect(result.slice.extensionDisplays[0]).toMatchObject({ method: "showPanel" });
+    expect(result.slice.extensionDisplays[0]).toMatchObject({
+      method: "showPanel",
+    });
   });
 
   it("never reconstructs a generic display from an unprojected raw event", () => {
     const result = reduce(emptyEventSlice(), new Set(), {
-      type: "extension_ui_request", id: "raw", method: "setWidget", widgetKey: "raw", widgetLines: ["secret"],
+      type: "extension_ui_request",
+      id: "raw",
+      method: "setWidget",
+      widgetKey: "raw",
+      widgetLines: ["secret"],
     });
     expect(result.slice.extensionDisplays).toEqual([]);
   });

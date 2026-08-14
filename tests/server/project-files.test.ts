@@ -2,11 +2,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { directoryEntries, searchProjectFiles } from "../../server/project-files.js";
+import {
+  directoryEntries,
+  searchProjectFiles,
+} from "../../server/project-files.js";
 
 describe("directoryEntries", () => {
   it("derives one directory level from the flat project index, folders first", () => {
-    const paths = ["src/main.ts", "src/lib/util.ts", "README.md", "assets/logo.png"];
+    const paths = [
+      "src/main.ts",
+      "src/lib/util.ts",
+      "README.md",
+      "assets/logo.png",
+    ];
     expect(directoryEntries(paths, "")).toEqual([
       { name: "assets", type: "dir" },
       { name: "src", type: "dir" },
@@ -16,7 +24,9 @@ describe("directoryEntries", () => {
       { name: "lib", type: "dir" },
       { name: "main.ts", type: "file" },
     ]);
-    expect(directoryEntries(paths, "src/lib")).toEqual([{ name: "util.ts", type: "file" }]);
+    expect(directoryEntries(paths, "src/lib")).toEqual([
+      { name: "util.ts", type: "file" },
+    ]);
     expect(directoryEntries(paths, "missing")).toEqual([]);
   });
 
@@ -30,7 +40,9 @@ describe("project index authority", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(
+      roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   async function scratch(): Promise<string> {

@@ -32,6 +32,29 @@ The frozen activation thresholds are:
 
 Counts and aggregate React work remain diagnostic. Every activation uses independent-sample witnesses: p95 must reach its threshold **and** at least `max(3, ceil(samples * 0.10))` samples must individually cross it. At 21 samples this requires three crossings, so neither one spike nor the two samples that determine nearest-rank p95 can activate work alone. React uses each iteration's surface p95 as its independent value. A Vite chunk-size warning or an isolated microbenchmark never activates maintenance by itself.
 
+## Package and font-transfer evidence
+
+`npm run size:report` is static package inventory, not a network measurement.
+It first prepares the release client and compiled host, then packs with lifecycle
+scripts disabled and rejects a tarball missing `build/server/index.js`,
+`dist/index.html`, or `dist/THIRD_PARTY_NOTICES.txt`; the report therefore
+measures the same prepared release shape rather than a clean-checkout
+source-only package. On 2026-08-14 it reported a 29,781,248-byte tarball,
+37,158,962 unpacked bytes, 34,116,728 packaged font bytes, and 729,564 bytes
+across 21 `coldStartFontCandidates`. The candidate field is deliberately a
+filename-based package heuristic; it must not be reported as cold-start
+transfer.
+
+The mock-host Playwright workbench tests independently open a Chrome DevTools
+Protocol Network session before navigation, disable the cache, wait for
+`document.fonts.ready` and network idle, and preserve each
+`Network.loadingFinished.encodedDataLength` font ledger in the CI artifact.
+The desktop and 390px scenarios each observed 297,018 aggregate encoded bytes
+on that run. This is an observed test-scenario transfer metric, not an
+installation-size claim or a release budget: network/browser versions, content,
+and font range selection can change it. Establish a threshold only after
+collecting representative release and product scenarios.
+
 ## 2026-08-08 project-hardening validation
 
 The repaired evaluator ran against the completed hardening change set and final Dynamic dwell policy on isolated ports. It accepted 21 browser samples within 22 attempts and rejected one attempt whose event-loop-delay p95 reached 31.70 ms against the 25 ms control bound, so the final decision used only uncontaminated samples. Exact accounting observed 52 typed WebSocket frames and one `/api/resources/list` request per accepted iteration in addition to the established branch, Git, prompt, session-list, and snapshot contract. The settled-tool witness accepts either the ordinary tool card or Dynamic mode's compact button with the same accessible `read: finished — analysis.ts` identity, instead of depending on an internal card-name node remaining mounted across its minimum-residency transition. No activation witness crossed its threshold three times, and the evaluator returned `no-performance-change` with zero activated suspects.

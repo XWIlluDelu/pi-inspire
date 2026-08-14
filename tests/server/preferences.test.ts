@@ -15,7 +15,9 @@ async function fixture(): Promise<{ path: string; store: PreferencesStore }> {
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 describe("PreferencesStore validation", () => {
@@ -37,7 +39,9 @@ describe("PreferencesStore validation", () => {
       pinnedSessionIds: ["session-a"],
     });
     expect(inspected.warning).toMatch(/toolVisibility.*left unchanged/);
-    await expect(store.patch({ projectDisplay: "path" })).rejects.toMatchObject({ status: 409 });
+    await expect(store.patch({ projectDisplay: "path" })).rejects.toMatchObject(
+      { status: 409 },
+    );
     expect(await readFile(path, "utf8")).toBe(raw);
   });
 
@@ -49,7 +53,9 @@ describe("PreferencesStore validation", () => {
     const inspected = await store.inspect();
     expect(inspected.preferences).toEqual(defaultPreferences);
     expect(inspected.warning).toMatch(/not valid JSON.*left unchanged/);
-    await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({ status: 409 });
+    await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
+      status: 409,
+    });
     expect(await readFile(path, "utf8")).toBe(raw);
 
     const second = await store.inspect();
@@ -59,7 +65,10 @@ describe("PreferencesStore validation", () => {
 
   it("treats missing legacy fields as migration defaults, not corruption", async () => {
     const { path, store } = await fixture();
-    await writeFile(path, JSON.stringify({ theme: "light", launch: "welcome" }));
+    await writeFile(
+      path,
+      JSON.stringify({ theme: "light", launch: "welcome" }),
+    );
 
     const inspected = await store.inspect();
     expect(inspected.warning).toBeUndefined();

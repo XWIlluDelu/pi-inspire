@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,7 +13,11 @@ async function temporaryPath(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  );
 });
 
 describe("persistent host access token", () => {
@@ -31,15 +35,23 @@ describe("persistent host access token", () => {
 
   it("keeps an explicit environment token outside persistent storage", async () => {
     const path = await temporaryPath();
-    await expect(resolveAccessToken("explicit-test-token", path)).resolves.toBe("explicit-test-token");
-    await expect(resolveAccessToken("", path)).rejects.toThrow("between 1 and 256 characters");
-    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(resolveAccessToken("explicit-test-token", path)).resolves.toBe(
+      "explicit-test-token",
+    );
+    await expect(resolveAccessToken("", path)).rejects.toThrow(
+      "between 1 and 256 characters",
+    );
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("refuses a token file exposed to other local users", async () => {
     const path = await temporaryPath();
     await resolveAccessToken(undefined, path);
     await chmod(path, 0o644);
-    await expect(resolveAccessToken(undefined, path)).rejects.toThrow("must not be accessible by other users");
+    await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+      "must not be accessible by other users",
+    );
   });
 });

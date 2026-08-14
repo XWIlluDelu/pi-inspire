@@ -10,9 +10,18 @@ import {
   MAX_PROMPT_IMAGE_BYTES,
 } from "../../shared/contracts.js";
 
-function upload(name: string, type: string, size?: number): Express.Multer.File {
+function upload(
+  name: string,
+  type: string,
+  size?: number,
+): Express.Multer.File {
   const buffer = Buffer.from("payload");
-  return { originalname: name, mimetype: type, size: size ?? buffer.length, buffer } as Express.Multer.File;
+  return {
+    originalname: name,
+    mimetype: type,
+    size: size ?? buffer.length,
+    buffer,
+  } as Express.Multer.File;
 }
 
 describe("attachment consumption lifecycle", () => {
@@ -65,7 +74,9 @@ describe("attachment consumption lifecycle", () => {
   it("refuses to lease a file already claimed by another prompt", async () => {
     const doc = await store.add(upload("notes.txt", "text/plain"));
     const first = await store.resolveForPrompt([doc.id]);
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/already belong/);
+    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
+      /already belong/,
+    );
 
     // The rejected prompt held nothing: the first lease still shields the file.
     await store.remove(doc.id);
@@ -73,21 +84,54 @@ describe("attachment consumption lifecycle", () => {
 
     // Consumed files are equally unavailable to a new prompt.
     await store.releaseConsumed([doc.id]);
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/already belong/);
+    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
+      /already belong/,
+    );
   });
 
   it("enforces aggregate upload and prompt-image budgets before leasing files", async () => {
-    await expect(store.add(upload("too-large.bin", "application/octet-stream", MAX_ATTACHMENT_FILE_BYTES + 1)))
-      .rejects.toThrow(/Each attachment/);
-    await expect(store.addMany([
-      upload("one.bin", "application/octet-stream", MAX_ATTACHMENT_FILE_BYTES),
-      upload("two.bin", "application/octet-stream", MAX_ATTACHMENT_FILE_BYTES),
-      upload("three.bin", "application/octet-stream", 1),
-    ])).rejects.toThrow(new RegExp(String(MAX_ATTACHMENT_UPLOAD_BYTES)));
+    await expect(
+      store.add(
+        upload(
+          "too-large.bin",
+          "application/octet-stream",
+          MAX_ATTACHMENT_FILE_BYTES + 1,
+        ),
+      ),
+    ).rejects.toThrow(/Each attachment/);
+    await expect(
+      store.addMany([
+        upload(
+          "one.bin",
+          "application/octet-stream",
+          MAX_ATTACHMENT_FILE_BYTES,
+        ),
+        upload(
+          "two.bin",
+          "application/octet-stream",
+          MAX_ATTACHMENT_FILE_BYTES,
+        ),
+        upload("three.bin", "application/octet-stream", 1),
+      ]),
+    ).rejects.toThrow(new RegExp(String(MAX_ATTACHMENT_UPLOAD_BYTES)));
 
-    const first = await store.add(upload("one.png", "image/png", Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1));
-    const second = await store.add(upload("two.png", "image/png", Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1));
-    await expect(store.resolveForPrompt([first.id, second.id])).rejects.toThrow(new RegExp(String(MAX_PROMPT_IMAGE_BYTES)));
+    const first = await store.add(
+      upload(
+        "one.png",
+        "image/png",
+        Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1,
+      ),
+    );
+    const second = await store.add(
+      upload(
+        "two.png",
+        "image/png",
+        Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1,
+      ),
+    );
+    await expect(store.resolveForPrompt([first.id, second.id])).rejects.toThrow(
+      new RegExp(String(MAX_PROMPT_IMAGE_BYTES)),
+    );
     await store.remove(first.id);
     await store.remove(second.id);
   });

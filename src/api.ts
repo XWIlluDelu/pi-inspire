@@ -66,7 +66,10 @@ async function ensureOk(response: Response): Promise<void> {
   let message = `Request failed (${response.status})`;
   let matches: string[] | undefined;
   try {
-    const body = (await response.json()) as { error?: string; matches?: unknown };
+    const body = (await response.json()) as {
+      error?: string;
+      matches?: unknown;
+    };
     if (body.error) message = body.error;
     if (Array.isArray(body.matches)) matches = body.matches.map(String);
   } catch {
@@ -79,13 +82,19 @@ function authorizationHeader(token: string | null): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(token: string | null, path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  token: string | null,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: "same-origin",
     headers: {
       ...authorizationHeader(token),
-      ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(init.body !== undefined
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...init.headers,
     },
   });
@@ -121,20 +130,28 @@ async function fetchResourceContent(
   sessionId: string,
   options: ResourceContentOptions = {},
 ): Promise<ResourceContentResponse> {
-  const response = await fetch(`/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`, {
-    signal: options.signal,
-    credentials: "same-origin",
-    headers: {
-      ...authorizationHeader(token),
-      ...(options.byteLimit ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` } : {}),
+  const response = await fetch(
+    `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
+    {
+      signal: options.signal,
+      credentials: "same-origin",
+      headers: {
+        ...authorizationHeader(token),
+        ...(options.byteLimit
+          ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` }
+          : {}),
+      },
     },
-  });
+  );
   await ensureOk(response);
   const blob = await response.blob();
   return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
-async function uploadFiles(token: string | null, files: File[]): Promise<{ attachments: UploadedAttachment[] }> {
+async function uploadFiles(
+  token: string | null,
+  files: File[],
+): Promise<{ attachments: UploadedAttachment[] }> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
   // No Content-Type header: the browser sets the multipart boundary.
@@ -148,41 +165,72 @@ async function uploadFiles(token: string | null, files: File[]): Promise<{ attac
   return (await response.json()) as { attachments: UploadedAttachment[] };
 }
 
-function post<T>(token: string | null, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
-  return request<T>(token, path, { ...init, method: "POST", body: JSON.stringify(body ?? {}) });
+function post<T>(
+  token: string | null,
+  path: string,
+  body?: unknown,
+  init: RequestInit = {},
+): Promise<T> {
+  return request<T>(token, path, {
+    ...init,
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
 }
 
 export function createApi(token: string | null = null) {
   return {
     bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
-    olderTranscript: (sessionId: string, cursor: string, signal?: AbortSignal) =>
+    olderTranscript: (
+      sessionId: string,
+      cursor: string,
+      signal?: AbortSignal,
+    ) =>
       request<TranscriptPage>(
         token,
         `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
         { signal },
       ),
-    branchTree: (sessionId: string) => request<BranchTreeResponse>(
-      token,
-      `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
-    ),
-    navigateBranch: (body: BranchNavigateRequest) => post<BranchNavigateResponse>(token, "/api/branches/navigate", body),
-    forkBranch: (body: BranchForkRequest) => post<BranchForkResponse>(token, "/api/branches/fork", body),
+    branchTree: (sessionId: string) =>
+      request<BranchTreeResponse>(
+        token,
+        `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
+      ),
+    navigateBranch: (body: BranchNavigateRequest) =>
+      post<BranchNavigateResponse>(token, "/api/branches/navigate", body),
+    forkBranch: (body: BranchForkRequest) =>
+      post<BranchForkResponse>(token, "/api/branches/fork", body),
     sessions: (query: string, offset = 0, limit = 40) =>
       request<SessionListResponse>(
         token,
         `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
       ),
-    refreshSessions: () => post<{ ok: boolean }>(token, "/api/sessions/refresh"),
-    sessionsByIds: (ids: string[]) => post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-id", { ids }),
+    refreshSessions: () =>
+      post<{ ok: boolean }>(token, "/api/sessions/refresh"),
+    sessionsByIds: (ids: string[]) =>
+      post<{ sessions: SessionListResponse["sessions"] }>(
+        token,
+        "/api/sessions/by-id",
+        { ids },
+      ),
     sessionsByCwds: (cwds: string[]) =>
-      post<{ sessions: SessionListResponse["sessions"] }>(token, "/api/sessions/by-cwd", { cwds }),
-    openSession: (id: string) => post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
-    deselectSession: () => post<ActiveSnapshot>(token, "/api/sessions/deselect"),
+      post<{ sessions: SessionListResponse["sessions"] }>(
+        token,
+        "/api/sessions/by-cwd",
+        { cwds },
+      ),
+    openSession: (id: string) =>
+      post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
+    deselectSession: () =>
+      post<ActiveSnapshot>(token, "/api/sessions/deselect"),
     newSession: (cwd: string, options: NewSessionOptions = {}) =>
       post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, ...options }),
     newSessionDefaults: (cwd: string) =>
-      request<NewSessionDefaults>(token, `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`),
+      request<NewSessionDefaults>(
+        token,
+        `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`,
+      ),
     searchNewSessionFiles: (cwd: string, query: string, limit = 50) =>
       request<{ cwd: string; files: ProjectFileResult[] }>(
         token,
@@ -191,16 +239,33 @@ export function createApi(token: string | null = null) {
     renameSession: (sessionId: string, name: string) =>
       post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
     deleteSession: (sessionId: string) =>
-      request<SessionDeleteResponse>(token, `/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
-    prompt: (body: PromptRequest) => post<{ accepted: boolean }>(token, "/api/prompt", body),
-    abort: (sessionId: string) => post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
+      request<SessionDeleteResponse>(
+        token,
+        `/api/sessions/${encodeURIComponent(sessionId)}`,
+        { method: "DELETE" },
+      ),
+    prompt: (body: PromptRequest) =>
+      post<{ accepted: boolean }>(token, "/api/prompt", body),
+    abort: (sessionId: string) =>
+      post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
-      post<unknown>(token, "/api/control/model", { sessionId, provider, modelId }),
+      post<unknown>(token, "/api/control/model", {
+        sessionId,
+        provider,
+        modelId,
+      }),
     setThinkingLevel: (sessionId: string, level: string) =>
-      post<{ ok: boolean }>(token, "/api/control/thinking", { sessionId, level }),
+      post<{ ok: boolean }>(token, "/api/control/thinking", {
+        sessionId,
+        level,
+      }),
     uploadAttachments: (files: File[]) => uploadFiles(token, files),
     deleteAttachment: (id: string) =>
-      request<{ ok: boolean }>(token, `/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      request<{ ok: boolean }>(
+        token,
+        `/api/attachments/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
     searchFiles: (sessionId: string, query: string, limit = 50) =>
       request<{ files: ProjectFileResult[] }>(
         token,
@@ -217,29 +282,74 @@ export function createApi(token: string | null = null) {
         `/api/git/status?sessionId=${encodeURIComponent(sessionId)}`,
         { signal },
       ),
-    gitDiff: (sessionId: string, pathId: string, side: GitDiffSide, signal?: AbortSignal) =>
-      post<GitDiffResponse>(token, "/api/git/diff", { sessionId, pathId, side }, { signal }),
+    gitDiff: (
+      sessionId: string,
+      pathId: string,
+      side: GitDiffSide,
+      signal?: AbortSignal,
+    ) =>
+      post<GitDiffResponse>(
+        token,
+        "/api/git/diff",
+        { sessionId, pathId, side },
+        { signal },
+      ),
     browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
     browseHostDirs: (path?: string) =>
-      request<HostDirListing>(token, path ? `/api/host/dirs?path=${encodeURIComponent(path)}` : "/api/host/dirs"),
+      request<HostDirListing>(
+        token,
+        path
+          ? `/api/host/dirs?path=${encodeURIComponent(path)}`
+          : "/api/host/dirs",
+      ),
     listResources: (
       sessionId: string,
       options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
-    ) => post<SessionResourceListResponse>(token, "/api/resources/list", {
-      sessionId,
-      ...(options.cursor ? { cursor: options.cursor } : {}),
-      ...(options.limit ? { limit: options.limit } : {}),
-    }, { signal: options.signal }),
-    probeResources: (sessionId: string, references: string[], signal?: AbortSignal) =>
-      post<ResourceProbeResponse>(token, "/api/resources/probe", { sessionId, references }, { signal }),
-    resolveResource: (sessionId: string, reference: string, signal?: AbortSignal) =>
-      post<ResourceDescriptor>(token, "/api/resources/resolve", { sessionId, reference }, { signal }),
-    resourceContent: (id: string, sessionId: string, options?: ResourceContentOptions) =>
-      fetchResourceContent(token, id, sessionId, options),
+    ) =>
+      post<SessionResourceListResponse>(
+        token,
+        "/api/resources/list",
+        {
+          sessionId,
+          ...(options.cursor ? { cursor: options.cursor } : {}),
+          ...(options.limit ? { limit: options.limit } : {}),
+        },
+        { signal: options.signal },
+      ),
+    probeResources: (
+      sessionId: string,
+      references: string[],
+      signal?: AbortSignal,
+    ) =>
+      post<ResourceProbeResponse>(
+        token,
+        "/api/resources/probe",
+        { sessionId, references },
+        { signal },
+      ),
+    resolveResource: (
+      sessionId: string,
+      reference: string,
+      signal?: AbortSignal,
+    ) =>
+      post<ResourceDescriptor>(
+        token,
+        "/api/resources/resolve",
+        { sessionId, reference },
+        { signal },
+      ),
+    resourceContent: (
+      id: string,
+      sessionId: string,
+      options?: ResourceContentOptions,
+    ) => fetchResourceContent(token, id, sessionId, options),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
     savePreferences: (patch: Partial<InspirePreferences>) =>
-      request<InspirePreferences>(token, "/api/preferences", { method: "PATCH", body: JSON.stringify(patch) }),
+      request<InspirePreferences>(token, "/api/preferences", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
   };
 }
 

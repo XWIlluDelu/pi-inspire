@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
 import { parseCompactCommand } from "../shared/commands.js";
-import { messageFallbackCorrelation, structuralMessageIdentity } from "../shared/message-identity.js";
+import {
+  messageFallbackCorrelation,
+  structuralMessageIdentity,
+} from "../shared/message-identity.js";
 import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
@@ -38,17 +41,33 @@ import {
   type SessionRuntimeStatus,
 } from "../shared/contracts.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { addAttachmentContext, AttachmentStore, resolveProjectFiles } from "./attachments.js";
+import {
+  addAttachmentContext,
+  AttachmentStore,
+  resolveProjectFiles,
+} from "./attachments.js";
 import { nullDiagnosticLogger, type DiagnosticLogger } from "./diagnostics.js";
-import { isPiRpcOutcomeUnknown, MAX_RPC_LINE_BYTES, PiRpcOutcomeUnknownError, PiRpcProcess, type PiRpcOptions } from "./pi-rpc.js";
+import {
+  isPiRpcOutcomeUnknown,
+  MAX_RPC_LINE_BYTES,
+  PiRpcOutcomeUnknownError,
+  PiRpcProcess,
+  type PiRpcOptions,
+} from "./pi-rpc.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
-import { deleteSessionFile, type DeleteSessionRecord } from "./session-delete.js";
-import { loadSessionPreview, type ActiveSessionSnapshot } from "./session-preview.js";
+import {
+  deleteSessionFile,
+  type DeleteSessionRecord,
+} from "./session-delete.js";
+import {
+  loadSessionPreview,
+  type ActiveSessionSnapshot,
+} from "./session-preview.js";
+import { PreviewProjection } from "./preview-projection.js";
 import {
   boundedTranscriptValue,
   SessionProjection,
   TRANSIENT_OVERLAY_MAX_BYTES,
-  type InitialMaterializationAttestation,
   type ProjectionReconcileResult,
   type SessionProjectionView,
 } from "./session-projection.js";
@@ -59,34 +78,46 @@ import { projectSafeValue } from "./safe-projection.js";
 const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
 const BRANCH_BRIDGE_TIMEOUT_MS = 15_000;
-const BRANCH_EXTENSION_PATH = fileURLToPath(new URL(
-  fileURLToPath(import.meta.url).endsWith(".ts")
-    ? "./extensions/inspire-branch-bridge.ts"
-    : "./extensions/inspire-branch-bridge.js",
-  import.meta.url,
-));
+const BRANCH_EXTENSION_PATH = fileURLToPath(
+  new URL(
+    fileURLToPath(import.meta.url).endsWith(".ts")
+      ? "./extensions/inspire-branch-bridge.ts"
+      : "./extensions/inspire-branch-bridge.js",
+    import.meta.url,
+  ),
+);
 const MAX_PROMPT_CHARS = 500_000;
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
 const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
-const FORK_BUFFER_OVERFLOW_ERROR = "Fork event buffer exceeded its bound; the worker was stopped";
-export const PI_STARTUP_RESPONSE_UI_ERROR = "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
+const FORK_BUFFER_OVERFLOW_ERROR =
+  "Fork event buffer exceeded its bound; the worker was stopped";
+export const PI_STARTUP_RESPONSE_UI_ERROR =
+  "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 /** Keep a small warm cache, but never stop selected, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
 export const MAX_IDLE_WORKERS = 3;
 
 export function safeProjection(value: unknown): unknown {
-  return projectSafeValue(value, { depth: 20, stringChars: 250_000, arrayItems: 10_000 });
+  return projectSafeValue(value, {
+    depth: 20,
+    stringChars: 250_000,
+    arrayItems: 10_000,
+  });
 }
 
 /** Full child diagnostics remain host-only; browser errors use safe messages
  * emitted separately by the runtime. */
 function consoleRuntimeError(sessionId: string, error: unknown): void {
   const detail = (error as { detail?: unknown } | null)?.detail;
-  console.error(`[pi ${sessionId}]`, error, ...(typeof detail === "string" ? [detail] : []));
+  console.error(
+    `[pi ${sessionId}]`,
+    error,
+    ...(typeof detail === "string" ? [detail] : []),
+  );
 }
 
 export interface RuntimeLike {
@@ -100,18 +131,27 @@ export interface RuntimeLike {
   sessionCwd(sessionId: string): string | null;
   openSession(id: string): Promise<ActiveSnapshot>;
   deselectSession(): Promise<ActiveSnapshot>;
-  newSession(cwdInput: string, options?: NewSessionOptions): Promise<ActiveSnapshot>;
+  newSession(
+    cwdInput: string,
+    options?: NewSessionOptions,
+  ): Promise<ActiveSnapshot>;
   deleteSession(sessionId: string): Promise<SessionDeleteResponse>;
   prompt(request: PromptRequest): Promise<void>;
   abort(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
-  setModel(sessionId: string, provider: string, modelId: string): Promise<unknown>;
+  setModel(
+    sessionId: string,
+    provider: string,
+    modelId: string,
+  ): Promise<unknown>;
   setThinkingLevel(sessionId: string, level: string): Promise<void>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(): Promise<ActiveSnapshot>;
   transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage>;
   branchTree(sessionId: string): Promise<BranchTreeResponse>;
-  navigateBranch(request: BranchNavigateRequest): Promise<BranchNavigateResponse>;
+  navigateBranch(
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse>;
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
   close(): Promise<void>;
@@ -126,24 +166,40 @@ interface RpcEntryChain {
 
 function parseRpcEntryChain(
   value: unknown,
-  options: { expectedParentId: string | null; maxEntries: number; maxBytes: number; label: string },
+  options: {
+    expectedParentId: string | null;
+    maxEntries: number;
+    maxBytes: number;
+    label: string;
+  },
 ): RpcEntryChain {
-  const invalid = (detail: string): Error => new Error(`Pi reported ${detail} ${options.label} entries`);
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("invalid");
-  if (Buffer.byteLength(JSON.stringify(value)) > options.maxBytes) throw invalid("oversized");
+  const invalid = (detail: string): Error =>
+    new Error(`Pi reported ${detail} ${options.label} entries`);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw invalid("invalid");
+  if (Buffer.byteLength(JSON.stringify(value)) > options.maxBytes)
+    throw invalid("oversized");
   const response = value as Record<string, unknown>;
-  if (!Array.isArray(response.entries) || response.entries.length > options.maxEntries) throw invalid("invalid");
+  if (
+    !Array.isArray(response.entries) ||
+    response.entries.length > options.maxEntries
+  )
+    throw invalid("invalid");
   const entries: SessionEntry[] = [];
   let expectedParentId = options.expectedParentId;
   for (const value of response.entries) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("invalid");
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw invalid("invalid");
     const entry = value as Record<string, unknown>;
     if (
       typeof entry.type !== "string" ||
-      typeof entry.id !== "string" || entry.id.length === 0 || entry.id.length > 200 ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      entry.id.length > 200 ||
       entry.parentId !== expectedParentId ||
       !isCanonicalIsoTimestamp(entry.timestamp)
-    ) throw invalid("non-contiguous");
+    )
+      throw invalid("non-contiguous");
     entries.push(entry as unknown as SessionEntry);
     expectedParentId = entry.id;
   }
@@ -175,7 +231,9 @@ function deferredExpectation(): PersistenceExpectation {
   const expectation: PersistenceExpectation = {
     token: Symbol("persistence-expectation"),
     matcher: null,
-    ready: new Promise<void>((resolveReady) => { settleReady = resolveReady; }),
+    ready: new Promise<void>((resolveReady) => {
+      settleReady = resolveReady;
+    }),
     settle(matcher) {
       if (settled) return;
       settled = true;
@@ -189,7 +247,8 @@ function deferredExpectation(): PersistenceExpectation {
 function persistenceMessageKey(message: unknown): string | null {
   if (!message || typeof message !== "object") return null;
   const record = message as Record<string, unknown>;
-  if (record.role === "custom" && typeof record.customType === "string") return `custom:${record.customType}`;
+  if (record.role === "custom" && typeof record.customType === "string")
+    return `custom:${record.customType}`;
   const correlation = messageFallbackCorrelation(message);
   return correlation ? `message:${correlation}` : null;
 }
@@ -214,42 +273,71 @@ function entryDescriptor(entry: SessionEntry): Record<string, unknown> {
 
 function exactEntryExpectation(entry: SessionEntry): PersistenceExpectation {
   const expected = structuredClone(entry);
-  return knownExpectation((candidate) => samePersistedJson(candidate, expected));
+  return knownExpectation((candidate) =>
+    samePersistedJson(candidate, expected),
+  );
 }
 
 function eventSessionEntry(value: unknown): SessionEntry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const entry = value as Record<string, unknown>;
   if (
-    typeof entry.type !== "string" || typeof entry.id !== "string" || entry.id.length === 0 || entry.id.length > 200 ||
-    (entry.parentId !== null && typeof entry.parentId !== "string") || !isCanonicalIsoTimestamp(entry.timestamp)
-  ) return null;
+    typeof entry.type !== "string" ||
+    typeof entry.id !== "string" ||
+    entry.id.length === 0 ||
+    entry.id.length > 200 ||
+    (entry.parentId !== null && typeof entry.parentId !== "string") ||
+    !isCanonicalIsoTimestamp(entry.timestamp)
+  )
+    return null;
   try {
-    if (Buffer.byteLength(JSON.stringify(entry)) > MAX_RPC_LINE_BYTES) return null;
+    if (Buffer.byteLength(JSON.stringify(entry)) > MAX_RPC_LINE_BYTES)
+      return null;
   } catch {
     return null;
   }
   return structuredClone(entry) as unknown as SessionEntry;
 }
 
-function customMessageEntryMatches(message: unknown, entry: SessionEntry): boolean {
-  if (!message || typeof message !== "object" || Array.isArray(message) || entry.type !== "custom_message") return false;
+function customMessageEntryMatches(
+  message: unknown,
+  entry: SessionEntry,
+): boolean {
+  if (
+    !message ||
+    typeof message !== "object" ||
+    Array.isArray(message) ||
+    entry.type !== "custom_message"
+  )
+    return false;
   const record = message as Record<string, unknown>;
-  return record.role === "custom" &&
+  return (
+    record.role === "custom" &&
     entry.customType === record.customType &&
     samePersistedJson(entry.content ?? [], record.content ?? []) &&
     entry.display === record.display &&
-    samePersistedJson(entry.details, record.details);
+    samePersistedJson(entry.details, record.details)
+  );
 }
 
 function messageExpectation(message: unknown): PersistenceExpectation | null {
   if (!message || typeof message !== "object") return null;
   const record = message as Record<string, unknown>;
   if (record.role === "custom") {
-    return knownExpectation((entry) => customMessageEntryMatches(message, entry));
+    return knownExpectation((entry) =>
+      customMessageEntryMatches(message, entry),
+    );
   }
-  if (record.role !== "user" && record.role !== "assistant" && record.role !== "toolResult") return null;
-  return knownExpectation((entry) => entry.type === "message" && samePersistedJson(entry.message, record));
+  if (
+    record.role !== "user" &&
+    record.role !== "assistant" &&
+    record.role !== "toolResult"
+  )
+    return null;
+  return knownExpectation(
+    (entry) =>
+      entry.type === "message" && samePersistedJson(entry.message, record),
+  );
 }
 
 function compactionMatcher(result: unknown): PersistenceMatcher | null {
@@ -259,73 +347,15 @@ function compactionMatcher(result: unknown): PersistenceMatcher | null {
     typeof expected.summary !== "string" ||
     typeof expected.firstKeptEntryId !== "string" ||
     typeof expected.tokensBefore !== "number"
-  ) return null;
-  return (entry) => entry.type === "compaction" &&
+  )
+    return null;
+  return (entry) =>
+    entry.type === "compaction" &&
     entry.summary === expected.summary &&
     entry.firstKeptEntryId === expected.firstKeptEntryId &&
     entry.tokensBefore === expected.tokensBefore &&
     samePersistedJson(entry.details, expected.details) &&
     samePersistedJson(entry.usage, expected.usage);
-}
-
-class PreviewProjection extends EventEmitter implements SessionProjectionView {
-  readonly path: string;
-  readonly revision = 1;
-  readonly fingerprint = "preview";
-  readonly health = { status: "ok" as const };
-  readonly leafId = null;
-  readonly tailEntryId = null;
-  readonly sourceIdentity = "preview";
-  readonly sourceVersion = "preview";
-  readonly committedBytes = 0;
-  readonly uncommittedBytes = 0;
-  readonly uncommittedFingerprint = null;
-
-  constructor(readonly sessionId: string, private readonly preview: ActiveSessionSnapshot) {
-    super();
-    this.path = preview.sessionFile ?? "";
-  }
-
-  get messages(): readonly unknown[] { return this.preview.messages; }
-  get model(): unknown { return this.preview.model; }
-  get thinkingLevel(): string { return this.preview.thinkingLevel; }
-  attestInitialMaterialization(_cwd: string, _workerEntries: readonly SessionEntry[]): InitialMaterializationAttestation { return "mismatch"; }
-  hasActiveEntryType(_type: string): boolean { return false; }
-  async suspendReconciliation(): Promise<void> {}
-  resumeReconciliation(): void {}
-
-  latestPage(overlay: readonly unknown[] = [], _effectiveLeafId?: string | null, viewId = "preview"): TranscriptPage {
-    const messages = [...this.preview.messages, ...overlay].map((value) => boundedTranscriptValue(value));
-    return { sessionId: this.sessionId, revision: this.revision, viewId, messages, hasOlder: false, olderCursor: null };
-  }
-
-  page(_cursor: string, _effectiveLeafId?: string | null, _viewId?: string): TranscriptPage {
-    throw Object.assign(new Error("This transcript has no older page"), { status: 409 });
-  }
-
-  branchTree(): BranchTreeResponse {
-    throw Object.assign(new Error("Branch history is unavailable for this preview"), { status: 503 });
-  }
-
-  entry(_id: string): SessionEntry | null { return null; }
-
-  userText(_id: string, _maxChars: number): string {
-    throw Object.assign(new Error("Branch history is unavailable for this preview"), { status: 503 });
-  }
-
-  viewMessages(): readonly unknown[] { return this.preview.messages; }
-
-  async reconcile(_force = false): Promise<ProjectionReconcileResult> {
-    return {
-      changed: false, initialMaterialization: false, kind: "none", messageChange: "none", previousRevision: 1, revision: 1,
-      previousFingerprint: this.fingerprint, fingerprint: this.fingerprint, healthChanged: false,
-      sourceChanged: false, previousSourceVersion: this.sourceVersion, sourceVersion: this.sourceVersion,
-      uncommittedBytes: 0, previousUncommittedBytes: 0, previousTailVerified: true,
-    };
-  }
-  reconcileSuspended(force = false): Promise<ProjectionReconcileResult> { return this.reconcile(force); }
-
-  async close(): Promise<void> { this.removeAllListeners(); }
 }
 
 type PersistenceMatcher = (entry: SessionEntry) => boolean;
@@ -412,13 +442,18 @@ function newBridgeIdentity(): BranchBridgeIdentity {
 function parseBridgeResult(text: unknown): BranchBridgeResult {
   let value: Record<string, unknown>;
   try {
-    const decoded = decodeBranchBridgeJson(text, BRANCH_BRIDGE_MAX_RESULT_BYTES);
-    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("not an object");
+    const decoded = decodeBranchBridgeJson(
+      text,
+      BRANCH_BRIDGE_MAX_RESULT_BYTES,
+    );
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded))
+      throw new Error("not an object");
     value = decoded as Record<string, unknown>;
   } catch {
     throw new Error("Malformed branch bridge result");
   }
-  const leaf = (candidate: unknown) => candidate === null || typeof candidate === "string";
+  const leaf = (candidate: unknown) =>
+    candidate === null || typeof candidate === "string";
   if (
     value.v !== BRANCH_BRIDGE_VERSION ||
     typeof value.nonce !== "string" ||
@@ -426,10 +461,26 @@ function parseBridgeResult(text: unknown): BranchBridgeResult {
     typeof value.sessionId !== "string" ||
     typeof value.ok !== "boolean" ||
     typeof value.cancelled !== "boolean" ||
-    !leaf(value.beforeLeaf) || !leaf(value.effectiveLeaf) ||
-    (value.error !== undefined && (typeof value.error !== "string" || value.error.length > 300)) ||
-    Object.keys(value).some((key) => !["v", "nonce", "workerId", "sessionId", "ok", "cancelled", "beforeLeaf", "effectiveLeaf", "error"].includes(key))
-  ) throw new Error("Malformed branch bridge result");
+    !leaf(value.beforeLeaf) ||
+    !leaf(value.effectiveLeaf) ||
+    (value.error !== undefined &&
+      (typeof value.error !== "string" || value.error.length > 300)) ||
+    Object.keys(value).some(
+      (key) =>
+        ![
+          "v",
+          "nonce",
+          "workerId",
+          "sessionId",
+          "ok",
+          "cancelled",
+          "beforeLeaf",
+          "effectiveLeaf",
+          "error",
+        ].includes(key),
+    )
+  )
+    throw new Error("Malformed branch bridge result");
   return value as unknown as BranchBridgeResult;
 }
 
@@ -554,7 +605,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private workerMaintenanceRequested = false;
   private readonly processOwners = new WeakMap<PiRpcProcess, RuntimeSlot>();
   private readonly attachedProcesses = new WeakSet<PiRpcProcess>();
-  private readonly provisionalSlots = new Map<string, { slot: RuntimeSlot; completion: Promise<void> }>();
+  private readonly provisionalSlots = new Map<
+    string,
+    { slot: RuntimeSlot; completion: Promise<void> }
+  >();
   /** A deletion reservation blocks every new operation addressed to the same
    * identity from the moment the request is accepted until the file outcome
    * is known. Concurrent duplicate DELETEs share the same result. */
@@ -565,10 +619,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   constructor(
     private readonly catalog: SessionCatalogLike,
     private readonly attachments: AttachmentStore,
-    private readonly createProcess: (options: PiRpcOptions) => PiRpcProcess = (options) => new PiRpcProcess(options),
-    private readonly loadPreview: (session: SessionRecord) => Promise<ActiveSessionSnapshot> = loadSessionPreview,
+    private readonly createProcess: (options: PiRpcOptions) => PiRpcProcess = (
+      options,
+    ) => new PiRpcProcess(options),
+    private readonly loadPreview: (
+      session: SessionRecord,
+    ) => Promise<ActiveSessionSnapshot> = loadSessionPreview,
     private readonly branchBridgeTimeoutMs = BRANCH_BRIDGE_TIMEOUT_MS,
-    private readonly openForkProjection: (session: SessionRecord) => Promise<SessionProjectionView> = SessionProjection.open,
+    private readonly openForkProjection: (
+      session: SessionRecord,
+    ) => Promise<SessionProjectionView> = SessionProjection.open,
     private readonly deleteSessionRecord: DeleteSessionRecord = deleteSessionFile,
     private readonly diagnostics: DiagnosticLogger = nullDiagnosticLogger(),
   ) {
@@ -584,12 +644,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private selectedSlot(): RuntimeSlot | null {
-    return this.selectedSessionId ? (this.slots.get(this.selectedSessionId) ?? null) : null;
+    return this.selectedSessionId
+      ? (this.slots.get(this.selectedSessionId) ?? null)
+      : null;
   }
 
-  private logRuntimeError(sessionId: string, error: unknown, event = "runtime_error"): void {
-    const record = error && typeof error === "object" ? error as { name?: unknown; code?: unknown } : {};
-    const slot = this.slots.get(sessionId) ?? this.provisionalSlots.get(sessionId)?.slot;
+  private logRuntimeError(
+    sessionId: string,
+    error: unknown,
+    event = "runtime_error",
+  ): void {
+    const record =
+      error && typeof error === "object"
+        ? (error as { name?: unknown; code?: unknown })
+        : {};
+    const slot =
+      this.slots.get(sessionId) ?? this.provisionalSlots.get(sessionId)?.slot;
     this.diagnostics.record("error", event, {
       sessionId,
       slotIncarnation: slot?.incarnationId,
@@ -601,12 +671,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     consoleRuntimeError(sessionId, error);
   }
 
-  private workerOptions(cwd: string, args: string[], bridge: BranchBridgeIdentity): PiRpcOptions {
+  private workerOptions(
+    cwd: string,
+    args: string[],
+    bridge: BranchBridgeIdentity,
+  ): PiRpcOptions {
     return {
       cwd,
       args: [...args, "--extension", BRANCH_EXTENSION_PATH],
       workerId: bridge.workerId,
-      diagnostic: (level, event, fields) => this.diagnostics.record(level, event, fields),
+      diagnostic: (level, event, fields) =>
+        this.diagnostics.record(level, event, fields),
       env: {
         INSPIRE_BRANCH_COMMAND: bridge.command,
         INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
@@ -616,7 +691,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private effectiveLeaf(slot: RuntimeSlot): string | null {
-    return slot.navigationLease?.effectiveLeafId ?? slot.projection?.leafId ?? null;
+    return (
+      slot.navigationLease?.effectiveLeafId ?? slot.projection?.leafId ?? null
+    );
   }
 
   private renewView(slot: RuntimeSlot): void {
@@ -626,10 +703,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private reserveForkDestination(id: string, path: string): ForkReservation {
     if (
-      this.forkReservationsById.has(id) || this.forkReservationsByPath.has(path) ||
-      this.loadingSlots.has(id) || this.loadingPaths.has(path)
+      this.forkReservationsById.has(id) ||
+      this.forkReservationsByPath.has(path) ||
+      this.loadingSlots.has(id) ||
+      this.loadingPaths.has(path)
     ) {
-      throw Object.assign(new Error("Fork destination is already being attached"), { status: 409 });
+      throw Object.assign(
+        new Error("Fork destination is already being attached"),
+        { status: 409 },
+      );
     }
     let settle!: () => void;
     let released = false;
@@ -637,12 +719,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       token: Symbol("fork-reservation"),
       id,
       path,
-      completion: new Promise<void>((resolveCompletion) => { settle = resolveCompletion; }),
+      completion: new Promise<void>((resolveCompletion) => {
+        settle = resolveCompletion;
+      }),
       release: () => {
         if (released) return;
         released = true;
-        if (this.forkReservationsById.get(id) === reservation) this.forkReservationsById.delete(id);
-        if (this.forkReservationsByPath.get(path) === reservation) this.forkReservationsByPath.delete(path);
+        if (this.forkReservationsById.get(id) === reservation)
+          this.forkReservationsById.delete(id);
+        if (this.forkReservationsByPath.get(path) === reservation)
+          this.forkReservationsByPath.delete(path);
         settle();
       },
     };
@@ -654,7 +740,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async waitForForkReservation(session: SessionRecord): Promise<void> {
     const path = resolve(session.path);
     while (true) {
-      const reservation = this.forkReservationsById.get(session.id) ?? this.forkReservationsByPath.get(path);
+      const reservation =
+        this.forkReservationsById.get(session.id) ??
+        this.forkReservationsByPath.get(path);
       if (!reservation) return;
       await reservation.completion;
     }
@@ -665,7 +753,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   /** Protect an RPC operation from idle-worker reclamation. */
-  private async useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T> {
+  private async useSlot<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     slot.activeOperations += 1;
     this.touch(slot);
     try {
@@ -677,9 +768,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   /** One FIFO gate owns worker startup and every persistence-capable command. */
-  private mutateSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T> {
+  private mutateSlot<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     const guarded = () => {
-      if (this.closing) throw Object.assign(new Error("Runtime is closing"), { status: 503 });
+      if (this.closing)
+        throw Object.assign(new Error("Runtime is closing"), { status: 503 });
       return operation();
     };
     slot.activeOperations += 1;
@@ -687,11 +782,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.touch(slot);
     let run: Promise<T>;
     if (slot.mutationPending === 1) {
-      try { run = Promise.resolve(guarded()); } catch (error) { run = Promise.reject(error); }
+      try {
+        run = Promise.resolve(guarded());
+      } catch (error) {
+        run = Promise.reject(error);
+      }
     } else {
       run = slot.mutationTail.then(guarded, guarded);
     }
-    slot.mutationTail = run.then(() => undefined, () => undefined);
+    slot.mutationTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run.finally(() => {
       slot.activeOperations -= 1;
       slot.mutationPending -= 1;
@@ -702,9 +804,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   /** Extension responses are non-persisting and must be deliverable while a
    * branch mutation is waiting on an extension hook. This independent FIFO is
    * process-instance validated and protects the worker from reclamation. */
-  private extensionResponseSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T> {
+  private extensionResponseSlot<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     const guarded = () => {
-      if (this.closing) throw Object.assign(new Error("Runtime is closing"), { status: 503 });
+      if (this.closing)
+        throw Object.assign(new Error("Runtime is closing"), { status: 503 });
       return operation();
     };
     slot.activeOperations += 1;
@@ -712,18 +818,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.touch(slot);
     let run: Promise<T>;
     if (slot.extensionResponsePending === 1) {
-      try { run = Promise.resolve(guarded()); } catch (error) { run = Promise.reject(error); }
+      try {
+        run = Promise.resolve(guarded());
+      } catch (error) {
+        run = Promise.reject(error);
+      }
     } else {
       run = slot.extensionResponseTail.then(guarded, guarded);
     }
-    slot.extensionResponseTail = run.then(() => undefined, () => undefined);
+    slot.extensionResponseTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run.finally(() => {
       slot.activeOperations -= 1;
       slot.extensionResponsePending -= 1;
       this.scheduleIdleWorkerEviction();
     });
   }
-
 
   private overlayIdentity(value: unknown): string | null {
     if (!value || typeof value !== "object") return null;
@@ -732,41 +844,76 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private projectionHasEntry(slot: RuntimeSlot, entryId: string): boolean {
-    return (slot.projection?.messages ?? []).some((message) =>
-      message && typeof message === "object" && !Array.isArray(message) &&
-      (message as Record<string, unknown>).__inspireEntryId === entryId);
+    return (slot.projection?.messages ?? []).some(
+      (message) =>
+        message &&
+        typeof message === "object" &&
+        !Array.isArray(message) &&
+        (message as Record<string, unknown>).__inspireEntryId === entryId,
+    );
   }
 
-  private rememberCustomActivityOwner(slot: RuntimeSlot, entryId: string, activityId: string): boolean {
+  private rememberCustomActivityOwner(
+    slot: RuntimeSlot,
+    entryId: string,
+    activityId: string,
+  ): boolean {
     const ownership = slot.customActivities;
     const ownedActivity = ownership.activityIdByEntryId.get(entryId);
     const ownedEntry = ownership.entryIdByActivityId.get(activityId);
-    if ((ownedActivity && ownedActivity !== activityId) || (ownedEntry && ownedEntry !== entryId)) return false;
+    if (
+      (ownedActivity && ownedActivity !== activityId) ||
+      (ownedEntry && ownedEntry !== entryId)
+    )
+      return false;
     ownership.activityIdByEntryId.set(entryId, activityId);
     ownership.entryIdByActivityId.set(activityId, entryId);
-    ownership.pendingEntries = ownership.pendingEntries.filter((entry) => entry.id !== entryId);
-    ownership.pendingMessageActivityIds = ownership.pendingMessageActivityIds.filter((pending) => pending !== activityId);
+    ownership.pendingEntries = ownership.pendingEntries.filter(
+      (entry) => entry.id !== entryId,
+    );
+    ownership.pendingMessageActivityIds =
+      ownership.pendingMessageActivityIds.filter(
+        (pending) => pending !== activityId,
+      );
     while (ownership.activityIdByEntryId.size > CUSTOM_ACTIVITY_OWNERSHIP_MAX) {
-      const oldestEntryId = ownership.activityIdByEntryId.keys().next().value as string | undefined;
+      const oldestEntryId = ownership.activityIdByEntryId.keys().next().value as
+        | string
+        | undefined;
       if (!oldestEntryId) break;
       const oldestActivityId = ownership.activityIdByEntryId.get(oldestEntryId);
       ownership.activityIdByEntryId.delete(oldestEntryId);
-      if (oldestActivityId) ownership.entryIdByActivityId.delete(oldestActivityId);
+      if (oldestActivityId)
+        ownership.entryIdByActivityId.delete(oldestActivityId);
     }
     return true;
   }
 
-  private claimCustomActivityEntry(slot: RuntimeSlot, entry: SessionEntry): void {
-    if (entry.type !== "custom_message" || slot.customActivities.activityIdByEntryId.has(entry.id)) return;
+  private claimCustomActivityEntry(
+    slot: RuntimeSlot,
+    entry: SessionEntry,
+  ): void {
+    if (
+      entry.type !== "custom_message" ||
+      slot.customActivities.activityIdByEntryId.has(entry.id)
+    )
+      return;
     const ownership = slot.customActivities;
-    const pendingIndex = ownership.pendingMessageActivityIds.findIndex((activityId) => {
-      const pending = slot.overlay.find((item) => this.overlayIdentity(item) === activityId);
-      return pending !== undefined && customMessageEntryMatches(pending, entry);
-    });
+    const pendingIndex = ownership.pendingMessageActivityIds.findIndex(
+      (activityId) => {
+        const pending = slot.overlay.find(
+          (item) => this.overlayIdentity(item) === activityId,
+        );
+        return (
+          pending !== undefined && customMessageEntryMatches(pending, entry)
+        );
+      },
+    );
     if (pendingIndex >= 0) {
       const activityId = ownership.pendingMessageActivityIds[pendingIndex]!;
       this.rememberCustomActivityOwner(slot, entry.id, activityId);
-      const overlayIndex = slot.overlay.findIndex((item) => this.overlayIdentity(item) === activityId);
+      const overlayIndex = slot.overlay.findIndex(
+        (item) => this.overlayIdentity(item) === activityId,
+      );
       if (overlayIndex >= 0) {
         const overlay = slot.overlay[overlayIndex];
         if (overlay && typeof overlay === "object" && !Array.isArray(overlay)) {
@@ -779,17 +926,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       return;
     }
-    if (!ownership.pendingEntries.some((candidate) => candidate.id === entry.id)) {
+    if (
+      !ownership.pendingEntries.some((candidate) => candidate.id === entry.id)
+    ) {
       ownership.pendingEntries.push(structuredClone(entry));
-      if (ownership.pendingEntries.length > CUSTOM_ACTIVITY_OWNERSHIP_MAX) ownership.pendingEntries.shift();
+      if (ownership.pendingEntries.length > CUSTOM_ACTIVITY_OWNERSHIP_MAX)
+        ownership.pendingEntries.shift();
     }
   }
 
-  private claimCustomActivityMessage(slot: RuntimeSlot, message: unknown, activityId: string): string | null {
+  private claimCustomActivityMessage(
+    slot: RuntimeSlot,
+    message: unknown,
+    activityId: string,
+  ): string | null {
     const ownership = slot.customActivities;
     const linkedEntryId = ownership.entryIdByActivityId.get(activityId);
     if (linkedEntryId) return linkedEntryId;
-    const entryIndex = ownership.pendingEntries.findIndex((entry) => customMessageEntryMatches(message, entry));
+    const entryIndex = ownership.pendingEntries.findIndex((entry) =>
+      customMessageEntryMatches(message, entry),
+    );
     if (entryIndex >= 0) {
       const entry = ownership.pendingEntries[entryIndex]!;
       this.rememberCustomActivityOwner(slot, entry.id, activityId);
@@ -797,44 +953,70 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
     if (!ownership.pendingMessageActivityIds.includes(activityId)) {
       ownership.pendingMessageActivityIds.push(activityId);
-      if (ownership.pendingMessageActivityIds.length > CUSTOM_ACTIVITY_OWNERSHIP_MAX) {
+      if (
+        ownership.pendingMessageActivityIds.length >
+        CUSTOM_ACTIVITY_OWNERSHIP_MAX
+      ) {
         ownership.pendingMessageActivityIds.shift();
       }
     }
     return null;
   }
 
-  private updateOverlay(slot: RuntimeSlot, message: unknown, phase: "start" | "update" | "end"): unknown {
+  private updateOverlay(
+    slot: RuntimeSlot,
+    message: unknown,
+    phase: "start" | "update" | "end",
+  ): unknown {
     const correlation = messageFallbackCorrelation(message);
-    let liveId = correlation ? slot.activeOverlayIds.get(correlation) : undefined;
+    let liveId = correlation
+      ? slot.activeOverlayIds.get(correlation)
+      : undefined;
     if (!liveId || phase === "start") {
       liveId = `${slot.id}:live:${++slot.nextOverlayId}`;
       if (correlation) slot.activeOverlayIds.set(correlation, liveId);
     }
     const bounded = boundedTranscriptValue(message);
-    const boundedRecord = bounded && typeof bounded === "object" && !Array.isArray(bounded)
-      ? bounded as Record<string, unknown>
-      : null;
-    const customEntryId = boundedRecord?.role === "custom"
-      ? this.claimCustomActivityMessage(slot, bounded, liveId)
-      : null;
+    const boundedRecord =
+      bounded && typeof bounded === "object" && !Array.isArray(bounded)
+        ? (bounded as Record<string, unknown>)
+        : null;
+    const customEntryId =
+      boundedRecord?.role === "custom"
+        ? this.claimCustomActivityMessage(slot, bounded, liveId)
+        : null;
     const projected = boundedRecord
       ? {
           ...boundedRecord,
           __inspireLiveId: liveId,
-          ...(customEntryId ? { __inspireMessageId: `${customEntryId}:0`, __inspireEntryId: customEntryId } : {}),
+          ...(customEntryId
+            ? {
+                __inspireMessageId: `${customEntryId}:0`,
+                __inspireEntryId: customEntryId,
+              }
+            : {}),
           ...(phase === "end" ? { __inspireSettled: true } : {}),
         }
       : bounded;
     const next = [...slot.overlay];
-    const index = next.findIndex((item) => this.overlayIdentity(item) === liveId);
-    const durableEnd = phase === "end" && customEntryId !== null && this.projectionHasEntry(slot, customEntryId);
+    const index = next.findIndex(
+      (item) => this.overlayIdentity(item) === liveId,
+    );
+    const durableEnd =
+      phase === "end" &&
+      customEntryId !== null &&
+      this.projectionHasEntry(slot, customEntryId);
     if (durableEnd) {
       if (index >= 0) next.splice(index, 1);
     } else if (index >= 0) next[index] = projected;
     else next.push(projected);
-    if (phase === "end" && correlation) slot.activeOverlayIds.delete(correlation);
-    while (next.length > 0 && Buffer.byteLength(JSON.stringify(next)) > TRANSIENT_OVERLAY_MAX_BYTES) next.shift();
+    if (phase === "end" && correlation)
+      slot.activeOverlayIds.delete(correlation);
+    while (
+      next.length > 0 &&
+      Buffer.byteLength(JSON.stringify(next)) > TRANSIENT_OVERLAY_MAX_BYTES
+    )
+      next.shift();
     slot.overlay = next;
     slot.overlayBytes = Buffer.byteLength(JSON.stringify(next));
     return projected;
@@ -845,50 +1027,81 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!correlation) return null;
     const liveId = slot.activeOverlayIds.get(correlation);
     if (!liveId) return null;
-    return slot.overlay.find((message) => this.overlayIdentity(message) === liveId) ?? null;
+    return (
+      slot.overlay.find(
+        (message) => this.overlayIdentity(message) === liveId,
+      ) ?? null
+    );
   }
 
-  private activeAssistantSnapshotKey(slot: RuntimeSlot, messages: unknown[]): string | null {
+  private activeAssistantSnapshotKey(
+    slot: RuntimeSlot,
+    messages: unknown[],
+  ): string | null {
     const correlation = slot.activeAssistantCorrelation;
     if (!correlation) return null;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (
-        !message || typeof message !== "object" ||
+        !message ||
+        typeof message !== "object" ||
         (message as Record<string, unknown>).role !== "assistant" ||
         messageFallbackCorrelation(message) !== correlation
-      ) continue;
+      )
+        continue;
       return structuralMessageIdentity(message);
     }
     return null;
   }
 
-  private reconcileOverlay(slot: RuntimeSlot, appendedEntries: readonly SessionEntry[] = []): void {
+  private reconcileOverlay(
+    slot: RuntimeSlot,
+    appendedEntries: readonly SessionEntry[] = [],
+  ): void {
     const persisted = slot.projection?.messages ?? [];
     const remaining = new Map<string, number>();
-    const customCandidates = appendedEntries.filter((entry) => entry.type === "custom_message");
-    const usedCustomEntries = new Set(slot.customActivities.activityIdByEntryId.keys());
+    const customCandidates = appendedEntries.filter(
+      (entry) => entry.type === "custom_message",
+    );
+    const usedCustomEntries = new Set(
+      slot.customActivities.activityIdByEntryId.keys(),
+    );
     for (const item of persisted) {
       const key = messageFallbackCorrelation(item);
       if (key) remaining.set(key, (remaining.get(key) ?? 0) + 1);
     }
     slot.overlay = slot.overlay.filter((item) => {
-      if (item && typeof item === "object" && !Array.isArray(item) && (item as Record<string, unknown>).role === "custom") {
+      if (
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        (item as Record<string, unknown>).role === "custom"
+      ) {
         const activityId = this.overlayIdentity(item);
-        let entryId = activityId ? slot.customActivities.entryIdByActivityId.get(activityId) : undefined;
+        let entryId = activityId
+          ? slot.customActivities.entryIdByActivityId.get(activityId)
+          : undefined;
         if (!entryId) {
-          const candidate = customCandidates.find((entry) =>
-            !usedCustomEntries.has(entry.id) && customMessageEntryMatches(item, entry));
+          const candidate = customCandidates.find(
+            (entry) =>
+              !usedCustomEntries.has(entry.id) &&
+              customMessageEntryMatches(item, entry),
+          );
           if (candidate) {
             entryId = candidate.id;
             usedCustomEntries.add(entryId);
-            if (activityId) this.rememberCustomActivityOwner(slot, entryId, activityId);
+            if (activityId)
+              this.rememberCustomActivityOwner(slot, entryId, activityId);
           }
         }
         // A custom_message entry can exist before Pi emits its synthetic live
         // lifecycle. Keep the active overlay for reconnect snapshots, but once
         // message_end settles it the durable row becomes the sole owner.
-        if (entryId && (item as Record<string, unknown>).__inspireSettled === true) return false;
+        if (
+          entryId &&
+          (item as Record<string, unknown>).__inspireSettled === true
+        )
+          return false;
         return true;
       }
       const key = messageFallbackCorrelation(item);
@@ -900,12 +1113,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.overlayBytes = Buffer.byteLength(JSON.stringify(slot.overlay));
   }
 
-  private consumeAbsorbedPersistenceEntry(slot: RuntimeSlot, entry: SessionEntry): boolean {
+  private consumeAbsorbedPersistenceEntry(
+    slot: RuntimeSlot,
+    entry: SessionEntry,
+  ): boolean {
     const key = persistenceEntryKey(entry);
     if (!key) return false;
     const entries = slot.absorbedPersistenceEntries.get(key);
     if (!entries) return false;
-    const index = entries.findIndex((candidate) => samePersistedJson(candidate, entry));
+    const index = entries.findIndex((candidate) =>
+      samePersistedJson(candidate, entry),
+    );
     if (index < 0) return false;
     entries.splice(index, 1);
     if (entries.length === 0) slot.absorbedPersistenceEntries.delete(key);
@@ -922,13 +1140,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const appendedEntries = result.appendedEntries;
     if (!projection) return { owned: false, reason: "projection-unavailable" };
     if (!rpc) return { owned: false, reason: "worker-unavailable" };
-    if (!Array.isArray(appendedEntries) || result.previousLeafId === undefined) {
+    if (
+      !Array.isArray(appendedEntries) ||
+      result.previousLeafId === undefined
+    ) {
       return { owned: false, reason: "entries-unavailable" };
     }
     try {
-      const response = await rpc.request<Record<string, unknown>>({ type: "get_entries", since: result.previousLeafId });
-      if (slot.process !== rpc) return { owned: false, reason: "worker-unavailable" };
-      const expectedParentId = slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+      const response = await rpc.request<Record<string, unknown>>({
+        type: "get_entries",
+        since: result.previousLeafId,
+      });
+      if (slot.process !== rpc)
+        return { owned: false, reason: "worker-unavailable" };
+      const expectedParentId =
+        slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
       const workerChain = parseRpcEntryChain(response, {
         expectedParentId,
         maxEntries: NEW_SESSION_ENTRY_MAX_COUNT,
@@ -936,7 +1162,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         label: "incremental",
       });
       const workerEntries = workerChain.entries;
-      if (workerEntries.length < appendedEntries.length || workerChain.leafId !== projection.leafId) {
+      if (
+        workerEntries.length < appendedEntries.length ||
+        workerChain.leafId !== projection.leafId
+      ) {
         return { owned: false, reason: "worker-entry-mismatch" };
       }
       for (let index = 0; index < appendedEntries.length; index += 1) {
@@ -945,7 +1174,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         }
       }
       for (const entry of appendedEntries.slice(expectationsConsumed)) {
-        if (entry.type === "custom") this.rememberAbsorbedPersistenceEntry(slot, entry);
+        if (entry.type === "custom")
+          this.rememberAbsorbedPersistenceEntry(slot, entry);
       }
       slot.persistenceExpectations.splice(0, expectationsConsumed);
       if (slot.navigationLease) slot.navigationLease = null;
@@ -955,18 +1185,30 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private async appendedEntriesOwnership(slot: RuntimeSlot, result: ProjectionReconcileResult): Promise<OwnershipDecision> {
+  private async appendedEntriesOwnership(
+    slot: RuntimeSlot,
+    result: ProjectionReconcileResult,
+  ): Promise<OwnershipDecision> {
     const projection = slot.projection;
     const initialMaterialization = result.initialMaterialization;
     if (!projection) return { owned: false, reason: "projection-unavailable" };
     if (result.kind !== "append") return { owned: false, reason: "not-append" };
-    if (!Array.isArray(result.appendedEntries)) return { owned: false, reason: "entries-unavailable" };
-    if (slot.workerProjectionRevision !== result.previousRevision) return { owned: false, reason: "revision-mismatch" };
-    if (slot.workerProjectionFingerprint !== result.previousFingerprint) return { owned: false, reason: "fingerprint-mismatch" };
-    if (!slot.pendingPartialPersistence && slot.workerProjectionSourceVersion !== result.previousSourceVersion) {
+    if (!Array.isArray(result.appendedEntries))
+      return { owned: false, reason: "entries-unavailable" };
+    if (slot.workerProjectionRevision !== result.previousRevision)
+      return { owned: false, reason: "revision-mismatch" };
+    if (slot.workerProjectionFingerprint !== result.previousFingerprint)
+      return { owned: false, reason: "fingerprint-mismatch" };
+    if (
+      !slot.pendingPartialPersistence &&
+      slot.workerProjectionSourceVersion !== result.previousSourceVersion
+    ) {
       return { owned: false, reason: "source-version-mismatch" };
     }
-    if (!initialMaterialization && slot.workerProjectionSourceIdentity !== projection.sourceIdentity) {
+    if (
+      !initialMaterialization &&
+      slot.workerProjectionSourceIdentity !== projection.sourceIdentity
+    ) {
       return { owned: false, reason: "source-identity-mismatch" };
     }
 
@@ -975,7 +1217,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!rpc) return { owned: false, reason: "worker-unavailable" };
       try {
         const workerEntries = await this.readNewSessionEntries(slot, rpc);
-        if (projection.attestInitialMaterialization(slot.cwd, workerEntries) === "mismatch") {
+        if (
+          projection.attestInitialMaterialization(slot.cwd, workerEntries) ===
+          "mismatch"
+        ) {
           return { owned: false, reason: "initial-materialization-mismatch" };
         }
       } catch {
@@ -983,10 +1228,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
     }
 
-    let expectedParent = slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+    let expectedParent =
+      slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
     let expectationsConsumed = 0;
     for (const entry of result.appendedEntries) {
-      if (entry.parentId !== expectedParent) return { owned: false, reason: "parent-mismatch" };
+      if (entry.parentId !== expectedParent)
+        return { owned: false, reason: "parent-mismatch" };
       expectedParent = entry.id;
 
       const expectation = slot.persistenceExpectations[expectationsConsumed];
@@ -1001,9 +1248,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         }
         continue;
       }
-      if (!expectation) return this.workerAppendWitness(slot, result, expectationsConsumed);
+      if (!expectation)
+        return this.workerAppendWitness(slot, result, expectationsConsumed);
       await expectation.ready;
-      if (expectation.matcher?.(entry) !== true) return this.workerAppendWitness(slot, result, expectationsConsumed);
+      if (expectation.matcher?.(entry) !== true)
+        return this.workerAppendWitness(slot, result, expectationsConsumed);
       expectationsConsumed += 1;
     }
 
@@ -1011,7 +1260,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (slot.navigationLease) slot.navigationLease = null;
     return {
       owned: true,
-      source: initialMaterialization ? "initial-materialization" : "expectation",
+      source: initialMaterialization
+        ? "initial-materialization"
+        : "expectation",
       expectationsConsumed,
     };
   }
@@ -1020,7 +1271,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return [...slot.pendingExtensionUiRequests.values()];
   }
 
-  private removePendingExtensionUi(slot: RuntimeSlot, id: string, reason: "answered" | "expired" | "cleared"): boolean {
+  private removePendingExtensionUi(
+    slot: RuntimeSlot,
+    id: string,
+    reason: "answered" | "expired" | "cleared",
+  ): boolean {
     if (!slot.pendingExtensionUiRequests.delete(id)) return false;
     slot.pendingExtensionUiOwners.delete(id);
     const timer = slot.pendingExtensionUiTimers.get(id);
@@ -1031,9 +1286,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
-  private clearPendingExtensionUi(slot: RuntimeSlot, reason: "settled" | "aborted" | "replaced" | "stopped" | "closed"): void {
-    if (slot.pendingExtensionUiRequests.size === 0 && slot.pendingExtensionUiOwners.size === 0 && slot.pendingExtensionUiTimers.size === 0) return;
-    for (const timer of slot.pendingExtensionUiTimers.values()) clearTimeout(timer);
+  private clearPendingExtensionUi(
+    slot: RuntimeSlot,
+    reason: "settled" | "aborted" | "replaced" | "stopped" | "closed",
+  ): void {
+    if (
+      slot.pendingExtensionUiRequests.size === 0 &&
+      slot.pendingExtensionUiOwners.size === 0 &&
+      slot.pendingExtensionUiTimers.size === 0
+    )
+      return;
+    for (const timer of slot.pendingExtensionUiTimers.values())
+      clearTimeout(timer);
     slot.pendingExtensionUiTimers.clear();
     slot.pendingExtensionUiRequests.clear();
     slot.pendingExtensionUiOwners.clear();
@@ -1041,21 +1305,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.scheduleIdleWorkerEviction();
   }
 
-  private scheduleExtensionUiExpiry(slot: RuntimeSlot, request: ExtensionUiRequest): void {
+  private scheduleExtensionUiExpiry(
+    slot: RuntimeSlot,
+    request: ExtensionUiRequest,
+  ): void {
     const previousTimer = slot.pendingExtensionUiTimers.get(request.id);
     if (previousTimer) clearTimeout(previousTimer);
     slot.pendingExtensionUiTimers.delete(request.id);
     if (request.expiresAt === undefined) return;
     const delay = Math.max(0, request.expiresAt - Date.now());
     const timer = setTimeout(() => {
-      if (slot.pendingExtensionUiRequests.get(request.id)?.expiresAt !== request.expiresAt) return;
+      if (
+        slot.pendingExtensionUiRequests.get(request.id)?.expiresAt !==
+        request.expiresAt
+      )
+        return;
       this.removePendingExtensionUi(slot, request.id, "expired");
     }, delay);
     timer.unref?.();
     slot.pendingExtensionUiTimers.set(request.id, timer);
   }
 
-  private addPendingExtensionUi(slot: RuntimeSlot, value: unknown, rpc: PiRpcProcess): ExtensionUiRequest | null {
+  private addPendingExtensionUi(
+    slot: RuntimeSlot,
+    value: unknown,
+    rpc: PiRpcProcess,
+  ): ExtensionUiRequest | null {
     const request = parsePendingExtensionUiRequest(value);
     if (!request) return null;
     slot.pendingExtensionUiRequests.set(request.id, request);
@@ -1064,12 +1339,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return request;
   }
 
-  private rebindPendingExtensionUi(source: RuntimeSlot, destination: RuntimeSlot, rpc: PiRpcProcess): void {
-    for (const timer of source.pendingExtensionUiTimers.values()) clearTimeout(timer);
+  private rebindPendingExtensionUi(
+    source: RuntimeSlot,
+    destination: RuntimeSlot,
+    rpc: PiRpcProcess,
+  ): void {
+    for (const timer of source.pendingExtensionUiTimers.values())
+      clearTimeout(timer);
     source.pendingExtensionUiTimers.clear();
     for (const [id, request] of source.pendingExtensionUiRequests) {
       if (source.pendingExtensionUiOwners.get(id) !== rpc) continue;
-      const rebound = { ...request, sessionId: destination.id } as ExtensionUiRequest;
+      const rebound = {
+        ...request,
+        sessionId: destination.id,
+      } as ExtensionUiRequest;
       destination.pendingExtensionUiRequests.set(id, rebound);
       destination.pendingExtensionUiOwners.set(id, rpc);
       this.scheduleExtensionUiExpiry(destination, rebound);
@@ -1081,17 +1364,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private captureWriterProjectionBaseline(slot: RuntimeSlot): void {
     slot.workerProjectionRevision = slot.projection?.revision ?? null;
     slot.workerProjectionFingerprint = slot.projection?.fingerprint ?? null;
-    slot.workerProjectionSourceIdentity = slot.projection?.sourceIdentity ?? null;
+    slot.workerProjectionSourceIdentity =
+      slot.projection?.sourceIdentity ?? null;
     slot.workerProjectionSourceVersion = slot.projection?.sourceVersion ?? null;
     slot.workerProjectionObservedBytes = slot.projection
       ? slot.projection.committedBytes + slot.projection.uncommittedBytes
       : null;
   }
 
-  private captureWriterProjectionResult(slot: RuntimeSlot, result: ProjectionReconcileResult): void {
+  private captureWriterProjectionResult(
+    slot: RuntimeSlot,
+    result: ProjectionReconcileResult,
+  ): void {
     slot.workerProjectionRevision = result.revision;
     slot.workerProjectionFingerprint = result.fingerprint;
-    slot.workerProjectionSourceIdentity = slot.workerProjectionSourceIdentity ?? slot.projection?.sourceIdentity ?? null;
+    slot.workerProjectionSourceIdentity =
+      slot.workerProjectionSourceIdentity ??
+      slot.projection?.sourceIdentity ??
+      null;
     slot.workerProjectionSourceVersion = result.sourceVersion;
     slot.workerProjectionObservedBytes = slot.projection
       ? slot.projection.committedBytes + slot.projection.uncommittedBytes
@@ -1108,18 +1398,28 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private writerProjectionBaselineMatches(slot: RuntimeSlot): boolean {
-    return Boolean(slot.projection) &&
+    return (
+      Boolean(slot.projection) &&
       slot.workerProjectionRevision === slot.projection?.revision &&
       slot.workerProjectionFingerprint === slot.projection?.fingerprint &&
       slot.workerProjectionSourceIdentity === slot.projection?.sourceIdentity &&
       slot.workerProjectionSourceVersion === slot.projection?.sourceVersion &&
-      slot.workerProjectionObservedBytes === (slot.projection ? slot.projection.committedBytes + slot.projection.uncommittedBytes : null);
+      slot.workerProjectionObservedBytes ===
+        (slot.projection
+          ? slot.projection.committedBytes + slot.projection.uncommittedBytes
+          : null)
+    );
   }
 
   private writerOwnershipActive(slot: RuntimeSlot): boolean {
-    return isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
-      slot.persistenceExpectations.length > 0 || Boolean(slot.pendingPartialPersistence) ||
-      Boolean(slot.navigationLease) || Boolean(slot.pendingBranchBridge);
+    return (
+      isBusyRunState(slot.runState) ||
+      slot.pendingExtensionUiRequests.size > 0 ||
+      slot.persistenceExpectations.length > 0 ||
+      Boolean(slot.pendingPartialPersistence) ||
+      Boolean(slot.navigationLease) ||
+      Boolean(slot.pendingBranchBridge)
+    );
   }
 
   private clearPartialPersistence(slot: RuntimeSlot): void {
@@ -1134,7 +1434,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     message: string,
     diagnosticFields: Record<string, unknown> = {},
   ): ProjectionConflict {
-    const incidentId = slot.conflict?.incidentId ?? `inc_${randomBytes(8).toString("base64url")}`;
+    const incidentId =
+      slot.conflict?.incidentId ??
+      `inc_${randomBytes(8).toString("base64url")}`;
     const conflict = {
       kind,
       message,
@@ -1147,22 +1449,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // kind whenever the slot is in the background. Clear any older completion
     // marker so it cannot reappear after recovery.
     slot.attention = null;
-    this.diagnostics.record(kind === "external-change" ? "warning" : "error", "projection_conflict", {
-      incidentId,
-      sessionId: slot.id,
-      slotIncarnation: slot.incarnationId,
-      workerId: slot.bridge?.workerId,
-      childPid: slot.process?.pid,
-      conflictKind: kind,
-      revision: conflict.revision,
-      runState: slot.runState,
-      selected: this.selectedSessionId === slot.id,
-      sourceIdentity: slot.projection?.sourceIdentity,
-      sourceVersion: slot.projection?.sourceVersion,
-      committedBytes: slot.projection?.committedBytes,
-      uncommittedBytes: slot.projection?.uncommittedBytes,
-      ...diagnosticFields,
-    });
+    this.diagnostics.record(
+      kind === "external-change" ? "warning" : "error",
+      "projection_conflict",
+      {
+        incidentId,
+        sessionId: slot.id,
+        slotIncarnation: slot.incarnationId,
+        workerId: slot.bridge?.workerId,
+        childPid: slot.process?.pid,
+        conflictKind: kind,
+        revision: conflict.revision,
+        runState: slot.runState,
+        selected: this.selectedSessionId === slot.id,
+        sourceIdentity: slot.projection?.sourceIdentity,
+        sourceVersion: slot.projection?.sourceVersion,
+        committedBytes: slot.projection?.committedBytes,
+        uncommittedBytes: slot.projection?.uncommittedBytes,
+        ...diagnosticFields,
+      },
+    );
     return conflict;
   }
 
@@ -1175,17 +1481,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<void> {
     this.clearPartialPersistence(slot);
     const newlyConflicted = !slot.conflict;
-    const conflict = this.setProjectionConflict(slot, kind, message, diagnosticFields);
-    if (emit && newlyConflicted) this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
+    const conflict = this.setProjectionConflict(
+      slot,
+      kind,
+      message,
+      diagnosticFields,
+    );
+    if (emit && newlyConflicted)
+      this.emitSlotEvent(slot, {
+        type: "session_projection_conflict",
+        conflict,
+      });
     return this.stopWriter(slot);
   }
 
   private trackPartialPersistence(slot: RuntimeSlot): void {
     const projection = slot.projection;
-    if (!projection || projection.uncommittedBytes <= 0 || !projection.uncommittedFingerprint) return;
+    if (
+      !projection ||
+      projection.uncommittedBytes <= 0 ||
+      !projection.uncommittedFingerprint
+    )
+      return;
     const prior = slot.pendingPartialPersistence;
     if (prior) clearTimeout(prior.timer);
-    const deadline = prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
+    const deadline =
+      prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
     const lease = {
       committedBytes: projection.committedBytes,
       bytes: projection.uncommittedBytes,
@@ -1196,33 +1517,57 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       deadline,
       timer: undefined as unknown as ReturnType<typeof setTimeout>,
     };
-    lease.timer = setTimeout(() => {
-      if (slot.pendingPartialPersistence !== lease) return;
-      void this.reconcileSlot(slot, true).then(() => {
-        if (slot.pendingPartialPersistence === lease) {
-          return this.failPartialPersistence(slot, "Session persistence stopped with an incomplete JSONL entry; the worker was stopped");
-        }
-      }).catch(() => this.failPartialPersistence(slot, "Session persistence could not verify an incomplete JSONL entry; the worker was stopped"));
-    }, Math.max(0, deadline - Date.now()));
+    lease.timer = setTimeout(
+      () => {
+        if (slot.pendingPartialPersistence !== lease) return;
+        void this.reconcileSlot(slot, true)
+          .then(() => {
+            if (slot.pendingPartialPersistence === lease) {
+              return this.failPartialPersistence(
+                slot,
+                "Session persistence stopped with an incomplete JSONL entry; the worker was stopped",
+              );
+            }
+          })
+          .catch(() =>
+            this.failPartialPersistence(
+              slot,
+              "Session persistence could not verify an incomplete JSONL entry; the worker was stopped",
+            ),
+          );
+      },
+      Math.max(0, deadline - Date.now()),
+    );
     lease.timer.unref?.();
     slot.pendingPartialPersistence = lease;
   }
 
-  private async handleProjectionUpdate(slot: RuntimeSlot, result: ProjectionReconcileResult): Promise<void> {
+  private async handleProjectionUpdate(
+    slot: RuntimeSlot,
+    result: ProjectionReconcileResult,
+  ): Promise<void> {
     const projection = slot.projection;
     if (!projection || this.closing) return;
     if (result.changed) slot.branchRevision += 1;
     if (result.messageChange === "replace") this.renewView(slot);
     const previousConflict = slot.conflict;
     const priorPartial = slot.pendingPartialPersistence;
-    const expectedSourceVersion = priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
-    const expectedObservedBytes = priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
-    const observedBytes = projection.committedBytes + projection.uncommittedBytes;
+    const expectedSourceVersion =
+      priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
+    const expectedObservedBytes =
+      priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
+    const observedBytes =
+      projection.committedBytes + projection.uncommittedBytes;
     const initialMaterialization = result.initialMaterialization;
-    const strictPhysicalProgress = expectedObservedBytes !== null &&
+    const strictPhysicalProgress =
+      expectedObservedBytes !== null &&
       result.previousSourceVersion === expectedSourceVersion &&
-      (initialMaterialization || projection.sourceIdentity === (priorPartial?.sourceIdentity ?? slot.workerProjectionSourceIdentity)) &&
-      result.previousTailVerified && observedBytes > expectedObservedBytes;
+      (initialMaterialization ||
+        projection.sourceIdentity ===
+          (priorPartial?.sourceIdentity ??
+            slot.workerProjectionSourceIdentity)) &&
+      result.previousTailVerified &&
+      observedBytes > expectedObservedBytes;
     let lastOwnership: OwnershipDecision | null = null;
     const ownershipFields = (): Record<string, unknown> => ({
       ownershipSource: lastOwnership?.source,
@@ -1242,20 +1587,28 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!strictPhysicalProgress) {
         lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       } else if (!result.changed) {
-        lastOwnership = { owned: true, source: "expectation", expectationsConsumed: 0 };
+        lastOwnership = {
+          owned: true,
+          source: "expectation",
+          expectationsConsumed: 0,
+        };
       } else if (result.kind !== "append") {
         lastOwnership = { owned: false, reason: "not-append" };
       } else {
         lastOwnership = await this.appendedEntriesOwnership(slot, result);
       }
-      this.diagnostics.record(lastOwnership.owned ? "debug" : "warning", "persistence_ownership_decision", {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        owned: lastOwnership.owned,
-        ...ownershipFields(),
-      });
+      this.diagnostics.record(
+        lastOwnership.owned ? "debug" : "warning",
+        "persistence_ownership_decision",
+        {
+          sessionId: slot.id,
+          slotIncarnation: slot.incarnationId,
+          workerId: slot.bridge?.workerId,
+          childPid: slot.process?.pid,
+          owned: lastOwnership.owned,
+          ...ownershipFields(),
+        },
+      );
       if (!lastOwnership.owned) return false;
       this.captureWriterProjectionResult(slot, result);
       this.reconcileOverlay(slot, result.appendedEntries);
@@ -1263,11 +1616,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     };
 
     if (slot.process && result.uncommittedBytes > 0) {
-      const initiallyOwned = priorPartial !== null || isBusyRunState(slot.runState) || slot.persistenceExpectations.length > 0;
-      const exactPrior = !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
+      const initiallyOwned =
+        priorPartial !== null ||
+        isBusyRunState(slot.runState) ||
+        slot.persistenceExpectations.length > 0;
+      const exactPrior =
+        !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
       let owned = false;
-      if (!initiallyOwned) lastOwnership = { owned: false, reason: "missing-claim" };
-      else if (!exactPrior) lastOwnership = { owned: false, reason: "source-version-mismatch" };
+      if (!initiallyOwned)
+        lastOwnership = { owned: false, reason: "missing-claim" };
+      else if (!exactPrior)
+        lastOwnership = { owned: false, reason: "source-version-mismatch" };
       else owned = await acceptOwnedAppend();
       if (!owned) {
         await this.failPartialPersistence(
@@ -1281,21 +1640,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.trackPartialPersistence(slot);
       }
     } else if (priorPartial) {
-      const exactPrior = result.previousUncommittedBytes === priorPartial.bytes &&
-        result.uncommittedBytes === 0 && result.changed;
-      const exactCompletion = exactPrior && await acceptOwnedAppend();
-      if (!exactPrior) lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
+      const exactPrior =
+        result.previousUncommittedBytes === priorPartial.bytes &&
+        result.uncommittedBytes === 0 &&
+        result.changed;
+      const exactCompletion = exactPrior && (await acceptOwnedAppend());
+      if (!exactPrior)
+        lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       if (exactCompletion) this.clearPartialPersistence(slot);
-      else await this.failPartialPersistence(
-        slot,
-        "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped",
-        false,
-        "incomplete-persistence",
-        ownershipFields(),
-      );
+      else
+        await this.failPartialPersistence(
+          slot,
+          "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped",
+          false,
+          "incomplete-persistence",
+          ownershipFields(),
+        );
     } else if (
-      projection.health.status === "error" && slot.process &&
-      (this.writerOwnershipActive(slot) || slot.workerProjectionSourceIdentity === null)
+      projection.health.status === "error" &&
+      slot.process &&
+      (this.writerOwnershipActive(slot) ||
+        slot.workerProjectionSourceIdentity === null)
     ) {
       this.setProjectionConflict(
         slot,
@@ -1303,19 +1668,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
       );
       await this.stopWriter(slot);
-    } else if (slot.process && (result.sourceChanged || result.changed) && !this.writerProjectionBaselineMatches(slot)) {
+    } else if (
+      slot.process &&
+      (result.sourceChanged || result.changed) &&
+      !this.writerProjectionBaselineMatches(slot)
+    ) {
       if (initialMaterialization || this.writerOwnershipActive(slot)) {
         lastOwnership = result.changed
           ? await this.appendedEntriesOwnership(slot, result)
           : { owned: false, reason: "not-append" };
-        this.diagnostics.record(lastOwnership.owned ? "debug" : "warning", "persistence_ownership_decision", {
-          sessionId: slot.id,
-          slotIncarnation: slot.incarnationId,
-          workerId: slot.bridge?.workerId,
-          childPid: slot.process?.pid,
-          owned: lastOwnership.owned,
-          ...ownershipFields(),
-        });
+        this.diagnostics.record(
+          lastOwnership.owned ? "debug" : "warning",
+          "persistence_ownership_decision",
+          {
+            sessionId: slot.id,
+            slotIncarnation: slot.incarnationId,
+            workerId: slot.bridge?.workerId,
+            childPid: slot.process?.pid,
+            owned: lastOwnership.owned,
+            ...ownershipFields(),
+          },
+        );
         if (lastOwnership.owned) {
           this.captureWriterProjectionResult(slot, result);
           this.reconcileOverlay(slot, result.appendedEntries);
@@ -1336,7 +1709,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
     }
     if (!previousConflict && slot.conflict) {
-      this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+      this.emitSlotEvent(slot, {
+        type: "session_projection_conflict",
+        conflict: slot.conflict,
+      });
     }
     this.emitSlotEvent(slot, {
       type: "session_projection_changed",
@@ -1346,13 +1722,25 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private async reconcileSlot(slot: RuntimeSlot, force = true, startupAttestation = false): Promise<ProjectionReconcileResult> {
-    if (!slot.projection) throw Object.assign(new Error("Session projection is not available"), { status: 503 });
+  private async reconcileSlot(
+    slot: RuntimeSlot,
+    force = true,
+    startupAttestation = false,
+  ): Promise<ProjectionReconcileResult> {
+    if (!slot.projection)
+      throw Object.assign(new Error("Session projection is not available"), {
+        status: 503,
+      });
     await slot.projectionTail;
     const result = startupAttestation
       ? await slot.projection.reconcileSuspended(force)
       : await slot.projection.reconcile(force);
-    if (startupAttestation || result.changed || result.healthChanged || result.sourceChanged) {
+    if (
+      startupAttestation ||
+      result.changed ||
+      result.healthChanged ||
+      result.sourceChanged
+    ) {
       this.diagnostics.record("debug", "projection_reconcile", {
         sessionId: slot.id,
         slotIncarnation: slot.incarnationId,
@@ -1374,7 +1762,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         uncommittedBytes: slot.projection.uncommittedBytes,
       });
     }
-    if (!startupAttestation && (result.changed || result.healthChanged || result.sourceChanged)) {
+    if (
+      !startupAttestation &&
+      (result.changed || result.healthChanged || result.sourceChanged)
+    ) {
       await this.handleProjectionUpdate(slot, result);
     }
     this.reconcileOverlay(slot, result.appendedEntries);
@@ -1383,9 +1774,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private throwIfConflicted(slot: RuntimeSlot): void {
     if (slot.conflict || slot.projection?.health.status === "error") {
-      throw Object.assign(new Error(
-        slot.conflict?.message ?? slot.projection?.health.message ?? "Session projection is unavailable",
-      ), { status: 409 });
+      throw Object.assign(
+        new Error(
+          slot.conflict?.message ??
+            slot.projection?.health.message ??
+            "Session projection is unavailable",
+        ),
+        { status: 409 },
+      );
     }
   }
 
@@ -1401,14 +1797,25 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private markForkBufferOverflow(slot: RuntimeSlot): void {
     if (slot.forkBufferOverflow) return;
     slot.forkBufferOverflow = true;
-    if (!slot.conflict) this.setProjectionConflict(slot, "fork-overflow", FORK_BUFFER_OVERFLOW_MESSAGE);
-    this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict: slot.conflict });
+    if (!slot.conflict)
+      this.setProjectionConflict(
+        slot,
+        "fork-overflow",
+        FORK_BUFFER_OVERFLOW_MESSAGE,
+      );
+    this.emitSlotEvent(slot, {
+      type: "session_projection_conflict",
+      conflict: slot.conflict,
+    });
     slot.forkOverflowCleanup = this.cleanupForkBufferOverflow(slot);
-    void slot.forkOverflowCleanup.catch((error) => this.logRuntimeError(slot.id, error));
+    void slot.forkOverflowCleanup.catch((error) =>
+      this.logRuntimeError(slot.id, error),
+    );
   }
 
   private async failForkBufferOverflow(slot: RuntimeSlot): Promise<never> {
-    if (slot.forkOverflowCleanup) await slot.forkOverflowCleanup.catch(() => undefined);
+    if (slot.forkOverflowCleanup)
+      await slot.forkOverflowCleanup.catch(() => undefined);
     throw Object.assign(new Error(FORK_BUFFER_OVERFLOW_ERROR), { status: 504 });
   }
 
@@ -1437,7 +1844,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           "incomplete-persistence",
           "Pi stopped before an incomplete JSONL persistence frame was verified",
         );
-        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
+        this.emitSlotEvent(slot, {
+          type: "session_projection_conflict",
+          conflict,
+        });
       }
     }
     slot.process = null;
@@ -1451,29 +1861,54 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (slot.navigationLease) slot.branchRevision += 1;
     slot.navigationLease = null;
     if (slot.pendingBranchBridge) {
-      slot.pendingBranchBridge.reject(new Error("Branch bridge worker stopped"));
+      slot.pendingBranchBridge.reject(
+        new Error("Branch bridge worker stopped"),
+      );
       slot.pendingBranchBridge = null;
     }
     this.processOwners.delete(rpc);
     this.clearPendingExtensionUi(slot, "stopped");
-    const stopping = rpc.stop().catch((error) => this.logRuntimeError(slot.id, error));
+    const stopping = rpc
+      .stop()
+      .catch((error) => this.logRuntimeError(slot.id, error));
     slot.stopping = stopping;
-    try { await stopping; } finally {
+    try {
+      await stopping;
+    } finally {
       if (slot.stopping === stopping) slot.stopping = null;
       this.scheduleIdleWorkerEviction();
     }
   }
 
-  private async ensureFreshWriterInsideGate(slot: RuntimeSlot): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    if (!(slot.projection instanceof PreviewProjection)) await this.reconcileSlot(slot, true);
+  private async ensureFreshWriterInsideGate(
+    slot: RuntimeSlot,
+  ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
+    if (!(slot.projection instanceof PreviewProjection))
+      await this.reconcileSlot(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
-      throw Object.assign(new Error(slot.projection?.health.message ?? "Session projection is unavailable"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          slot.projection?.health.message ??
+            "Session projection is unavailable",
+        ),
+        { status: 409 },
+      );
     }
     if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(new Error("Session file ends with an incomplete JSONL entry; repair or complete it before writing"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "Session file ends with an incomplete JSONL entry; repair or complete it before writing",
+        ),
+        { status: 409 },
+      );
     }
-    if (slot.conflict) throw Object.assign(new Error(slot.conflict.message), { status: 409 });
-    if (slot.process && slot.ready && !this.writerProjectionBaselineMatches(slot)) {
+    if (slot.conflict)
+      throw Object.assign(new Error(slot.conflict.message), { status: 409 });
+    if (
+      slot.process &&
+      slot.ready &&
+      !this.writerProjectionBaselineMatches(slot)
+    ) {
       if (this.writerOwnershipActive(slot)) {
         const conflict = this.setProjectionConflict(
           slot,
@@ -1481,29 +1916,43 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
         );
         await this.stopWriter(slot);
-        this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
+        this.emitSlotEvent(slot, {
+          type: "session_projection_conflict",
+          conflict,
+        });
         throw Object.assign(new Error(conflict.message), { status: 409 });
       }
       await this.stopWriter(slot);
     }
     if (!slot.process || !slot.ready) await this.startSlot(slot);
-    if (!slot.process || !slot.ready) throw Object.assign(new Error("Pi runtime failed to start"), { status: 503 });
+    if (!slot.process || !slot.ready)
+      throw Object.assign(new Error("Pi runtime failed to start"), {
+        status: 503,
+      });
     this.captureWriterProjectionBaseline(slot);
     return slot as RuntimeSlot & { process: PiRpcProcess };
   }
 
-  private async failUnknownRpcOutcome(slot: RuntimeSlot, error: PiRpcOutcomeUnknownError): Promise<never> {
-    for (const expectation of slot.persistenceExpectations) expectation.settle(null);
+  private async failUnknownRpcOutcome(
+    slot: RuntimeSlot,
+    error: PiRpcOutcomeUnknownError,
+  ): Promise<never> {
+    for (const expectation of slot.persistenceExpectations)
+      expectation.settle(null);
     await error.stopped.catch(() => undefined);
     await this.stopWriter(slot);
-    if (slot.projection) await this.reconcileSlot(slot, true).catch(() => undefined);
+    if (slot.projection)
+      await this.reconcileSlot(slot, true).catch(() => undefined);
     const conflict = this.setProjectionConflict(
       slot,
       "outcome-unknown",
       `Pi ${error.command} outcome is unknown; the worker was stopped and disk state reconciled`,
     );
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
-    throw Object.assign(new Error(conflict.message), { status: 504, outcomeUnknown: true });
+    throw Object.assign(new Error(conflict.message), {
+      status: 504,
+      outcomeUnknown: true,
+    });
   }
 
   private async requestPersistence<T>(
@@ -1515,15 +1964,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       return await rpc.request<T>(command, timeoutMs);
     } catch (error) {
-      if (isPiRpcOutcomeUnknown(error)) return this.failUnknownRpcOutcome(slot, error);
+      if (isPiRpcOutcomeUnknown(error))
+        return this.failUnknownRpcOutcome(slot, error);
       throw error;
     }
   }
 
-  private async readNewSessionEntries(slot: RuntimeSlot, rpc: PiRpcProcess): Promise<SessionEntry[]> {
-    const response = await rpc.request<Record<string, unknown>>({ type: "get_entries" });
+  private async readNewSessionEntries(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+  ): Promise<SessionEntry[]> {
+    const response = await rpc.request<Record<string, unknown>>({
+      type: "get_entries",
+    });
     if (slot.process !== rpc) {
-      throw Object.assign(new Error("The new-session worker changed while its entries were inspected"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "The new-session worker changed while its entries were inspected",
+        ),
+        { status: 409 },
+      );
     }
     return parseRpcEntryChain(response, {
       expectedParentId: null,
@@ -1590,7 +2050,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       console.error("Failed to reclaim an idle Pi worker", error);
     } finally {
       this.workerMaintenanceRunning = false;
-      if (this.workerMaintenanceRequested && !this.closing) this.scheduleIdleWorkerEviction();
+      if (this.workerMaintenanceRequested && !this.closing)
+        this.scheduleIdleWorkerEviction();
     }
   }
 
@@ -1624,7 +2085,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.commands = null;
       const stop = Promise.all([
         rpc.stop().catch((error) => this.logRuntimeError(slot.id, error)),
-        projection?.close().catch((error) => this.logRuntimeError(slot.id, error)),
+        projection
+          ?.close()
+          .catch((error) => this.logRuntimeError(slot.id, error)),
       ]).then(() => undefined);
       slot.stopping = stop;
       stopping.push(
@@ -1638,13 +2101,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private canReclaimProjection(slot: RuntimeSlot): boolean {
-    return slot.id !== this.selectedSessionId && Boolean(slot.projection) &&
-      !slot.process && !slot.stopping && !slot.rebinding &&
-      slot.activeOperations === 0 && slot.mutationPending === 0 && slot.extensionResponsePending === 0 &&
-      slot.persistenceExpectations.length === 0 && !slot.pendingPartialPersistence &&
-      !this.opening.has(slot.id) && !this.loadingSlots.has(slot.id) &&
-      !this.selectionReservations.has(slot.id) && !this.forkReservationsById.has(slot.id) &&
-      !(slot.sessionPath && this.forkReservationsByPath.has(resolve(slot.sessionPath)));
+    return (
+      slot.id !== this.selectedSessionId &&
+      Boolean(slot.projection) &&
+      !slot.process &&
+      !slot.stopping &&
+      !slot.rebinding &&
+      slot.activeOperations === 0 &&
+      slot.mutationPending === 0 &&
+      slot.extensionResponsePending === 0 &&
+      slot.persistenceExpectations.length === 0 &&
+      !slot.pendingPartialPersistence &&
+      !this.opening.has(slot.id) &&
+      !this.loadingSlots.has(slot.id) &&
+      !this.selectionReservations.has(slot.id) &&
+      !this.forkReservationsById.has(slot.id) &&
+      !(
+        slot.sessionPath &&
+        this.forkReservationsByPath.has(resolve(slot.sessionPath))
+      )
+    );
   }
 
   private async reclaimDormantProjections(): Promise<void> {
@@ -1654,22 +2130,46 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const projection = slot.projection;
       slot.projection = null;
       slot.preview = null;
-      closing.push(projection?.close().catch((error) => this.logRuntimeError(slot.id, error)) ?? Promise.resolve());
+      closing.push(
+        projection
+          ?.close()
+          .catch((error) => this.logRuntimeError(slot.id, error)) ??
+          Promise.resolve(),
+      );
     }
     await Promise.all(closing);
   }
 
   private canPruneDormant(slot: RuntimeSlot): boolean {
-    return slot.id !== this.selectedSessionId &&
-      !slot.process && !slot.stopping && !slot.attention && !isBusyRunState(slot.runState) &&
-      slot.runState !== "failed" && slot.runState !== "conflict" &&
-      slot.pendingExtensionUiRequests.size === 0 && slot.pendingQueues.steering.length === 0 && slot.pendingQueues.followUp.length === 0 &&
-      !slot.conflict && !slot.navigationLease && !slot.pendingBranchBridge && !slot.rebinding &&
-      slot.activeOperations === 0 && slot.mutationPending === 0 && slot.extensionResponsePending === 0 &&
-      slot.persistenceExpectations.length === 0 && !slot.pendingPartialPersistence &&
-      !this.opening.has(slot.id) && !this.loadingSlots.has(slot.id) &&
-      !this.selectionReservations.has(slot.id) && !this.forkReservationsById.has(slot.id) &&
-      !(slot.sessionPath && this.forkReservationsByPath.has(resolve(slot.sessionPath)));
+    return (
+      slot.id !== this.selectedSessionId &&
+      !slot.process &&
+      !slot.stopping &&
+      !slot.attention &&
+      !isBusyRunState(slot.runState) &&
+      slot.runState !== "failed" &&
+      slot.runState !== "conflict" &&
+      slot.pendingExtensionUiRequests.size === 0 &&
+      slot.pendingQueues.steering.length === 0 &&
+      slot.pendingQueues.followUp.length === 0 &&
+      !slot.conflict &&
+      !slot.navigationLease &&
+      !slot.pendingBranchBridge &&
+      !slot.rebinding &&
+      slot.activeOperations === 0 &&
+      slot.mutationPending === 0 &&
+      slot.extensionResponsePending === 0 &&
+      slot.persistenceExpectations.length === 0 &&
+      !slot.pendingPartialPersistence &&
+      !this.opening.has(slot.id) &&
+      !this.loadingSlots.has(slot.id) &&
+      !this.selectionReservations.has(slot.id) &&
+      !this.forkReservationsById.has(slot.id) &&
+      !(
+        slot.sessionPath &&
+        this.forkReservationsByPath.has(resolve(slot.sessionPath))
+      )
+    );
   }
 
   private async pruneDormantSlots(): Promise<void> {
@@ -1681,7 +2181,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const projection = slot.projection;
       slot.projection = null;
       slot.preview = null;
-      closing.push(projection?.close().catch((error) => this.logRuntimeError(slot.id, error)) ?? Promise.resolve());
+      closing.push(
+        projection
+          ?.close()
+          .catch((error) => this.logRuntimeError(slot.id, error)) ??
+          Promise.resolve(),
+      );
     }
     await Promise.all(closing);
   }
@@ -1689,23 +2194,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private canEvict(slot: RuntimeSlot): boolean {
     return Boolean(
       slot.process &&
-      slot.ready &&
-      slot.id !== this.selectedSessionId &&
-      !isBusyRunState(slot.runState) &&
-      slot.pendingExtensionUiRequests.size === 0 &&
-      !slot.conflict &&
-      !slot.navigationLease &&
-      !slot.pendingBranchBridge &&
-      !slot.pendingPartialPersistence &&
-      !slot.rebinding &&
-      slot.activeOperations === 0 &&
-      !this.opening.has(slot.id) &&
-      !this.selectionReservations.has(slot.id),
+        slot.ready &&
+        slot.id !== this.selectedSessionId &&
+        !isBusyRunState(slot.runState) &&
+        slot.pendingExtensionUiRequests.size === 0 &&
+        !slot.conflict &&
+        !slot.navigationLease &&
+        !slot.pendingBranchBridge &&
+        !slot.pendingPartialPersistence &&
+        !slot.rebinding &&
+        slot.activeOperations === 0 &&
+        !this.opening.has(slot.id) &&
+        !this.selectionReservations.has(slot.id),
     );
   }
 
   private assertNotClosing(): void {
-    if (this.closing) throw Object.assign(new Error("Runtime is closing"), { status: 503 });
+    if (this.closing)
+      throw Object.assign(new Error("Runtime is closing"), { status: 503 });
   }
 
   /** Writes are addressed: the caller names the session, and a concurrent
@@ -1713,27 +2219,43 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private requireSlot(sessionId: string): RuntimeSlot {
     this.assertNotClosing();
     if (this.deleting.has(sessionId)) {
-      throw Object.assign(new Error("That session is being deleted"), { status: 409 });
+      throw Object.assign(new Error("That session is being deleted"), {
+        status: 409,
+      });
     }
     const slot = this.slots.get(sessionId);
-    if (!slot) throw Object.assign(new Error("That session is not open on this host"), { status: 409 });
+    if (!slot)
+      throw Object.assign(new Error("That session is not open on this host"), {
+        status: 409,
+      });
     return slot;
   }
 
-  private statusFor(slot: RuntimeSlot, selectedSessionId = this.selectedSessionId): SessionRuntimeStatus {
+  private statusFor(
+    slot: RuntimeSlot,
+    selectedSessionId = this.selectedSessionId,
+  ): SessionRuntimeStatus {
     let indicator: SessionRuntimeStatus["indicator"];
     if (isBusyRunState(slot.runState)) {
       indicator = "running";
     } else if (slot.conflict && slot.id !== selectedSessionId) {
-      indicator = slot.conflict.kind === "external-change" ? "attention" : "failed";
+      indicator =
+        slot.conflict.kind === "external-change" ? "attention" : "failed";
     } else {
       indicator = slot.attention ?? undefined;
     }
     return { runState: slot.runState, ...(indicator ? { indicator } : {}) };
   }
 
-  private sessionStatuses(selectedSessionId = this.selectedSessionId): Record<string, SessionRuntimeStatus> {
-    return Object.fromEntries([...this.slots].map(([id, slot]) => [id, this.statusFor(slot, selectedSessionId)]));
+  private sessionStatuses(
+    selectedSessionId = this.selectedSessionId,
+  ): Record<string, SessionRuntimeStatus> {
+    return Object.fromEntries(
+      [...this.slots].map(([id, slot]) => [
+        id,
+        this.statusFor(slot, selectedSessionId),
+      ]),
+    );
   }
 
   private emitSlotEvent(slot: RuntimeSlot, event: unknown): void {
@@ -1743,9 +2265,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // returns the full state once the real id is known.
     if (this.slots.get(slot.id) !== slot) return;
     const projected = safeProjection(event);
-    const body = projected && typeof projected === "object" && !Array.isArray(projected)
-      ? projected as Record<string, unknown>
-      : { type: "runtime_event", data: projected };
+    const body =
+      projected && typeof projected === "object" && !Array.isArray(projected)
+        ? (projected as Record<string, unknown>)
+        : { type: "runtime_event", data: projected };
     this.emit("event", {
       ...body,
       sessionId: slot.id,
@@ -1753,7 +2276,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private rememberAbsorbedPersistenceEntry(slot: RuntimeSlot, entry: SessionEntry): boolean {
+  private rememberAbsorbedPersistenceEntry(
+    slot: RuntimeSlot,
+    entry: SessionEntry,
+  ): boolean {
     const key = persistenceEntryKey(entry);
     if (!key) return false;
     const entries = slot.absorbedPersistenceEntries.get(key) ?? [];
@@ -1762,7 +2288,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
-  private consumeAbsorbedPersistenceEvent(slot: RuntimeSlot, message: unknown): boolean {
+  private consumeAbsorbedPersistenceEvent(
+    slot: RuntimeSlot,
+    message: unknown,
+  ): boolean {
     const key = persistenceMessageKey(message);
     const matcher = messageExpectation(message)?.matcher;
     if (!key || !matcher) return false;
@@ -1775,7 +2304,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
-  private recordPersistenceEvent(slot: RuntimeSlot, event: Record<string, unknown>): void {
+  private recordPersistenceEvent(
+    slot: RuntimeSlot,
+    event: Record<string, unknown>,
+  ): void {
     if (event.type === "entry_appended") {
       const entry = eventSessionEntry(event.entry);
       if (!entry) {
@@ -1790,28 +2322,43 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       this.claimCustomActivityEntry(slot, entry);
       const absorbed = this.consumeAbsorbedPersistenceEntry(slot, entry);
-      if (!absorbed) slot.persistenceExpectations.push(exactEntryExpectation(entry));
-      this.diagnostics.record("debug", absorbed ? "persistence_claim_absorbed" : "persistence_claim_added", {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        ...entryDescriptor(entry),
-      });
+      if (!absorbed)
+        slot.persistenceExpectations.push(exactEntryExpectation(entry));
+      this.diagnostics.record(
+        "debug",
+        absorbed ? "persistence_claim_absorbed" : "persistence_claim_added",
+        {
+          sessionId: slot.id,
+          slotIncarnation: slot.incarnationId,
+          workerId: slot.bridge?.workerId,
+          childPid: slot.process?.pid,
+          ...entryDescriptor(entry),
+        },
+      );
       return;
     }
     if (event.type === "message_end") {
       if (this.consumeAbsorbedPersistenceEvent(slot, event.message)) return;
       const message = event.message;
-      if (message && typeof message === "object" && !Array.isArray(message) &&
-          (message as Record<string, unknown>).role === "custom") {
+      if (
+        message &&
+        typeof message === "object" &&
+        !Array.isArray(message) &&
+        (message as Record<string, unknown>).role === "custom"
+      ) {
         const correlation = messageFallbackCorrelation(message);
-        const activityId = correlation ? slot.activeOverlayIds.get(correlation) : undefined;
+        const activityId = correlation
+          ? slot.activeOverlayIds.get(correlation)
+          : undefined;
         // Pi's idle sendMessage path persists custom_message before emitting
         // message_start/end. That entry's exact claim already owns the write;
         // adding a second future expectation here would misattribute the next
         // real append to this already-durable message.
-        if (activityId && slot.customActivities.entryIdByActivityId.has(activityId)) return;
+        if (
+          activityId &&
+          slot.customActivities.entryIdByActivityId.has(activityId)
+        )
+          return;
       }
       const expectation = messageExpectation(message);
       if (expectation) slot.persistenceExpectations.push(expectation);
@@ -1820,34 +2367,53 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (event.type === "compaction_end") {
       const matcher = compactionMatcher(event.result);
       if (!matcher) return;
-      const pending = slot.persistenceExpectations.find((expectation) => expectation.matcher === null);
+      const pending = slot.persistenceExpectations.find(
+        (expectation) => expectation.matcher === null,
+      );
       if (pending) pending.settle(matcher);
       else slot.persistenceExpectations.push(knownExpectation(matcher));
     }
   }
 
-  private updateExtensionDisplay(slot: RuntimeSlot, record: Record<string, unknown>): void {
-    const method = typeof record.method === "string" ? record.method.slice(0, 120) : "";
+  private updateExtensionDisplay(
+    slot: RuntimeSlot,
+    record: Record<string, unknown>,
+  ): void {
+    const method =
+      typeof record.method === "string" ? record.method.slice(0, 120) : "";
     // Current Pi identifies setWidget as one-way. Future RPC display methods
     // can opt into this same generic projection with responseRequired:false.
     if (method !== "setWidget" && record.responseRequired !== false) return;
-    const key = (typeof record.widgetKey === "string" && record.widgetKey ? record.widgetKey : String(record.id ?? method)).slice(0, 240);
+    const key = (
+      typeof record.widgetKey === "string" && record.widgetKey
+        ? record.widgetKey
+        : String(record.id ?? method)
+    ).slice(0, 240);
     const id = `${method}:${key}`;
     if (method === "setWidget" && record.widgetLines === undefined) {
-      slot.extensionDisplays = slot.extensionDisplays.filter((display) => display.id !== id);
+      slot.extensionDisplays = slot.extensionDisplays.filter(
+        (display) => display.id !== id,
+      );
       return;
     }
-    const source = (typeof record.extensionPath === "string"
-      ? record.extensionPath
-      : typeof record.extensionName === "string" ? record.extensionName : "Pi extension").slice(0, 500);
+    const source = (
+      typeof record.extensionPath === "string"
+        ? record.extensionPath
+        : typeof record.extensionName === "string"
+          ? record.extensionName
+          : "Pi extension"
+    ).slice(0, 500);
     const projected = safeProjection(record);
     const encoded = JSON.stringify(projected);
-    const payload = Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
-      ? projected
-      : {
-          truncated: true,
-          preview: Buffer.from(encoded).subarray(0, MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES).toString("utf8"),
-        };
+    const payload =
+      Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
+        ? projected
+        : {
+            truncated: true,
+            preview: Buffer.from(encoded)
+              .subarray(0, MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES)
+              .toString("utf8"),
+          };
     const display: GenericExtensionDisplay = {
       id,
       method,
@@ -1860,24 +2426,47 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     ].slice(-MAX_EXTENSION_DISPLAYS);
   }
 
-  private handleEvent(slot: RuntimeSlot, event: unknown, rpc: PiRpcProcess): void {
-    const record = event && typeof event === "object" ? event as Record<string, unknown> : {};
+  private handleEvent(
+    slot: RuntimeSlot,
+    event: unknown,
+    rpc: PiRpcProcess,
+  ): void {
+    const record =
+      event && typeof event === "object"
+        ? (event as Record<string, unknown>)
+        : {};
     let forwardedEvent: unknown = event;
-    if (record.type === "message_start" || record.type === "message_update" || record.type === "message_end") {
+    if (
+      record.type === "message_start" ||
+      record.type === "message_update" ||
+      record.type === "message_end"
+    ) {
       let message = record.message;
-      if (record.type === "message_update" && (!message || typeof message !== "object" || Array.isArray(message))) {
+      if (
+        record.type === "message_update" &&
+        (!message || typeof message !== "object" || Array.isArray(message))
+      ) {
         message = applyAssistantMessageDelta(
           this.activeAssistantOverlayMessage(slot),
           record.assistantMessageEvent,
         );
       }
       if (message && typeof message === "object" && !Array.isArray(message)) {
-        const phase = record.type === "message_start" ? "start" : record.type === "message_end" ? "end" : "update";
+        const phase =
+          record.type === "message_start"
+            ? "start"
+            : record.type === "message_end"
+              ? "end"
+              : "update";
         const projectedMessage = this.updateOverlay(slot, message, phase);
         if (
-          record.type === "message_start" && projectedMessage && typeof projectedMessage === "object" &&
+          record.type === "message_start" &&
+          projectedMessage &&
+          typeof projectedMessage === "object" &&
           (projectedMessage as Record<string, unknown>).role === "assistant"
-        ) slot.activeAssistantCorrelation = messageFallbackCorrelation(projectedMessage);
+        )
+          slot.activeAssistantCorrelation =
+            messageFallbackCorrelation(projectedMessage);
         forwardedEvent = { ...record, message: projectedMessage };
       }
     }
@@ -1887,16 +2476,34 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const pending = this.addPendingExtensionUi(slot, owned, rpc);
         this.updateExtensionDisplay(slot, owned);
         if (pending) {
-          forwardedEvent = { ...owned, timeout: pending.timeout, expiresAt: pending.expiresAt };
-        } else if (record.method === "setWidget" || record.responseRequired === false) {
-          forwardedEvent = { ...owned, extensionDisplays: slot.extensionDisplays };
+          forwardedEvent = {
+            ...owned,
+            timeout: pending.timeout,
+            expiresAt: pending.expiresAt,
+          };
+        } else if (
+          record.method === "setWidget" ||
+          record.responseRequired === false
+        ) {
+          forwardedEvent = {
+            ...owned,
+            extensionDisplays: slot.extensionDisplays,
+          };
         }
         break;
       }
       case "queue_update":
         slot.pendingQueues = {
-          steering: Array.isArray(record.steering) ? record.steering.filter((value): value is string => typeof value === "string") : [],
-          followUp: Array.isArray(record.followUp) ? record.followUp.filter((value): value is string => typeof value === "string") : [],
+          steering: Array.isArray(record.steering)
+            ? record.steering.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [],
+          followUp: Array.isArray(record.followUp)
+            ? record.followUp.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [],
         };
         break;
       case "agent_start":
@@ -1917,19 +2524,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.runState = record.success === false ? "failed" : "running";
         break;
       case "message_end": {
-        const stopReason = (record.message as Record<string, unknown> | undefined)?.stopReason;
+        const stopReason = (
+          record.message as Record<string, unknown> | undefined
+        )?.stopReason;
         if (stopReason === "aborted") slot.runState = "aborted";
         if (stopReason === "error") slot.runState = "failed";
         break;
       }
       case "agent_settled": {
-        const outcome = slot.runState === "failed" || slot.runState === "conflict" ? "failed" : slot.runState === "aborted" ? null : "completed";
-        slot.runState = slot.conflict ? "conflict" : slot.runState === "failed" ? "failed" : slot.runState === "aborted" ? "aborted" : "idle";
+        const outcome =
+          slot.runState === "failed" || slot.runState === "conflict"
+            ? "failed"
+            : slot.runState === "aborted"
+              ? null
+              : "completed";
+        slot.runState = slot.conflict
+          ? "conflict"
+          : slot.runState === "failed"
+            ? "failed"
+            : slot.runState === "aborted"
+              ? "aborted"
+              : "idle";
         slot.activeAssistantCorrelation = null;
         slot.attention = this.selectedSessionId === slot.id ? null : outcome;
         slot.pendingQueues = emptyPendingQueues();
         this.clearPendingExtensionUi(slot, "settled");
-        for (const expectation of slot.persistenceExpectations) expectation.settle(null);
+        for (const expectation of slot.persistenceExpectations)
+          expectation.settle(null);
         slot.persistenceExpectations = [];
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
@@ -1942,12 +2563,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.emitSlotEvent(slot, forwardedEvent);
   }
 
-  private interceptBranchStatus(slot: RuntimeSlot, rpc: PiRpcProcess, record: Record<string, unknown>): boolean {
+  private interceptBranchStatus(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    record: Record<string, unknown>,
+  ): boolean {
     const bridge = slot.bridge;
     if (
-      !bridge || slot.process !== rpc || record.type !== "extension_ui_request" ||
-      record.method !== "setStatus" || record.statusKey !== bridge.statusKey
-    ) return false;
+      !bridge ||
+      slot.process !== rpc ||
+      record.type !== "extension_ui_request" ||
+      record.method !== "setStatus" ||
+      record.statusKey !== bridge.statusKey
+    )
+      return false;
     const pending = slot.pendingBranchBridge;
     if (!pending || pending.bridge !== bridge) return true;
     if (pending.settled) {
@@ -1957,9 +2586,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const result = parseBridgeResult(record.statusText);
       if (
-        result.nonce !== pending.nonce || result.workerId !== bridge.workerId ||
+        result.nonce !== pending.nonce ||
+        result.workerId !== bridge.workerId ||
         result.sessionId !== slot.id
-      ) throw new Error("Mismatched branch bridge result");
+      )
+        throw new Error("Mismatched branch bridge result");
       pending.settled = true;
       pending.resolve(result);
     } catch (error) {
@@ -1969,14 +2600,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
-  private rejectUnsupportedStartupUi(slot: RuntimeSlot, rpc: PiRpcProcess, record: Record<string, unknown>): boolean {
-    if (slot.ready || slot.startupPhase !== "starting" || record.type !== "extension_ui_request") return false;
-    if (!parsePendingExtensionUiRequest({ ...record, sessionId: slot.id })) return false;
+  private rejectUnsupportedStartupUi(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    record: Record<string, unknown>,
+  ): boolean {
+    if (
+      slot.ready ||
+      slot.startupPhase !== "starting" ||
+      record.type !== "extension_ui_request"
+    )
+      return false;
+    if (!parsePendingExtensionUiRequest({ ...record, sessionId: slot.id }))
+      return false;
     if (!slot.startupError) {
-      slot.startupError = Object.assign(new Error(PI_STARTUP_RESPONSE_UI_ERROR), {
-        status: 503,
-        code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
-      });
+      slot.startupError = Object.assign(
+        new Error(PI_STARTUP_RESPONSE_UI_ERROR),
+        {
+          status: 503,
+          code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
+        },
+      );
     }
     if (!slot.startupStop) {
       slot.startupStop = rpc.stop().catch((error) => {
@@ -1989,7 +2633,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void {
     const slot = this.processOwners.get(rpc);
     if (!slot || slot.process !== rpc) return;
-    const record = event && typeof event === "object" ? event as Record<string, unknown> : {};
+    const record =
+      event && typeof event === "object"
+        ? (event as Record<string, unknown>)
+        : {};
     if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     if (slot.rebinding) {
@@ -2005,8 +2652,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         }
       }
       let eventBytes = 0;
-      try { eventBytes = Buffer.byteLength(JSON.stringify(event)); } catch { eventBytes = 2 * 1024 * 1024 + 1; }
-      if (slot.bufferedEvents.length >= 1_000 || slot.bufferedEventBytes + eventBytes > 2 * 1024 * 1024) {
+      try {
+        eventBytes = Buffer.byteLength(JSON.stringify(event));
+      } catch {
+        eventBytes = 2 * 1024 * 1024 + 1;
+      }
+      if (
+        slot.bufferedEvents.length >= 1_000 ||
+        slot.bufferedEventBytes + eventBytes > 2 * 1024 * 1024
+      ) {
         this.markForkBufferOverflow(slot);
         return;
       }
@@ -2019,18 +2673,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // extension payload must never cross the browser boundary.
     if (record.type === "entry_appended") return;
     if (record.type === "agent_settled" || record.type === "compaction_end") {
-      slot.eventTail = slot.eventTail.then(async () => {
-        if (slot.process !== rpc) return;
-        await this.reconcileSlot(slot, true);
-        this.handleEvent(slot, event, rpc);
-        // A terminal lifecycle event may settle the agent, but it cannot
-        // repair a reconciliation conflict. Keep the worker stopped and leave
-        // the explicit abort/recovery boundary as the sole conflict clearer.
-        if (record.type === "agent_settled" && slot.conflict) await this.stopWriter(slot);
-      }).catch((error) => {
-        this.logRuntimeError(slot.id, error, "event_reconciliation_failed");
-        this.handleEvent(slot, event, rpc);
-      });
+      slot.eventTail = slot.eventTail
+        .then(async () => {
+          if (slot.process !== rpc) return;
+          await this.reconcileSlot(slot, true);
+          this.handleEvent(slot, event, rpc);
+          // A terminal lifecycle event may settle the agent, but it cannot
+          // repair a reconciliation conflict. Keep the worker stopped and leave
+          // the explicit abort/recovery boundary as the sole conflict clearer.
+          if (record.type === "agent_settled" && slot.conflict)
+            await this.stopWriter(slot);
+        })
+        .catch((error) => {
+          this.logRuntimeError(slot.id, error, "event_reconciliation_failed");
+          this.handleEvent(slot, event, rpc);
+        });
     } else {
       this.handleEvent(slot, event, rpc);
     }
@@ -2064,7 +2721,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (owner.navigationLease) owner.branchRevision += 1;
       owner.navigationLease = null;
       if (owner.pendingBranchBridge) {
-        owner.pendingBranchBridge.reject(new Error("Branch bridge worker exited"));
+        owner.pendingBranchBridge.reject(
+          new Error("Branch bridge worker exited"),
+        );
         owner.pendingBranchBridge = null;
       }
       if (owner.pendingPartialPersistence) {
@@ -2082,12 +2741,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       owner.pendingQueues = emptyPendingQueues();
       owner.extensionDisplays = [];
       this.logRuntimeError(owner.id, error, "worker_exit");
-      this.emitSlotEvent(owner, { type: "runtime_error", error: error.message });
+      this.emitSlotEvent(owner, {
+        type: "runtime_error",
+        error: error.message,
+      });
       this.scheduleIdleWorkerEviction();
     });
   }
 
-  private async readRuntimeExtras(slot: RuntimeSlot, rpc: PiRpcProcess): Promise<{
+  private async readRuntimeExtras(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+  ): Promise<{
     stats: unknown;
     models: unknown[];
     commands: unknown[];
@@ -2096,19 +2761,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       rpc.request({ type: "get_session_stats" }).catch(() => undefined),
       slot.availableModels
         ? Promise.resolve(slot.availableModels)
-        : rpc.request<{ models: unknown[] }>({ type: "get_available_models" }).then(
-            (result) => (slot.availableModels = result.models),
-            () => [],
-          ),
+        : rpc
+            .request<{ models: unknown[] }>({ type: "get_available_models" })
+            .then(
+              (result) => (slot.availableModels = result.models),
+              () => [],
+            ),
       slot.commands
         ? Promise.resolve(slot.commands)
         : rpc.request<{ commands: unknown[] }>({ type: "get_commands" }).then(
             (result) => {
               const reserved = slot.bridge?.command;
               return (slot.commands = result.commands.filter((command) => {
-                if (!reserved || !command || typeof command !== "object") return true;
+                if (!reserved || !command || typeof command !== "object")
+                  return true;
                 const record = command as Record<string, unknown>;
-                return record.name !== reserved && record.invocationName !== reserved;
+                return (
+                  record.name !== reserved && record.invocationName !== reserved
+                );
               }));
             },
             () => [],
@@ -2119,11 +2789,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private previewSnapshot(
     slot: RuntimeSlot,
-    sessionStatuses: Record<string, SessionRuntimeStatus> = this.sessionStatuses(),
+    sessionStatuses: Record<
+      string,
+      SessionRuntimeStatus
+    > = this.sessionStatuses(),
   ): ActiveSnapshot {
-    if (!slot.preview || !slot.projection) throw new Error("Session projection is not available");
+    if (!slot.preview || !slot.projection)
+      throw new Error("Session projection is not available");
     const effectiveLeafId = this.effectiveLeaf(slot);
-    const page = slot.projection.latestPage(slot.overlay, effectiveLeafId, slot.viewId);
+    const page = slot.projection.latestPage(
+      slot.overlay,
+      effectiveLeafId,
+      slot.viewId,
+    );
     return safeProjection({
       active: {
         ...slot.preview,
@@ -2133,10 +2811,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         transcriptPage: page,
         projectionHealth: slot.projection.health,
         projectionConflict: slot.conflict,
+        durableLeafId: slot.projection.leafId,
         effectiveLeafId,
         navigationLeased: Boolean(slot.navigationLease),
         isStreaming: isBusyRunState(slot.runState),
-        activeAssistantMessageKey: this.activeAssistantSnapshotKey(slot, page.messages),
+        activeAssistantMessageKey: this.activeAssistantSnapshotKey(
+          slot,
+          page.messages,
+        ),
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
@@ -2154,7 +2836,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     } catch (error) {
       // Test-only preview adapters intentionally use virtual paths. Real
       // workspaces still require a canonical physical identity.
-      if (this.loadPreview !== loadSessionPreview && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (
+        this.loadPreview !== loadSessionPreview &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
         return resolved;
       }
       throw error;
@@ -2164,11 +2849,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async openProjection(
     session: SessionRecord,
     workspaceRoot: string,
-  ): Promise<{ projection: SessionProjectionView; preview: ActiveSessionSnapshot }> {
+  ): Promise<{
+    projection: SessionProjectionView;
+    preview: ActiveSessionSnapshot;
+  }> {
     if (this.loadPreview !== loadSessionPreview) {
       const preview = await this.loadPreview(session);
       const canonicalPreview = { ...preview, cwd: workspaceRoot };
-      return { projection: new PreviewProjection(session.id, canonicalPreview), preview: canonicalPreview };
+      return {
+        projection: new PreviewProjection(session.id, canonicalPreview),
+        preview: canonicalPreview,
+      };
     }
     const projection = await SessionProjection.open(session);
     const page = projection.latestPage();
@@ -2192,31 +2883,47 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     };
   }
 
-  private attachProjection(slot: RuntimeSlot, projection: SessionProjectionView): void {
+  private attachProjection(
+    slot: RuntimeSlot,
+    projection: SessionProjectionView,
+  ): void {
     projection.on("update", (result) => {
       if (slot.projection !== projection || this.closing) return;
-      slot.projectionTail = slot.projectionTail.then(
-        () => this.handleProjectionUpdate(slot, result),
-        () => this.handleProjectionUpdate(slot, result),
-      ).catch((error) => {
-        if (!this.closing) this.logRuntimeError(slot.id, error, "projection_update_failed");
-      });
+      slot.projectionTail = slot.projectionTail
+        .then(
+          () => this.handleProjectionUpdate(slot, result),
+          () => this.handleProjectionUpdate(slot, result),
+        )
+        .catch((error) => {
+          if (!this.closing)
+            this.logRuntimeError(slot.id, error, "projection_update_failed");
+        });
     });
   }
 
   private async prepareSlot(session: SessionRecord): Promise<RuntimeSlot> {
     if (this.deleting.has(session.id)) {
-      throw Object.assign(new Error("That session is being deleted"), { status: 409 });
+      throw Object.assign(new Error("That session is being deleted"), {
+        status: 409,
+      });
     }
-    const reservation = this.forkReservationsById.get(session.id) ?? this.forkReservationsByPath.get(resolve(session.path));
+    const reservation =
+      this.forkReservationsById.get(session.id) ??
+      this.forkReservationsByPath.get(resolve(session.path));
     if (reservation) await this.waitForForkReservation(session);
     if (this.deleting.has(session.id)) {
-      throw Object.assign(new Error("That session is being deleted"), { status: 409 });
+      throw Object.assign(new Error("That session is being deleted"), {
+        status: 409,
+      });
     }
     let existing = this.slots.get(session.id);
     if (existing?.stopping) await existing.stopping;
     existing = this.slots.get(session.id);
-    if (existing && (existing.projection || existing.process || this.opening.has(session.id))) return existing;
+    if (
+      existing &&
+      (existing.projection || existing.process || this.opening.has(session.id))
+    )
+      return existing;
     const path = resolve(session.path);
     const pending = this.loadingSlots.get(session.id);
     if (pending) return pending;
@@ -2224,12 +2931,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (pendingPath) {
       const loaded = await pendingPath;
       if (loaded.id === session.id) return loaded;
-      throw Object.assign(new Error("Session path is already owned by another session"), { status: 409 });
+      throw Object.assign(
+        new Error("Session path is already owned by another session"),
+        { status: 409 },
+      );
     }
 
     const loading = (async () => {
-      const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd || process.cwd());
-      const { projection, preview } = await this.openProjection(session, workspaceRoot);
+      const workspaceRoot = await this.resolveWorkspaceRoot(
+        session.cwd || process.cwd(),
+      );
+      const { projection, preview } = await this.openProjection(
+        session,
+        workspaceRoot,
+      );
       const current = this.slots.get(session.id);
       if (current && (current.process || this.opening.has(session.id))) {
         await projection.close();
@@ -2243,7 +2958,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.attachProjection(current, projection);
         current.preview = preview;
         current.cwd = workspaceRoot;
-        current.sessionPath = preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path);
+        current.sessionPath = preview.sessionFile
+          ? resolve(preview.sessionFile)
+          : resolve(session.path);
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         this.clearPendingExtensionUi(current, "replaced");
         current.pendingQueues = emptyPendingQueues();
@@ -2262,7 +2979,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const slot: RuntimeSlot = {
         id: session.id,
         cwd: workspaceRoot,
-        sessionPath: preview.sessionFile ? resolve(preview.sessionFile) : resolve(session.path),
+        sessionPath: preview.sessionFile
+          ? resolve(preview.sessionFile)
+          : resolve(session.path),
         process: null,
         startupPhase: "idle",
         startupError: null,
@@ -2324,8 +3043,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       return await loading;
     } finally {
-      if (this.loadingSlots.get(session.id) === loading) this.loadingSlots.delete(session.id);
-      if (this.loadingPaths.get(path) === loading) this.loadingPaths.delete(path);
+      if (this.loadingSlots.get(session.id) === loading)
+        this.loadingSlots.delete(session.id);
+      if (this.loadingPaths.get(path) === loading)
+        this.loadingPaths.delete(path);
     }
   }
 
@@ -2336,18 +3057,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const reconciled = await this.reconcileSlot(slot, true, true);
     const projection = slot.projection;
     if (
-      !projection || projection.health.status === "error" || reconciled.changed || reconciled.healthChanged || reconciled.sourceChanged ||
+      !projection ||
+      projection.health.status === "error" ||
+      reconciled.changed ||
+      reconciled.healthChanged ||
+      reconciled.sourceChanged ||
       reconciled.kind !== "none" ||
-      reconciled.previousRevision !== baseline.revision || reconciled.revision !== baseline.revision ||
-      reconciled.previousFingerprint !== baseline.fingerprint || reconciled.fingerprint !== baseline.fingerprint ||
-      projection.revision !== baseline.revision || projection.fingerprint !== baseline.fingerprint ||
-      projection.sourceIdentity !== baseline.sourceIdentity || projection.sourceVersion !== baseline.sourceVersion ||
+      reconciled.previousRevision !== baseline.revision ||
+      reconciled.revision !== baseline.revision ||
+      reconciled.previousFingerprint !== baseline.fingerprint ||
+      reconciled.fingerprint !== baseline.fingerprint ||
+      projection.revision !== baseline.revision ||
+      projection.fingerprint !== baseline.fingerprint ||
+      projection.sourceIdentity !== baseline.sourceIdentity ||
+      projection.sourceVersion !== baseline.sourceVersion ||
       projection.committedBytes !== baseline.committedBytes ||
       projection.uncommittedBytes !== baseline.uncommittedBytes ||
-      projection.uncommittedFingerprint !== baseline.uncommittedFingerprint || projection.uncommittedBytes > 0 ||
-      projection.tailEntryId !== baseline.tailEntryId || projection.leafId !== baseline.leafId
+      projection.uncommittedFingerprint !== baseline.uncommittedFingerprint ||
+      projection.uncommittedBytes > 0 ||
+      projection.tailEntryId !== baseline.tailEntryId ||
+      projection.leafId !== baseline.leafId
     ) {
-      throw Object.assign(new Error("Session changed after worker creation but before Pi startup"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "Session changed after worker creation but before Pi startup",
+        ),
+        { status: 409 },
+      );
     }
   }
 
@@ -2357,10 +3093,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     baseline: StartupProjectionBaseline,
   ): Promise<void> {
     const fail = (): never => {
-      throw Object.assign(new Error("Session changed on disk while the Pi runtime was starting; retry after reconciliation"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "Session changed on disk while the Pi runtime was starting; retry after reconciliation",
+        ),
+        { status: 409 },
+      );
     };
-    if (baseline.tailEntryId !== baseline.leafId || baseline.uncommittedBytes > 0) fail();
-    const rpcEntries = await rpc.request<{ entries?: unknown; leafId?: unknown }>({
+    if (
+      baseline.tailEntryId !== baseline.leafId ||
+      baseline.uncommittedBytes > 0
+    )
+      fail();
+    const rpcEntries = await rpc.request<{
+      entries?: unknown;
+      leafId?: unknown;
+    }>({
       type: "get_entries",
       ...(baseline.tailEntryId === null ? {} : { since: baseline.tailEntryId }),
     });
@@ -2376,29 +3124,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         return fail();
       }
     })();
-    const state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
+    const state = await rpc.request<Record<string, unknown>>({
+      type: "get_state",
+    });
     if (
       state.sessionId !== slot.id ||
       typeof state.sessionFile !== "string" ||
       resolve(state.sessionFile) !== resolve(slot.sessionPath!) ||
       typeof state.thinkingLevel !== "string"
-    ) fail();
+    )
+      fail();
     const reconciled = await this.reconcileSlot(slot, true, true);
     if (!slot.projection) fail();
     const projection = slot.projection as SessionProjectionView;
-    if (projection.health.status === "error" || projection.sourceIdentity !== baseline.sourceIdentity ||
-      projection.uncommittedBytes > 0) fail();
+    if (
+      projection.health.status === "error" ||
+      projection.sourceIdentity !== baseline.sourceIdentity ||
+      projection.uncommittedBytes > 0
+    )
+      fail();
 
     const delta = parsedRpcEntries.entries;
     if (!reconciled.changed) {
       if (
-        reconciled.kind !== "none" || reconciled.sourceChanged ||
+        reconciled.kind !== "none" ||
+        reconciled.sourceChanged ||
         projection.revision !== baseline.revision ||
         projection.fingerprint !== baseline.fingerprint ||
         delta.length !== 0 ||
         parsedRpcEntries.leafId !== baseline.leafId ||
         projection.leafId !== baseline.leafId
-      ) fail();
+      )
+        fail();
       return;
     }
 
@@ -2412,36 +3169,60 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // cannot prove causal authorship, so Pi's one-writer operating rule remains
     // mandatory outside this fail-closed boundary.
     if (
-      reconciled.kind !== "append" || reconciled.healthChanged ||
+      reconciled.kind !== "append" ||
+      reconciled.healthChanged ||
       reconciled.previousRevision !== baseline.revision ||
       reconciled.previousFingerprint !== baseline.fingerprint ||
       reconciled.previousLeafId !== baseline.leafId ||
       projection.revision !== baseline.revision + 1 ||
       projection.committedBytes <= baseline.committedBytes ||
-      projection.committedBytes > baseline.committedBytes + STARTUP_DELTA_MAX_BYTES ||
+      projection.committedBytes >
+        baseline.committedBytes + STARTUP_DELTA_MAX_BYTES ||
       !Array.isArray(appendedEntries) ||
       appendedEntries.length !== delta.length ||
       delta.length === 0
-    ) fail();
+    )
+      fail();
 
     let sawThinkingInitializer = false;
     for (let index = 0; index < delta.length; index += 1) {
       const rpcEntry = delta[index]!;
-      const projectedEntry = (appendedEntries as readonly SessionEntry[])[index];
-      if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry)) fail();
+      const projectedEntry = (appendedEntries as readonly SessionEntry[])[
+        index
+      ];
+      if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
+        fail();
       const record = rpcEntry as unknown as Record<string, unknown>;
       const keys = Object.keys(record).sort();
       if (record.type === "custom") {
         if (
-          typeof record.customType !== "string" || record.customType.length === 0 || record.customType.length > 200 ||
-          !isDeepStrictEqual(keys, ["customType", "data", "id", "parentId", "timestamp", "type"])
-        ) fail();
+          typeof record.customType !== "string" ||
+          record.customType.length === 0 ||
+          record.customType.length > 200 ||
+          !isDeepStrictEqual(keys, [
+            "customType",
+            "data",
+            "id",
+            "parentId",
+            "timestamp",
+            "type",
+          ])
+        )
+          fail();
       } else if (record.type === "thinking_level_change") {
         if (
-          !baseline.missingThinkingLevel || sawThinkingInitializer ||
+          !baseline.missingThinkingLevel ||
+          sawThinkingInitializer ||
           record.thinkingLevel !== state.thinkingLevel ||
-          !isDeepStrictEqual(keys, ["id", "parentId", "thinkingLevel", "timestamp", "type"])
-        ) fail();
+          !isDeepStrictEqual(keys, [
+            "id",
+            "parentId",
+            "thinkingLevel",
+            "timestamp",
+            "type",
+          ])
+        )
+          fail();
         sawThinkingInitializer = true;
       } else {
         fail();
@@ -2452,13 +3233,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       projection.leafId !== parsedRpcEntries.leafId ||
       projection.tailEntryId !== parsedRpcEntries.leafId ||
       projection.thinkingLevel !== state.thinkingLevel
-    ) fail();
+    )
+      fail();
   }
 
   private async startSlot(slot: RuntimeSlot): Promise<RuntimeSlot> {
-    if (!slot.sessionPath || !slot.projection) throw new Error("Session file is not available");
+    if (!slot.sessionPath || !slot.projection)
+      throw new Error("Session file is not available");
     if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(new Error("Session file ends with an incomplete JSONL entry; repair or complete it before starting Pi"), { status: 409 });
+      throw Object.assign(
+        new Error(
+          "Session file ends with an incomplete JSONL entry; repair or complete it before starting Pi",
+        ),
+        { status: 409 },
+      );
     }
     if (slot.stopping) await slot.stopping;
     const projection = slot.projection;
@@ -2473,12 +3261,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       uncommittedFingerprint: projection.uncommittedFingerprint,
       tailEntryId: projection.tailEntryId,
       leafId: projection.leafId,
-      missingThinkingLevel: !projection.hasActiveEntryType("thinking_level_change"),
+      missingThinkingLevel: !projection.hasActiveEntryType(
+        "thinking_level_change",
+      ),
     };
     const bridge = newBridgeIdentity();
     let rpc: PiRpcProcess;
     try {
-      rpc = this.createProcess(this.workerOptions(slot.cwd, ["--session", slot.sessionPath], bridge));
+      rpc = this.createProcess(
+        this.workerOptions(slot.cwd, ["--session", slot.sessionPath], bridge),
+      );
     } catch (error) {
       projection.resumeReconciliation();
       throw error;
@@ -2503,7 +3295,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.attestStartup(slot, rpc, baseline);
       slot.ready = true;
       slot.startupPhase = "complete";
-      if (slot.runState === "failed" || slot.runState === "aborted") slot.runState = "idle";
+      if (slot.runState === "failed" || slot.runState === "aborted")
+        slot.runState = "idle";
       this.captureWriterProjectionBaseline(slot);
       this.diagnostics.record("info", "slot_worker_ready", {
         sessionId: slot.id,
@@ -2523,7 +3316,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         await this.stopWriter(slot);
         slot.runState = "failed";
         slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-        this.emitSlotEvent(slot, { type: "runtime_error", error: failure instanceof Error ? failure.message : String(failure) });
+        this.emitSlotEvent(slot, {
+          type: "runtime_error",
+          error: failure instanceof Error ? failure.message : String(failure),
+        });
       } else {
         await rpc.stop();
       }
@@ -2535,12 +3331,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
     if (
-      slot.process && slot.ready && this.writerProjectionBaselineMatches(slot)
-    ) return slot;
+      slot.process &&
+      slot.ready &&
+      this.writerProjectionBaselineMatches(slot)
+    )
+      return slot;
     const pending = this.opening.get(slot.id);
     if (pending) return pending;
 
-    const opening = this.mutateSlot(slot, async () => this.ensureFreshWriterInsideGate(slot));
+    const opening = this.mutateSlot(slot, async () =>
+      this.ensureFreshWriterInsideGate(slot),
+    );
     this.opening.set(slot.id, opening);
     try {
       return await opening;
@@ -2553,17 +3354,25 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async openSession(id: string): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     if (this.deleting.has(id)) {
-      throw Object.assign(new Error("That session is being deleted"), { status: 409 });
+      throw Object.assign(new Error("That session is being deleted"), {
+        status: 409,
+      });
     }
     const selection = ++this.selectionSequence;
-    this.selectionReservations.set(id, (this.selectionReservations.get(id) ?? 0) + 1);
+    this.selectionReservations.set(
+      id,
+      (this.selectionReservations.get(id) ?? 0) + 1,
+    );
     try {
       const session = await this.catalog.get(id);
-      if (!session) throw Object.assign(new Error("Session not found"), { status: 404 });
+      if (!session)
+        throw Object.assign(new Error("Session not found"), { status: 404 });
 
       const slot = await this.prepareSlot(session);
       const ready = Boolean(slot.process && slot.ready);
-      const snapshot = ready ? await this.snapshotSlot(slot) : this.previewSnapshot(slot);
+      const snapshot = ready
+        ? await this.snapshotSlot(slot)
+        : this.previewSnapshot(slot);
       if (selection === this.selectionSequence) {
         const previousSessionId = this.selectedSessionId;
         this.selectedSessionId = slot.id;
@@ -2602,24 +3411,44 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       childPid: previousSlot?.process?.pid,
     });
     this.scheduleIdleWorkerEviction();
-    return { active: null, runState: "idle", sessionStatuses: this.sessionStatuses() };
+    return {
+      active: null,
+      runState: "idle",
+      sessionStatuses: this.sessionStatuses(),
+    };
   }
 
-  private async deletionCatalogRecord(sessionId: string): Promise<SessionRecord> {
-    const matches = (await this.catalog.refresh(true)).filter((candidate) => candidate.id === sessionId);
-    if (matches.length === 0) throw Object.assign(new Error("Session not found"), { status: 404 });
+  private async deletionCatalogRecord(
+    sessionId: string,
+  ): Promise<SessionRecord> {
+    const matches = (await this.catalog.refresh(true)).filter(
+      (candidate) => candidate.id === sessionId,
+    );
+    if (matches.length === 0)
+      throw Object.assign(new Error("Session not found"), { status: 404 });
     if (matches.length > 1) {
-      throw Object.assign(new Error("The session identity is ambiguous in the Pi catalog"), { status: 409 });
+      throw Object.assign(
+        new Error("The session identity is ambiguous in the Pi catalog"),
+        { status: 409 },
+      );
     }
     return matches[0]!;
   }
 
-  private async deleteSessionInside(sessionId: string): Promise<SessionDeleteResponse> {
+  private async deleteSessionInside(
+    sessionId: string,
+  ): Promise<SessionDeleteResponse> {
     if (this.selectedSessionId === sessionId) {
-      throw Object.assign(new Error("Switch to another session before deleting this one"), { status: 409 });
+      throw Object.assign(
+        new Error("Switch to another session before deleting this one"),
+        { status: 409 },
+      );
     }
     if (this.selectionReservations.has(sessionId)) {
-      throw Object.assign(new Error("Wait for the session to finish opening before deleting it"), { status: 409 });
+      throw Object.assign(
+        new Error("Wait for the session to finish opening before deleting it"),
+        { status: 409 },
+      );
     }
     // Opening an existing session returns its read-only preview before the
     // background Pi worker has necessarily finished startup. Once New session
@@ -2627,45 +3456,90 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // instead of exposing a transient, user-visible refusal.
     await this.opening.get(sessionId)?.catch(() => undefined);
     await this.loadingSlots.get(sessionId)?.catch(() => undefined);
-    if (this.selectedSessionId === sessionId || this.selectionReservations.has(sessionId)) {
-      throw Object.assign(new Error("The session became active while deletion was waiting for startup"), { status: 409 });
+    if (
+      this.selectedSessionId === sessionId ||
+      this.selectionReservations.has(sessionId)
+    ) {
+      throw Object.assign(
+        new Error(
+          "The session became active while deletion was waiting for startup",
+        ),
+        { status: 409 },
+      );
     }
 
     const initial = await this.deletionCatalogRecord(sessionId);
     const path = resolve(initial.path);
     await this.loadingPaths.get(path)?.catch(() => undefined);
     if (
-      this.selectedSessionId === sessionId || this.selectionReservations.has(sessionId) ||
-      this.loadingSlots.has(sessionId) || this.loadingPaths.has(path) || this.opening.has(sessionId) ||
-      this.forkReservationsById.has(sessionId) || this.forkReservationsByPath.has(path)
+      this.selectedSessionId === sessionId ||
+      this.selectionReservations.has(sessionId) ||
+      this.loadingSlots.has(sessionId) ||
+      this.loadingPaths.has(path) ||
+      this.opening.has(sessionId) ||
+      this.forkReservationsById.has(sessionId) ||
+      this.forkReservationsByPath.has(path)
     ) {
-      throw Object.assign(new Error("The session is still being opened or changed"), { status: 409 });
+      throw Object.assign(
+        new Error("The session is still being opened or changed"),
+        { status: 409 },
+      );
     }
 
     const slot = this.slots.get(sessionId);
     if (slot) {
       if (slot.stopping) await slot.stopping;
       if (
-        slot.activeOperations > 0 || slot.mutationPending > 0 || slot.extensionResponsePending > 0 ||
-        isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
-        slot.pendingQueues.steering.length > 0 || slot.pendingQueues.followUp.length > 0 ||
-        slot.persistenceExpectations.length > 0 || slot.pendingPartialPersistence ||
-        slot.pendingBranchBridge || slot.rebinding || slot.conflict || slot.navigationLease
+        slot.activeOperations > 0 ||
+        slot.mutationPending > 0 ||
+        slot.extensionResponsePending > 0 ||
+        isBusyRunState(slot.runState) ||
+        slot.pendingExtensionUiRequests.size > 0 ||
+        slot.pendingQueues.steering.length > 0 ||
+        slot.pendingQueues.followUp.length > 0 ||
+        slot.persistenceExpectations.length > 0 ||
+        slot.pendingPartialPersistence ||
+        slot.pendingBranchBridge ||
+        slot.rebinding ||
+        slot.conflict ||
+        slot.navigationLease
       ) {
-        throw Object.assign(new Error("Wait for the session's active work or interaction to finish before deleting it"), { status: 409 });
+        throw Object.assign(
+          new Error(
+            "Wait for the session's active work or interaction to finish before deleting it",
+          ),
+          { status: 409 },
+        );
       }
       await this.mutateSlot(slot, async () => {
-        if (this.selectedSessionId === sessionId || this.slots.get(sessionId) !== slot) {
-          throw Object.assign(new Error("The session changed while deletion was being prepared"), { status: 409 });
+        if (
+          this.selectedSessionId === sessionId ||
+          this.slots.get(sessionId) !== slot
+        ) {
+          throw Object.assign(
+            new Error("The session changed while deletion was being prepared"),
+            { status: 409 },
+          );
         }
         if (
-          isBusyRunState(slot.runState) || slot.pendingExtensionUiRequests.size > 0 ||
-          slot.pendingQueues.steering.length > 0 || slot.pendingQueues.followUp.length > 0 ||
-          slot.extensionResponsePending > 0 || slot.persistenceExpectations.length > 0 ||
-          slot.pendingPartialPersistence || slot.pendingBranchBridge || slot.rebinding ||
-          slot.conflict || slot.navigationLease
+          isBusyRunState(slot.runState) ||
+          slot.pendingExtensionUiRequests.size > 0 ||
+          slot.pendingQueues.steering.length > 0 ||
+          slot.pendingQueues.followUp.length > 0 ||
+          slot.extensionResponsePending > 0 ||
+          slot.persistenceExpectations.length > 0 ||
+          slot.pendingPartialPersistence ||
+          slot.pendingBranchBridge ||
+          slot.rebinding ||
+          slot.conflict ||
+          slot.navigationLease
         ) {
-          throw Object.assign(new Error("Wait for the session's active work or interaction to finish before deleting it"), { status: 409 });
+          throw Object.assign(
+            new Error(
+              "Wait for the session's active work or interaction to finish before deleting it",
+            ),
+            { status: 409 },
+          );
         }
         await this.stopWriter(slot);
         const projection = slot.projection;
@@ -2677,8 +3551,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       });
     }
 
-    if (this.selectedSessionId === sessionId || this.selectionReservations.has(sessionId)) {
-      throw Object.assign(new Error("The session became active while deletion was being prepared"), { status: 409 });
+    if (
+      this.selectedSessionId === sessionId ||
+      this.selectionReservations.has(sessionId)
+    ) {
+      throw Object.assign(
+        new Error(
+          "The session became active while deletion was being prepared",
+        ),
+        { status: 409 },
+      );
     }
     // The initial forced catalog read established one unambiguous id/path.
     // The destructive adapter now reopens that exact path and verifies its
@@ -2701,13 +3583,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const deletion = this.deleteSessionInside(sessionId);
     this.deleting.set(sessionId, deletion);
     const clear = () => {
-      if (this.deleting.get(sessionId) === deletion) this.deleting.delete(sessionId);
+      if (this.deleting.get(sessionId) === deletion)
+        this.deleting.delete(sessionId);
     };
     void deletion.then(clear, clear);
     return deletion;
   }
 
-  async newSession(cwdInput: string, options: NewSessionOptions = {}): Promise<ActiveSnapshot> {
+  async newSession(
+    cwdInput: string,
+    options: NewSessionOptions = {},
+  ): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
     const cwd = await this.resolveWorkspaceRoot(cwdInput);
@@ -2715,15 +3601,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       details = await stat(cwd);
     } catch {
-      throw Object.assign(new Error("Project path does not exist"), { status: 400 });
+      throw Object.assign(new Error("Project path does not exist"), {
+        status: 400,
+      });
     }
-    if (!details.isDirectory()) throw Object.assign(new Error("Project path is not a directory"), { status: 400 });
+    if (!details.isDirectory())
+      throw Object.assign(new Error("Project path is not a directory"), {
+        status: 400,
+      });
     this.assertNotClosing();
 
     const name = options.name?.trim().slice(0, 160) || undefined;
     const args: string[] = [];
     if (name) args.push("--name", name);
-    if (options.model) args.push("--model", `${options.model.provider}/${options.model.id}`);
+    if (options.model)
+      args.push("--model", `${options.model.provider}/${options.model.id}`);
     if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const bridge = newBridgeIdentity();
     const rpc = this.createProcess(this.workerOptions(cwd, args, bridge));
@@ -2787,7 +3679,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     let committed = false;
     let committedSnapshot: ActiveSnapshot | null = null;
     let finishProvisional!: () => void;
-    const completion = new Promise<void>((resolveCompletion) => { finishProvisional = resolveCompletion; });
+    const completion = new Promise<void>((resolveCompletion) => {
+      finishProvisional = resolveCompletion;
+    });
     this.provisionalSlots.set(provisionalId, { slot, completion });
     this.attachProcess(slot, rpc);
     try {
@@ -2797,15 +3691,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.assertNotClosing();
       slot.ready = true;
       slot.startupPhase = "complete";
-      const state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
+      const state = await rpc.request<Record<string, unknown>>({
+        type: "get_state",
+      });
       this.assertNotClosing();
       const sessionId = String(state.sessionId ?? "");
       if (!sessionId) throw new Error("Pi did not report a session id");
-      const reportedPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : null;
+      const reportedPath =
+        typeof state.sessionFile === "string"
+          ? resolve(state.sessionFile)
+          : null;
       if (
-        this.slots.has(sessionId) || this.forkReservationsById.has(sessionId) ||
+        this.slots.has(sessionId) ||
+        this.forkReservationsById.has(sessionId) ||
         (reportedPath !== null && this.forkReservationsByPath.has(reportedPath))
-      ) throw new Error("Pi created a duplicate or reserved session identity");
+      )
+        throw new Error("Pi created a duplicate or reserved session identity");
       slot.id = sessionId;
       slot.sessionPath = reportedPath;
       const initialEntries = await this.readNewSessionEntries(slot, rpc);
@@ -2826,10 +3727,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.assertNotClosing();
         if (
           pendingProjection.sourceIdentity !== null &&
-          pendingProjection.attestInitialMaterialization(cwd, initialEntries) === "mismatch"
+          pendingProjection.attestInitialMaterialization(
+            cwd,
+            initialEntries,
+          ) === "mismatch"
         ) {
           await pendingProjection.close();
-          throw Object.assign(new Error("The new session file appeared with entries that do not match its Pi worker"), { status: 409 });
+          throw Object.assign(
+            new Error(
+              "The new session file appeared with entries that do not match its Pi worker",
+            ),
+            { status: 409 },
+          );
         }
         projection = pendingProjection;
       } else if (this.loadPreview !== loadSessionPreview) {
@@ -2842,7 +3751,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           isStreaming: false,
           isCompacting: false,
           messages: [],
-          transcriptPage: { sessionId, revision: 1, viewId: slot.viewId, messages: [], hasOlder: false, olderCursor: null },
+          transcriptPage: {
+            sessionId,
+            revision: 1,
+            viewId: slot.viewId,
+            messages: [],
+            hasOlder: false,
+            olderCursor: null,
+          },
           projectionHealth: { status: "ok" },
           availableModels: [],
           commands: [],
@@ -2875,20 +3791,34 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // Extensions may have asked for input while the slot still carried its
       // provisional id; preserve order while rebinding every request.
       slot.pendingExtensionUiRequests = new Map(
-        [...slot.pendingExtensionUiRequests].map(([id, request]) => [id, { ...request, sessionId }]),
+        [...slot.pendingExtensionUiRequests].map(([id, request]) => [
+          id,
+          { ...request, sessionId },
+        ]),
       );
       const extras = await this.readRuntimeExtras(slot, rpc);
       this.assertNotClosing();
       slot.preview = {
         ...slot.preview,
-        ...(typeof state.sessionName === "string" ? { sessionName: state.sessionName } : {}),
+        ...(typeof state.sessionName === "string"
+          ? { sessionName: state.sessionName }
+          : {}),
         stats: extras.stats,
         availableModels: extras.models,
         commands: extras.commands,
       };
       committedSnapshot = this.previewSnapshot(slot, {
-        ...this.sessionStatuses(selection === this.selectionSequence ? sessionId : this.selectedSessionId),
-        [sessionId]: this.statusFor(slot, selection === this.selectionSequence ? sessionId : this.selectedSessionId),
+        ...this.sessionStatuses(
+          selection === this.selectionSequence
+            ? sessionId
+            : this.selectedSessionId,
+        ),
+        [sessionId]: this.statusFor(
+          slot,
+          selection === this.selectionSequence
+            ? sessionId
+            : this.selectedSessionId,
+        ),
       });
       this.provisionalSlots.delete(provisionalId);
       this.slots.set(sessionId, slot);
@@ -2943,8 +3873,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const entered = request.message.trim();
     if (slot.bridge) {
       const reserved = `/${slot.bridge.command}`;
-      if (entered === reserved || (entered.startsWith(reserved) && /^\s/u.test(entered.slice(reserved.length)))) {
-        throw Object.assign(new Error("That command is reserved for internal branch navigation"), { status: 403 });
+      if (
+        entered === reserved ||
+        (entered.startsWith(reserved) &&
+          /^\s/u.test(entered.slice(reserved.length)))
+      ) {
+        throw Object.assign(
+          new Error("That command is reserved for internal branch navigation"),
+          { status: 403 },
+        );
       }
     }
     const resolving = this.attachments.resolveForPrompt(request.attachmentIds);
@@ -2970,7 +3907,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // file references present the text is not a command and flows through as
       // an ordinary prompt, so nothing the user staged is silently dropped.
       const compact = parseCompactCommand(message);
-      if (compact && !request.attachmentIds?.length && !request.projectFiles?.length) {
+      if (
+        compact &&
+        !request.attachmentIds?.length &&
+        !request.projectFiles?.length
+      ) {
         await this.compactSlot(slot, compact.instructions);
         return;
       }
@@ -2980,10 +3921,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const projectFiles = resolvedProjectFiles;
         const readySlot = await this.ensureFreshWriterInsideGate(slot);
         if (!readySlot.process || !readySlot.ready) {
-          throw Object.assign(new Error("Pi runtime failed to start"), { status: 503 });
+          throw Object.assign(new Error("Pi runtime failed to start"), {
+            status: 503,
+          });
         }
-        const fullMessage = addAttachmentContext(message, resolved.files, projectFiles);
-        if (!fullMessage && resolved.images.length === 0) throw new Error("Message or attachment is required");
+        const fullMessage = addAttachmentContext(
+          message,
+          resolved.files,
+          projectFiles,
+        );
+        if (!fullMessage && resolved.images.length === 0)
+          throw new Error("Message or attachment is required");
         const previousRunState = slot.runState;
         // Pi acknowledges prompt acceptance before agent_start can cross the
         // event channel. Mark the handoff queued so idle reclamation cannot
@@ -2994,7 +3942,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             type: "prompt",
             message: fullMessage,
             ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
-            ...(request.behavior ? { streamingBehavior: request.behavior } : {}),
+            ...(request.behavior
+              ? { streamingBehavior: request.behavior }
+              : {}),
           });
           accepted = true;
           await this.reconcileSlot(slot, true);
@@ -3004,12 +3954,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           throw error;
         }
       } catch (error) {
-        const outcomeUnknown = error && typeof error === "object" &&
+        const outcomeUnknown =
+          error &&
+          typeof error === "object" &&
           (error as { outcomeUnknown?: unknown }).outcomeUnknown === true;
         if (accepted || outcomeUnknown) {
           // Pi accepted the prompt, or may have accepted it before losing the
           // response. Restaging would invite a duplicate prompt on retry.
-          if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
+          if (request.attachmentIds?.length)
+            await this.attachments.releaseConsumed(request.attachmentIds);
           throw error;
         }
         // Failed delivery hands leased attachments back to the staged state,
@@ -3029,7 +3982,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // Delivered: image bytes travelled inside the request, so their upload
       // cache entries are no longer needed. File attachments stay (their host
       // paths are part of the conversation text).
-      if (request.attachmentIds?.length) await this.attachments.releaseConsumed(request.attachmentIds);
+      if (request.attachmentIds?.length)
+        await this.attachments.releaseConsumed(request.attachmentIds);
     });
   }
 
@@ -3038,29 +3992,52 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.useSlot(slot, async () => {
       await this.reconcileSlot(slot, true);
       this.throwIfConflicted(slot);
-      if (!slot.projection) throw Object.assign(new Error("Session projection is not available"), { status: 503 });
-      return { ...slot.projection.branchTree(this.effectiveLeaf(slot)), revision: slot.branchRevision };
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
+      return {
+        ...slot.projection.branchTree(this.effectiveLeaf(slot)),
+        revision: slot.branchRevision,
+      };
     });
   }
 
   private requireIdleBranchSlot(slot: RuntimeSlot, revision: number): void {
     if (slot.branchRevision !== revision) {
-      throw Object.assign(new Error("Branch view is stale; refresh before changing history"), { status: 409 });
+      throw Object.assign(
+        new Error("Branch view is stale; refresh before changing history"),
+        { status: 409 },
+      );
     }
-    if (slot.runState !== "idle" || slot.pendingExtensionUiRequests.size > 0 ||
-      slot.pendingQueues.steering.length > 0 || slot.pendingQueues.followUp.length > 0) {
-      throw Object.assign(new Error("Branch operations require an idle session with no pending dialog or queue"), { status: 409 });
+    if (
+      slot.runState !== "idle" ||
+      slot.pendingExtensionUiRequests.size > 0 ||
+      slot.pendingQueues.steering.length > 0 ||
+      slot.pendingQueues.followUp.length > 0
+    ) {
+      throw Object.assign(
+        new Error(
+          "Branch operations require an idle session with no pending dialog or queue",
+        ),
+        { status: 409 },
+      );
     }
   }
 
-  private makePendingBranch(slot: RuntimeSlot, bridge: BranchBridgeIdentity): PendingBranchBridge {
+  private makePendingBranch(
+    slot: RuntimeSlot,
+    bridge: BranchBridgeIdentity,
+  ): PendingBranchBridge {
     const nonce = bridgeToken("nonce");
     let resolveResult!: (result: BranchBridgeResult) => void;
     let rejectResult!: (error: Error) => void;
-    const result = new Promise<BranchBridgeResult>((resolvePromise, rejectPromise) => {
-      resolveResult = resolvePromise;
-      rejectResult = rejectPromise;
-    });
+    const result = new Promise<BranchBridgeResult>(
+      (resolvePromise, rejectPromise) => {
+        resolveResult = resolvePromise;
+        rejectResult = rejectPromise;
+      },
+    );
     const pending: PendingBranchBridge = {
       nonce,
       bridge,
@@ -3074,15 +4051,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return pending;
   }
 
-  private async failUnknownBranchOutcome(slot: RuntimeSlot, message: string): Promise<never> {
+  private async failUnknownBranchOutcome(
+    slot: RuntimeSlot,
+    message: string,
+  ): Promise<never> {
     await this.stopWriter(slot);
     await this.reconcileSlot(slot, true).catch(() => undefined);
-    const conflict = this.setProjectionConflict(slot, "outcome-unknown", message);
+    const conflict = this.setProjectionConflict(
+      slot,
+      "outcome-unknown",
+      message,
+    );
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
-    throw Object.assign(new Error(message), { status: 504, outcomeUnknown: true });
+    throw Object.assign(new Error(message), {
+      status: 504,
+      outcomeUnknown: true,
+    });
   }
 
-  async navigateBranch(request: BranchNavigateRequest): Promise<BranchNavigateResponse> {
+  async navigateBranch(
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse> {
     const slot = this.requireSlot(request.sessionId);
     return this.mutateSlot(slot, async () => {
       this.requireIdleBranchSlot(slot, request.revision);
@@ -3090,29 +4079,56 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.requireIdleBranchSlot(slot, request.revision);
       const projection = ready.projection;
       const bridge = ready.bridge;
-      if (!projection || !bridge) throw Object.assign(new Error("Branch navigation bridge is unavailable"), { status: 503 });
+      if (!projection || !bridge)
+        throw Object.assign(
+          new Error("Branch navigation bridge is unavailable"),
+          { status: 503 },
+        );
       const target = projection.entry(request.targetId);
-      if (!target) throw Object.assign(new Error("Branch target does not exist"), { status: 404 });
+      if (!target)
+        throw Object.assign(new Error("Branch target does not exist"), {
+          status: 404,
+        });
 
       let navigationTarget = request.targetId;
       let editorText: string | undefined;
       if (request.mode === "edit") {
         editorText = projection.userText(request.targetId, MAX_PROMPT_CHARS);
         if (target.parentId === null) {
-          throw Object.assign(new Error("Editing the root user message is not supported by Pi's public navigation API"), { status: 409 });
+          throw Object.assign(
+            new Error(
+              "Editing the root user message is not supported by Pi's public navigation API",
+            ),
+            { status: 409 },
+          );
         }
         navigationTarget = target.parentId;
       } else if (target.type === "message" && target.role === "user") {
-        throw Object.assign(new Error("Use Edit from here for a user message"), { status: 409 });
+        throw Object.assign(
+          new Error("Use Edit from here for a user message"),
+          { status: 409 },
+        );
       }
 
       const beforeLeaf = this.effectiveLeaf(slot);
-      if (navigationTarget === beforeLeaf) return { snapshot: await this.snapshotSlot(slot), ...(editorText ? { editorText } : {}) };
+      if (navigationTarget === beforeLeaf)
+        return {
+          snapshot: await this.snapshotSlot(slot),
+          ...(editorText ? { editorText } : {}),
+        };
       const tail = projection.tailEntryId;
       const sourceProjectionRevision = projection.revision;
       const sourceProjectionFingerprint = projection.fingerprint;
-      if (!tail) throw Object.assign(new Error("An empty session cannot change branches"), { status: 409 });
-      if (slot.pendingBranchBridge) throw Object.assign(new Error("A branch operation is already pending"), { status: 409 });
+      if (!tail)
+        throw Object.assign(
+          new Error("An empty session cannot change branches"),
+          { status: 409 },
+        );
+      if (slot.pendingBranchBridge)
+        throw Object.assign(
+          new Error("A branch operation is already pending"),
+          { status: 409 },
+        );
 
       const pending = this.makePendingBranch(slot, bridge);
       const bridgeRequest: BranchBridgeRequest = {
@@ -3123,7 +4139,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         operation: "navigate",
         targetId: navigationTarget,
       };
-      const payload = encodeBranchBridgeJson(bridgeRequest, BRANCH_BRIDGE_MAX_ARGUMENT_BYTES);
+      const payload = encodeBranchBridgeJson(
+        bridgeRequest,
+        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      );
       const promptFence = ready.process.request(
         { type: "prompt", message: `/${bridge.command} ${payload}` },
         this.branchBridgeTimeoutMs,
@@ -3132,29 +4151,58 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const resultFence = Promise.race([
         pending.result,
         new Promise<BranchBridgeResult>((_resolve, reject) => {
-          timeout = setTimeout(() => reject(new Error("Timed out waiting for branch bridge result")), this.branchBridgeTimeoutMs);
+          timeout = setTimeout(
+            () =>
+              reject(new Error("Timed out waiting for branch bridge result")),
+            this.branchBridgeTimeoutMs,
+          );
           timeout.unref?.();
         }),
       ]);
-      const [resultOutcome, promptOutcome] = await Promise.allSettled([resultFence, promptFence]);
+      const [resultOutcome, promptOutcome] = await Promise.allSettled([
+        resultFence,
+        promptFence,
+      ]);
       if (timeout) clearTimeout(timeout);
       if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
-        promptOutcome.status === "rejected" && !isPiRpcOutcomeUnknown(promptOutcome.reason) &&
+        promptOutcome.status === "rejected" &&
+        !isPiRpcOutcomeUnknown(promptOutcome.reason) &&
         resultOutcome.status === "rejected"
-      ) throw promptOutcome.reason;
-      if (pending.duplicate || resultOutcome.status === "rejected" || promptOutcome.status === "rejected") {
-        return this.failUnknownBranchOutcome(slot, "Branch navigation outcome is unknown; the worker was stopped and disk state reconciled");
+      )
+        throw promptOutcome.reason;
+      if (
+        pending.duplicate ||
+        resultOutcome.status === "rejected" ||
+        promptOutcome.status === "rejected"
+      ) {
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Branch navigation outcome is unknown; the worker was stopped and disk state reconciled",
+        );
       }
       const result = resultOutcome.value;
       let verified: { entries?: unknown[]; leafId?: unknown };
       try {
-        verified = await ready.process.request({ type: "get_entries", since: tail });
+        verified = await ready.process.request({
+          type: "get_entries",
+          since: tail,
+        });
       } catch {
-        return this.failUnknownBranchOutcome(slot, "Branch navigation could not be verified; the worker was stopped and disk state reconciled");
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Branch navigation could not be verified; the worker was stopped and disk state reconciled",
+        );
       }
-      if (!Array.isArray(verified.entries) || verified.entries.length > 100 || Buffer.byteLength(JSON.stringify(verified)) > 1024 * 1024) {
-        return this.failUnknownBranchOutcome(slot, "Branch navigation verification exceeded its bound; the worker was stopped");
+      if (
+        !Array.isArray(verified.entries) ||
+        verified.entries.length > 100 ||
+        Buffer.byteLength(JSON.stringify(verified)) > 1024 * 1024
+      ) {
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Branch navigation verification exceeded its bound; the worker was stopped",
+        );
       }
       await this.reconcileSlot(slot, true);
       if (
@@ -3164,17 +4212,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         verified.entries.length !== 0 ||
         verified.leafId !== result.effectiveLeaf ||
         result.beforeLeaf !== beforeLeaf
-      ) return this.failUnknownBranchOutcome(slot, "Branch navigation verification failed; the worker was stopped and disk state reconciled");
+      )
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Branch navigation verification failed; the worker was stopped and disk state reconciled",
+        );
       if (result.cancelled) {
-        if (result.effectiveLeaf !== beforeLeaf) return this.failUnknownBranchOutcome(slot, "Cancelled branch navigation changed the effective leaf");
-        throw Object.assign(new Error("Branch navigation was cancelled by an extension"), { status: 409 });
+        if (result.effectiveLeaf !== beforeLeaf)
+          return this.failUnknownBranchOutcome(
+            slot,
+            "Cancelled branch navigation changed the effective leaf",
+          );
+        throw Object.assign(
+          new Error("Branch navigation was cancelled by an extension"),
+          { status: 409 },
+        );
       }
       if (!result.ok || result.error) {
-        if (result.effectiveLeaf !== beforeLeaf) return this.failUnknownBranchOutcome(slot, "Failed branch navigation changed the effective leaf");
-        throw Object.assign(new Error(result.error ?? "Branch navigation failed"), { status: 409 });
+        if (result.effectiveLeaf !== beforeLeaf)
+          return this.failUnknownBranchOutcome(
+            slot,
+            "Failed branch navigation changed the effective leaf",
+          );
+        throw Object.assign(
+          new Error(result.error ?? "Branch navigation failed"),
+          { status: 409 },
+        );
       }
       if (result.effectiveLeaf !== navigationTarget) {
-        return this.failUnknownBranchOutcome(slot, "Branch navigation reached an unexpected leaf; the worker was stopped");
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Branch navigation reached an unexpected leaf; the worker was stopped",
+        );
       }
       slot.branchRevision += 1;
       this.renewView(slot);
@@ -3190,12 +4259,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           mode: request.mode,
         };
       }
-      this.emitSlotEvent(slot, { type: "branch_changed", revision: slot.branchRevision, effectiveLeafId: result.effectiveLeaf });
-      return { snapshot: await this.snapshotSlot(slot), ...(editorText ? { editorText } : {}) };
+      this.emitSlotEvent(slot, {
+        type: "branch_changed",
+        revision: slot.branchRevision,
+        effectiveLeafId: result.effectiveLeaf,
+      });
+      return {
+        snapshot: await this.snapshotSlot(slot),
+        ...(editorText ? { editorText } : {}),
+      };
     });
   }
 
-  private replayBufferedEvents(slot: RuntimeSlot, rpc: PiRpcProcess, events: readonly unknown[]): void {
+  private replayBufferedEvents(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    events: readonly unknown[],
+  ): void {
     slot.rebinding = false;
     slot.bufferedEvents = [];
     slot.bufferedEventBytes = 0;
@@ -3206,7 +4286,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const source = this.requireSlot(request.sessionId);
     return this.mutateSlot(source, async () => {
       if (this.selectedSessionId !== source.id) {
-        throw Object.assign(new Error("Fork requires the source session to remain selected"), { status: 409 });
+        throw Object.assign(
+          new Error("Fork requires the source session to remain selected"),
+          { status: 409 },
+        );
       }
       this.requireIdleBranchSlot(source, request.revision);
       const ready = await this.ensureFreshWriterInsideGate(source);
@@ -3214,21 +4297,37 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const projection = ready.projection;
       const rpc = ready.process;
       const bridge = ready.bridge;
-      if (!projection || !bridge) throw Object.assign(new Error("Fork runtime is unavailable"), { status: 503 });
+      if (!projection || !bridge)
+        throw Object.assign(new Error("Fork runtime is unavailable"), {
+          status: 503,
+        });
       const tree = projection.branchTree(this.effectiveLeaf(source));
-      const node = tree.nodes.find((candidate) => candidate.id === request.targetId);
-      if (!node?.canFork) throw Object.assign(new Error("Fork requires a user message on the active branch"), { status: 409 });
-      const editorText = projection.userText(request.targetId, MAX_PROMPT_CHARS);
+      const node = tree.nodes.find(
+        (candidate) => candidate.id === request.targetId,
+      );
+      if (!node?.canFork)
+        throw Object.assign(
+          new Error("Fork requires a user message on the active branch"),
+          { status: 409 },
+        );
+      const editorText = projection.userText(
+        request.targetId,
+        MAX_PROMPT_CHARS,
+      );
       const selectionAtDispatch = this.selectionSequence;
       source.rebinding = true;
       source.bufferedEvents = [];
       source.bufferedEventBytes = 0;
       let forkResult: { text?: unknown; cancelled?: unknown };
       try {
-        forkResult = await rpc.request({ type: "fork", entryId: request.targetId });
+        forkResult = await rpc.request({
+          type: "fork",
+          entryId: request.targetId,
+        });
         await this.assertForkBufferHealthy(source);
       } catch (error) {
-        if (source.forkBufferOverflow) return this.failForkBufferOverflow(source);
+        if (source.forkBufferOverflow)
+          return this.failForkBufferOverflow(source);
         const buffered = source.bufferedEvents.slice();
         source.rebinding = false;
         source.bufferedEvents = [];
@@ -3237,7 +4336,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           await error.stopped.catch(() => undefined);
           // Events cannot be attributed after an acceptance-unknown replacement.
           void buffered;
-          return this.failUnknownBranchOutcome(source, "Fork outcome is unknown; the worker was stopped and disk state reconciled");
+          return this.failUnknownBranchOutcome(
+            source,
+            "Fork outcome is unknown; the worker was stopped and disk state reconciled",
+          );
         }
         this.replayBufferedEvents(source, rpc, buffered);
         throw error;
@@ -3248,30 +4350,58 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.replayBufferedEvents(source, rpc, buffered);
         await this.reconcileSlot(source, true);
         await this.assertForkBufferHealthy(source);
-        throw Object.assign(new Error("Fork was cancelled by an extension"), { status: 409 });
+        throw Object.assign(new Error("Fork was cancelled by an extension"), {
+          status: 409,
+        });
       }
       await this.reconcileSlot(source, true);
       await this.assertForkBufferHealthy(source);
       if (source.conflict || source.projection?.health.status === "error") {
         await this.stopWriter(source);
-        throw Object.assign(new Error("Fork source changed while the operation was in flight; the destination worker was stopped"), { status: 409 });
+        throw Object.assign(
+          new Error(
+            "Fork source changed while the operation was in flight; the destination worker was stopped",
+          ),
+          { status: 409 },
+        );
       }
 
       let state: Record<string, unknown>;
       try {
-        state = await rpc.request<Record<string, unknown>>({ type: "get_state" });
+        state = await rpc.request<Record<string, unknown>>({
+          type: "get_state",
+        });
         await this.assertForkBufferHealthy(source);
-      } catch (error) {
-        if (source.forkBufferOverflow) return this.failForkBufferOverflow(source);
-        return this.failUnknownBranchOutcome(source, "Fork identity outcome is unknown; the worker was stopped and disk state reconciled");
+      } catch (_error) {
+        if (source.forkBufferOverflow)
+          return this.failForkBufferOverflow(source);
+        return this.failUnknownBranchOutcome(
+          source,
+          "Fork identity outcome is unknown; the worker was stopped and disk state reconciled",
+        );
       }
-      const destinationId = typeof state.sessionId === "string" ? state.sessionId : "";
-      const destinationPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : "";
-      const pathCollision = [...this.slots.values()].some((slot) => slot.sessionPath !== null && resolve(slot.sessionPath) === destinationPath);
-      if (!destinationId || destinationId === source.id || !destinationPath || this.slots.has(destinationId) || pathCollision) {
+      const destinationId =
+        typeof state.sessionId === "string" ? state.sessionId : "";
+      const destinationPath =
+        typeof state.sessionFile === "string" ? resolve(state.sessionFile) : "";
+      const pathCollision = [...this.slots.values()].some(
+        (slot) =>
+          slot.sessionPath !== null &&
+          resolve(slot.sessionPath) === destinationPath,
+      );
+      if (
+        !destinationId ||
+        destinationId === source.id ||
+        !destinationPath ||
+        this.slots.has(destinationId) ||
+        pathCollision
+      ) {
         await this.stopWriter(source);
         await this.reconcileSlot(source, true).catch(() => undefined);
-        throw Object.assign(new Error("Pi returned an invalid or colliding fork identity"), { status: 409 });
+        throw Object.assign(
+          new Error("Pi returned an invalid or colliding fork identity"),
+          { status: 409 },
+        );
       }
 
       // This reservation is installed synchronously in the same turn as the
@@ -3279,7 +4409,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // while the destination projection is being opened.
       let reservation: ForkReservation;
       try {
-        reservation = this.reserveForkDestination(destinationId, destinationPath);
+        reservation = this.reserveForkDestination(
+          destinationId,
+          destinationPath,
+        );
       } catch (error) {
         await this.stopWriter(source);
         await this.reconcileSlot(source, true).catch(() => undefined);
@@ -3306,24 +4439,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // run-to-completion semantics make this the atomic
         // reservation-to-owner transition.
         await this.assertForkBufferHealthy(source);
-        const attachPathCollision = [...this.slots.values()].some((slot) =>
-          slot !== source && slot.sessionPath !== null && resolve(slot.sessionPath) === destinationPath,
+        const attachPathCollision = [...this.slots.values()].some(
+          (slot) =>
+            slot !== source &&
+            slot.sessionPath !== null &&
+            resolve(slot.sessionPath) === destinationPath,
         );
         if (
           this.forkReservationsById.get(destinationId) !== reservation ||
           this.forkReservationsByPath.get(destinationPath) !== reservation ||
-          this.slots.has(destinationId) || attachPathCollision
+          this.slots.has(destinationId) ||
+          attachPathCollision
         ) {
-          throw Object.assign(new Error("Fork destination ownership changed before attach"), { status: 409 });
+          throw Object.assign(
+            new Error("Fork destination ownership changed before attach"),
+            { status: 409 },
+          );
         }
 
         const destinationViewId = bridgeToken("view");
         const sourceViewId = bridgeToken("view");
-        const page = destinationProjection.latestPage([], destinationProjection.leafId, destinationViewId);
+        const page = destinationProjection.latestPage(
+          [],
+          destinationProjection.leafId,
+          destinationViewId,
+        );
         const reboundRequests = new Map(
           [...source.pendingExtensionUiRequests]
             .filter(([id]) => source.pendingExtensionUiOwners.get(id) === rpc)
-            .map(([id, request]) => [id, { ...request, sessionId: destinationId } as ExtensionUiRequest]),
+            .map(([id, request]) => [
+              id,
+              { ...request, sessionId: destinationId } as ExtensionUiRequest,
+            ]),
         );
         const destination: RuntimeSlot = {
           id: destinationId,
@@ -3340,7 +4487,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             sessionFile: destinationPath,
             cwd: source.cwd,
             model: destinationProjection.model ?? state.model,
-            thinkingLevel: destinationProjection.thinkingLevel || String(state.thinkingLevel ?? "off"),
+            thinkingLevel:
+              destinationProjection.thinkingLevel ||
+              String(state.thinkingLevel ?? "off"),
             isStreaming: false,
             isCompacting: false,
             messages: page.messages,
@@ -3368,7 +4517,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           workerProjectionFingerprint: destinationProjection.fingerprint,
           workerProjectionSourceIdentity: destinationProjection.sourceIdentity,
           workerProjectionSourceVersion: destinationProjection.sourceVersion,
-          workerProjectionObservedBytes: destinationProjection.committedBytes + destinationProjection.uncommittedBytes,
+          workerProjectionObservedBytes:
+            destinationProjection.committedBytes +
+            destinationProjection.uncommittedBytes,
           overlay: [],
           overlayBytes: 0,
           nextOverlayId: source.nextOverlayId,
@@ -3395,9 +4546,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           incarnationId: bridgeToken("slot"),
           viewId: destinationViewId,
         };
-        const selectedAfterCommit = this.selectedSessionId === source.id && this.selectionSequence === selectionAtDispatch
-          ? destinationId
-          : this.selectedSessionId;
+        const selectedAfterCommit =
+          this.selectedSessionId === source.id &&
+          this.selectionSequence === selectionAtDispatch
+            ? destinationId
+            : this.selectedSessionId;
         const snapshot = this.previewSnapshot(destination, {
           ...this.sessionStatuses(selectedAfterCommit),
           [destinationId]: this.statusFor(destination, selectedAfterCommit),
@@ -3422,7 +4575,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.slots.set(destinationId, destination);
         attachedDestination = destination;
         this.processOwners.set(rpc, destination);
-        if (this.selectedSessionId === source.id && this.selectionSequence === selectionAtDispatch) {
+        if (
+          this.selectedSessionId === source.id &&
+          this.selectionSequence === selectionAtDispatch
+        ) {
           this.selectedSessionId = destinationId;
           this.selectionSequence += 1;
         }
@@ -3430,7 +4586,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const buffered = destination.bufferedEvents.slice();
         this.replayBufferedEvents(destination, rpc, buffered);
         this.catalog.invalidate();
-        this.emitSlotEvent(destination, { type: "runtime_ready", forkedFrom: source.id });
+        this.emitSlotEvent(destination, {
+          type: "runtime_ready",
+          forkedFrom: source.id,
+        });
         this.scheduleIdleWorkerEviction();
         reservation.release();
         return committedResponse;
@@ -3440,8 +4599,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           return committedResponse;
         }
         if (attachedDestination) {
-          if (this.slots.get(destinationId) === attachedDestination) this.slots.delete(destinationId);
-          if (this.selectedSessionId === destinationId) this.selectedSessionId = source.id;
+          if (this.slots.get(destinationId) === attachedDestination)
+            this.slots.delete(destinationId);
+          if (this.selectedSessionId === destinationId)
+            this.selectedSessionId = source.id;
           this.clearPendingExtensionUi(attachedDestination, "replaced");
           await this.stopWriter(attachedDestination);
         } else {
@@ -3462,7 +4623,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         let slot = initialSlot;
         if (!slot.projection) {
           const session = await this.catalog.get(sessionId);
-          if (!session) throw Object.assign(new Error("Session not found"), { status: 404 });
+          if (!session)
+            throw Object.assign(new Error("Session not found"), {
+              status: 404,
+            });
           slot = await this.prepareSlot(session);
         }
         await this.mutateSlot(slot, async () => {
@@ -3474,7 +4638,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.clearPendingExtensionUi(slot, "aborted");
           slot.pendingQueues = emptyPendingQueues();
           slot.extensionDisplays = [];
-          for (const expectation of slot.persistenceExpectations) expectation.settle(null);
+          for (const expectation of slot.persistenceExpectations)
+            expectation.settle(null);
           slot.persistenceExpectations = [];
           await this.reconcileSlot(slot, true);
           if (slot.projection?.health.status === "ok") {
@@ -3494,7 +4659,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.emitSlotEvent(slot, {
             type: "session_projection_changed",
             revision: slot.projection?.revision ?? 0,
-            health: slot.projection?.health ?? { status: "error", message: "Session projection is unavailable" },
+            health: slot.projection?.health ?? {
+              status: "error",
+              message: "Session projection is unavailable",
+            },
             conflict: slot.conflict,
           });
         });
@@ -3505,7 +4673,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     await this.useSlot(slot, async () => {
       const rpc = slot.process;
       if (!rpc || !slot.ready) {
-        throw Object.assign(new Error("There is no live Pi runtime to abort"), { status: 409 });
+        throw Object.assign(new Error("There is no live Pi runtime to abort"), {
+          status: 409,
+        });
       }
       await rpc.request({ type: "abort" });
       this.clearPendingExtensionUi(slot, "aborted");
@@ -3513,25 +4683,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private async compactSlot(slot: RuntimeSlot, customInstructions?: string): Promise<unknown> {
+  private async compactSlot(
+    slot: RuntimeSlot,
+    customInstructions?: string,
+  ): Promise<unknown> {
     const ready = await this.ensureFreshWriterInsideGate(slot);
     const previousRunState = slot.runState;
     slot.runState = "compacting";
     try {
       const expectation = deferredExpectation();
-      return await this.withExpectedPersistence(slot, [expectation], async () => {
-        const result = await this.requestPersistence<unknown>(
-          slot,
-          ready.process,
-          { type: "compact", customInstructions },
-          180_000,
-        );
-        expectation.settle(compactionMatcher(result));
-        await this.reconcileSlot(slot, true);
-        this.throwIfConflicted(slot);
-        if (slot.runState === "compacting") slot.runState = "idle";
-        return result;
-      });
+      return await this.withExpectedPersistence(
+        slot,
+        [expectation],
+        async () => {
+          const result = await this.requestPersistence<unknown>(
+            slot,
+            ready.process,
+            { type: "compact", customInstructions },
+            180_000,
+          );
+          expectation.settle(compactionMatcher(result));
+          await this.reconcileSlot(slot, true);
+          this.throwIfConflicted(slot);
+          if (slot.runState === "compacting") slot.runState = "idle";
+          return result;
+        },
+      );
     } catch (error) {
       if (slot.runState === "compacting") slot.runState = previousRunState;
       throw error;
@@ -3543,29 +4720,56 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
       const persistedName = name.trim().slice(0, 160);
-      await this.withExpectedPersistence(slot, [knownExpectation(
-        (entry) => entry.type === "session_info" && entry.name === persistedName,
-      )], async () => {
-        await this.requestPersistence(slot, ready.process, { type: "set_session_name", name: persistedName });
-        await this.reconcileSlot(slot, true);
-        this.throwIfConflicted(slot);
-      });
+      await this.withExpectedPersistence(
+        slot,
+        [
+          knownExpectation(
+            (entry) =>
+              entry.type === "session_info" && entry.name === persistedName,
+          ),
+        ],
+        async () => {
+          await this.requestPersistence(slot, ready.process, {
+            type: "set_session_name",
+            name: persistedName,
+          });
+          await this.reconcileSlot(slot, true);
+          this.throwIfConflicted(slot);
+        },
+      );
       this.catalog.invalidate();
     });
   }
 
-  async setModel(sessionId: string, provider: string, modelId: string): Promise<unknown> {
+  async setModel(
+    sessionId: string,
+    provider: string,
+    modelId: string,
+  ): Promise<unknown> {
     const slot = this.requireSlot(sessionId);
     return this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      return this.withExpectedPersistence(slot, [knownExpectation(
-        (entry) => entry.type === "model_change" && entry.provider === provider && entry.modelId === modelId,
-      )], async () => {
-        const result = await this.requestPersistence(slot, ready.process, { type: "set_model", provider, modelId });
-        await this.reconcileSlot(slot, true);
-        this.throwIfConflicted(slot);
-        return result;
-      });
+      return this.withExpectedPersistence(
+        slot,
+        [
+          knownExpectation(
+            (entry) =>
+              entry.type === "model_change" &&
+              entry.provider === provider &&
+              entry.modelId === modelId,
+          ),
+        ],
+        async () => {
+          const result = await this.requestPersistence(slot, ready.process, {
+            type: "set_model",
+            provider,
+            modelId,
+          });
+          await this.reconcileSlot(slot, true);
+          this.throwIfConflicted(slot);
+          return result;
+        },
+      );
     });
   }
 
@@ -3573,40 +4777,84 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const slot = this.requireSlot(sessionId);
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.withExpectedPersistence(slot, [knownExpectation(
-        (entry) => entry.type === "thinking_level_change" && entry.thinkingLevel === level,
-      )], async () => {
-        await this.requestPersistence(slot, ready.process, { type: "set_thinking_level", level });
-        await this.reconcileSlot(slot, true);
-        this.throwIfConflicted(slot);
-      });
+      await this.withExpectedPersistence(
+        slot,
+        [
+          knownExpectation(
+            (entry) =>
+              entry.type === "thinking_level_change" &&
+              entry.thinkingLevel === level,
+          ),
+        ],
+        async () => {
+          await this.requestPersistence(slot, ready.process, {
+            type: "set_thinking_level",
+            level,
+          });
+          await this.reconcileSlot(slot, true);
+          this.throwIfConflicted(slot);
+        },
+      );
     });
   }
 
   async extensionUiResponse(response: Record<string, unknown>): Promise<void> {
-    const sessionId = typeof response.sessionId === "string" ? response.sessionId : "";
+    const sessionId =
+      typeof response.sessionId === "string" ? response.sessionId : "";
     const requestId = typeof response.id === "string" ? response.id : "";
     const slot = this.slots.get(sessionId);
-    if (!slot) throw Object.assign(new Error("The extension request no longer has a live Pi runtime"), { status: 409 });
+    if (!slot)
+      throw Object.assign(
+        new Error("The extension request no longer has a live Pi runtime"),
+        { status: 409 },
+      );
     const { sessionId: _owner, ...wireResponse } = response;
     await this.extensionResponseSlot(slot, async () => {
-      if (this.slots.get(sessionId) !== slot || slot.conflict || slot.projection?.health.status === "error") {
-        throw Object.assign(new Error(slot.conflict?.message ?? slot.projection?.health.message ?? "The extension request owner changed"), { status: 409 });
+      if (
+        this.slots.get(sessionId) !== slot ||
+        slot.conflict ||
+        slot.projection?.health.status === "error"
+      ) {
+        throw Object.assign(
+          new Error(
+            slot.conflict?.message ??
+              slot.projection?.health.message ??
+              "The extension request owner changed",
+          ),
+          { status: 409 },
+        );
       }
       await this.reconcileSlot(slot, true);
       if (this.slots.get(sessionId) !== slot) {
-        throw Object.assign(new Error("The extension request owner changed"), { status: 409 });
+        throw Object.assign(new Error("The extension request owner changed"), {
+          status: 409,
+        });
       }
       this.throwIfConflicted(slot);
       const request = slot.pendingExtensionUiRequests.get(requestId);
       const rpc = slot.pendingExtensionUiOwners.get(requestId);
-      if (!request || !rpc) throw Object.assign(new Error("The extension request is no longer pending"), { status: 409 });
-      if (request.sessionId !== sessionId || slot.process !== rpc || !slot.ready || this.processOwners.get(rpc) !== slot) {
-        throw Object.assign(new Error("The extension request no longer belongs to this worker"), { status: 409 });
+      if (!request || !rpc)
+        throw Object.assign(
+          new Error("The extension request is no longer pending"),
+          { status: 409 },
+        );
+      if (
+        request.sessionId !== sessionId ||
+        slot.process !== rpc ||
+        !slot.ready ||
+        this.processOwners.get(rpc) !== slot
+      ) {
+        throw Object.assign(
+          new Error("The extension request no longer belongs to this worker"),
+          { status: 409 },
+        );
       }
       if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
         this.removePendingExtensionUi(slot, requestId, "expired");
-        throw Object.assign(new Error("The extension request expired before the response"), { status: 409 });
+        throw Object.assign(
+          new Error("The extension request expired before the response"),
+          { status: 409 },
+        );
       }
       // The lane is serialized, so removing immediately after the one stdin
       // delivery makes retries and concurrent browser submissions harmless.
@@ -3641,25 +4889,40 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.readRuntimeExtras(slot, rpc),
       ]);
       const { stats, models, commands } = extras;
-      slot.sessionPath = typeof state.sessionFile === "string" ? resolve(state.sessionFile) : slot.sessionPath;
-      if (!slot.projection) throw new Error("Session projection is not available");
+      slot.sessionPath =
+        typeof state.sessionFile === "string"
+          ? resolve(state.sessionFile)
+          : slot.sessionPath;
+      if (!slot.projection)
+        throw new Error("Session projection is not available");
       const effectiveLeafId = this.effectiveLeaf(slot);
-      const page = slot.projection.latestPage(slot.overlay, effectiveLeafId, slot.viewId);
+      const page = slot.projection.latestPage(
+        slot.overlay,
+        effectiveLeafId,
+        slot.viewId,
+      );
       const snapshot = safeProjection({
         active: {
           sessionId: slot.id,
           sessionFile: slot.sessionPath ?? undefined,
-          sessionName: typeof state.sessionName === "string" ? state.sessionName : undefined,
+          sessionName:
+            typeof state.sessionName === "string"
+              ? state.sessionName
+              : undefined,
           cwd: slot.cwd,
           model: slot.projection.model ?? state.model,
           thinkingLevel: slot.projection.thinkingLevel,
           isStreaming: Boolean(state.isStreaming),
-          activeAssistantMessageKey: this.activeAssistantSnapshotKey(slot, page.messages),
+          activeAssistantMessageKey: this.activeAssistantSnapshotKey(
+            slot,
+            page.messages,
+          ),
           isCompacting: Boolean(state.isCompacting),
           messages: page.messages,
           transcriptPage: page,
           projectionHealth: slot.projection.health,
           projectionConflict: slot.conflict,
+          durableLeafId: slot.projection.leafId,
           effectiveLeafId,
           navigationLeased: Boolean(slot.navigationLease),
           stats,
@@ -3673,7 +4936,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         extensionDisplays: slot.extensionDisplays,
       }) as ActiveSnapshot;
       if (snapshot.active) {
-        slot.preview = { ...snapshot.active, isStreaming: false, isCompacting: false };
+        slot.preview = {
+          ...snapshot.active,
+          isStreaming: false,
+          isCompacting: false,
+        };
       }
       return snapshot;
     });
@@ -3683,7 +4950,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.assertNotClosing();
     while (true) {
       const slot = this.selectedSlot();
-      if (!slot) return { active: null, runState: "idle", sessionStatuses: this.sessionStatuses() };
+      if (!slot)
+        return {
+          active: null,
+          runState: "idle",
+          sessionStatuses: this.sessionStatuses(),
+        };
       const snapshot = await this.snapshotSlot(slot);
       // The RPC reads above may have overlapped a newer open/new selection.
       // Only a snapshot of the still-selected slot is authoritative.
@@ -3691,27 +4963,46 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  async transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage> {
+  async transcriptPage(
+    sessionId: string,
+    cursor: string,
+  ): Promise<TranscriptPage> {
     const slot = this.requireSlot(sessionId);
     return this.useSlot(slot, async () => {
-      if (!slot.projection) throw Object.assign(new Error("Session projection is not available"), { status: 503 });
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
       await this.reconcileSlot(slot, true);
-      return slot.projection.page(cursor, this.effectiveLeaf(slot), slot.viewId);
+      return slot.projection.page(
+        cursor,
+        this.effectiveLeaf(slot),
+        slot.viewId,
+      );
     });
   }
 
   async resourceContext(sessionId: string): Promise<ResourceContext> {
     const slot = this.selectedSlot();
     if (!slot || slot.id !== sessionId) {
-      throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+      throw Object.assign(
+        new Error("The resource does not belong to the visible session"),
+        { status: 409 },
+      );
     }
     return this.useSlot(slot, async () => {
       if (this.selectedSessionId !== slot.id) {
-        throw Object.assign(new Error("The resource does not belong to the visible session"), { status: 409 });
+        throw Object.assign(
+          new Error("The resource does not belong to the visible session"),
+          { status: 409 },
+        );
       }
       await this.reconcileSlot(slot, true);
       if (this.selectedSessionId !== slot.id || !slot.projection) {
-        throw Object.assign(new Error("The resource does not belong to the visible branch view"), { status: 409 });
+        throw Object.assign(
+          new Error("The resource does not belong to the visible branch view"),
+          { status: 409 },
+        );
       }
       const viewId = slot.viewId;
       const revision = slot.projection.revision;
@@ -3725,14 +5016,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private async resourceMessages(slot: RuntimeSlot, viewId: string, revision: number): Promise<unknown[]> {
+  private async resourceMessages(
+    slot: RuntimeSlot,
+    viewId: string,
+    revision: number,
+  ): Promise<unknown[]> {
     return this.useSlot(slot, async () => {
-      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId || slot.projection?.revision !== revision) {
-        throw Object.assign(new Error("The resource does not belong to the visible branch revision"), { status: 409 });
+      if (
+        this.selectedSessionId !== slot.id ||
+        slot.viewId !== viewId ||
+        slot.projection?.revision !== revision
+      ) {
+        throw Object.assign(
+          new Error(
+            "The resource does not belong to the visible branch revision",
+          ),
+          { status: 409 },
+        );
       }
       await this.reconcileSlot(slot, true);
-      if (this.selectedSessionId !== slot.id || slot.viewId !== viewId || slot.projection?.revision !== revision) {
-        throw Object.assign(new Error("The resource does not belong to the visible branch revision"), { status: 409 });
+      if (
+        this.selectedSessionId !== slot.id ||
+        slot.viewId !== viewId ||
+        slot.projection?.revision !== revision
+      ) {
+        throw Object.assign(
+          new Error(
+            "The resource does not belong to the visible branch revision",
+          ),
+          { status: 409 },
+        );
       }
       return [...slot.projection.viewMessages(this.effectiveLeaf(slot))];
     });
@@ -3750,11 +5063,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // Provisional workers are registered before startup's first await, so the
     // same shutdown ownership covers them and established slots.
     const provisional = [...this.provisionalSlots.values()];
-    const ownedSlots = new Set([...this.slots.values(), ...provisional.map((entry) => entry.slot)]);
+    const ownedSlots = new Set([
+      ...this.slots.values(),
+      ...provisional.map((entry) => entry.slot),
+    ]);
     const stopping: Promise<unknown>[] = [];
     for (const slot of ownedSlots) {
       this.clearPendingExtensionUi(slot, "closed");
-      for (const expectation of slot.persistenceExpectations) expectation.settle(null);
+      for (const expectation of slot.persistenceExpectations)
+        expectation.settle(null);
       slot.persistenceExpectations = [];
       const rpc = slot.process;
       slot.process = null;
@@ -3768,14 +5085,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...this.opening.values(),
       ...this.deleting.values(),
       ...provisional.map((entry) => entry.completion),
-      ...[...ownedSlots].flatMap((slot) => [slot.mutationTail, slot.extensionResponseTail, slot.eventTail, slot.projectionTail]),
+      ...[...ownedSlots].flatMap((slot) => [
+        slot.mutationTail,
+        slot.extensionResponseTail,
+        slot.eventTail,
+        slot.projectionTail,
+      ]),
       ...stopping,
       this.workerMaintenance,
     ]);
-    await Promise.allSettled([...ownedSlots].map(async (slot) => {
-      await slot.projection?.close();
-      slot.projection = null;
-    }));
+    await Promise.allSettled(
+      [...ownedSlots].map(async (slot) => {
+        await slot.projection?.close();
+        slot.projection = null;
+      }),
+    );
     this.provisionalSlots.clear();
     this.deleting.clear();
     this.slots.clear();

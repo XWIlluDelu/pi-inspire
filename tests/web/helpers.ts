@@ -1,5 +1,9 @@
 import { vi } from "vitest";
-import { defaultPreferences, type ActiveSnapshot, type SessionSummary } from "../../shared/contracts";
+import {
+  defaultPreferences,
+  type ActiveSnapshot,
+  type SessionSummary,
+} from "../../shared/contracts";
 
 // --- Fetch stubbing ---
 
@@ -64,7 +68,9 @@ export function installFakeWebSocket(): void {
 
 export const DEFAULT_PREFS = defaultPreferences;
 
-export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveSnapshot {
+export function activeSnapshot(
+  overrides: Record<string, unknown> = {},
+): ActiveSnapshot {
   const active: NonNullable<ActiveSnapshot["active"]> = {
     sessionId: "s1",
     sessionName: "Test session",
@@ -75,12 +81,20 @@ export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveS
     isCompacting: false,
     messages: [],
     transcriptPage: {
-      sessionId: "s1", revision: 1, viewId: "view-s1", incarnation: "projection-1", appendFromRevision: 1,
-      messages: [], hasOlder: false, olderCursor: null,
+      sessionId: "s1",
+      revision: 1,
+      viewId: "view-s1",
+      incarnation: "projection-1",
+      appendFromRevision: 1,
+      messages: [],
+      hasOlder: false,
+      olderCursor: null,
     },
     projectionHealth: { status: "ok" as const },
     projectionConflict: null,
-    stats: { contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 } },
+    stats: {
+      contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 },
+    },
     availableModels: [],
     commands: [],
     ...overrides,
@@ -104,7 +118,9 @@ export function activeSnapshot(overrides: Record<string, unknown> = {}): ActiveS
   };
 }
 
-export function sessionSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
+export function sessionSummary(
+  overrides: Partial<SessionSummary> = {},
+): SessionSummary {
   return {
     id: "s1",
     cwd: "/demo",
@@ -125,8 +141,18 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     mock: false,
     preferences: DEFAULT_PREFS,
     availableModels: [
-      { provider: "kimi-coding", id: "kimi-k3", name: "Kimi K3", reasoning: true },
-      { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+      {
+        provider: "kimi-coding",
+        id: "kimi-k3",
+        name: "Kimi K3",
+        reasoning: true,
+      },
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        reasoning: true,
+      },
     ],
     snapshot: { active: null, runState: "idle", sessionStatuses: {} },
     ...overrides,

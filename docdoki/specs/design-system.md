@@ -403,8 +403,12 @@ and red failure. The mock badge shares the warning capsule surface.
 - **Topbar status and actions** — runtime and extension status capsules remain
   in the leading cluster, immediately after session identity, while the action
   targets stay fixed at the right. Status is vertically centered; long extension
-  text ellipsizes with its full value in the tooltip. The session title and
-  project location yield first, and the bounded status cluster yields next, so
+  text ellipsizes with its full value in the tooltip. Every capsule keeps literal
+  descendant status text and a title when responsive CSS visually hides its label;
+  generic wrapper elements never rely on an author-supplied accessible name. The
+  focused browser gate checks the narrow topbar and composer with axe rather than
+  treating a hover-only tooltip as semantic evidence. The session title and project location yield first,
+  and the bounded status cluster yields next, so
   neither can cross the command palette, settings (opens the settings overlay),
   or context-pane targets. The nav toggle remains at the left. There
   is no compact button: users type `/compact [instructions]`, which the
@@ -418,8 +422,10 @@ and red failure. The mock badge shares the warning capsule surface.
   navigation, never Git branch selection. History uses a bounded, vertically scrollable entry tree: role chips and one-line
   snippets form the main row, active ancestry uses the accent rail, and the
   effective leaf is the only `aria-current` row. Switch uses the row itself;
-  edit-from-here and fork are quiet trailing icon actions with confirmation.
-  Host truncation and stale/error state remain visible above or below the tree.
+  edit-from-here and fork are quiet trailing icon actions. Reversible switch and
+  fork do not block on confirmation; edit confirms only when it replaces a
+  non-empty composer draft. Host truncation and stale/error state remain visible
+  above or below the tree.
 - **Start surface** — the welcome canvas carries the brand at its one full
   scale: the hero composes the reticle mark at 32px beside the large
   wordmark, the same pair the nav header carries at 22px, over the tagline;
@@ -435,11 +441,16 @@ and red failure. The mock badge shares the warning capsule surface.
 - Folder-first hierarchy: group headers are a quiet semibold tier above their rows — `{typography.size-sm}`/600 `muted` with `0.04em` tracking on a 28px line. The entire header row toggles the folder, not just its label. The chevron is 13px and the folder glyph is 14px; folder curation uses the same two 22px trailing action targets as session rows. Session rows remain single-line at `{typography.size-sm}`/400 `ink`. Each row carries exactly one number: a compact activity age in `faint` `{typography.size-xs}`, right-aligned in a fixed 46px column, preceded by the project as a `surface-inset` pill only where a section crosses folders. The header's session count occupies that same 46px column at `{typography.size-xs}`, so counts and ages read down one rule; the exact timestamp and message count stay in tooltips.
 - Groups collapse freely — including the visible session's group; a collapsed
   folder that hides the visible session takes the `accent-tint` highlight and
-  2px `accent` left edge itself. Active search overrides collapse. Opening the
-  New session surface host-deselects the prior session: its worker may remain
-  only as an unselected idle cache entry, while navigation selection, topbar
-  status, resources, attention acknowledgement, and Escape targeting all clear.
-  No session row or folder then claims current-page styling.
+  2px `accent` left edge itself. Active search overrides collapse. Each session
+  remains in its one curated location: its row dot alone reports busy work,
+  unseen completion/failure, or recovery, so runtime transitions never duplicate
+  a row into a separate status group or disrupt spatial memory. Hidden remains
+  an explicit curation choice, and its rows retain the same state dots when the
+  drawer is expanded. Opening the New session surface host-deselects the prior
+  session: its worker may remain only as an unselected idle cache entry, while
+  navigation selection, topbar status, resources, completion acknowledgement,
+  and Escape targeting all clear. No session row or folder then claims
+  current-page styling.
 - Row hover shows `surface-inset`; the visible row pairs the 2px `accent`
   inset edge with an `accent-tint` wash that fades toward the right, so the
   highlight points back at the edge. Runtime dots use `warning` for working,
@@ -478,6 +489,7 @@ and red failure. The mock badge shares the warning capsule surface.
 
 - **Conversation search** — a compact Level-1 pill floats at the transcript viewport's upper-right, aligned to the reading column. The pill is an **opaque** `surface` — it floats over scrolling content, and a translucent one lets text read through and collide with the controls; the transcript's `scroll-padding-top` keeps search jumps and anchored rows below the pill zone. Its empty, unfocused idle state keeps full text/icon opacity and no shadow; hover, focus-within (including the scope menu), or a nonempty query adds only the Level-1 shadow over `{motion.micro}`. A quiet scope dropdown selects All, User, or Model while the literal query, match count, and previous/next controls retain the original compact anatomy. The transcript reserves its opening top offset; on narrow layouts the pill spans the available width without horizontal overflow.
 - **Earlier history** — approaching the transcript top loads the next page without a normal-state control. A quiet centered status appears only while loading; failure replaces it with a compact retry action and pauses automatic loading until the user retries. Prepending history preserves the visible reading position.
+- **Earlier-branch context** — when the effective leaf differs from the durable leaf, a restrained Level-1 banner sits above the transcript reading flow: `Viewing an earlier branch`, followed by explicit `Back to latest` and `Fork from here` actions. It remains visible when the right History pane closes or switches modes, so the user never loses the context that a visible transcript is not the durable latest branch.
 - **User bubble** — right-aligned, unlabeled, max-width 85% of the reading
   column, `accent-tint` background, `accent`-alpha hairline, `{rounded.lg}`,
   `{typography.size-md}` text; the full timestamp is the tooltip. Extra

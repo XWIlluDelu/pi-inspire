@@ -3,7 +3,11 @@ import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, {
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import multer from "multer";
 import { WebSocket, WebSocketServer } from "ws";
 import { z, ZodError } from "zod";
@@ -21,6 +25,7 @@ import {
 } from "../shared/contracts.js";
 import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
+  MAX_RESOURCE_PROBE_REFERENCES,
   RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -34,40 +39,68 @@ import type { SessionCatalogLike } from "./session-catalog.js";
 
 const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
 const openSchema = z.object({ id: z.string().min(1).max(128) });
-const deleteSessionParamsSchema = z.object({ sessionId: z.string().min(1).max(128) });
-const newSchema = z.object({
-  cwd: z.string().min(1).max(4_096),
-  name: z.string().max(160).optional(),
-  model: z.object({
-    provider: z.string().min(1).max(120),
-    id: z.string().min(1).max(240),
-  }).strict().optional(),
-  thinkingLevel: z.enum(THINKING_LEVELS).optional(),
-}).strict();
+const deleteSessionParamsSchema = z.object({
+  sessionId: z.string().min(1).max(128),
+});
+const newSchema = z
+  .object({
+    cwd: z.string().min(1).max(4_096),
+    name: z.string().max(160).optional(),
+    model: z
+      .object({
+        provider: z.string().min(1).max(120),
+        id: z.string().min(1).max(240),
+      })
+      .strict()
+      .optional(),
+    thinkingLevel: z.enum(THINKING_LEVELS).optional(),
+  })
+  .strict();
 const sessionIdField = z.string().min(1).max(200);
 const promptSchema = z.object({
   sessionId: sessionIdField,
   message: z.string().max(500_000),
   attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
-  projectFiles: z.array(z.string().max(4_096)).max(MAX_PROJECT_FILES).optional(),
+  projectFiles: z
+    .array(z.string().max(4_096))
+    .max(MAX_PROJECT_FILES)
+    .optional(),
   behavior: z.enum(["steer", "followUp"]).optional(),
 });
 const abortSchema = z.object({ sessionId: sessionIdField });
-const renameSchema = z.object({ sessionId: sessionIdField, name: z.string().max(160) });
+const renameSchema = z.object({
+  sessionId: sessionIdField,
+  name: z.string().max(160),
+});
 const modelSchema = z.object({
   sessionId: sessionIdField,
   provider: z.string().min(1).max(120),
   modelId: z.string().min(1).max(240),
 });
-const thinkingSchema = z.object({ sessionId: sessionIdField, level: z.enum(THINKING_LEVELS) });
-const extensionSchema = z.object({
+const thinkingSchema = z.object({
   sessionId: sessionIdField,
-  id: z.string().min(1).max(200),
-}).passthrough();
+  level: z.enum(THINKING_LEVELS),
+});
+const extensionSchema = z
+  .object({
+    sessionId: sessionIdField,
+    id: z.string().min(1).max(200),
+  })
+  .passthrough();
 const sessionQuerySchema = z.object({
   q: z.string().max(200).default(""),
-  offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
-  limit: z.coerce.number().int().min(1).max(MAX_SESSION_LIST_PAGE_SIZE).default(40),
+  offset: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(0),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_SESSION_LIST_PAGE_SIZE)
+    .default(40),
 });
 const fileQuerySchema = z.object({
   sessionId: sessionIdField,
@@ -88,10 +121,18 @@ const fileListSchema = z.object({
     .string()
     .max(4_096)
     .default("")
-    .refine((value) => !value.split("/").includes(".."), "dir must stay inside the project"),
+    .refine(
+      (value) => !value.split("/").includes(".."),
+      "dir must stay inside the project",
+    ),
 });
 const hostDirsSchema = z.object({
-  path: z.string().min(1).max(4_096).refine(isAbsolute, "path must be absolute").optional(),
+  path: z
+    .string()
+    .min(1)
+    .max(4_096)
+    .refine(isAbsolute, "path must be absolute")
+    .optional(),
 });
 // Hydration unions can also contain selected/live identities, so the browser
 // chunks the deduplicated union to this explicit per-request contract.
@@ -99,21 +140,32 @@ const sessionIdsSchema = z.object({
   ids: z.array(z.string().min(1).max(128)).max(MAX_SESSION_ID_HYDRATION_IDS),
 });
 const sessionCwdsSchema = z.object({
-  cwds: z.array(z.string().min(1).max(4_096)).max(MAX_SESSION_CWD_HYDRATION_CWDS),
+  cwds: z
+    .array(z.string().min(1).max(4_096))
+    .max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const attachmentIdSchema = z.string().uuid();
-const resourceListSchema = z.object({
-  sessionId: sessionIdField,
-  cursor: z.string().min(1).max(2_048).optional(),
-  limit: z.number().int().min(1).max(MAX_RESOURCE_LIST_PAGE_SIZE).default(RESOURCE_LIST_INITIAL_SIZE),
-}).strict();
+const resourceListSchema = z
+  .object({
+    sessionId: sessionIdField,
+    cursor: z.string().min(1).max(2_048).optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_RESOURCE_LIST_PAGE_SIZE)
+      .default(RESOURCE_LIST_INITIAL_SIZE),
+  })
+  .strict();
 const resourceResolveSchema = z.object({
   sessionId: sessionIdField,
   reference: z.string().min(1).max(8_192),
 });
 const resourceProbeSchema = z.object({
   sessionId: sessionIdField,
-  references: z.array(z.string().min(1).max(8_192)).max(16),
+  references: z
+    .array(z.string().min(1).max(8_192))
+    .max(MAX_RESOURCE_PROBE_REFERENCES),
 });
 const resourceContentSchema = z.object({ sessionId: sessionIdField });
 const transcriptPageSchema = z.object({
@@ -121,21 +173,29 @@ const transcriptPageSchema = z.object({
   cursor: z.string().min(1).max(2_048),
 });
 const branchTreeSchema = z.object({ sessionId: sessionIdField });
-const branchNavigateSchema = z.object({
-  sessionId: sessionIdField,
-  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  targetId: z.string().min(1).max(200),
-  mode: z.enum(["switch", "edit"]),
-}).strict();
-const branchForkSchema = z.object({
-  sessionId: sessionIdField,
-  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  targetId: z.string().min(1).max(200),
-}).strict();
+const branchNavigateSchema = z
+  .object({
+    sessionId: sessionIdField,
+    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    targetId: z.string().min(1).max(200),
+    mode: z.enum(["switch", "edit"]),
+  })
+  .strict();
+const branchForkSchema = z
+  .object({
+    sessionId: sessionIdField,
+    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    targetId: z.string().min(1).max(200),
+  })
+  .strict();
 const gitStatusSchema = z.object({ sessionId: sessionIdField });
 const gitDiffSchema = z.object({
   sessionId: sessionIdField,
-  pathId: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9_-]+$/),
+  pathId: z
+    .string()
+    .min(1)
+    .max(16_384)
+    .regex(/^[A-Za-z0-9_-]+$/),
   side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
 });
 
@@ -169,10 +229,14 @@ async function prospectiveWorkspaceRoot(cwd: string): Promise<string> {
     root = await realpath(resolve(cwd));
     details = await stat(root);
   } catch {
-    throw Object.assign(new Error("Project path does not exist"), { status: 400 });
+    throw Object.assign(new Error("Project path does not exist"), {
+      status: 400,
+    });
   }
   if (!details.isDirectory()) {
-    throw Object.assign(new Error("Project path is not a directory"), { status: 400 });
+    throw Object.assign(new Error("Project path is not a directory"), {
+      status: 400,
+    });
   }
   return root;
 }
@@ -186,7 +250,8 @@ function cookieToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
   for (const segment of header.split(";")) {
     const separator = segment.indexOf("=");
-    if (separator < 0 || segment.slice(0, separator).trim() !== ACCESS_COOKIE) continue;
+    if (separator < 0 || segment.slice(0, separator).trim() !== ACCESS_COOKIE)
+      continue;
     try {
       return decodeURIComponent(segment.slice(separator + 1).trim());
     } catch {
@@ -196,14 +261,21 @@ function cookieToken(header: string | undefined): string | undefined {
   return undefined;
 }
 
-function tokenMatches(candidate: string | undefined, expected: string): boolean {
+function tokenMatches(
+  candidate: string | undefined,
+  expected: string,
+): boolean {
   if (candidate === undefined) return false;
   const left = Buffer.from(candidate);
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function setAccessCookie(request: Request, response: Response, token: string): void {
+function setAccessCookie(
+  request: Request,
+  response: Response,
+  token: string,
+): void {
   response.cookie(ACCESS_COOKIE, token, {
     httpOnly: true,
     sameSite: "strict",
@@ -213,12 +285,18 @@ function setAccessCookie(request: Request, response: Response, token: string): v
   });
 }
 
-function originAllowed(origin: string | undefined, host: string | undefined): boolean {
+function originAllowed(
+  origin: string | undefined,
+  host: string | undefined,
+): boolean {
   if (!origin) return true;
   if (!host) return false;
   try {
     const url = new URL(origin);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.host === host;
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.host === host
+    );
   } catch {
     return false;
   }
@@ -228,11 +306,21 @@ function originAllowed(origin: string | undefined, host: string | undefined): bo
  * parsing (including suffix and open-ended forms); malformed, unsatisfiable,
  * non-byte, and multi-range requests fail rather than unexpectedly receiving
  * the whole potentially large resource. */
-function resourceByteRange(request: Request, size: number): { start: number; end: number } | null {
+function resourceByteRange(
+  request: Request,
+  size: number,
+): { start: number; end: number } | null {
   if (!request.get("range")) return null;
   const ranges = request.range(size);
-  if (!Array.isArray(ranges) || ranges.type !== "bytes" || ranges.length !== 1) {
-    throw Object.assign(new Error("The requested byte range cannot be served"), { status: 416 });
+  if (
+    !Array.isArray(ranges) ||
+    ranges.type !== "bytes" ||
+    ranges.length !== 1
+  ) {
+    throw Object.assign(
+      new Error("The requested byte range cannot be served"),
+      { status: 416 },
+    );
   }
   return ranges[0]!;
 }
@@ -257,7 +345,12 @@ async function withRequestSignal<T>(
   }
 }
 
-function apiError(error: unknown, request: Request, response: Response, _next: NextFunction): void {
+function apiError(
+  error: unknown,
+  request: Request,
+  response: Response,
+  _next: NextFunction,
+): void {
   const status =
     error instanceof ZodError
       ? 400
@@ -266,14 +359,24 @@ function apiError(error: unknown, request: Request, response: Response, _next: N
           ? 413
           : 400
         : Number((error as { status?: unknown })?.status) || 500;
-  const message = error instanceof Error ? error.message : "Unexpected server error";
-  if (status >= 500) console.error(`[${request.method} ${request.path}]`, error);
+  const message =
+    error instanceof Error ? error.message : "Unexpected server error";
+  if (status >= 500)
+    console.error(`[${request.method} ${request.path}]`, error);
   // A refusal may carry the candidates the host declined to choose between.
   const matches = (error as { matches?: unknown })?.matches;
-  response.status(status).json(Array.isArray(matches) ? { error: message, matches } : { error: message });
+  response
+    .status(status)
+    .json(
+      Array.isArray(matches) ? { error: message, matches } : { error: message },
+    );
 }
 
-export function createInspireServer(deps: AppDependencies): { app: express.Express; server: Server; close: () => Promise<void> } {
+export function createInspireServer(deps: AppDependencies): {
+  app: express.Express;
+  server: Server;
+  close: () => Promise<void>;
+} {
   const app = express();
   app.disable("x-powered-by");
   app.use((request, response, next) => {
@@ -297,7 +400,8 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
         "form-action 'self'",
       ].join("; "),
     });
-    if (request.path.startsWith("/api/")) response.set("Cache-Control", "no-store");
+    if (request.path.startsWith("/api/"))
+      response.set("Cache-Control", "no-store");
     next();
   });
   app.use(express.json({ limit: "2mb" }));
@@ -309,7 +413,8 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       return response.status(403).json({ error: "Origin is not allowed" });
     }
     const { token } = pairSchema.parse(request.body);
-    if (!tokenMatches(token, deps.token)) return response.status(401).json({ error: "Access token is not valid" });
+    if (!tokenMatches(token, deps.token))
+      return response.status(401).json({ error: "Access token is not valid" });
     setAccessCookie(request, response, deps.token);
     response.status(204).end();
   });
@@ -320,7 +425,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     }
     const bearer = bearerToken(request);
     const cookie = cookieToken(request.get("cookie"));
-    if (!tokenMatches(bearer, deps.token) && !tokenMatches(cookie, deps.token)) {
+    if (
+      !tokenMatches(bearer, deps.token) &&
+      !tokenMatches(cookie, deps.token)
+    ) {
       return response.status(401).json({ error: "Authentication required" });
     }
     // Existing token URLs and non-cookie clients transparently establish the
@@ -347,7 +455,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       piVersion: deps.piVersion,
       mock: deps.mock,
       preferences: preferenceState.preferences,
-      ...(preferenceState.warning ? { preferencesWarning: preferenceState.warning } : {}),
+      ...(preferenceState.warning
+        ? { preferencesWarning: preferenceState.warning }
+        : {}),
       availableModels,
       snapshot,
     };
@@ -379,7 +489,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
   app.post("/api/sessions/new", async (request, response) => {
     const { cwd, name, model, thinkingLevel } = newSchema.parse(request.body);
-    response.json(await deps.runtime.newSession(cwd, { name, model, thinkingLevel }));
+    response.json(
+      await deps.runtime.newSession(cwd, { name, model, thinkingLevel }),
+    );
   });
   // These endpoints are read-only previews for the start surface. They neither
   // create a session nor authorize later file reads; the resulting session
@@ -388,14 +500,19 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     const { cwd } = newSessionDefaultsQuerySchema.parse(request.query);
     const root = await prospectiveWorkspaceRoot(cwd);
     if (!deps.newSessionDefaults) {
-      return response.status(503).json({ error: "New-session model resolution is unavailable" });
+      return response
+        .status(503)
+        .json({ error: "New-session model resolution is unavailable" });
     }
     response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
   });
   app.get("/api/new-session/files", async (request, response) => {
     const { cwd, q, limit } = newSessionFileQuerySchema.parse(request.query);
     const root = await prospectiveWorkspaceRoot(cwd);
-    response.json({ cwd: root, files: await searchProjectFiles(root, q, limit) });
+    response.json({
+      cwd: root,
+      files: await searchProjectFiles(root, q, limit),
+    });
   });
   app.post("/api/sessions/rename", async (request, response) => {
     const { sessionId, name } = renameSchema.parse(request.body);
@@ -412,20 +529,32 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     } catch (error) {
       // The destructive result is already known. Never turn a metadata-write
       // failure into a retryable DELETE whose second execution is ambiguous.
-      console.error(`[session ${sessionId}] navigation metadata cleanup failed`, error);
+      console.error(
+        `[session ${sessionId}] navigation metadata cleanup failed`,
+        error,
+      );
       response.json({ ...result, preferenceCleanupFailed: true });
     }
   });
 
   const upload = multer({
     storage: deps.attachments.multerStorage(),
-    limits: { fileSize: MAX_ATTACHMENT_FILE_BYTES, files: MAX_ATTACHMENTS, fields: MAX_ATTACHMENTS },
+    limits: {
+      fileSize: MAX_ATTACHMENT_FILE_BYTES,
+      files: MAX_ATTACHMENTS,
+      fields: MAX_ATTACHMENTS,
+    },
   });
-  app.post("/api/attachments", upload.array("files", MAX_ATTACHMENTS), async (request, response) => {
-    const files = Array.isArray(request.files) ? request.files : [];
-    if (files.length === 0) return response.status(400).json({ error: "No files provided" });
-    response.json({ attachments: await deps.attachments.addMany(files) });
-  });
+  app.post(
+    "/api/attachments",
+    upload.array("files", MAX_ATTACHMENTS),
+    async (request, response) => {
+      const files = Array.isArray(request.files) ? request.files : [];
+      if (files.length === 0)
+        return response.status(400).json({ error: "No files provided" });
+      response.json({ attachments: await deps.attachments.addMany(files) });
+    },
+  );
   app.delete("/api/attachments/:id", async (request, response) => {
     await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
     response.json({ ok: true });
@@ -442,7 +571,13 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);
-    response.json(await deps.runtime.setModel(value.sessionId, value.provider, value.modelId));
+    response.json(
+      await deps.runtime.setModel(
+        value.sessionId,
+        value.provider,
+        value.modelId,
+      ),
+    );
   });
   app.post("/api/control/thinking", async (request, response) => {
     const { sessionId, level } = thinkingSchema.parse(request.body);
@@ -457,26 +592,46 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   app.get("/api/files", async (request, response) => {
     const { sessionId, q, limit } = fileQuerySchema.parse(request.query);
     const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    if (!cwd)
+      return response
+        .status(409)
+        .json({ error: "That session is not open on this host" });
     response.json({ files: await searchProjectFiles(cwd, q, limit) });
   });
   app.get("/api/files/list", async (request, response) => {
     const { sessionId, dir } = fileListSchema.parse(request.query);
     const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
+    if (!cwd)
+      return response
+        .status(409)
+        .json({ error: "That session is not open on this host" });
     response.json({ entries: await listProjectDirectory(cwd, dir) });
   });
   app.get("/api/git/status", async (request, response) => {
     const { sessionId } = gitStatusSchema.parse(request.query);
     const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
-    response.json(await withRequestSignal(request, response, (signal) => deps.git.status(cwd, signal)));
+    if (!cwd)
+      return response
+        .status(409)
+        .json({ error: "That session is not open on this host" });
+    response.json(
+      await withRequestSignal(request, response, (signal) =>
+        deps.git.status(cwd, signal),
+      ),
+    );
   });
   app.post("/api/git/diff", async (request, response) => {
     const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
     const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd) return response.status(409).json({ error: "That session is not open on this host" });
-    response.json(await withRequestSignal(request, response, (signal) => deps.git.diff(cwd, pathId, side, signal)));
+    if (!cwd)
+      return response
+        .status(409)
+        .json({ error: "That session is not open on this host" });
+    response.json(
+      await withRequestSignal(request, response, (signal) =>
+        deps.git.diff(cwd, pathId, side, signal),
+      ),
+    );
   });
 
   // Session-independent: the picker browses the host filesystem before any
@@ -492,9 +647,13 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       if (code === "ENOENT" || code === "ENOTDIR")
-        throw Object.assign(new Error("No such directory on the host"), { status: 404 });
+        throw Object.assign(new Error("No such directory on the host"), {
+          status: 404,
+        });
       if (code === "EACCES" || code === "EPERM")
-        throw Object.assign(new Error("The host cannot read that directory"), { status: 403 });
+        throw Object.assign(new Error("The host cannot read that directory"), {
+          status: 403,
+        });
       throw error;
     }
   });
@@ -516,6 +675,7 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json({
       sessionId,
       viewId: context.viewId ?? `legacy-view:${sessionId}`,
+      revision: context.revision ?? 0,
       results: await deps.resources.probe(context, references),
     });
   });
@@ -533,8 +693,16 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
-    if (!context.viewId) throw Object.assign(new Error("The runtime did not provide a branch view identity"), { status: 409 });
-    const resource = deps.resources.get(String(request.params.id), sessionId, context.viewId);
+    if (!context.viewId)
+      throw Object.assign(
+        new Error("The runtime did not provide a branch view identity"),
+        { status: 409 },
+      );
+    const resource = deps.resources.get(
+      String(request.params.id),
+      sessionId,
+      context.viewId,
+    );
     await deps.resources.revalidate(resource, context);
     if (closed || response.destroyed) return;
     response.set({
@@ -578,7 +746,9 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       } else {
         response.set("Content-Length", String(size));
       }
-      const stream = handle.createReadStream(range ? { start: range.start, end: range.end } : {});
+      const stream = handle.createReadStream(
+        range ? { start: range.start, end: range.end } : {},
+      );
       response.on("close", () => stream.destroy());
       stream.on("error", () => {
         if (!response.headersSent) response.status(500);
@@ -586,15 +756,21 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
       });
       stream.pipe(response);
     } else {
-      response.status(404).json({ error: "The resource preview is no longer available" });
+      response
+        .status(404)
+        .json({ error: "The resource preview is no longer available" });
     }
   });
 
-  app.get("/api/preferences", async (_request, response) => response.json(await deps.preferences.read()));
+  app.get("/api/preferences", async (_request, response) =>
+    response.json(await deps.preferences.read()),
+  );
   app.patch("/api/preferences", async (request, response) => {
     response.json(await deps.preferences.patch(request.body));
   });
-  app.get("/api/snapshot", async (_request, response) => response.json(await deps.runtime.snapshot()));
+  app.get("/api/snapshot", async (_request, response) =>
+    response.json(await deps.runtime.snapshot()),
+  );
   app.get("/api/transcript/older", async (request, response) => {
     const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
     response.json(await deps.runtime.transcriptPage(sessionId, cursor));
@@ -604,10 +780,16 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     response.json(await deps.runtime.branchTree(sessionId));
   });
   app.post("/api/branches/navigate", async (request, response) => {
-    response.json(await deps.runtime.navigateBranch(branchNavigateSchema.parse(request.body)));
+    response.json(
+      await deps.runtime.navigateBranch(
+        branchNavigateSchema.parse(request.body),
+      ),
+    );
   });
   app.post("/api/branches/fork", async (request, response) => {
-    response.json(await deps.runtime.forkBranch(branchForkSchema.parse(request.body)));
+    response.json(
+      await deps.runtime.forkBranch(branchForkSchema.parse(request.body)),
+    );
   });
 
   const distDir = resolve(deps.distDir ?? "dist");
@@ -616,21 +798,37 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     // the bearer from browser history. Invalid credentials are also stripped
     // and fall through to the ordinary pairing surface.
     app.get("/", (request, response, next) => {
-      const candidate = typeof request.query.token === "string" ? request.query.token : undefined;
+      const candidate =
+        typeof request.query.token === "string"
+          ? request.query.token
+          : undefined;
       if (candidate === undefined) return next();
-      if (tokenMatches(candidate, deps.token)) setAccessCookie(request, response, deps.token);
-      const clean = new URL(request.originalUrl, `http://${request.get("host") ?? "127.0.0.1"}`);
+      if (tokenMatches(candidate, deps.token))
+        setAccessCookie(request, response, deps.token);
+      const clean = new URL(
+        request.originalUrl,
+        `http://${request.get("host") ?? "127.0.0.1"}`,
+      );
       clean.searchParams.delete("token");
-      response.redirect(303, `${clean.pathname}${clean.search}${clean.hash}` || "/");
+      response.redirect(
+        303,
+        `${clean.pathname}${clean.search}${clean.hash}` || "/",
+      );
     });
     // Content-hashed bundles under /assets are safe to cache forever. Every
     // other dist file is unhashed — theme-init.js, index.html — so it must
     // revalidate, or a rebuild is served stale for up to a year.
     app.use(
       "/assets",
-      express.static(join(distDir, "assets"), { immutable: true, maxAge: "1y", fallthrough: true }),
+      express.static(join(distDir, "assets"), {
+        immutable: true,
+        maxAge: "1y",
+        fallthrough: true,
+      }),
     );
-    app.use(express.static(distDir, { index: false, fallthrough: true, maxAge: 0 }));
+    app.use(
+      express.static(distDir, { index: false, fallthrough: true, maxAge: 0 }),
+    );
     app.get("*path", (_request, response) => {
       response.set("Cache-Control", "no-cache");
       response.sendFile(resolve(distDir, "index.html"));
@@ -639,7 +837,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
 
   app.use(apiError);
   const server = createServer(app);
-  const websocket = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+  const websocket = new WebSocketServer({
+    noServer: true,
+    maxPayload: 2 * 1024 * 1024,
+  });
   const sockets = new Set<WebSocket>();
   /** Sockets still waiting for their snapshot; live events queue here so the
    * first frame a client processes is always the authoritative snapshot,
@@ -651,7 +852,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   };
   const sendBounded = (socket: WebSocket, message: string): boolean => {
     if (socket.readyState !== WebSocket.OPEN) return false;
-    if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_SOCKET_BUFFERED_BYTES) {
+    if (
+      socket.bufferedAmount + Buffer.byteLength(message) >
+      MAX_SOCKET_BUFFERED_BYTES
+    ) {
       closeLaggingSocket(socket, "Client fell behind");
       return false;
     }
@@ -679,7 +883,10 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
   server.on("upgrade", (request, socket, head) => {
     let url: URL;
     try {
-      url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+      url = new URL(
+        request.url ?? "/",
+        `http://${request.headers.host ?? "127.0.0.1"}`,
+      );
     } catch {
       socket.destroy();
       return;
@@ -688,14 +895,17 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
     const pairedToken = cookieToken(request.headers.cookie);
     if (
       url.pathname !== "/events" ||
-      (!tokenMatches(queryToken, deps.token) && !tokenMatches(pairedToken, deps.token)) ||
+      (!tokenMatches(queryToken, deps.token) &&
+        !tokenMatches(pairedToken, deps.token)) ||
       !originAllowed(request.headers.origin, request.headers.host)
     ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
-    websocket.handleUpgrade(request, socket, head, (client) => websocket.emit("connection", client, request));
+    websocket.handleUpgrade(request, socket, head, (client) =>
+      websocket.emit("connection", client, request),
+    );
   });
 
   websocket.on("connection", (socket) => {
@@ -710,7 +920,13 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
         const queued = joining.get(socket);
         joining.delete(socket);
         if (!queued || socket.readyState !== WebSocket.OPEN) return;
-        if (!sendBounded(socket, JSON.stringify({ type: "snapshot", data: snapshot }))) return;
+        if (
+          !sendBounded(
+            socket,
+            JSON.stringify({ type: "snapshot", data: snapshot }),
+          )
+        )
+          return;
         for (const message of queued.messages) {
           if (!sendBounded(socket, message)) break;
         }
@@ -745,15 +961,28 @@ export function createInspireServer(deps: AppDependencies): { app: express.Expre
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
+      const resourceResult = await deps.resources.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
       const attachmentResult = await deps.attachments.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
-      const failures = [runtimeResult, drainedResult, attachmentResult]
-        .filter((result): result is { status: "rejected"; reason: unknown } => result.status === "rejected")
+      const failures = [
+        runtimeResult,
+        drainedResult,
+        resourceResult,
+        attachmentResult,
+      ]
+        .filter(
+          (result): result is { status: "rejected"; reason: unknown } =>
+            result.status === "rejected",
+        )
         .map((result) => result.reason);
       if (failures.length === 1) throw failures[0];
-      if (failures.length > 1) throw new AggregateError(failures, "Inspire server shutdown failed");
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Inspire server shutdown failed");
     },
   };
 }

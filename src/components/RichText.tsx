@@ -1,8 +1,15 @@
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import { Check, Copy } from "lucide-react";
-import { memo, type ClipboardEvent as ReactClipboardEvent, type ReactNode } from "react";
-import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
+import {
+  memo,
+  type ClipboardEvent as ReactClipboardEvent,
+  type ReactNode,
+} from "react";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -37,7 +44,10 @@ const schema = {
   },
 };
 
-function sourceSlice(node: { position?: { start: { offset?: number }; end: { offset?: number } } }, source: string): string | null {
+function sourceSlice(
+  node: { position?: { start: { offset?: number }; end: { offset?: number } } },
+  source: string,
+): string | null {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   return start == null || end == null ? null : source.slice(start, end);
@@ -86,7 +96,9 @@ function firstUnclosedBackslashMath(raw: string): number {
 }
 
 function hasRealDisplayClose(raw: string): boolean {
-  return !raw.startsWith("\\[") || scanBackslashMath(raw).hasOpeningDisplayClose;
+  return (
+    !raw.startsWith("\\[") || scanBackslashMath(raw).hasOpeningDisplayClose
+  );
 }
 
 /** Parse only a complete sequence of unescaped `$$…$$` displays separated by
@@ -127,7 +139,10 @@ function dollarDisplaySegments(raw: string): string[] | null {
   return null;
 }
 
-function displayMathNode(value: string, position?: unknown): Record<string, unknown> {
+function displayMathNode(
+  value: string,
+  position?: unknown,
+): Record<string, unknown> {
   return {
     type: "math",
     value,
@@ -145,75 +160,96 @@ function displayMathNode(value: string, position?: unknown): Record<string, unkn
  * ordinary Markdown decoding before it. Code nodes are never visited. The
  * same pass promotes complete line-separated `$$…$$` tokens to display math
  * and restores first-line formula text that the block tokenizer called meta. */
-const remarkMathSourceSafety: Plugin<[], Root> = function remarkMathSourceSafety() {
-  return (tree, file) => {
-    const source = String(file.value);
-    const visit = (parent: { children?: Array<Record<string, unknown>> }) => {
-      if (!Array.isArray(parent.children)) return;
-      for (let index = 0; index < parent.children.length; index += 1) {
-        const node = parent.children[index]!;
-        const raw = sourceSlice(node, source);
-        if (node.type === "math" && raw !== null) {
-          if (raw.startsWith("$$")) {
-            const segments = dollarDisplaySegments(raw);
-            if (!segments) {
+const remarkMathSourceSafety: Plugin<[], Root> =
+  function remarkMathSourceSafety() {
+    return (tree, file) => {
+      const source = String(file.value);
+      const visit = (parent: { children?: Array<Record<string, unknown>> }) => {
+        if (!Array.isArray(parent.children)) return;
+        for (let index = 0; index < parent.children.length; index += 1) {
+          const node = parent.children[index]!;
+          const raw = sourceSlice(node, source);
+          if (node.type === "math" && raw !== null) {
+            if (raw.startsWith("$$")) {
+              const segments = dollarDisplaySegments(raw);
+              if (!segments) {
+                parent.children[index] = {
+                  type: "paragraph",
+                  children: [
+                    { type: "text", value: raw, position: node.position },
+                  ],
+                  position: node.position,
+                };
+              } else if (segments.length > 1 || node.meta != null) {
+                parent.children.splice(
+                  index,
+                  1,
+                  ...segments.map((value) => displayMathNode(value)),
+                );
+                index += segments.length - 1;
+              }
+              continue;
+            }
+            if (!hasRealDisplayClose(raw)) {
               parent.children[index] = {
                 type: "paragraph",
-                children: [{ type: "text", value: raw, position: node.position }],
+                children: [
+                  { type: "text", value: raw, position: node.position },
+                ],
                 position: node.position,
               };
-            } else if (segments.length > 1 || node.meta != null) {
-              parent.children.splice(index, 1, ...segments.map((value) => displayMathNode(value)));
-              index += segments.length - 1;
-            }
-            continue;
-          }
-          if (!hasRealDisplayClose(raw)) {
-            parent.children[index] = {
-              type: "paragraph",
-              children: [{ type: "text", value: raw, position: node.position }],
-              position: node.position,
-            };
-            continue;
-          }
-        }
-        if (node.type === "text" && raw !== null) {
-          const opener = firstUnclosedBackslashMath(raw);
-          if (opener >= 0) node.value = `${decodeString(raw.slice(0, opener))}${raw.slice(opener)}`;
-          continue;
-        }
-        if (node.type === "paragraph") {
-          const children = node.children as Array<Record<string, unknown>> | undefined;
-          const inlineDisplays: Array<Record<string, unknown>> = [];
-          let hasLineSeparator = false;
-          let promotable = Boolean(children?.length);
-          for (const child of children ?? []) {
-            if (child.type === "text") {
-              const value = String(child.value ?? "");
-              if (!/^\s+$/.test(value)) promotable = false;
-              if (value.includes("\n")) hasLineSeparator = true;
               continue;
             }
-            const childRaw = sourceSlice(child, source);
-            const segments = child.type === "inlineMath" && childRaw !== null ? dollarDisplaySegments(childRaw) : null;
-            if (!segments || segments.length !== 1) {
-              promotable = false;
-              continue;
-            }
-            inlineDisplays.push(displayMathNode(segments[0]!, child.position));
           }
-          if (promotable && inlineDisplays.length > 0 && (inlineDisplays.length === 1 || hasLineSeparator)) {
-            parent.children.splice(index, 1, ...inlineDisplays);
-            index += inlineDisplays.length - 1;
+          if (node.type === "text" && raw !== null) {
+            const opener = firstUnclosedBackslashMath(raw);
+            if (opener >= 0)
+              node.value = `${decodeString(raw.slice(0, opener))}${raw.slice(opener)}`;
             continue;
           }
+          if (node.type === "paragraph") {
+            const children = node.children as
+              | Array<Record<string, unknown>>
+              | undefined;
+            const inlineDisplays: Array<Record<string, unknown>> = [];
+            let hasLineSeparator = false;
+            let promotable = Boolean(children?.length);
+            for (const child of children ?? []) {
+              if (child.type === "text") {
+                const value = String(child.value ?? "");
+                if (!/^\s+$/.test(value)) promotable = false;
+                if (value.includes("\n")) hasLineSeparator = true;
+                continue;
+              }
+              const childRaw = sourceSlice(child, source);
+              const segments =
+                child.type === "inlineMath" && childRaw !== null
+                  ? dollarDisplaySegments(childRaw)
+                  : null;
+              if (!segments || segments.length !== 1) {
+                promotable = false;
+                continue;
+              }
+              inlineDisplays.push(
+                displayMathNode(segments[0]!, child.position),
+              );
+            }
+            if (
+              promotable &&
+              inlineDisplays.length > 0 &&
+              (inlineDisplays.length === 1 || hasLineSeparator)
+            ) {
+              parent.children.splice(index, 1, ...inlineDisplays);
+              index += inlineDisplays.length - 1;
+              continue;
+            }
+          }
+          visit(node as { children?: Array<Record<string, unknown>> });
         }
-        visit(node as { children?: Array<Record<string, unknown>> });
-      }
+      };
+      visit(tree as unknown as { children: Array<Record<string, unknown>> });
     };
-    visit(tree as unknown as { children: Array<Record<string, unknown>> });
   };
-};
 
 function closestKatexBoundary(node: Node, root: HTMLElement): Element | null {
   const element = node instanceof Element ? node : node.parentElement;
@@ -232,8 +268,15 @@ function fragmentHtml(fragment: DocumentFragment): string {
 /** Build the clipboard projection used by the transcript's delegated copy
  * boundary. The supplied range is cloned, so neither selection nor Pi source
  * text is modified. */
-export function projectKatexSelection(range: Range, root: HTMLElement): { plain: string; html: string } | null {
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+export function projectKatexSelection(
+  range: Range,
+  root: HTMLElement,
+): { plain: string; html: string } | null {
+  if (
+    !root.contains(range.startContainer) ||
+    !root.contains(range.endContainer)
+  )
+    return null;
   const selected = range.cloneRange();
   // Determine display identity in the original DOM. A cloned partial KaTeX
   // fragment no longer has its .katex-display ancestor, so expand endpoints
@@ -253,15 +296,28 @@ export function projectKatexSelection(range: Range, root: HTMLElement): { plain:
     const display = Boolean(mathml.closest(".katex-display"));
     const rendered = mathml.nextElementSibling;
     if (rendered?.classList.contains("katex-html")) rendered.remove();
-    mathml.replaceWith(document.createTextNode(display ? `$$${source}$$` : `$${source}$`));
+    mathml.replaceWith(
+      document.createTextNode(display ? `$$${source}$$` : `$${source}$`),
+    );
   }
   return { plain: fragment.textContent ?? "", html };
 }
 
-export function handleRichTextCopy(event: ReactClipboardEvent<HTMLElement>): void {
+export function handleRichTextCopy(
+  event: ReactClipboardEvent<HTMLElement>,
+): void {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !event.clipboardData) return;
-  const projection = projectKatexSelection(selection.getRangeAt(0), event.currentTarget);
+  if (
+    !selection ||
+    selection.isCollapsed ||
+    selection.rangeCount === 0 ||
+    !event.clipboardData
+  )
+    return;
+  const projection = projectKatexSelection(
+    selection.getRangeAt(0),
+    event.currentTarget,
+  );
   if (!projection) return;
   event.clipboardData.setData("text/plain", projection.plain);
   event.clipboardData.setData("text/html", projection.html);
@@ -269,10 +325,20 @@ export function handleRichTextCopy(event: ReactClipboardEvent<HTMLElement>): voi
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-export function CodeBlock({ language, code }: { language: string; code: string }) {
+export function CodeBlock({
+  language,
+  code,
+}: {
+  language: string;
+  code: string;
+}) {
   const { copied, copy } = useCopied();
   const highlighted = hljs.getLanguage(language)
     ? hljs.highlight(code, { language }).value
@@ -289,12 +355,19 @@ export function CodeBlock({ language, code }: { language: string; code: string }
           aria-label={copied ? "Copied" : "Copy code"}
           title={copied ? "Copied" : "Copy code"}
         >
-          {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
+          {copied ? (
+            <Check size={13} aria-hidden />
+          ) : (
+            <Copy size={13} aria-hidden />
+          )}
         </button>
       </div>
-      <pre className="code-block__pre">
+      <pre className="code-block__pre" tabIndex={0}>
         {/* highlight.js escapes its input; the generated markup contains only span tags */}
-        <code className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} />
+        <code
+          className={`hljs language-${language}`}
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
       </pre>
     </div>
   );
@@ -306,7 +379,13 @@ export function CodeBlock({ language, code }: { language: string; code: string }
 const components: Components = {
   // Our CodeBlock renders its own <pre>; unwrap react-markdown's wrapper.
   pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
-  code: ({ className, children }: { className?: string; children?: ReactNode }) => {
+  code: ({
+    className,
+    children,
+  }: {
+    className?: string;
+    children?: ReactNode;
+  }) => {
     const text = String(children ?? "").replace(/\n$/, "");
     const match = /language-([\w+-]+)/.exec(className ?? "");
     if (!match) {
@@ -314,7 +393,11 @@ const components: Components = {
       // prefix) opens the resource pane rather than sitting inert.
       if (isLocalResourceReference(text)) {
         return (
-          <button type="button" className="file-ref file-ref--code" data-file-path={text}>
+          <button
+            type="button"
+            className="file-ref file-ref--code"
+            data-file-path={text}
+          >
             <code className="inline-code">{text}</code>
           </button>
         );
@@ -340,7 +423,12 @@ const components: Components = {
   img: ({ src, alt }: { src?: string; alt?: string }) => {
     if (src && isLocalResourceReference(src)) {
       return (
-        <button type="button" className="file-ref file-ref--image" data-file-path={src} aria-label={`Preview ${alt || src}`}>
+        <button
+          type="button"
+          className="file-ref file-ref--image"
+          data-file-path={src}
+          aria-label={`Preview ${alt || src}`}
+        >
           <span aria-hidden>▧</span>
           <span>{alt || src}</span>
         </button>
@@ -387,7 +475,9 @@ export const RichText = memo(function RichText({
   inline?: boolean;
 }) {
   return (
-    <div className={`rich-text rich-text--${variant} ${inline ? "rich-text--inline" : ""}`}>
+    <div
+      className={`rich-text rich-text--${variant} ${inline ? "rich-text--inline" : ""}`}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkMathSourceSafety]}
         rehypePlugins={[
