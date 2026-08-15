@@ -11,6 +11,13 @@ scope:
   - scripts/vite-license-notices.ts
   - server/resources.ts
   - server/runtime.ts
+  - server/runtime-slot.ts
+  - server/runtime-entry-chain.ts
+  - server/runtime-process-registry.ts
+  - server/runtime-projection-coordinator.ts
+  - server/runtime-startup-attestor.ts
+  - server/runtime-worker-lifecycle.ts
+  - server/runtime-worker-pool.ts
   - server/preview-projection.ts
   - shared/contracts.ts
   - src/App.tsx
@@ -28,6 +35,10 @@ scope:
   - src/components/Nav.tsx
   - src/components/Transcript.tsx
   - src/components/transcript-activity.ts
+  - src/components/transcript-cards.tsx
+  - src/components/transcript-rows.tsx
+  - src/components/transcript-search.ts
+  - src/components/transcript-viewport.ts
   - src/styles.css
   - tests/browser/workbench.spec.ts
   - tests/server/resources.test.ts
@@ -47,8 +58,8 @@ scope:
 ## Objective
 
 Reconcile the external reviews with the current implementation, repair confirmed
-correctness gaps, and begin the requested behavior-preserving decomposition
-without creating a second browser store or Pi runtime authority.
+correctness gaps, and complete the currently evidenced behavior-preserving
+decomposition without creating a second browser store or Pi runtime authority.
 
 ## Current state
 
@@ -74,7 +85,8 @@ without creating a second browser store or Pi runtime authority.
   queued count outside its live status region, while the transcript's labelled
   pending steering/follow-up rows retain the complete Pi-projected text. There
   is no redundant queue inspector or imaginary queue-management control.
-- The first behavior-preserving extraction series is active: `AppStore` still
+- The behavior-preserving extraction series is complete for the currently
+  evidenced domains: `AppStore` still
   publishes the only browser snapshot and coordinates cross-domain writes, but
   `ConnectionController` owns browser transport/backoff; `ResourceController`
   owns resource pagination/probes/preview lifecycle; `GitController` owns Git
@@ -83,12 +95,22 @@ without creating a second browser store or Pi runtime authority.
   owns session-partitioned attachments/project files and delivery;
   `SessionCatalogController` owns catalog pagination/hydration/retry
   generations; and `SessionSelectionController` owns open/new/deselect request
-  ownership. `resource-preview` owns pure resource presentation; `transcript-activity`
-  owns dynamic card grouping; `AppTopbar` owns topbar presentation; and
-  `PreviewProjection` owns the read-only runtime preview adapter. These
-  collaborators have narrow host interfaces and do not own canonical session
-  state. Controller tests characterize request ownership independently of
-  AppStore.
+  ownership. `resource-preview` owns pure resource presentation; `AppTopbar`
+  owns topbar presentation; and `PreviewProjection` owns the read-only runtime
+  preview adapter. On the runtime side, `runtime-slot` is the single slot-state
+  factory, `RuntimeProcessRegistry` owns process-instance-to-slot identity and
+  rebinds, `RuntimeStartupAttestor` owns bounded fail-closed startup evidence,
+  `RuntimeWorkerLifecycle` owns safe start/stop/fresh-writer transitions,
+  `RuntimeWorkerPool` owns safe LRU reclamation, and
+  `RuntimeProjectionCoordinator` owns reconcile/partial-persistence and
+  ownership conflict algorithms. On the transcript side, `Transcript` is now a
+  composition layer: `transcript-activity` owns time-bounded Dynamic lifecycle,
+  `transcript-viewport` owns anchored pages/virtualization/latest-follow,
+  `transcript-search` owns settled-text query state, `transcript-rows` owns
+  turn composition, and `transcript-cards` owns activity-card presentation.
+  These collaborators have narrow host interfaces and do not own canonical
+  session state. Controller and characterization tests retain independent
+  lifecycle evidence rather than treating a smaller facade as proof.
 - Bootstrap is latest-wins: each `init()` retains its generation and API
   identity, and only the still-current request can apply a snapshot, open a
   socket, load launch preferences, or turn a 401 into pairing state. A newer
@@ -113,16 +135,16 @@ without creating a second browser store or Pi runtime authority.
 
 ## Current validation
 
-The last pre-consolidation remote candidate, `62ff372`, passed `quality`,
-`size-report`, and `release-verify` in GitHub Actions run
-[`31805238878`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/31805238878).
-A consolidated delivery is accepted only after its exact pushed SHA passes
-`quality`, `size-report`, and `release-verify`; this stage intentionally does
-not self-identify a mutable commit SHA. Local verification covers Biome
-format/lint and import-boundary checks, TypeScript, 66 ordinary Vitest files /
-713 tests, one serial launcher test, the production Vite build, and three
-mock-host Playwright scenarios. `npm run size:report`, `npm run
-release:verify`, and `git diff --check` also pass.
+The prior stable baseline, `36f3062`, passed `quality`, `size-report`, and
+`release-verify` in GitHub Actions run
+[`31814820740`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/31814820740).
+A delivery is accepted only after its exact pushed SHA passes those three jobs;
+this stage intentionally does not self-identify a mutable candidate SHA. The
+current F6 candidate has local evidence from Biome format/lint and
+import-boundary checks, TypeScript, 66 ordinary Vitest files / 713 tests, one
+serial launcher test, the production Vite build, and three mock-host Playwright
+scenarios. `npm run size:report`, `npm run release:verify`, and `git diff
+--check` also pass. Exact remote evidence remains required after delivery.
 
 The new release verifier first exposed two runner-specific but real
 compatibility gaps: npm 10 emits a direct `npm publish --dry-run --json` record
@@ -150,11 +172,12 @@ committing state or reporting authentication failure.
   transcript activity, topbar, and preview-projection boundaries.
 - [x] Expand format/lint/import-boundary coverage and make size evidence an
   independent non-blocking CI job.
-- [ ] Continue the F6 series one proven domain at a time: runtime worker and
-  projection coordination. Git, branch, composer, session catalog, and session
-  selection browser collaborators are now extracted. Each migration needs
-  characterization coverage and must leave `AppStore`/`RuntimeController` as
-  facades.
+- [x] Complete the currently proven F6 boundaries: browser transport/resource/
+  Git/branch/composer/catalog/selection lifecycles; runtime slot/process/startup/
+  worker/projection lifecycles; and transcript activity/viewport/search/row/card
+  composition. `AppStore` and `RuntimeController` remain facades. Their remaining
+  transaction and command-routing methods deliberately stay there until a new
+  behavioral boundary—not a line count—warrants another collaborator.
 - [ ] Add the next small set of high-value browser scenarios for project-file
   focus recovery, resource history virtualization/HTML network isolation, and
   earlier-branch recovery.
