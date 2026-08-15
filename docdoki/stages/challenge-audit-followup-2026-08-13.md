@@ -142,7 +142,7 @@ A delivery is accepted only after its exact pushed SHA passes those three jobs;
 this stage intentionally does not self-identify a mutable candidate SHA. The
 current F6 candidate has local evidence from Biome format/lint and
 import-boundary checks, TypeScript, 66 ordinary Vitest files / 713 tests, one
-serial launcher test, the production Vite build, and three mock-host Playwright
+serial launcher test, the production Vite build, and six mock-host Playwright
 scenarios. `npm run size:report`, `npm run release:verify`, and `git diff
 --check` also pass. Exact remote evidence remains required after delivery.
 
@@ -178,9 +178,11 @@ committing state or reporting authentication failure.
   composition. `AppStore` and `RuntimeController` remain facades. Their remaining
   transaction and command-routing methods deliberately stay there until a new
   behavioral boundary—not a line count—warrants another collaborator.
-- [ ] Add the next small set of high-value browser scenarios for project-file
-  focus recovery, resource history virtualization/HTML network isolation, and
-  earlier-branch recovery.
+- [x] Add Chromium witnesses for project-file focus recovery, bounded resource
+  history virtualization plus sandboxed-HTML network isolation, and
+  earlier-branch fork/return recovery. The mock fixture supplies those states
+  only through the ordinary runtime/resource APIs; no test-only HTTP route
+  bypasses product authorization.
 - [ ] Decide explicitly whether repository branch protection should require the
   `quality` GitHub job and require PR merges. That is shared GitHub governance,
   not a source-only change to apply implicitly.
