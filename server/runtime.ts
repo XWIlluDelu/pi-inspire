@@ -3,7 +3,6 @@ import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
 import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
 import { parseCompactCommand } from "../shared/commands.js";
 import {
@@ -32,10 +31,8 @@ import {
   type ExtensionUiRequest,
   type GenericExtensionDisplay,
   type NewSessionOptions,
-  type PendingQueues,
   type ProjectionConflict,
   type PromptRequest,
-  type RunState,
   type TranscriptPage,
   type SessionDeleteResponse,
   type SessionRuntimeStatus,
@@ -65,6 +62,17 @@ import {
 } from "./session-preview.js";
 import { PreviewProjection } from "./preview-projection.js";
 import {
+  isCanonicalIsoTimestamp,
+  parseRpcEntryChain,
+} from "./runtime-entry-chain.js";
+import { RuntimeProcessRegistry } from "./runtime-process-registry.js";
+import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
+export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
+import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
+import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
+import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
+export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
+import {
   boundedTranscriptValue,
   SessionProjection,
   TRANSIENT_OVERLAY_MAX_BYTES,
@@ -74,6 +82,16 @@ import {
 import type { ResourceContext } from "./resources.js";
 import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
+import {
+  createRuntimeSlot,
+  emptyCustomActivityOwnership,
+  type BranchBridgeIdentity,
+  type OwnershipDecision,
+  type PendingBranchBridge,
+  type PersistenceExpectation,
+  type PersistenceMatcher,
+  type RuntimeSlot,
+} from "./runtime-slot.js";
 
 const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -87,8 +105,6 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
   ),
 );
 const MAX_PROMPT_CHARS = 500_000;
-const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
-const STARTUP_DELTA_MAX_ENTRIES = 16;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
 const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
@@ -96,10 +112,6 @@ const FORK_BUFFER_OVERFLOW_ERROR =
   "Fork event buffer exceeded its bound; the worker was stopped";
 export const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
-export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
-/** Keep a small warm cache, but never stop selected, busy, in-use, or
- * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
-export const MAX_IDLE_WORKERS = 3;
 
 export function safeProjection(value: unknown): unknown {
   return projectSafeValue(value, {
@@ -155,65 +167,6 @@ export interface RuntimeLike {
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
   close(): Promise<void>;
-}
-
-type CompletionAttention = "completed" | "failed";
-
-interface RpcEntryChain {
-  entries: SessionEntry[];
-  leafId: string | null;
-}
-
-function parseRpcEntryChain(
-  value: unknown,
-  options: {
-    expectedParentId: string | null;
-    maxEntries: number;
-    maxBytes: number;
-    label: string;
-  },
-): RpcEntryChain {
-  const invalid = (detail: string): Error =>
-    new Error(`Pi reported ${detail} ${options.label} entries`);
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw invalid("invalid");
-  if (Buffer.byteLength(JSON.stringify(value)) > options.maxBytes)
-    throw invalid("oversized");
-  const response = value as Record<string, unknown>;
-  if (
-    !Array.isArray(response.entries) ||
-    response.entries.length > options.maxEntries
-  )
-    throw invalid("invalid");
-  const entries: SessionEntry[] = [];
-  let expectedParentId = options.expectedParentId;
-  for (const value of response.entries) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-      throw invalid("invalid");
-    const entry = value as Record<string, unknown>;
-    if (
-      typeof entry.type !== "string" ||
-      typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
-      entry.id.length > 200 ||
-      entry.parentId !== expectedParentId ||
-      !isCanonicalIsoTimestamp(entry.timestamp)
-    )
-      throw invalid("non-contiguous");
-    entries.push(entry as unknown as SessionEntry);
-    expectedParentId = entry.id;
-  }
-  if (response.leafId !== expectedParentId) throw invalid("inconsistent");
-  return { entries, leafId: expectedParentId };
-}
-
-function isCanonicalIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  try {
-    return new Date(value).toISOString() === value;
-  } catch {
-    return false;
-  }
 }
 
 function knownExpectation(matcher: PersistenceMatcher): PersistenceExpectation {
@@ -358,75 +311,6 @@ function compactionMatcher(result: unknown): PersistenceMatcher | null {
     samePersistedJson(entry.usage, expected.usage);
 }
 
-type PersistenceMatcher = (entry: SessionEntry) => boolean;
-
-type OwnershipRejectionReason =
-  | "projection-unavailable"
-  | "not-append"
-  | "entries-unavailable"
-  | "revision-mismatch"
-  | "fingerprint-mismatch"
-  | "source-version-mismatch"
-  | "source-identity-mismatch"
-  | "worker-unavailable"
-  | "worker-entries-unavailable"
-  | "worker-entry-mismatch"
-  | "parent-mismatch"
-  | "missing-claim"
-  | "claim-mismatch"
-  | "initial-materialization-mismatch"
-  | "physical-progress-mismatch";
-
-interface OwnershipDecision {
-  owned: boolean;
-  source?: "expectation" | "worker-entries" | "initial-materialization";
-  reason?: OwnershipRejectionReason;
-  expectationsConsumed?: number;
-}
-
-interface PersistenceExpectation {
-  readonly token: symbol;
-  matcher: PersistenceMatcher | null;
-  readonly ready: Promise<void>;
-  settle(matcher: PersistenceMatcher | null): void;
-}
-
-interface BranchBridgeIdentity {
-  workerId: string;
-  command: string;
-  statusKey: string;
-}
-
-interface PendingBranchBridge {
-  nonce: string;
-  bridge: BranchBridgeIdentity;
-  settled: boolean;
-  duplicate: boolean;
-  resolve: (result: BranchBridgeResult) => void;
-  reject: (error: Error) => void;
-  result: Promise<BranchBridgeResult>;
-}
-
-interface PendingPartialPersistence {
-  committedBytes: number;
-  bytes: number;
-  fingerprint: string;
-  sourceIdentity: string | null;
-  sourceVersion: string | null;
-  observedBytes: number;
-  deadline: number;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-interface NavigationLease {
-  workerId: string;
-  sourceRevision: number;
-  durableLeafId: string | null;
-  effectiveLeafId: string;
-  targetId: string;
-  mode: "switch" | "edit";
-}
-
 function bridgeToken(prefix: string): string {
   return `${prefix}_${randomBytes(24).toString("base64url")}`;
 }
@@ -492,100 +376,6 @@ interface ForkReservation {
   release(): void;
 }
 
-interface StartupProjectionBaseline {
-  revision: number;
-  fingerprint: string;
-  sourceIdentity: string | null;
-  sourceVersion: string | null;
-  committedBytes: number;
-  uncommittedBytes: number;
-  uncommittedFingerprint: string | null;
-  tailEntryId: string | null;
-  leafId: string | null;
-  missingThinkingLevel: boolean;
-}
-
-interface CustomActivityOwnership {
-  pendingEntries: SessionEntry[];
-  pendingMessageActivityIds: string[];
-  activityIdByEntryId: Map<string, string>;
-  entryIdByActivityId: Map<string, string>;
-}
-
-function emptyCustomActivityOwnership(): CustomActivityOwnership {
-  return {
-    pendingEntries: [],
-    pendingMessageActivityIds: [],
-    activityIdByEntryId: new Map(),
-    entryIdByActivityId: new Map(),
-  };
-}
-
-interface RuntimeSlot {
-  id: string;
-  cwd: string;
-  sessionPath: string | null;
-  process: PiRpcProcess | null;
-  startupPhase: "idle" | "starting" | "complete";
-  startupError: Error | null;
-  startupStop: Promise<void> | null;
-  /** A reclaimed worker must finish stopping before the same session starts
-   * another one, preserving Pi's one-writer-per-session rule. */
-  stopping: Promise<void> | null;
-  ready: boolean;
-  preview: ActiveSessionSnapshot | null;
-  projection: SessionProjectionView | null;
-  runState: RunState;
-  attention: CompletionAttention | null;
-  pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
-  pendingExtensionUiOwners: Map<string, PiRpcProcess>;
-  pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
-  extensionResponseTail: Promise<void>;
-  extensionResponsePending: number;
-  pendingQueues: PendingQueues;
-  extensionDisplays: GenericExtensionDisplay[];
-  availableModels: unknown[] | null;
-  commands: unknown[] | null;
-  lastUsed: number;
-  activeOperations: number;
-  workerProjectionRevision: number | null;
-  workerProjectionFingerprint: string | null;
-  workerProjectionSourceIdentity: string | null;
-  workerProjectionSourceVersion: string | null;
-  workerProjectionObservedBytes: number | null;
-  overlay: unknown[];
-  overlayBytes: number;
-  nextOverlayId: number;
-  /** Fallback correlation of the assistant message whose tool batch is live.
-   * It survives live-overlay absorption without treating an older assistant
-   * as active when the current message falls outside a bounded page. */
-  activeAssistantCorrelation: string | null;
-  activeOverlayIds: Map<string, string>;
-  /** Pi assigns a fresh persistence timestamp to custom_message entries, so
-   * live↔durable ownership is established one-to-one from exact payload and
-   * event order rather than the ordinary role+timestamp correlation. */
-  customActivities: CustomActivityOwnership;
-  conflict: ProjectionConflict | null;
-  persistenceExpectations: PersistenceExpectation[];
-  absorbedPersistenceEntries: Map<string, SessionEntry[]>;
-  pendingPartialPersistence: PendingPartialPersistence | null;
-  mutationTail: Promise<void>;
-  mutationPending: number;
-  eventTail: Promise<void>;
-  projectionTail: Promise<void>;
-  bridge: BranchBridgeIdentity | null;
-  pendingBranchBridge: PendingBranchBridge | null;
-  navigationLease: NavigationLease | null;
-  rebinding: boolean;
-  bufferedEvents: unknown[];
-  bufferedEventBytes: number;
-  forkBufferOverflow: boolean;
-  forkOverflowCleanup: Promise<void> | null;
-  branchRevision: number;
-  incarnationId: string;
-  viewId: string;
-}
-
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
   private readonly loadingSlots = new Map<string, Promise<RuntimeSlot>>();
@@ -600,11 +390,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private selectionSequence = 0;
   private provisionalSequence = 0;
   private useSequence = 0;
-  private workerMaintenance: Promise<void> = Promise.resolve();
-  private workerMaintenanceRunning = false;
-  private workerMaintenanceRequested = false;
-  private readonly processOwners = new WeakMap<PiRpcProcess, RuntimeSlot>();
-  private readonly attachedProcesses = new WeakSet<PiRpcProcess>();
+  private readonly processRegistry: RuntimeProcessRegistry;
+  private readonly projectionCoordinator: RuntimeProjectionCoordinator;
+  private readonly startupAttestor: RuntimeStartupAttestor;
+  private readonly workerLifecycle: RuntimeWorkerLifecycle;
+  private readonly workerPool: RuntimeWorkerPool;
   private readonly provisionalSlots = new Map<
     string,
     { slot: RuntimeSlot; completion: Promise<void> }
@@ -633,6 +423,95 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     private readonly diagnostics: DiagnosticLogger = nullDiagnosticLogger(),
   ) {
     super();
+    this.processRegistry = new RuntimeProcessRegistry({
+      recordProcessAttachment: (slot, rpc) => {
+        this.diagnostics.record("debug", "slot_worker_attached", {
+          sessionId: slot.id,
+          slotIncarnation: slot.incarnationId,
+          workerId: slot.bridge?.workerId,
+          childPid: rpc.pid,
+          provisional: !this.slots.has(slot.id),
+        });
+      },
+      dispatchProcessEvent: (rpc, event) =>
+        this.dispatchProcessEvent(rpc, event),
+      handleProcessExit: (slot, rpc, error) =>
+        this.handleProcessExit(slot, rpc, error),
+    });
+    this.projectionCoordinator = new RuntimeProjectionCoordinator(
+      {
+        isClosing: () => this.closing,
+        reconcileOverlay: (slot, appendedEntries) =>
+          this.reconcileOverlay(slot, appendedEntries),
+        appendedEntriesOwnership: (slot, result) =>
+          this.appendedEntriesOwnership(slot, result),
+        setProjectionConflict: (slot, kind, message, diagnosticFields) =>
+          this.setProjectionConflict(slot, kind, message, diagnosticFields),
+        stopWriter: (slot) => this.stopWriter(slot),
+        renewView: (slot) => this.renewView(slot),
+        emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
+        logRuntimeError: (sessionId, error, event) =>
+          this.logRuntimeError(sessionId, error, event),
+      },
+      diagnostics,
+    );
+    this.startupAttestor = new RuntimeStartupAttestor({
+      reconcile: (slot, force, startupAttestation) =>
+        this.reconcileSlot(slot, force, startupAttestation),
+    });
+    this.workerLifecycle = new RuntimeWorkerLifecycle(
+      {
+        selectedSessionId: () => this.selectedSessionId,
+        createProcess: (options) => this.createProcess(options),
+        workerOptions: (cwd, args, bridge) =>
+          this.workerOptions(cwd, args, bridge),
+        newBridgeIdentity,
+        attachProcess: (slot, rpc) => this.attachProcess(slot, rpc),
+        detachProcess: (rpc) => this.processRegistry.detach(rpc),
+        reconcile: (slot, force, startupAttestation) =>
+          this.reconcileSlot(slot, force, startupAttestation),
+        clearPendingExtensionUi: (slot, reason) =>
+          this.clearPendingExtensionUi(slot, reason),
+        clearWriterBaseline: (slot) => this.clearWriterProjectionBaseline(slot),
+        captureWriterBaseline: (slot) =>
+          this.captureWriterProjectionBaseline(slot),
+        writerBaselineMatches: (slot) =>
+          this.writerProjectionBaselineMatches(slot),
+        writerOwnershipActive: (slot) => this.writerOwnershipActive(slot),
+        clearPartialPersistence: (slot) => this.clearPartialPersistence(slot),
+        setProjectionConflict: (slot, kind, message, diagnosticFields) =>
+          this.setProjectionConflict(slot, kind, message, diagnosticFields),
+        renewView: (slot) => this.renewView(slot),
+        emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
+        scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
+        logRuntimeError: (sessionId, error, event) =>
+          this.logRuntimeError(sessionId, error, event),
+      },
+      diagnostics,
+      this.startupAttestor,
+    );
+    this.workerPool = new RuntimeWorkerPool({
+      isClosing: () => this.closing,
+      selectedSessionId: () => this.selectedSessionId,
+      slots: () => this.slots.values(),
+      isOpening: (sessionId) => this.opening.has(sessionId),
+      isLoading: (sessionId) => this.loadingSlots.has(sessionId),
+      hasSelectionReservation: (sessionId) =>
+        this.selectionReservations.has(sessionId),
+      hasForkReservation: (sessionId, sessionPath) =>
+        this.forkReservationsById.has(sessionId) ||
+        Boolean(
+          sessionPath && this.forkReservationsByPath.has(resolve(sessionPath)),
+        ),
+      detachProcess: (_slot, rpc) => this.processRegistry.detach(rpc),
+      clearWriterBaseline: (slot) => this.clearWriterProjectionBaseline(slot),
+      renewView: (slot) => this.renewView(slot),
+      removeSlot: (slot) => {
+        if (this.slots.get(slot.id) === slot) this.slots.delete(slot.id);
+      },
+      logRuntimeError: (sessionId, error, event) =>
+        this.logRuntimeError(sessionId, error, event),
+    });
   }
 
   get activeSessionId(): string | null {
@@ -1362,70 +1241,30 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private captureWriterProjectionBaseline(slot: RuntimeSlot): void {
-    slot.workerProjectionRevision = slot.projection?.revision ?? null;
-    slot.workerProjectionFingerprint = slot.projection?.fingerprint ?? null;
-    slot.workerProjectionSourceIdentity =
-      slot.projection?.sourceIdentity ?? null;
-    slot.workerProjectionSourceVersion = slot.projection?.sourceVersion ?? null;
-    slot.workerProjectionObservedBytes = slot.projection
-      ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-      : null;
+    this.projectionCoordinator.captureWriterBaseline(slot);
   }
 
   private captureWriterProjectionResult(
     slot: RuntimeSlot,
     result: ProjectionReconcileResult,
   ): void {
-    slot.workerProjectionRevision = result.revision;
-    slot.workerProjectionFingerprint = result.fingerprint;
-    slot.workerProjectionSourceIdentity =
-      slot.workerProjectionSourceIdentity ??
-      slot.projection?.sourceIdentity ??
-      null;
-    slot.workerProjectionSourceVersion = result.sourceVersion;
-    slot.workerProjectionObservedBytes = slot.projection
-      ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-      : null;
+    this.projectionCoordinator.captureWriterResult(slot, result);
   }
 
   private clearWriterProjectionBaseline(slot: RuntimeSlot): void {
-    slot.workerProjectionRevision = null;
-    slot.workerProjectionFingerprint = null;
-    slot.workerProjectionSourceIdentity = null;
-    slot.workerProjectionSourceVersion = null;
-    slot.workerProjectionObservedBytes = null;
-    slot.absorbedPersistenceEntries.clear();
+    this.projectionCoordinator.clearWriterBaseline(slot);
   }
 
   private writerProjectionBaselineMatches(slot: RuntimeSlot): boolean {
-    return (
-      Boolean(slot.projection) &&
-      slot.workerProjectionRevision === slot.projection?.revision &&
-      slot.workerProjectionFingerprint === slot.projection?.fingerprint &&
-      slot.workerProjectionSourceIdentity === slot.projection?.sourceIdentity &&
-      slot.workerProjectionSourceVersion === slot.projection?.sourceVersion &&
-      slot.workerProjectionObservedBytes ===
-        (slot.projection
-          ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-          : null)
-    );
+    return this.projectionCoordinator.writerBaselineMatches(slot);
   }
 
   private writerOwnershipActive(slot: RuntimeSlot): boolean {
-    return (
-      isBusyRunState(slot.runState) ||
-      slot.pendingExtensionUiRequests.size > 0 ||
-      slot.persistenceExpectations.length > 0 ||
-      Boolean(slot.pendingPartialPersistence) ||
-      Boolean(slot.navigationLease) ||
-      Boolean(slot.pendingBranchBridge)
-    );
+    return this.projectionCoordinator.writerOwnershipActive(slot);
   }
 
   private clearPartialPersistence(slot: RuntimeSlot): void {
-    if (!slot.pendingPartialPersistence) return;
-    clearTimeout(slot.pendingPartialPersistence.timer);
-    slot.pendingPartialPersistence = null;
+    this.projectionCoordinator.clearPartialPersistence(slot);
   }
 
   private setProjectionConflict(
@@ -1472,304 +1311,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return conflict;
   }
 
-  private failPartialPersistence(
-    slot: RuntimeSlot,
-    message: string,
-    emit = true,
-    kind: ProjectionConflict["kind"] = "incomplete-persistence",
-    diagnosticFields: Record<string, unknown> = {},
-  ): Promise<void> {
-    this.clearPartialPersistence(slot);
-    const newlyConflicted = !slot.conflict;
-    const conflict = this.setProjectionConflict(
-      slot,
-      kind,
-      message,
-      diagnosticFields,
-    );
-    if (emit && newlyConflicted)
-      this.emitSlotEvent(slot, {
-        type: "session_projection_conflict",
-        conflict,
-      });
-    return this.stopWriter(slot);
-  }
-
-  private trackPartialPersistence(slot: RuntimeSlot): void {
-    const projection = slot.projection;
-    if (
-      !projection ||
-      projection.uncommittedBytes <= 0 ||
-      !projection.uncommittedFingerprint
-    )
-      return;
-    const prior = slot.pendingPartialPersistence;
-    if (prior) clearTimeout(prior.timer);
-    const deadline =
-      prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
-    const lease = {
-      committedBytes: projection.committedBytes,
-      bytes: projection.uncommittedBytes,
-      fingerprint: projection.uncommittedFingerprint,
-      sourceIdentity: projection.sourceIdentity,
-      sourceVersion: projection.sourceVersion,
-      observedBytes: projection.committedBytes + projection.uncommittedBytes,
-      deadline,
-      timer: undefined as unknown as ReturnType<typeof setTimeout>,
-    };
-    lease.timer = setTimeout(
-      () => {
-        if (slot.pendingPartialPersistence !== lease) return;
-        void this.reconcileSlot(slot, true)
-          .then(() => {
-            if (slot.pendingPartialPersistence === lease) {
-              return this.failPartialPersistence(
-                slot,
-                "Session persistence stopped with an incomplete JSONL entry; the worker was stopped",
-              );
-            }
-          })
-          .catch(() =>
-            this.failPartialPersistence(
-              slot,
-              "Session persistence could not verify an incomplete JSONL entry; the worker was stopped",
-            ),
-          );
-      },
-      Math.max(0, deadline - Date.now()),
-    );
-    lease.timer.unref?.();
-    slot.pendingPartialPersistence = lease;
-  }
-
-  private async handleProjectionUpdate(
-    slot: RuntimeSlot,
-    result: ProjectionReconcileResult,
-  ): Promise<void> {
-    const projection = slot.projection;
-    if (!projection || this.closing) return;
-    if (result.changed) slot.branchRevision += 1;
-    if (result.messageChange === "replace") this.renewView(slot);
-    const previousConflict = slot.conflict;
-    const priorPartial = slot.pendingPartialPersistence;
-    const expectedSourceVersion =
-      priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
-    const expectedObservedBytes =
-      priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
-    const observedBytes =
-      projection.committedBytes + projection.uncommittedBytes;
-    const initialMaterialization = result.initialMaterialization;
-    const strictPhysicalProgress =
-      expectedObservedBytes !== null &&
-      result.previousSourceVersion === expectedSourceVersion &&
-      (initialMaterialization ||
-        projection.sourceIdentity ===
-          (priorPartial?.sourceIdentity ??
-            slot.workerProjectionSourceIdentity)) &&
-      result.previousTailVerified &&
-      observedBytes > expectedObservedBytes;
-    let lastOwnership: OwnershipDecision | null = null;
-    const ownershipFields = (): Record<string, unknown> => ({
-      ownershipSource: lastOwnership?.source,
-      ownershipRejection: lastOwnership?.reason,
-      appendedEntries: Array.isArray(result.appendedEntries)
-        ? result.appendedEntries.map((entry) => entryDescriptor(entry))
-        : [],
-      previousRevision: result.previousRevision,
-      revision: result.revision,
-      previousFingerprint: result.previousFingerprint,
-      fingerprint: result.fingerprint,
-      previousSourceVersion: result.previousSourceVersion,
-      sourceVersion: result.sourceVersion,
-      previousLeafId: result.previousLeafId,
-    });
-    const acceptOwnedAppend = async (): Promise<boolean> => {
-      if (!strictPhysicalProgress) {
-        lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
-      } else if (!result.changed) {
-        lastOwnership = {
-          owned: true,
-          source: "expectation",
-          expectationsConsumed: 0,
-        };
-      } else if (result.kind !== "append") {
-        lastOwnership = { owned: false, reason: "not-append" };
-      } else {
-        lastOwnership = await this.appendedEntriesOwnership(slot, result);
-      }
-      this.diagnostics.record(
-        lastOwnership.owned ? "debug" : "warning",
-        "persistence_ownership_decision",
-        {
-          sessionId: slot.id,
-          slotIncarnation: slot.incarnationId,
-          workerId: slot.bridge?.workerId,
-          childPid: slot.process?.pid,
-          owned: lastOwnership.owned,
-          ...ownershipFields(),
-        },
-      );
-      if (!lastOwnership.owned) return false;
-      this.captureWriterProjectionResult(slot, result);
-      this.reconcileOverlay(slot, result.appendedEntries);
-      return true;
-    };
-
-    if (slot.process && result.uncommittedBytes > 0) {
-      const initiallyOwned =
-        priorPartial !== null ||
-        isBusyRunState(slot.runState) ||
-        slot.persistenceExpectations.length > 0;
-      const exactPrior =
-        !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
-      let owned = false;
-      if (!initiallyOwned)
-        lastOwnership = { owned: false, reason: "missing-claim" };
-      else if (!exactPrior)
-        lastOwnership = { owned: false, reason: "source-version-mismatch" };
-      else owned = await acceptOwnedAppend();
-      if (!owned) {
-        await this.failPartialPersistence(
-          slot,
-          "Session changed with an unowned or overwritten incomplete JSONL entry; the worker was stopped",
-          false,
-          "incomplete-persistence",
-          { initiallyOwned, exactPrior, ...ownershipFields() },
-        );
-      } else {
-        this.trackPartialPersistence(slot);
-      }
-    } else if (priorPartial) {
-      const exactPrior =
-        result.previousUncommittedBytes === priorPartial.bytes &&
-        result.uncommittedBytes === 0 &&
-        result.changed;
-      const exactCompletion = exactPrior && (await acceptOwnedAppend());
-      if (!exactPrior)
-        lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
-      if (exactCompletion) this.clearPartialPersistence(slot);
-      else
-        await this.failPartialPersistence(
-          slot,
-          "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped",
-          false,
-          "incomplete-persistence",
-          ownershipFields(),
-        );
-    } else if (
-      projection.health.status === "error" &&
-      slot.process &&
-      (this.writerOwnershipActive(slot) ||
-        slot.workerProjectionSourceIdentity === null)
-    ) {
-      this.setProjectionConflict(
-        slot,
-        "projection-failure",
-        `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
-      );
-      await this.stopWriter(slot);
-    } else if (
-      slot.process &&
-      (result.sourceChanged || result.changed) &&
-      !this.writerProjectionBaselineMatches(slot)
-    ) {
-      if (initialMaterialization || this.writerOwnershipActive(slot)) {
-        lastOwnership = result.changed
-          ? await this.appendedEntriesOwnership(slot, result)
-          : { owned: false, reason: "not-append" };
-        this.diagnostics.record(
-          lastOwnership.owned ? "debug" : "warning",
-          "persistence_ownership_decision",
-          {
-            sessionId: slot.id,
-            slotIncarnation: slot.incarnationId,
-            workerId: slot.bridge?.workerId,
-            childPid: slot.process?.pid,
-            owned: lastOwnership.owned,
-            ...ownershipFields(),
-          },
-        );
-        if (lastOwnership.owned) {
-          this.captureWriterProjectionResult(slot, result);
-          this.reconcileOverlay(slot, result.appendedEntries);
-        } else {
-          this.setProjectionConflict(
-            slot,
-            "external-change",
-            "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
-            ownershipFields(),
-          );
-          await this.stopWriter(slot);
-        }
-      } else {
-        // Even unchanged content may now belong to a different file version.
-        // An idle child is disposable: stop it now so the next write starts
-        // from a freshly attested source rather than silently adopting it.
-        await this.stopWriter(slot);
-      }
-    }
-    if (!previousConflict && slot.conflict) {
-      this.emitSlotEvent(slot, {
-        type: "session_projection_conflict",
-        conflict: slot.conflict,
-      });
-    }
-    this.emitSlotEvent(slot, {
-      type: "session_projection_changed",
-      revision: result.revision,
-      health: projection.health,
-      conflict: slot.conflict,
-    });
-  }
-
   private async reconcileSlot(
     slot: RuntimeSlot,
     force = true,
     startupAttestation = false,
   ): Promise<ProjectionReconcileResult> {
-    if (!slot.projection)
-      throw Object.assign(new Error("Session projection is not available"), {
-        status: 503,
-      });
-    await slot.projectionTail;
-    const result = startupAttestation
-      ? await slot.projection.reconcileSuspended(force)
-      : await slot.projection.reconcile(force);
-    if (
-      startupAttestation ||
-      result.changed ||
-      result.healthChanged ||
-      result.sourceChanged
-    ) {
-      this.diagnostics.record("debug", "projection_reconcile", {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        startupAttestation,
-        changed: result.changed,
-        changeKind: result.kind,
-        messageChange: result.messageChange,
-        healthChanged: result.healthChanged,
-        sourceChanged: result.sourceChanged,
-        previousRevision: result.previousRevision,
-        revision: result.revision,
-        previousFingerprint: result.previousFingerprint,
-        fingerprint: result.fingerprint,
-        previousSourceVersion: result.previousSourceVersion,
-        sourceVersion: result.sourceVersion,
-        committedBytes: slot.projection.committedBytes,
-        uncommittedBytes: slot.projection.uncommittedBytes,
-      });
-    }
-    if (
-      !startupAttestation &&
-      (result.changed || result.healthChanged || result.sourceChanged)
-    ) {
-      await this.handleProjectionUpdate(slot, result);
-    }
-    this.reconcileOverlay(slot, result.appendedEntries);
-    return result;
+    return this.projectionCoordinator.reconcile(
+      slot,
+      force,
+      startupAttestation,
+    );
   }
 
   private throwIfConflicted(slot: RuntimeSlot): void {
@@ -1823,114 +1374,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (slot.forkBufferOverflow) await this.failForkBufferOverflow(slot);
   }
 
-  private async stopWriter(slot: RuntimeSlot): Promise<void> {
-    const rpc = slot.process;
-    if (!rpc) return;
-    this.diagnostics.record("info", "slot_worker_stop", {
-      sessionId: slot.id,
-      slotIncarnation: slot.incarnationId,
-      workerId: slot.bridge?.workerId,
-      childPid: rpc.pid,
-      runState: slot.runState,
-      selected: this.selectedSessionId === slot.id,
-      conflictKind: slot.conflict?.kind,
-      incidentId: slot.conflict?.incidentId,
-    });
-    if (slot.pendingPartialPersistence) {
-      this.clearPartialPersistence(slot);
-      if (!slot.conflict) {
-        const conflict = this.setProjectionConflict(
-          slot,
-          "incomplete-persistence",
-          "Pi stopped before an incomplete JSONL persistence frame was verified",
-        );
-        this.emitSlotEvent(slot, {
-          type: "session_projection_conflict",
-          conflict,
-        });
-      }
-    }
-    slot.process = null;
-    slot.ready = false;
-    this.clearWriterProjectionBaseline(slot);
-    slot.bridge = null;
-    this.renewView(slot);
-    slot.rebinding = false;
-    slot.bufferedEvents = [];
-    slot.bufferedEventBytes = 0;
-    if (slot.navigationLease) slot.branchRevision += 1;
-    slot.navigationLease = null;
-    if (slot.pendingBranchBridge) {
-      slot.pendingBranchBridge.reject(
-        new Error("Branch bridge worker stopped"),
-      );
-      slot.pendingBranchBridge = null;
-    }
-    this.processOwners.delete(rpc);
-    this.clearPendingExtensionUi(slot, "stopped");
-    const stopping = rpc
-      .stop()
-      .catch((error) => this.logRuntimeError(slot.id, error));
-    slot.stopping = stopping;
-    try {
-      await stopping;
-    } finally {
-      if (slot.stopping === stopping) slot.stopping = null;
-      this.scheduleIdleWorkerEviction();
-    }
+  private stopWriter(slot: RuntimeSlot): Promise<void> {
+    return this.workerLifecycle.stop(slot);
   }
 
-  private async ensureFreshWriterInsideGate(
+  private ensureFreshWriterInsideGate(
     slot: RuntimeSlot,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    if (!(slot.projection instanceof PreviewProjection))
-      await this.reconcileSlot(slot, true);
-    if (!slot.projection || slot.projection.health.status === "error") {
-      throw Object.assign(
-        new Error(
-          slot.projection?.health.message ??
-            "Session projection is unavailable",
-        ),
-        { status: 409 },
-      );
-    }
-    if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(
-        new Error(
-          "Session file ends with an incomplete JSONL entry; repair or complete it before writing",
-        ),
-        { status: 409 },
-      );
-    }
-    if (slot.conflict)
-      throw Object.assign(new Error(slot.conflict.message), { status: 409 });
-    if (
-      slot.process &&
-      slot.ready &&
-      !this.writerProjectionBaselineMatches(slot)
-    ) {
-      if (this.writerOwnershipActive(slot)) {
-        const conflict = this.setProjectionConflict(
-          slot,
-          "external-change",
-          "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
-        );
-        await this.stopWriter(slot);
-        this.emitSlotEvent(slot, {
-          type: "session_projection_conflict",
-          conflict,
-        });
-        throw Object.assign(new Error(conflict.message), { status: 409 });
-      }
-      await this.stopWriter(slot);
-    }
-    if (!slot.process || !slot.ready) await this.startSlot(slot);
-    if (!slot.process || !slot.ready)
-      throw Object.assign(new Error("Pi runtime failed to start"), {
-        status: 503,
-      });
-    this.captureWriterProjectionBaseline(slot);
-    return slot as RuntimeSlot & { process: PiRpcProcess };
+    return this.workerLifecycle.ensureFreshWriter(slot);
   }
 
   private async failUnknownRpcOutcome(
@@ -1970,27 +1421,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private async readNewSessionEntries(
+  private readNewSessionEntries(
     slot: RuntimeSlot,
     rpc: PiRpcProcess,
   ): Promise<SessionEntry[]> {
-    const response = await rpc.request<Record<string, unknown>>({
-      type: "get_entries",
-    });
-    if (slot.process !== rpc) {
-      throw Object.assign(
-        new Error(
-          "The new-session worker changed while its entries were inspected",
-        ),
-        { status: 409 },
-      );
-    }
-    return parseRpcEntryChain(response, {
-      expectedParentId: null,
-      maxEntries: NEW_SESSION_ENTRY_MAX_COUNT,
-      maxBytes: MAX_RPC_LINE_BYTES,
-      label: "new-session",
-    }).entries;
+    return this.startupAttestor.readNewSessionEntries(
+      slot,
+      rpc,
+      NEW_SESSION_ENTRY_MAX_COUNT,
+    );
   }
 
   private async withExpectedPersistence<T>(
@@ -2033,180 +1472,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private scheduleIdleWorkerEviction(): void {
-    if (this.closing) return;
-    this.workerMaintenanceRequested = true;
-    if (this.workerMaintenanceRunning) return;
-    this.workerMaintenanceRunning = true;
-    this.workerMaintenance = this.runWorkerMaintenance();
-  }
-
-  private async runWorkerMaintenance(): Promise<void> {
-    try {
-      while (this.workerMaintenanceRequested && !this.closing) {
-        this.workerMaintenanceRequested = false;
-        await this.evictIdleWorkers();
-      }
-    } catch (error) {
-      console.error("Failed to reclaim an idle Pi worker", error);
-    } finally {
-      this.workerMaintenanceRunning = false;
-      if (this.workerMaintenanceRequested && !this.closing)
-        this.scheduleIdleWorkerEviction();
-    }
-  }
-
-  private async evictIdleWorkers(): Promise<void> {
-    const candidates = [...this.slots.values()]
-      .filter((slot) => this.canEvict(slot))
-      .sort((left, right) => left.lastUsed - right.lastUsed);
-    const excess = Math.max(0, candidates.length - MAX_IDLE_WORKERS);
-    const stopping: Promise<void>[] = [];
-    for (const slot of candidates) {
-      if (stopping.length >= excess) break;
-      // Detach every selected worker synchronously before awaiting any stop;
-      // independent 1.5 s force-kill windows then run in parallel.
-      if (!this.canEvict(slot)) continue;
-      const rpc = slot.process;
-      if (!rpc) continue;
-      slot.process = null;
-      slot.ready = false;
-      // Persisted sessions are reloadable. An unselected idle session whose
-      // first file never materialized has no catalog identity to reopen, so
-      // reclaiming it explicitly abandons that empty transient session.
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
-      this.clearWriterProjectionBaseline(slot);
-      slot.bridge = null;
-      this.renewView(slot);
-      slot.navigationLease = null;
-      this.processOwners.delete(rpc);
-      slot.availableModels = null;
-      slot.commands = null;
-      const stop = Promise.all([
-        rpc.stop().catch((error) => this.logRuntimeError(slot.id, error)),
-        projection
-          ?.close()
-          .catch((error) => this.logRuntimeError(slot.id, error)),
-      ]).then(() => undefined);
-      slot.stopping = stop;
-      stopping.push(
-        stop.finally(() => {
-          if (slot.stopping === stop) slot.stopping = null;
-        }),
-      );
-    }
-    await Promise.all(stopping);
-    await this.pruneDormantSlots();
-  }
-
-  private canReclaimProjection(slot: RuntimeSlot): boolean {
-    return (
-      slot.id !== this.selectedSessionId &&
-      Boolean(slot.projection) &&
-      !slot.process &&
-      !slot.stopping &&
-      !slot.rebinding &&
-      slot.activeOperations === 0 &&
-      slot.mutationPending === 0 &&
-      slot.extensionResponsePending === 0 &&
-      slot.persistenceExpectations.length === 0 &&
-      !slot.pendingPartialPersistence &&
-      !this.opening.has(slot.id) &&
-      !this.loadingSlots.has(slot.id) &&
-      !this.selectionReservations.has(slot.id) &&
-      !this.forkReservationsById.has(slot.id) &&
-      !(
-        slot.sessionPath &&
-        this.forkReservationsByPath.has(resolve(slot.sessionPath))
-      )
-    );
-  }
-
-  private async reclaimDormantProjections(): Promise<void> {
-    const closing: Promise<void>[] = [];
-    for (const slot of this.slots.values()) {
-      if (!this.canReclaimProjection(slot)) continue;
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
-      closing.push(
-        projection
-          ?.close()
-          .catch((error) => this.logRuntimeError(slot.id, error)) ??
-          Promise.resolve(),
-      );
-    }
-    await Promise.all(closing);
-  }
-
-  private canPruneDormant(slot: RuntimeSlot): boolean {
-    return (
-      slot.id !== this.selectedSessionId &&
-      !slot.process &&
-      !slot.stopping &&
-      !slot.attention &&
-      !isBusyRunState(slot.runState) &&
-      slot.runState !== "failed" &&
-      slot.runState !== "conflict" &&
-      slot.pendingExtensionUiRequests.size === 0 &&
-      slot.pendingQueues.steering.length === 0 &&
-      slot.pendingQueues.followUp.length === 0 &&
-      !slot.conflict &&
-      !slot.navigationLease &&
-      !slot.pendingBranchBridge &&
-      !slot.rebinding &&
-      slot.activeOperations === 0 &&
-      slot.mutationPending === 0 &&
-      slot.extensionResponsePending === 0 &&
-      slot.persistenceExpectations.length === 0 &&
-      !slot.pendingPartialPersistence &&
-      !this.opening.has(slot.id) &&
-      !this.loadingSlots.has(slot.id) &&
-      !this.selectionReservations.has(slot.id) &&
-      !this.forkReservationsById.has(slot.id) &&
-      !(
-        slot.sessionPath &&
-        this.forkReservationsByPath.has(resolve(slot.sessionPath))
-      )
-    );
-  }
-
-  private async pruneDormantSlots(): Promise<void> {
-    await this.reclaimDormantProjections();
-    const closing: Promise<void>[] = [];
-    for (const slot of this.slots.values()) {
-      if (!this.canPruneDormant(slot)) continue;
-      this.slots.delete(slot.id);
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
-      closing.push(
-        projection
-          ?.close()
-          .catch((error) => this.logRuntimeError(slot.id, error)) ??
-          Promise.resolve(),
-      );
-    }
-    await Promise.all(closing);
-  }
-
-  private canEvict(slot: RuntimeSlot): boolean {
-    return Boolean(
-      slot.process &&
-        slot.ready &&
-        slot.id !== this.selectedSessionId &&
-        !isBusyRunState(slot.runState) &&
-        slot.pendingExtensionUiRequests.size === 0 &&
-        !slot.conflict &&
-        !slot.navigationLease &&
-        !slot.pendingBranchBridge &&
-        !slot.pendingPartialPersistence &&
-        !slot.rebinding &&
-        slot.activeOperations === 0 &&
-        !this.opening.has(slot.id) &&
-        !this.selectionReservations.has(slot.id),
-    );
+    this.workerPool.schedule();
   }
 
   private assertNotClosing(): void {
@@ -2631,7 +1897,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void {
-    const slot = this.processOwners.get(rpc);
+    const slot = this.processRegistry.ownerOf(rpc);
     if (!slot || slot.process !== rpc) return;
     const record =
       event && typeof event === "object"
@@ -2694,59 +1960,49 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private attachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void {
-    this.processOwners.set(rpc, slot);
-    this.diagnostics.record("debug", "slot_worker_attached", {
-      sessionId: slot.id,
-      slotIncarnation: slot.incarnationId,
-      workerId: slot.bridge?.workerId,
-      childPid: rpc.pid,
-      provisional: !this.slots.has(slot.id),
+    this.processRegistry.attach(slot, rpc);
+  }
+
+  private handleProcessExit(
+    slot: RuntimeSlot,
+    _rpc: PiRpcProcess,
+    error: Error,
+  ): void {
+    slot.process = null;
+    slot.ready = false;
+    slot.activeAssistantCorrelation = null;
+    this.clearWriterProjectionBaseline(slot);
+    slot.bridge = null;
+    this.renewView(slot);
+    slot.rebinding = false;
+    slot.bufferedEvents = [];
+    slot.bufferedEventBytes = 0;
+    if (slot.navigationLease) slot.branchRevision += 1;
+    slot.navigationLease = null;
+    if (slot.pendingBranchBridge) {
+      slot.pendingBranchBridge.reject(new Error("Branch bridge worker exited"));
+      slot.pendingBranchBridge = null;
+    }
+    if (slot.pendingPartialPersistence) {
+      this.clearPartialPersistence(slot);
+      this.setProjectionConflict(
+        slot,
+        "incomplete-persistence",
+        "Pi exited before an incomplete JSONL persistence frame was verified",
+      );
+    } else {
+      slot.runState = "failed";
+      slot.attention = this.selectedSessionId === slot.id ? null : "failed";
+    }
+    this.clearPendingExtensionUi(slot, "stopped");
+    slot.pendingQueues = emptyPendingQueues();
+    slot.extensionDisplays = [];
+    this.logRuntimeError(slot.id, error, "worker_exit");
+    this.emitSlotEvent(slot, {
+      type: "runtime_error",
+      error: error.message,
     });
-    if (this.attachedProcesses.has(rpc)) return;
-    this.attachedProcesses.add(rpc);
-    rpc.on("event", (event) => this.dispatchProcessEvent(rpc, event));
-    rpc.on("exit", (error: Error) => {
-      const owner = this.processOwners.get(rpc);
-      if (!owner || owner.process !== rpc) return;
-      this.processOwners.delete(rpc);
-      owner.process = null;
-      owner.ready = false;
-      owner.activeAssistantCorrelation = null;
-      this.clearWriterProjectionBaseline(owner);
-      owner.bridge = null;
-      this.renewView(owner);
-      owner.rebinding = false;
-      owner.bufferedEvents = [];
-      owner.bufferedEventBytes = 0;
-      if (owner.navigationLease) owner.branchRevision += 1;
-      owner.navigationLease = null;
-      if (owner.pendingBranchBridge) {
-        owner.pendingBranchBridge.reject(
-          new Error("Branch bridge worker exited"),
-        );
-        owner.pendingBranchBridge = null;
-      }
-      if (owner.pendingPartialPersistence) {
-        this.clearPartialPersistence(owner);
-        this.setProjectionConflict(
-          owner,
-          "incomplete-persistence",
-          "Pi exited before an incomplete JSONL persistence frame was verified",
-        );
-      } else {
-        owner.runState = "failed";
-        owner.attention = this.selectedSessionId === owner.id ? null : "failed";
-      }
-      this.clearPendingExtensionUi(owner, "stopped");
-      owner.pendingQueues = emptyPendingQueues();
-      owner.extensionDisplays = [];
-      this.logRuntimeError(owner.id, error, "worker_exit");
-      this.emitSlotEvent(owner, {
-        type: "runtime_error",
-        error: error.message,
-      });
-      this.scheduleIdleWorkerEviction();
-    });
+    this.scheduleIdleWorkerEviction();
   }
 
   private async readRuntimeExtras(
@@ -2887,18 +2143,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     projection: SessionProjectionView,
   ): void {
-    projection.on("update", (result) => {
-      if (slot.projection !== projection || this.closing) return;
-      slot.projectionTail = slot.projectionTail
-        .then(
-          () => this.handleProjectionUpdate(slot, result),
-          () => this.handleProjectionUpdate(slot, result),
-        )
-        .catch((error) => {
-          if (!this.closing)
-            this.logRuntimeError(slot.id, error, "projection_update_failed");
-        });
-    });
+    this.projectionCoordinator.attach(slot, projection);
   }
 
   private async prepareSlot(session: SessionRecord): Promise<RuntimeSlot> {
@@ -2976,64 +2221,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         return current;
       }
 
-      const slot: RuntimeSlot = {
+      const slot = createRuntimeSlot({
         id: session.id,
         cwd: workspaceRoot,
         sessionPath: preview.sessionFile
           ? resolve(preview.sessionFile)
           : resolve(session.path),
         process: null,
-        startupPhase: "idle",
-        startupError: null,
-        startupStop: null,
-        stopping: null,
-        ready: false,
         preview,
         projection,
-        runState: "idle",
-        attention: null,
-        pendingExtensionUiRequests: new Map(),
-        pendingExtensionUiOwners: new Map(),
-        pendingExtensionUiTimers: new Map(),
-        extensionResponseTail: Promise.resolve(),
-        extensionResponsePending: 0,
-        pendingQueues: emptyPendingQueues(),
-        extensionDisplays: [],
-        availableModels: null,
-        commands: null,
-        lastUsed: 0,
-        activeOperations: 0,
-        workerProjectionRevision: null,
-        workerProjectionFingerprint: null,
-        workerProjectionSourceIdentity: null,
-        workerProjectionSourceVersion: null,
-        workerProjectionObservedBytes: null,
-        overlay: [],
-        overlayBytes: 0,
-        nextOverlayId: 0,
-        activeAssistantCorrelation: null,
-        activeOverlayIds: new Map(),
-        customActivities: emptyCustomActivityOwnership(),
-        conflict: null,
-        persistenceExpectations: [],
-        absorbedPersistenceEntries: new Map(),
-        pendingPartialPersistence: null,
-        mutationTail: Promise.resolve(),
-        mutationPending: 0,
-        eventTail: Promise.resolve(),
-        projectionTail: Promise.resolve(),
         bridge: null,
-        pendingBranchBridge: null,
-        navigationLease: null,
-        rebinding: false,
-        bufferedEvents: [],
-        bufferedEventBytes: 0,
-        forkBufferOverflow: false,
-        forkOverflowCleanup: null,
         branchRevision: projection.revision,
         incarnationId: bridgeToken("slot"),
         viewId: bridgeToken("view"),
-      };
+      });
       this.slots.set(slot.id, slot);
       this.attachProjection(slot, projection);
       return slot;
@@ -3050,283 +2251,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private async requireUnchangedPreStartBaseline(
-    slot: RuntimeSlot,
-    baseline: StartupProjectionBaseline,
-  ): Promise<void> {
-    const reconciled = await this.reconcileSlot(slot, true, true);
-    const projection = slot.projection;
-    if (
-      !projection ||
-      projection.health.status === "error" ||
-      reconciled.changed ||
-      reconciled.healthChanged ||
-      reconciled.sourceChanged ||
-      reconciled.kind !== "none" ||
-      reconciled.previousRevision !== baseline.revision ||
-      reconciled.revision !== baseline.revision ||
-      reconciled.previousFingerprint !== baseline.fingerprint ||
-      reconciled.fingerprint !== baseline.fingerprint ||
-      projection.revision !== baseline.revision ||
-      projection.fingerprint !== baseline.fingerprint ||
-      projection.sourceIdentity !== baseline.sourceIdentity ||
-      projection.sourceVersion !== baseline.sourceVersion ||
-      projection.committedBytes !== baseline.committedBytes ||
-      projection.uncommittedBytes !== baseline.uncommittedBytes ||
-      projection.uncommittedFingerprint !== baseline.uncommittedFingerprint ||
-      projection.uncommittedBytes > 0 ||
-      projection.tailEntryId !== baseline.tailEntryId ||
-      projection.leafId !== baseline.leafId
-    ) {
-      throw Object.assign(
-        new Error(
-          "Session changed after worker creation but before Pi startup",
-        ),
-        { status: 409 },
-      );
-    }
-  }
-
-  private async attestStartup(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-    baseline: StartupProjectionBaseline,
-  ): Promise<void> {
-    const fail = (): never => {
-      throw Object.assign(
-        new Error(
-          "Session changed on disk while the Pi runtime was starting; retry after reconciliation",
-        ),
-        { status: 409 },
-      );
-    };
-    if (
-      baseline.tailEntryId !== baseline.leafId ||
-      baseline.uncommittedBytes > 0
-    )
-      fail();
-    const rpcEntries = await rpc.request<{
-      entries?: unknown;
-      leafId?: unknown;
-    }>({
-      type: "get_entries",
-      ...(baseline.tailEntryId === null ? {} : { since: baseline.tailEntryId }),
-    });
-    const parsedRpcEntries = (() => {
-      try {
-        return parseRpcEntryChain(rpcEntries, {
-          expectedParentId: baseline.tailEntryId,
-          maxEntries: STARTUP_DELTA_MAX_ENTRIES,
-          maxBytes: STARTUP_DELTA_MAX_BYTES,
-          label: "startup",
-        });
-      } catch {
-        return fail();
-      }
-    })();
-    const state = await rpc.request<Record<string, unknown>>({
-      type: "get_state",
-    });
-    if (
-      state.sessionId !== slot.id ||
-      typeof state.sessionFile !== "string" ||
-      resolve(state.sessionFile) !== resolve(slot.sessionPath!) ||
-      typeof state.thinkingLevel !== "string"
-    )
-      fail();
-    const reconciled = await this.reconcileSlot(slot, true, true);
-    if (!slot.projection) fail();
-    const projection = slot.projection as SessionProjectionView;
-    if (
-      projection.health.status === "error" ||
-      projection.sourceIdentity !== baseline.sourceIdentity ||
-      projection.uncommittedBytes > 0
-    )
-      fail();
-
-    const delta = parsedRpcEntries.entries;
-    if (!reconciled.changed) {
-      if (
-        reconciled.kind !== "none" ||
-        reconciled.sourceChanged ||
-        projection.revision !== baseline.revision ||
-        projection.fingerprint !== baseline.fingerprint ||
-        delta.length !== 0 ||
-        parsedRpcEntries.leafId !== baseline.leafId ||
-        projection.leafId !== baseline.leafId
-      )
-        fail();
-      return;
-    }
-
-    const appendedEntries = reconciled.appendedEntries;
-    // Pi core may initialize a missing thinking level, and installed extensions
-    // may persist their own custom state from `session_start` (for example an
-    // active goal's updated usage). Those writes belong to the worker being
-    // started. Accept only a small, contiguous append whose entries are
-    // reported byte-for-byte by that worker and are limited to non-transcript
-    // custom state plus the one known Pi thinking initializer. Public RPC
-    // cannot prove causal authorship, so Pi's one-writer operating rule remains
-    // mandatory outside this fail-closed boundary.
-    if (
-      reconciled.kind !== "append" ||
-      reconciled.healthChanged ||
-      reconciled.previousRevision !== baseline.revision ||
-      reconciled.previousFingerprint !== baseline.fingerprint ||
-      reconciled.previousLeafId !== baseline.leafId ||
-      projection.revision !== baseline.revision + 1 ||
-      projection.committedBytes <= baseline.committedBytes ||
-      projection.committedBytes >
-        baseline.committedBytes + STARTUP_DELTA_MAX_BYTES ||
-      !Array.isArray(appendedEntries) ||
-      appendedEntries.length !== delta.length ||
-      delta.length === 0
-    )
-      fail();
-
-    let sawThinkingInitializer = false;
-    for (let index = 0; index < delta.length; index += 1) {
-      const rpcEntry = delta[index]!;
-      const projectedEntry = (appendedEntries as readonly SessionEntry[])[
-        index
-      ];
-      if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
-        fail();
-      const record = rpcEntry as unknown as Record<string, unknown>;
-      const keys = Object.keys(record).sort();
-      if (record.type === "custom") {
-        if (
-          typeof record.customType !== "string" ||
-          record.customType.length === 0 ||
-          record.customType.length > 200 ||
-          !isDeepStrictEqual(keys, [
-            "customType",
-            "data",
-            "id",
-            "parentId",
-            "timestamp",
-            "type",
-          ])
-        )
-          fail();
-      } else if (record.type === "thinking_level_change") {
-        if (
-          !baseline.missingThinkingLevel ||
-          sawThinkingInitializer ||
-          record.thinkingLevel !== state.thinkingLevel ||
-          !isDeepStrictEqual(keys, [
-            "id",
-            "parentId",
-            "thinkingLevel",
-            "timestamp",
-            "type",
-          ])
-        )
-          fail();
-        sawThinkingInitializer = true;
-      } else {
-        fail();
-      }
-    }
-
-    if (
-      projection.leafId !== parsedRpcEntries.leafId ||
-      projection.tailEntryId !== parsedRpcEntries.leafId ||
-      projection.thinkingLevel !== state.thinkingLevel
-    )
-      fail();
-  }
-
-  private async startSlot(slot: RuntimeSlot): Promise<RuntimeSlot> {
-    if (!slot.sessionPath || !slot.projection)
-      throw new Error("Session file is not available");
-    if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(
-        new Error(
-          "Session file ends with an incomplete JSONL entry; repair or complete it before starting Pi",
-        ),
-        { status: 409 },
-      );
-    }
-    if (slot.stopping) await slot.stopping;
-    const projection = slot.projection;
-    await projection.suspendReconciliation();
-    const baseline = {
-      revision: projection.revision,
-      fingerprint: projection.fingerprint,
-      sourceIdentity: projection.sourceIdentity,
-      sourceVersion: projection.sourceVersion,
-      committedBytes: projection.committedBytes,
-      uncommittedBytes: projection.uncommittedBytes,
-      uncommittedFingerprint: projection.uncommittedFingerprint,
-      tailEntryId: projection.tailEntryId,
-      leafId: projection.leafId,
-      missingThinkingLevel: !projection.hasActiveEntryType(
-        "thinking_level_change",
-      ),
-    };
-    const bridge = newBridgeIdentity();
-    let rpc: PiRpcProcess;
-    try {
-      rpc = this.createProcess(
-        this.workerOptions(slot.cwd, ["--session", slot.sessionPath], bridge),
-      );
-    } catch (error) {
-      projection.resumeReconciliation();
-      throw error;
-    }
-    slot.process = rpc;
-    slot.startupPhase = "idle";
-    slot.startupError = null;
-    slot.startupStop = null;
-    slot.bridge = bridge;
-    slot.ready = false;
-    this.clearPendingExtensionUi(slot, "replaced");
-    slot.pendingQueues = emptyPendingQueues();
-    slot.extensionDisplays = [];
-    slot.availableModels = null;
-    slot.commands = null;
-    try {
-      this.attachProcess(slot, rpc);
-      await this.requireUnchangedPreStartBaseline(slot, baseline);
-      slot.startupPhase = "starting";
-      await rpc.start();
-      if (slot.startupError) throw slot.startupError;
-      await this.attestStartup(slot, rpc, baseline);
-      slot.ready = true;
-      slot.startupPhase = "complete";
-      if (slot.runState === "failed" || slot.runState === "aborted")
-        slot.runState = "idle";
-      this.captureWriterProjectionBaseline(slot);
-      this.diagnostics.record("info", "slot_worker_ready", {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: bridge.workerId,
-        childPid: rpc.pid,
-        revision: slot.projection?.revision,
-        sourceVersion: slot.projection?.sourceVersion,
-      });
-      this.emitSlotEvent(slot, { type: "runtime_ready" });
-      this.scheduleIdleWorkerEviction();
-      return slot;
-    } catch (error) {
-      const failure = slot.startupError ?? error;
-      if (slot.process === rpc) {
-        this.logRuntimeError(slot.id, failure, "worker_start_failed");
-        await this.stopWriter(slot);
-        slot.runState = "failed";
-        slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-        this.emitSlotEvent(slot, {
-          type: "runtime_error",
-          error: failure instanceof Error ? failure.message : String(failure),
-        });
-      } else {
-        await rpc.stop();
-      }
-      throw failure;
-    } finally {
-      projection.resumeReconciliation();
-    }
+  private startSlot(slot: RuntimeSlot): Promise<RuntimeSlot> {
+    return this.workerLifecycle.start(slot);
   }
 
   private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
@@ -3619,62 +2545,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const bridge = newBridgeIdentity();
     const rpc = this.createProcess(this.workerOptions(cwd, args, bridge));
-    const slot: RuntimeSlot = {
+    const slot = createRuntimeSlot({
       id: `pending-${++this.provisionalSequence}`,
       cwd,
       sessionPath: null,
       process: rpc,
-      startupPhase: "idle",
-      startupError: null,
-      startupStop: null,
-      stopping: null,
-      ready: false,
       preview: null,
       projection: null,
-      runState: "idle",
-      attention: null,
-      pendingExtensionUiRequests: new Map(),
-      pendingExtensionUiOwners: new Map(),
-      pendingExtensionUiTimers: new Map(),
-      extensionResponseTail: Promise.resolve(),
-      extensionResponsePending: 0,
-      pendingQueues: emptyPendingQueues(),
-      extensionDisplays: [],
-      availableModels: null,
-      commands: null,
-      lastUsed: 0,
-      activeOperations: 0,
-      workerProjectionRevision: null,
-      workerProjectionFingerprint: null,
-      workerProjectionSourceIdentity: null,
-      workerProjectionSourceVersion: null,
-      workerProjectionObservedBytes: null,
-      overlay: [],
-      overlayBytes: 0,
-      nextOverlayId: 0,
-      activeAssistantCorrelation: null,
-      activeOverlayIds: new Map(),
-      customActivities: emptyCustomActivityOwnership(),
-      conflict: null,
-      persistenceExpectations: [],
-      absorbedPersistenceEntries: new Map(),
-      pendingPartialPersistence: null,
-      mutationTail: Promise.resolve(),
-      mutationPending: 0,
-      eventTail: Promise.resolve(),
-      projectionTail: Promise.resolve(),
       bridge,
-      pendingBranchBridge: null,
-      navigationLease: null,
-      rebinding: false,
-      bufferedEvents: [],
-      bufferedEventBytes: 0,
-      forkBufferOverflow: false,
-      forkOverflowCleanup: null,
       branchRevision: 1,
       incarnationId: bridgeToken("slot"),
       viewId: bridgeToken("view"),
-    };
+    });
     const provisionalId = slot.id;
     let committed = false;
     let committedSnapshot: ActiveSnapshot | null = null;
@@ -4472,16 +3354,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               { ...request, sessionId: destinationId } as ExtensionUiRequest,
             ]),
         );
-        const destination: RuntimeSlot = {
+        const destination = createRuntimeSlot({
           id: destinationId,
           cwd: source.cwd,
           sessionPath: destinationPath,
           process: rpc,
-          startupPhase: "complete",
-          startupError: null,
-          startupStop: null,
-          stopping: null,
-          ready: true,
           preview: {
             sessionId: destinationId,
             sessionFile: destinationPath,
@@ -4500,52 +3377,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             commands: extras.commands,
           },
           projection: destinationProjection,
-          runState: "idle",
-          attention: null,
-          pendingExtensionUiRequests: reboundRequests,
-          pendingExtensionUiOwners: new Map(),
-          pendingExtensionUiTimers: new Map(),
-          extensionResponseTail: Promise.resolve(),
-          extensionResponsePending: 0,
-          pendingQueues: source.pendingQueues,
-          extensionDisplays: source.extensionDisplays,
-          availableModels: extras.models,
-          commands: extras.commands,
-          lastUsed: ++this.useSequence,
-          activeOperations: 0,
-          workerProjectionRevision: destinationProjection.revision,
-          workerProjectionFingerprint: destinationProjection.fingerprint,
-          workerProjectionSourceIdentity: destinationProjection.sourceIdentity,
-          workerProjectionSourceVersion: destinationProjection.sourceVersion,
-          workerProjectionObservedBytes:
-            destinationProjection.committedBytes +
-            destinationProjection.uncommittedBytes,
-          overlay: [],
-          overlayBytes: 0,
-          nextOverlayId: source.nextOverlayId,
-          activeAssistantCorrelation: null,
-          activeOverlayIds: new Map(),
-          customActivities: emptyCustomActivityOwnership(),
-          conflict: null,
-          persistenceExpectations: [],
-          absorbedPersistenceEntries: new Map(),
-          pendingPartialPersistence: null,
-          mutationTail: Promise.resolve(),
-          mutationPending: 0,
-          eventTail: Promise.resolve(),
-          projectionTail: Promise.resolve(),
           bridge,
-          pendingBranchBridge: null,
-          navigationLease: null,
-          rebinding: true,
-          bufferedEvents: source.bufferedEvents.slice(),
-          bufferedEventBytes: source.bufferedEventBytes,
-          forkBufferOverflow: false,
-          forkOverflowCleanup: null,
           branchRevision: destinationProjection.revision,
           incarnationId: bridgeToken("slot"),
           viewId: destinationViewId,
-        };
+        });
+        destination.startupPhase = "complete";
+        destination.ready = true;
+        destination.pendingExtensionUiRequests = reboundRequests;
+        destination.pendingQueues = source.pendingQueues;
+        destination.extensionDisplays = source.extensionDisplays;
+        destination.availableModels = extras.models;
+        destination.commands = extras.commands;
+        destination.lastUsed = ++this.useSequence;
+        destination.workerProjectionRevision = destinationProjection.revision;
+        destination.workerProjectionFingerprint =
+          destinationProjection.fingerprint;
+        destination.workerProjectionSourceIdentity =
+          destinationProjection.sourceIdentity;
+        destination.workerProjectionSourceVersion =
+          destinationProjection.sourceVersion;
+        destination.workerProjectionObservedBytes =
+          destinationProjection.committedBytes +
+          destinationProjection.uncommittedBytes;
+        destination.nextOverlayId = source.nextOverlayId;
+        destination.rebinding = true;
+        destination.bufferedEvents = source.bufferedEvents.slice();
+        destination.bufferedEventBytes = source.bufferedEventBytes;
         const selectedAfterCommit =
           this.selectedSessionId === source.id &&
           this.selectionSequence === selectionAtDispatch
@@ -4574,7 +3432,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         source.bufferedEventBytes = 0;
         this.slots.set(destinationId, destination);
         attachedDestination = destination;
-        this.processOwners.set(rpc, destination);
+        this.processRegistry.rebind(rpc, destination);
         if (
           this.selectedSessionId === source.id &&
           this.selectionSequence === selectionAtDispatch
@@ -4842,7 +3700,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         request.sessionId !== sessionId ||
         slot.process !== rpc ||
         !slot.ready ||
-        this.processOwners.get(rpc) !== slot
+        this.processRegistry.ownerOf(rpc) !== slot
       ) {
         throw Object.assign(
           new Error("The extension request no longer belongs to this worker"),
@@ -5092,7 +3950,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.projectionTail,
       ]),
       ...stopping,
-      this.workerMaintenance,
+      this.workerPool.settled(),
     ]);
     await Promise.allSettled(
       [...ownedSlots].map(async (slot) => {
