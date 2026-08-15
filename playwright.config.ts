@@ -20,7 +20,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "INSPIRE_TOKEN=inspire-browser-test-token INSPIRE_MOCK=1 INSPIRE_MOCK_STREAM_INTERVAL_MS=250 INSPIRE_PORT=4592 npx tsx server/index.ts",
+      "INSPIRE_TOKEN=inspire-browser-test-token INSPIRE_MOCK=1 INSPIRE_MOCK_WORKSPACE=. INSPIRE_MOCK_STREAM_INTERVAL_MS=250 INSPIRE_PORT=4592 npx tsx server/index.ts",
     url: "http://127.0.0.1:4592/",
     reuseExistingServer: false,
     timeout: 30_000,

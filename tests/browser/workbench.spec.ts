@@ -12,6 +12,13 @@ async function pairedPage(page: import("@playwright/test").Page) {
   await expect(page.getByRole("main")).toBeVisible();
 }
 
+async function openMockSession(
+  page: import("@playwright/test").Page,
+  title: RegExp,
+) {
+  await page.locator(".nav__row-main").filter({ hasText: title }).click();
+}
+
 type FontTransfer = { url: string; encodedBytes: number };
 
 /** CDP's encodedDataLength is an observed cold-cache transfer metric. It is
@@ -101,6 +108,86 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   expect(externalRequests).toEqual([]);
   const fontTransfer = await stopFontTransfer();
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+});
+
+test("project-file picker restores focus to its trigger", async ({ page }) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const trigger = page.getByRole("button", { name: "Add project files" });
+  await trigger.click();
+  const search = page.getByRole("combobox", { name: "Search project files" });
+  await expect(search).toBeFocused();
+  await search.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
+test("resource history virtualizes rows and sandboxed HTML makes no external request", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const resources = page.getByRole("region", { name: "Referenced files" });
+  await expect(
+    resources.getByRole("button", { name: /^Earlier files \(65\)$/ }),
+  ).toBeVisible();
+  await resources
+    .getByRole("button", { name: /^Earlier files \(65\)$/ })
+    .click();
+  await expect(resources.locator(".res__virtual")).toBeVisible();
+  const mountedRows = await resources.locator(".res__virtual-row").count();
+  expect(mountedRows).toBeGreaterThan(0);
+  expect(mountedRows).toBeLessThan(73);
+
+  const localOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    const external =
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.origin !== localOrigin;
+    if (external) {
+      externalRequests.push(url.href);
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await resources
+    .getByRole("button", { name: /sandbox-resource\.html/ })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Open in sandboxed view" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open in sandboxed view" }).click();
+  const frame = page.frameLocator("iframe[title^='Sandboxed preview']");
+  await expect(frame.locator("h1")).toHaveText("Sandbox fixture");
+  await expect
+    .poll(async () => {
+      const sandbox = page
+        .frames()
+        .find((candidate) => candidate.url().startsWith("blob:"));
+      return sandbox ? sandbox.evaluate(() => document.readyState) : null;
+    })
+    .toBe("complete");
+  expect(externalRequests).toEqual([]);
+});
+
+test("earlier-branch banner can fork and return to the durable leaf", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const title = /Earlier branch recovery fixture/;
+  await openMockSession(page, title);
+  const banner = page.getByRole("region", { name: "Earlier branch context" });
+  await expect(banner).toBeVisible();
+  await banner.getByRole("button", { name: "Fork from here" }).click();
+  await expect(banner).toBeHidden();
+
+  await openMockSession(page, title);
+  await expect(banner).toBeVisible();
+  await banner.getByRole("button", { name: "Back to latest" }).click();
+  await expect(banner).toBeHidden();
 });
 
 test("running composer exposes steer, queue-next, and abort controls", async ({

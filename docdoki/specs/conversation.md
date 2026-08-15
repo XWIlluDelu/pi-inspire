@@ -10,9 +10,13 @@ covers:
   - src/components/RichText.tsx
   - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
+  - src/components/transcript-activity.ts
+  - src/components/transcript-cards.tsx
+  - src/components/transcript-rows.tsx
+  - src/components/transcript-search.ts
+  - src/components/transcript-viewport.ts
   - src/components/ActivityBar.tsx
   - src/components/EarlierBranchBanner.tsx
-  - src/components/transcript-activity.ts
   - src/components/BranchTree.tsx
   - src/components/Composer.tsx
   - src/components/ExtensionUiDialog.tsx
@@ -55,7 +59,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 - The user can abort active work, send steering input during work, and queue follow-up input for after completion. Exact ordered steering and follow-up arrays remain separate in live events and reconnect snapshots, render as labelled pending transcript rows, and clear on settle or worker replacement without inventing cross-queue chronology, cancellation, editing, or reordering controls. The activity bar reports only a concise queued count outside its live status region, so assistive technology is not asked to re-announce full queued content on every update.
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.
 - When earlier history exists, each upward return to the transcript's near-top boundary automatically requests the next cursor-bound page; a short page that leaves the viewport inside that boundary continues filling until the boundary moves away or history ends. The existing scroll surface owns this one proximity check, so loading-state rerenders cannot consume the next trigger. Coalesce an in-flight request, prepend only when the session generation, revision, view, and effective leaf still match, then restore the same visible message at the same viewport offset through virtualization. Same-view snapshots preserve pages already loaded behind a changed older cursor, while a rewrite or view change replaces them. Ordinary failure pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the authoritative snapshot. The host's existing page and cursor bounds remain unchanged.
-- Refreshing the browser reconstructs settled conversation state from Pi and then resumes live updates.
+- Refreshing the browser reconstructs settled conversation state from Pi and then resumes live updates. `Transcript` composes canonical rows with bounded collaborators: activity timing owns no transcript data, the viewport owns only DOM geometry/cursor loads/follow intent, search owns only view-local settled-text state, rows compose turns, and cards render activity variants. No transcript collaborator retains a second message projection or changes host pagination authority.
 
 ## Non-goals
 

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { parseCompactCommand } from "../shared/commands.js";
 import type {
   ActiveSnapshot,
@@ -24,10 +25,23 @@ import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
-const summaries: SessionSummary[] = [
+// Browser acceptance runs point this at the checkout so resource and project
+// picker fixtures exercise the normal server paths without test-only routes.
+const mockWorkspace = resolve(
+  process.env.INSPIRE_MOCK_WORKSPACE ?? "/home/demo/research",
+);
+const mockHistoryWorkspace = process.env.INSPIRE_MOCK_WORKSPACE
+  ? mockWorkspace
+  : "/home/demo/pi-extension";
+const RESOURCE_FIXTURE_SESSION_ID = "mock-resources";
+const BRANCH_FIXTURE_SESSION_ID = "mock-branch";
+const BRANCH_EARLIER_LEAF_ID = "mock-branch-earlier";
+const BRANCH_LATEST_LEAF_ID = "mock-branch-latest";
+
+const baseSummaries: SessionSummary[] = [
   {
     id: "mock-active",
-    cwd: "/home/demo/research",
+    cwd: mockWorkspace,
     project: "research",
     title: "Formula rendering and spectral analysis",
     created: new Date(now - 86_400_000).toISOString(),
@@ -36,13 +50,39 @@ const summaries: SessionSummary[] = [
   },
   {
     id: "mock-history",
-    cwd: "/home/demo/pi-extension",
+    cwd: mockHistoryWorkspace,
     project: "pi-extension",
     title: "Review extension event lifecycle",
     created: new Date(now - 604_800_000).toISOString(),
     modified: new Date(now - 172_800_000).toISOString(),
     messageCount: 12,
   },
+];
+
+const browserFixtureSummaries: SessionSummary[] = [
+  {
+    id: RESOURCE_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Resource virtualization and sandbox fixture",
+    created: new Date(now - 3_600_000).toISOString(),
+    modified: new Date(now - 45_000).toISOString(),
+    messageCount: 1,
+  },
+  {
+    id: BRANCH_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Earlier branch recovery fixture",
+    created: new Date(now - 7_200_000).toISOString(),
+    modified: new Date(now - 30_000).toISOString(),
+    messageCount: 3,
+  },
+];
+
+const summaries = [
+  ...baseSummaries,
+  ...(process.env.INSPIRE_MOCK_WORKSPACE ? browserFixtureSummaries : []),
 ];
 
 const richText = `## A compact result
@@ -172,6 +212,40 @@ const initialMessages = [
     timestamp: now - 25_000,
   },
 ];
+
+const resourceFixtureReferences = [
+  ...Array.from(
+    { length: 72 },
+    (_value, index) =>
+      `tests/browser/fixtures/unavailable-resource-${String(index + 1).padStart(3, "0")}.txt`,
+  ),
+  "tests/browser/fixtures/sandbox-resource.html",
+];
+
+/** A large, deterministic citation set exercises the same list/probe/preview
+ * routes as a real session without turning ordinary mock conversations into
+ * an oversized transcript. The final HTML reference is recent-first. */
+const resourceFixtureMessages = [
+  {
+    role: "assistant",
+    content: resourceFixtureReferences.map((path, index) => ({
+      type: "toolCall",
+      id: `mock-resource-${index + 1}`,
+      name: "read",
+      arguments: { path },
+    })),
+    provider: "kimi-coding",
+    model: "kimi-k3",
+    stopReason: "stop",
+    timestamp: now - 40_000,
+  },
+];
+
+function messagesForFixture(id: string): unknown[] {
+  return id === RESOURCE_FIXTURE_SESSION_ID
+    ? resourceFixtureMessages
+    : initialMessages;
+}
 
 const mockGitPath = {
   id: Buffer.from("analysis/spectrum.py").toString("base64url"),
@@ -344,10 +418,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return session;
   }
 
-  private activate(
-    id = "mock-active",
-    cwd = "/home/demo/research",
-  ): ActiveSnapshot {
+  private activate(id = "mock-active", cwd = mockWorkspace): ActiveSnapshot {
     const summary = summaries.find((item) => item.id === id);
     let active = this.sessions.get(id);
     if (!active) {
@@ -362,15 +433,25 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,
-        messages: summary ? structuredClone(initialMessages) : [],
+        messages: summary ? structuredClone(messagesForFixture(id)) : [],
         transcriptPage: {
           sessionId: id,
-          revision: 1,
+          revision: id === BRANCH_FIXTURE_SESSION_ID ? 7 : 1,
           viewId: `mock-view-${id}`,
-          messages: summary ? structuredClone(initialMessages) : [],
+          ...(id === BRANCH_FIXTURE_SESSION_ID
+            ? { effectiveLeafId: BRANCH_EARLIER_LEAF_ID }
+            : {}),
+          messages: summary ? structuredClone(messagesForFixture(id)) : [],
           hasOlder: false,
           olderCursor: null,
         },
+        ...(id === BRANCH_FIXTURE_SESSION_ID
+          ? {
+              durableLeafId: BRANCH_LATEST_LEAF_ID,
+              effectiveLeafId: BRANCH_EARLIER_LEAF_ID,
+              navigationLeased: true,
+            }
+          : {}),
         projectionHealth: { status: "ok" },
         projectionConflict: null,
         stats: {
@@ -414,7 +495,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async openSession(id: string): Promise<ActiveSnapshot> {
     return this.activate(
       id,
-      summaries.find((item) => item.id === id)?.cwd ?? "/home/demo/research",
+      summaries.find((item) => item.id === id)?.cwd ?? mockWorkspace,
     );
   }
 
@@ -628,29 +709,131 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
   async branchTree(sessionId: string): Promise<BranchTreeResponse> {
     const active = this.requireSession(sessionId);
+    if (sessionId !== BRANCH_FIXTURE_SESSION_ID) {
+      return {
+        sessionId,
+        revision: active.transcriptPage.revision,
+        incarnation: "mock",
+        durableLeafId: null,
+        effectiveLeafId: null,
+        activePath: [],
+        nodes: [],
+        truncated: false,
+        health: { status: "ok" },
+      };
+    }
+    const durableLeafId = active.durableLeafId ?? BRANCH_LATEST_LEAF_ID;
+    const effectiveLeafId = active.effectiveLeafId ?? BRANCH_EARLIER_LEAF_ID;
+    const viewingEarlier = effectiveLeafId !== durableLeafId;
     return {
       sessionId,
       revision: active.transcriptPage.revision,
-      incarnation: "mock",
-      durableLeafId: null,
-      effectiveLeafId: null,
-      activePath: [],
-      nodes: [],
+      incarnation: "mock-branch",
+      durableLeafId,
+      effectiveLeafId,
+      activePath: viewingEarlier
+        ? [BRANCH_EARLIER_LEAF_ID]
+        : [BRANCH_EARLIER_LEAF_ID, BRANCH_LATEST_LEAF_ID],
+      nodes: [
+        {
+          id: BRANCH_EARLIER_LEAF_ID,
+          parentId: null,
+          depth: 0,
+          type: "message",
+          role: "user",
+          label: "Earlier request",
+          snippet: "Inspect the earlier branch",
+          timestamp: new Date(now - 60_000).toISOString(),
+          active: viewingEarlier,
+          leaf: viewingEarlier,
+          canSwitch: !viewingEarlier,
+          canEdit: true,
+          canFork: true,
+        },
+        {
+          id: BRANCH_LATEST_LEAF_ID,
+          parentId: BRANCH_EARLIER_LEAF_ID,
+          depth: 1,
+          type: "message",
+          role: "assistant",
+          label: "Latest response",
+          snippet: "Continue from the durable leaf",
+          timestamp: new Date(now - 30_000).toISOString(),
+          active: !viewingEarlier,
+          leaf: !viewingEarlier,
+          canSwitch: viewingEarlier,
+          canEdit: false,
+          canFork: false,
+        },
+      ],
       truncated: false,
       health: { status: "ok" },
     };
   }
   async navigateBranch(
-    _request: BranchNavigateRequest,
+    request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse> {
-    throw Object.assign(new Error("Mock branch navigation is unavailable"), {
-      status: 409,
-    });
+    const active = this.requireSession(request.sessionId);
+    if (
+      request.sessionId !== BRANCH_FIXTURE_SESSION_ID ||
+      request.mode !== "switch" ||
+      request.targetId !== BRANCH_LATEST_LEAF_ID ||
+      request.revision !== active.transcriptPage.revision
+    ) {
+      throw Object.assign(new Error("Mock branch target is unavailable"), {
+        status: 409,
+      });
+    }
+    active.effectiveLeafId = BRANCH_LATEST_LEAF_ID;
+    active.navigationLeased = false;
+    active.transcriptPage = {
+      ...active.transcriptPage,
+      revision: active.transcriptPage.revision + 1,
+      viewId: `mock-view-${active.sessionId}-latest`,
+      effectiveLeafId: BRANCH_LATEST_LEAF_ID,
+    };
+    return { snapshot: await this.snapshot() };
   }
-  async forkBranch(_request: BranchForkRequest): Promise<BranchForkResponse> {
-    throw Object.assign(new Error("Mock session forking is unavailable"), {
-      status: 409,
+  async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
+    const source = this.requireSession(request.sessionId);
+    if (
+      request.sessionId !== BRANCH_FIXTURE_SESSION_ID ||
+      request.targetId !== BRANCH_EARLIER_LEAF_ID ||
+      request.revision !== source.transcriptPage.revision
+    ) {
+      throw Object.assign(new Error("Mock branch target is unavailable"), {
+        status: 409,
+      });
+    }
+    const sessionId = `mock-branch-fork-${++this.nextSession}`;
+    const destination = structuredClone(source);
+    destination.sessionId = sessionId;
+    destination.sessionFile = `/mock/${sessionId}.jsonl`;
+    destination.sessionName = "Fork of earlier branch";
+    destination.durableLeafId = BRANCH_EARLIER_LEAF_ID;
+    destination.effectiveLeafId = BRANCH_EARLIER_LEAF_ID;
+    destination.navigationLeased = false;
+    destination.transcriptPage = {
+      ...destination.transcriptPage,
+      sessionId,
+      revision: 1,
+      viewId: `mock-view-${sessionId}`,
+      effectiveLeafId: BRANCH_EARLIER_LEAF_ID,
+    };
+    this.sessions.set(sessionId, destination);
+    this.state.active = destination;
+    this.state.runState = "idle";
+    this.state.sessionStatuses[sessionId] = { runState: "idle" };
+    summaries.push({
+      id: sessionId,
+      cwd: destination.cwd,
+      project: "browser fixtures",
+      title: "Fork of earlier branch",
+      created: new Date().toISOString(),
+      modified: new Date().toISOString(),
+      messageCount: destination.messages.length,
     });
+    return { sessionId, snapshot: await this.snapshot(), editorText: "" };
   }
   async resourceContext(sessionId: string): Promise<ResourceContext> {
     const active = this.state.active;
