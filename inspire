@@ -35,6 +35,8 @@ fi
 mode="${1:-start}"
 instance_host=""
 instance_port=""
+instance_trust_proxy=""
+instance_allow_token_url_pairing=""
 state_path=""
 lock_path=""
 stop_request_path=""
@@ -126,6 +128,22 @@ open_url() {
 init_instance() {
   instance_host="${INSPIRE_HOST:-127.0.0.1}"
   instance_port="${INSPIRE_PORT:-4587}"
+  case "${INSPIRE_TRUST_PROXY:-}" in
+    "") instance_trust_proxy=0 ;;
+    loopback) instance_trust_proxy=1 ;;
+    *)
+      echo "INSPIRE_TRUST_PROXY must be \`loopback\` when configured." >&2
+      return 1
+      ;;
+  esac
+  case "${INSPIRE_ALLOW_TOKEN_URL_PAIRING:-1}" in
+    0) instance_allow_token_url_pairing=0 ;;
+    1) instance_allow_token_url_pairing=1 ;;
+    *)
+      echo "INSPIRE_ALLOW_TOKEN_URL_PAIRING must be \`0\` or \`1\`." >&2
+      return 1
+      ;;
+  esac
   if [[ -n "${INSPIRE_STATE_PATH:-}" ]]; then
     state_path="$INSPIRE_STATE_PATH"
     mkdir -p "$(dirname "$state_path")"
@@ -145,7 +163,8 @@ init_instance() {
 inspect_instance() {
   local mock="$1"
   node "$instance_state" inspect \
-    "$state_path" "$root" "$instance_host" "$instance_port" "$mock"
+    "$state_path" "$root" "$instance_host" "$instance_port" "$mock" \
+    "$instance_trust_proxy" "$instance_allow_token_url_pairing"
 }
 
 show_existing() {

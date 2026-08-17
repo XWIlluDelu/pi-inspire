@@ -10,6 +10,10 @@ export interface InstanceState {
   startedAt: string;
   processStartTime: string;
   mock: boolean;
+  /** Absent on pre-relay state records; defaults to false. */
+  trustProxy?: boolean;
+  /** Absent on pre-relay state records; defaults to true. */
+  allowTokenUrlPairing?: boolean;
 }
 
 export interface ExpectedInstance {
@@ -17,6 +21,8 @@ export interface ExpectedInstance {
   host: string;
   port: number;
   mock?: boolean;
+  trustProxy?: boolean;
+  allowTokenUrlPairing?: boolean;
 }
 
 export type InspectionResult =

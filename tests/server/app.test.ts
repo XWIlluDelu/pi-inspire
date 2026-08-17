@@ -267,6 +267,39 @@ describe("local host API", () => {
     }
   });
 
+  it("sets a Secure pairing cookie only through the explicit loopback proxy mode", async () => {
+    const proxied = createInspireServer({
+      token,
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "proxy-uploads")),
+      preferences: new PreferencesStore(
+        join(temporary, "proxy-preferences.json"),
+      ),
+      resources: new ResourceStore(),
+      git,
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      trustProxy: "loopback",
+    });
+    await new Promise<void>((resolve) =>
+      proxied.server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const paired = await request(proxied.server)
+        .post("/api/auth/pair")
+        .set("Host", "inspire.example.test")
+        .set("Origin", "https://inspire.example.test")
+        .set("X-Forwarded-Proto", "https")
+        .send({ token })
+        .expect(204);
+      expect(String(paired.headers["set-cookie"])).toContain("Secure");
+    } finally {
+      await proxied.close();
+    }
+  });
+
   it("caches hashed assets immutably but revalidates unhashed dist files", async () => {
     const dist = await mkdtemp(join(tmpdir(), "inspire-dist-"));
     await mkdir(join(dist, "assets"));
@@ -329,6 +362,45 @@ describe("local host API", () => {
     }
   });
 
+  it("scrubs rather than accepts token URLs in relay mode", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "inspire-relay-dist-"));
+    await writeFile(
+      join(dist, "index.html"),
+      "<!doctype html><title>INSΠRE</title>",
+    );
+    const relay = createInspireServer({
+      token,
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(dist, "uploads")),
+      preferences: new PreferencesStore(join(dist, "preferences.json")),
+      resources: new ResourceStore(),
+      git,
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      allowTokenUrlPairing: false,
+      distDir: dist,
+    });
+    await new Promise<void>((resolve) =>
+      relay.server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const browser = request.agent(relay.server);
+      const launch = await browser
+        .get(`/?token=${encodeURIComponent(token)}`)
+        .redirects(0)
+        .expect(303);
+      expect(launch.headers.location).toBe("/");
+      expect(String(launch.headers["set-cookie"])).not.toContain(
+        `${ACCESS_COOKIE}=`,
+      );
+      await browser.get("/api/bootstrap").expect(401);
+    } finally {
+      await relay.close();
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
 
   it("lists and opens Pi sessions through the typed API", async () => {
     const sessions = await request(application.server)

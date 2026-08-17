@@ -10,7 +10,10 @@ function displayHost(host) {
 }
 
 export function instanceUrl(state) {
-  return `http://${displayHost(state.host)}:${state.port}/?token=${encodeURIComponent(state.token)}`;
+  const base = `http://${displayHost(state.host)}:${state.port}/`;
+  return state.allowTokenUrlPairing === false
+    ? base
+    : `${base}?token=${encodeURIComponent(state.token)}`;
 }
 
 function validState(value) {
@@ -30,7 +33,20 @@ function validState(value) {
       typeof value.startedAt === "string" &&
       typeof value.processStartTime === "string" &&
       value.processStartTime.length > 0 &&
-      typeof value.mock === "boolean",
+      typeof value.mock === "boolean" &&
+      (value.trustProxy === undefined || typeof value.trustProxy === "boolean") &&
+      (value.allowTokenUrlPairing === undefined ||
+        typeof value.allowTokenUrlPairing === "boolean"),
+  );
+}
+
+function modeMatches(state, expected) {
+  return (
+    (expected.mock === undefined || state.mock === expected.mock) &&
+    (expected.trustProxy === undefined ||
+      (state.trustProxy ?? false) === expected.trustProxy) &&
+    (expected.allowTokenUrlPairing === undefined ||
+      (state.allowTokenUrlPairing ?? true) === expected.allowTokenUrlPairing)
   );
 }
 
@@ -128,9 +144,7 @@ export async function inspectInstance(path, expected, options = {}) {
   if (!state) return { kind: "absent" };
   if (!expectedState(state, expected)) return { kind: "stale" };
   if (!(await verifyManagedProcess(state, options.processMarker))) return { kind: "stale" };
-  if (expected.mock !== undefined && state.mock !== expected.mock) {
-    return { kind: "mode-conflict", state };
-  }
+  if (!modeMatches(state, expected)) return { kind: "mode-conflict", state };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.healthTimeoutMs ?? 1_500);
@@ -195,11 +209,37 @@ export async function portAvailable(host, port) {
   });
 }
 
+function optionalBoolean(text) {
+  if (text === undefined) return undefined;
+  if (text === "0") return false;
+  if (text === "1") return true;
+  return null;
+}
+
 async function cli() {
-  const [command, path, root, host, portText, mockText] = process.argv.slice(2);
+  const [
+    command,
+    path,
+    root,
+    host,
+    portText,
+    mockText,
+    trustProxyText,
+    allowTokenUrlPairingText,
+  ] = process.argv.slice(2);
   if (!command || !path || !root || !host || !portText) process.exit(64);
   const port = Number.parseInt(portText, 10);
-  const expected = { root, host, port, mock: mockText === undefined ? undefined : mockText === "1" };
+  const trustProxy = optionalBoolean(trustProxyText);
+  const allowTokenUrlPairing = optionalBoolean(allowTokenUrlPairingText);
+  if (trustProxy === null || allowTokenUrlPairing === null) process.exit(64);
+  const expected = {
+    root,
+    host,
+    port,
+    mock: mockText === undefined ? undefined : mockText === "1",
+    trustProxy,
+    allowTokenUrlPairing,
+  };
   const processMarker = fileURLToPath(import.meta.url).includes("/build/server/")
     ? "build/server/index.js"
     : "server/index.ts";

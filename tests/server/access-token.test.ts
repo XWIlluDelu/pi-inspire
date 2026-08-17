@@ -1,4 +1,12 @@
-import { chmod, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,11 +34,26 @@ describe("persistent host access token", () => {
     const first = await resolveAccessToken(undefined, path);
     const second = await resolveAccessToken(undefined, path);
 
-    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(first).toMatch(/^[A-Za-z0-9_-]{64}$/);
     expect(second).toBe(first);
     expect((await readFile(path, "utf8")).trim()).toBe(first);
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
     expect((await lstat(dirname(path))).mode & 0o777).toBe(0o700);
+  });
+
+  it("rotates prior generated token lengths once and then reuses the replacement", async () => {
+    for (const length of [43, 128]) {
+      const path = await temporaryPath();
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      const legacy = "a".repeat(length);
+      await writeFile(path, `${legacy}\n`, { mode: 0o600 });
+
+      const rotated = await resolveAccessToken(undefined, path);
+      expect(rotated).toMatch(/^[A-Za-z0-9_-]{64}$/);
+      expect(rotated).not.toBe(legacy);
+      expect((await readFile(path, "utf8")).trim()).toBe(rotated);
+      await expect(resolveAccessToken(undefined, path)).resolves.toBe(rotated);
+    }
   });
 
   it("keeps an explicit environment token outside persistent storage", async () => {
