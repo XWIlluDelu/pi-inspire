@@ -9,8 +9,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  Transcript,
   findLiteralMatches,
+  Transcript,
 } from "../../src/components/Transcript";
 import { store } from "../../src/store";
 
@@ -477,7 +477,7 @@ describe("transcript density preferences", () => {
     expect(screen.getByText("toolUse")).toBeInTheDocument();
   });
 
-  it("lays only adjacent tool calls across a row and reveals one downward detail panel", async () => {
+  it("compacts only multi-activity runs and leaves a singleton as a collapsed card", async () => {
     const { container } = render(
       <Transcript
         messages={[assistant, ...results]}
@@ -488,12 +488,16 @@ describe("transcript density preferences", () => {
       />,
     );
     const strips = container.querySelectorAll(".activity-strip");
-    expect(strips).toHaveLength(2);
+    expect(strips).toHaveLength(1);
     expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(
       2,
     );
-    expect(strips[1]!.querySelectorAll(".activity-strip__item")).toHaveLength(
-      1,
+    const singleton = screen
+      .getByText("bash", { selector: ".card__tool-name" })
+      .closest(".card");
+    expect(singleton?.querySelector(".card__disclosure")).toHaveAttribute(
+      "aria-expanded",
+      "false",
     );
 
     const read = screen.getByRole("button", { name: /read: finished/i });
@@ -795,7 +799,7 @@ describe("transcript density preferences", () => {
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(3);
   });
 
-  it("gives a fast final tool perceptible Expanded and Collapsed dwell before Compact", () => {
+  it("keeps a final singleton tool Collapsed after its perceptible Expanded dwell", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -846,20 +850,16 @@ describe("transcript density preferences", () => {
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".activity-strip")).toBeNull();
 
-    act(() => vi.advanceTimersByTime(979));
+    act(() => vi.advanceTimersByTime(2_000));
     expect(
       container.querySelector(".dynamic-activity-batch--compacting"),
     ).toBeNull();
-    act(() => vi.advanceTimersByTime(1));
-    expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
-    ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
-    act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(1);
+    expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("pauses Dynamic batch compaction while a completed tool is manually inspected", () => {
+  it("pauses eligible Dynamic batch compaction while a completed tool is manually inspected", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -871,6 +871,12 @@ describe("transcript density preferences", () => {
           id: "held-tool",
           name: "read",
           arguments: { path: "held.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "held-tool-2",
+          name: "bash",
+          arguments: { command: "check held.ts" },
         },
       ],
     };
@@ -886,6 +892,11 @@ describe("transcript density preferences", () => {
         activeAssistantMessageKey="live:held-call"
         toolActivity={{
           "held-tool": { id: "held-tool", name: "read", phase: "done" },
+          "held-tool-2": {
+            id: "held-tool-2",
+            name: "bash",
+            phase: "done",
+          },
         }}
       />,
     );
@@ -908,7 +919,7 @@ describe("transcript density preferences", () => {
       container.querySelector(".dynamic-activity-batch--compacting"),
     ).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
-    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
   });
 
   it("switches Dynamic density immediately when reduced motion is requested", () => {
@@ -962,7 +973,8 @@ describe("transcript density preferences", () => {
     act(() => vi.runOnlyPendingTimers());
     act(() => vi.runOnlyPendingTimers());
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(1);
+    expect(container.querySelector(".activity-strip")).toBeNull();
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(1);
   });
 
   it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", () => {
@@ -1475,6 +1487,31 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
+  it("keeps singleton custom activity as a collapsed card in Compact", () => {
+    const { container } = render(
+      <Transcript
+        messages={[
+          {
+            role: "custom",
+            customType: "intercom_message",
+            content: "one",
+            display: true,
+            timestamp: 19,
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="compact"
+      />,
+    );
+    const card = container.querySelector(".card--custom");
+    expect(card?.querySelector(".card__disclosure")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(container.querySelector(".activity-strip")).toBeNull();
+  });
+
   it("compacts adjacent custom activity into typed tiles without invented result status", async () => {
     const { container } = render(
       <Transcript
@@ -1695,7 +1732,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
-  it("loads historical Dynamic custom activity directly as Compact", () => {
+  it("loads a historical Dynamic singleton custom activity as Collapsed", () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -1712,13 +1749,16 @@ describe("transient conversation projections", () => {
         toolVisibility="dynamic"
       />,
     );
-    expect(container.querySelector(".card--custom")).toBeNull();
-    expect(
-      container.querySelectorAll(".activity-strip__item--custom"),
-    ).toHaveLength(1);
+    const card = container.querySelector(".card--custom");
+    expect(card).not.toBeNull();
+    expect(card?.querySelector(".card__disclosure")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(container.querySelector(".activity-strip")).toBeNull();
   });
 
-  it("streams custom activity through Expanded, Collapsed, and Compact", () => {
+  it("streams a singleton custom activity from Expanded to Collapsed without compacting", () => {
     vi.useFakeTimers();
     const started = {
       role: "custom",
@@ -1765,19 +1805,13 @@ describe("transient conversation projections", () => {
         {...props}
       />,
     );
-    act(() => vi.advanceTimersByTime(979));
+    act(() => vi.advanceTimersByTime(2_000));
     expect(
       container.querySelector(".dynamic-activity-batch--compacting"),
     ).toBeNull();
-    act(() => vi.advanceTimersByTime(1));
-    expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
-    ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
-    act(() => vi.advanceTimersByTime(180));
-    expect(
-      container.querySelectorAll(".activity-strip__item--custom"),
-    ).toHaveLength(1);
+    expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
+    expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps one Dynamic lifecycle when a custom activity adopts its durable timestamp", () => {

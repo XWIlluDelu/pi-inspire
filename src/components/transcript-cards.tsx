@@ -26,17 +26,17 @@ import {
   isLocalResourceReference,
   isToolResourceArgumentKey,
 } from "../../shared/resource-references";
+import { stripTerminalSequences } from "../ansi";
+import { type DiffLine, parseUnifiedDiff } from "../diff";
 import {
+  type ActivityTool,
+  type ChatMessage,
   contentItems,
   messageKey,
   store,
-  toolResultText,
-  type ActivityTool,
-  type ChatMessage,
   type ToolCallContent,
+  toolResultText,
 } from "../store";
-import { stripTerminalSequences } from "../ansi";
-import { parseUnifiedDiff, type DiffLine } from "../diff";
 import { useCopied } from "../use-copied";
 import { RichText } from "./RichText";
 import {
@@ -1047,16 +1047,19 @@ export function CustomActivityBatch({
   const lifecycleObserved = messages.some(
     (message) => typeof message.__inspireLiveId === "string",
   );
+  const compactEligible = activities.length > 1;
   const dynamicBatch = useDynamicActivityGroup(
     dynamic,
     lifecycleObserved,
     compactRequested,
     activityKeys,
+    compactEligible,
   );
   const ordinaryVisibility: StaticVisibility =
     toolVisibility === "compact" || dynamic ? "collapsed" : toolVisibility;
   const compact =
-    toolVisibility === "compact" || (dynamic && dynamicBatch.compact);
+    compactEligible &&
+    (toolVisibility === "compact" || (dynamic && dynamicBatch.compact));
 
   if (toolVisibility === "hidden" || activities.length === 0) return null;
   return (

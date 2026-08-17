@@ -224,7 +224,7 @@ export function Composer() {
               onClick={() => setDeliveryBehavior("followUp")}
               title="Queue this message after the current task"
             >
-              Queue next
+              Queue
             </button>
           </div>
         </div>
