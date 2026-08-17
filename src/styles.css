@@ -3693,18 +3693,31 @@ a {
   overflow-y: auto;
 }
 
-/* Boundary-straddling pane-resize handles: zero layout width, an 8px hit
-   band riding the shared edge (±4px). They sit below the scroll-rail thumb
-   in z-order, so the thumb keeps grab priority where they overlap. */
+/* One boundary affordance serves both outer pane widths and the stacked
+   file-list/preview split. Each visible 1px rule has an 8px centered hit band. */
 .pane-resize {
   position: relative;
-  width: 0;
   flex: 0 0 auto;
+}
+
+.pane-resize--vertical {
   z-index: 20;
+  width: 0;
+}
+
+.pane-resize--horizontal {
+  z-index: 2;
+  height: 1px;
+  flex-basis: 1px;
+  background: var(--hairline);
 }
 
 .pane-resize__hit {
   position: absolute;
+  touch-action: none;
+}
+
+.pane-resize--vertical .pane-resize__hit {
   top: 0;
   bottom: 0;
   left: -4px;
@@ -3712,27 +3725,46 @@ a {
   cursor: col-resize;
 }
 
+.pane-resize--horizontal .pane-resize__hit {
+  top: -4px;
+  right: 0;
+  bottom: -4px;
+  left: 0;
+  cursor: row-resize;
+}
+
 .pane-resize__hit::after {
-  content: "";
   position: absolute;
+  border-radius: var(--radius-pill);
+  background: var(--thumb);
+  opacity: 0;
+  content: "";
+  transition: opacity var(--dur-standard) var(--ease-standard);
+}
+
+.pane-resize--vertical .pane-resize__hit::after {
   top: 0;
   bottom: 0;
   left: 50%;
   width: 2px;
   transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--thumb);
-  opacity: 0;
-  transition: opacity var(--dur-standard) var(--ease-standard);
+}
+
+.pane-resize--horizontal .pane-resize__hit::after {
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 2px;
+  transform: translateY(-50%);
 }
 
 .pane-resize__hit:hover::after,
-.pane-resize__hit:focus-visible::after {
+.pane-resize__hit:focus-visible::after,
+.pane-resize__hit--drag::after {
   opacity: 1;
 }
 
 .pane-resize__hit--drag::after {
-  opacity: 1;
   background: color-mix(in srgb, var(--accent) 55%, var(--thumb));
 }
 
@@ -3741,12 +3773,19 @@ a {
 }
 
 body.pane-resizing {
-  cursor: col-resize;
   user-select: none;
 }
 
-/* The collapse animation must not rubber-band a live drag. */
-body.pane-resizing .nav {
+body.pane-resizing--vertical {
+  cursor: col-resize;
+}
+
+body.pane-resizing--horizontal {
+  cursor: row-resize;
+}
+
+/* The collapse animation must not rubber-band a live outer-pane drag. */
+body.pane-resizing--vertical .nav {
   transition: none;
 }
 
@@ -3831,14 +3870,44 @@ body.pane-resizing .nav {
   overflow: hidden;
 }
 
+.res__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.res__index {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.res__body--changes .res__index {
+  max-height: 45%;
+}
+
+.res__body[data-pane-resize-sized="true"] .res__index {
+  flex: 0 0 var(--pane-resize-primary-size);
+  max-height: none;
+}
+
 .res__list {
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2);
-  border-bottom: 1px solid var(--hairline);
-  max-height: 40%;
   overflow-y: auto;
+}
+
+.res__body[data-pane-resize-sized="true"] .res__list {
+  flex: 1 1 auto;
 }
 
 /* Historical pages stay in this one bounded scroll region. Large loaded
@@ -4007,10 +4076,6 @@ button.res__more:hover {
   font-weight: 500;
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-
-.changes__index {
-  max-height: 45%;
 }
 
 .changes__projection-note {

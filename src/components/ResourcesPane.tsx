@@ -1,3 +1,4 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
   ChevronDown,
@@ -11,7 +12,6 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitDiffSide,
@@ -30,20 +30,21 @@ import {
   collectResources,
   MAX_RESOURCE_ROWS,
   mergeResourceRows,
-  resourceIcon,
-  resourceRows,
   type ResourceIcon,
   type ResourceRow,
+  resourceIcon,
+  resourceRows,
 } from "../resources";
 import {
   gitChangeForWorkspacePath,
   MAX_MEDIA_PREVIEW_BYTES,
+  type ResourcePreview,
   store,
   TEXT_PREVIEW_BYTES,
   useAppState,
-  type ResourcePreview,
 } from "../store";
 import { BranchTree } from "./BranchTree";
+import { PaneResizeHandle } from "./PaneResizeHandle";
 import { CodeBlock, RichText } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
 
@@ -862,6 +863,8 @@ function DetailRegion() {
 export function ResourcesPane() {
   const state = useAppState();
   const paneRef = useRef<HTMLElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const indexRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     store.setGitSurfaceVisible("resources-pane", true);
     return () => store.setGitSurfaceVisible("resources-pane", false);
@@ -887,37 +890,77 @@ export function ResourcesPane() {
   const [nextPageCursor, setNextPageCursor] = useState<string | null>(null);
   const [failedPageCursor, setFailedPageCursor] = useState<string | null>(null);
   const pageRequestRef = useRef<AbortController | null>(null);
-  const viewKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}:${state.transcriptRevision}`;
+  const expandedViewKeyRef = useRef<string | null>(null);
+  const disclosureKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}`;
+  const viewKey = `${disclosureKey}:${state.transcriptRevision}`;
+
+  // Expansion belongs to the selected branch view, not to one transcript
+  // revision. Live transcript settlement refreshes the revision-bound rows
+  // below without treating that refresh as a request to close the list.
+  useEffect(() => {
+    if (
+      state.contextMode !== "files" ||
+      (expandedViewKeyRef.current !== null &&
+        expandedViewKeyRef.current !== disclosureKey)
+    ) {
+      expandedViewKeyRef.current = null;
+      setExpandedViewKey(null);
+    }
+  }, [disclosureKey, state.contextMode]);
 
   useEffect(() => {
     pageRequestRef.current?.abort();
     pageRequestRef.current = null;
     setEarlierResources([]);
-    setExpandedViewKey(null);
     setPageLoading(false);
     setNextPageCursor(null);
     setFailedPageCursor(null);
     if (state.contextMode !== "files") return;
+
     const request = new AbortController();
-    void store
-      .loadSessionResources({ signal: request.signal })
-      .then((response) => {
+    const restoreExpanded = expandedViewKeyRef.current === disclosureKey;
+    let initialLoaded = false;
+    let restoringCursor: string | null = null;
+    void (async () => {
+      try {
+        const response = await store.loadSessionResources({
+          signal: request.signal,
+        });
         if (!response || request.signal.aborted) return;
+        initialLoaded = true;
         setInitialList({ viewKey, response });
         setFailedViewKey(null);
-      })
-      .catch(() => {
-        if (!request.signal.aborted) setFailedViewKey(viewKey);
-      });
-    return () => request.abort();
-  }, [
-    state.contextMode,
-    state.sessionId,
-    state.transcriptViewId,
-    state.transcriptRevision,
-    listRetry,
-    viewKey,
-  ]);
+        if (!restoreExpanded || !response.nextCursor) return;
+
+        restoringCursor = response.nextCursor;
+        pageRequestRef.current = request;
+        setPageLoading(true);
+        const page = await store.loadSessionResources({
+          cursor: restoringCursor,
+          limit: RESOURCE_LIST_PAGE_SIZE,
+          signal: request.signal,
+        });
+        if (!page || request.signal.aborted) return;
+        setEarlierResources(resourceRows(page.resources));
+        setNextPageCursor(page.nextCursor);
+        setFailedPageCursor(null);
+      } catch {
+        if (request.signal.aborted) return;
+        if (initialLoaded && restoringCursor)
+          setFailedPageCursor(restoringCursor);
+        else setFailedViewKey(viewKey);
+      } finally {
+        if (pageRequestRef.current === request) {
+          pageRequestRef.current = null;
+          setPageLoading(false);
+        }
+      }
+    })();
+    return () => {
+      request.abort();
+      if (pageRequestRef.current === request) pageRequestRef.current = null;
+    };
+  }, [disclosureKey, listRetry, state.contextMode, viewKey]);
 
   useEffect(() => () => pageRequestRef.current?.abort(), []);
 
@@ -957,6 +1000,7 @@ export function ResourcesPane() {
   const collapseEarlierFiles = () => {
     pageRequestRef.current?.abort();
     pageRequestRef.current = null;
+    expandedViewKeyRef.current = null;
     setExpandedViewKey(null);
     setEarlierResources([]);
     setPageLoading(false);
@@ -966,7 +1010,7 @@ export function ResourcesPane() {
 
   const initialMatches = Boolean(initialList?.viewKey === viewKey);
   const initialResponse = initialMatches ? initialList!.response : null;
-  const expanded = expandedViewKey === viewKey;
+  const expanded = expandedViewKey === disclosureKey;
   const baselineResources = useMemo(() => {
     if (!initialResponse) return [];
     const initial = resourceRows(initialResponse.resources);
@@ -1138,121 +1182,155 @@ export function ResourcesPane() {
           </button>
         </div>
       ) : null}
-      {state.contextMode === "files" ? (
-        resources.length === 0 ? (
-          state.resourcePreview ? null : failedViewKey === viewKey ? (
-            <div className="empty-state" role="alert">
-              <AlertTriangle size={24} strokeWidth={1.5} aria-hidden />
-              <span className="empty-state__title">
-                Earlier files unavailable
-              </span>
-              <button
-                type="button"
-                className="button"
-                onClick={retryInitialList}
-              >
-                <RefreshCw size={12} aria-hidden />
-                Retry
-              </button>
-            </div>
-          ) : !initialResponse && state.hasOlderMessages ? (
-            <div className="empty-state" role="status">
-              <Loader2
-                size={22}
-                className="spin"
-                strokeWidth={1.5}
-                aria-hidden
-              />
-              <span className="empty-state__title">Loading earlier files</span>
-            </div>
-          ) : (
-            <div className="empty-state">
-              <FileSearch size={26} strokeWidth={1.5} aria-hidden />
-              <span className="empty-state__title">No files yet</span>
-              <span className="empty-state__hint">
-                Files Pi reads, writes, or you mention appear here
-              </span>
-            </div>
-          )
+      <div
+        className={`res__body ${state.contextMode === "changes" ? "res__body--changes" : ""}`}
+        ref={bodyRef}
+      >
+        {state.contextMode === "branches" ? (
+          <BranchTree />
         ) : (
-          <ResourceIndex
-            resources={resources}
-            onNearEnd={
-              expanded && pageCursor && !failedPageCursor && !pageLoading
-                ? () => loadEarlierPage(pageCursor)
-                : undefined
-            }
-          >
-            {expanded ? (
-              <button
-                type="button"
-                className="res__more"
-                aria-expanded="true"
-                onClick={collapseEarlierFiles}
-              >
-                <ChevronDown
-                  size={12}
-                  className="chev-flip chev-flip--open"
-                  aria-hidden
-                />
-                Recent files
-              </button>
-            ) : null}
-            {pageLoading ? (
-              <div className="res__more res__more--status" role="status">
-                <Loader2 size={12} className="spin" aria-hidden />
-                Loading earlier files
-              </div>
-            ) : failedPageCursor ? (
-              <button
-                type="button"
-                className="res__more"
-                aria-expanded="true"
-                onClick={() => loadEarlierPage(failedPageCursor)}
-              >
-                <RefreshCw size={12} aria-hidden />
-                Retry earlier files
-              </button>
-            ) : !expanded && pageCursor ? (
-              <button
-                type="button"
-                className="res__more"
-                aria-expanded="false"
-                onClick={() => {
-                  setExpandedViewKey(viewKey);
-                  loadEarlierPage(pageCursor);
-                }}
-              >
-                <ChevronDown size={12} aria-hidden />
-                {`Earlier files${remainingResources === null ? "" : ` (${remainingResources})`}`}
-              </button>
-            ) : expanded && pageCursor ? (
-              <div className="res__more res__more--status">
-                More files load as you scroll
-              </div>
-            ) : failedViewKey === viewKey ? (
-              <button
-                type="button"
-                className="res__more"
-                onClick={retryInitialList}
-              >
-                <RefreshCw size={12} aria-hidden />
-                Retry earlier files
-              </button>
-            ) : !initialResponse && state.hasOlderMessages ? (
-              <div className="res__more res__more--status" role="status">
-                <Loader2 size={12} className="spin" aria-hidden />
-                Earlier files
-              </div>
-            ) : null}
-          </ResourceIndex>
-        )
-      ) : state.contextMode === "changes" ? (
-        <ChangesIndex />
-      ) : (
-        <BranchTree />
-      )}
-      {state.contextMode !== "branches" ? <DetailRegion /> : null}
+          <>
+            <div className="res__index" ref={indexRef}>
+              {state.contextMode === "files" ? (
+                resources.length === 0 ? (
+                  state.resourcePreview ? null : failedViewKey === viewKey ? (
+                    <div className="empty-state" role="alert">
+                      <AlertTriangle size={24} strokeWidth={1.5} aria-hidden />
+                      <span className="empty-state__title">
+                        Earlier files unavailable
+                      </span>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={retryInitialList}
+                      >
+                        <RefreshCw size={12} aria-hidden />
+                        Retry
+                      </button>
+                    </div>
+                  ) : !initialResponse && state.hasOlderMessages ? (
+                    <div className="empty-state" role="status">
+                      <Loader2
+                        size={22}
+                        className="spin"
+                        strokeWidth={1.5}
+                        aria-hidden
+                      />
+                      <span className="empty-state__title">
+                        Loading earlier files
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <FileSearch size={26} strokeWidth={1.5} aria-hidden />
+                      <span className="empty-state__title">No files yet</span>
+                      <span className="empty-state__hint">
+                        Files Pi reads, writes, or you mention appear here
+                      </span>
+                    </div>
+                  )
+                ) : (
+                  <ResourceIndex
+                    resources={resources}
+                    onNearEnd={
+                      expanded &&
+                      pageCursor &&
+                      !failedPageCursor &&
+                      !pageLoading
+                        ? () => loadEarlierPage(pageCursor)
+                        : undefined
+                    }
+                  >
+                    {expanded ? (
+                      <button
+                        type="button"
+                        className="res__more"
+                        aria-expanded="true"
+                        onClick={collapseEarlierFiles}
+                      >
+                        <ChevronDown
+                          size={12}
+                          className="chev-flip chev-flip--open"
+                          aria-hidden
+                        />
+                        Recent files
+                      </button>
+                    ) : null}
+                    {pageLoading ? (
+                      <div
+                        className="res__more res__more--status"
+                        role="status"
+                      >
+                        <Loader2 size={12} className="spin" aria-hidden />
+                        Loading earlier files
+                      </div>
+                    ) : failedPageCursor ? (
+                      <button
+                        type="button"
+                        className="res__more"
+                        aria-expanded="true"
+                        onClick={() => loadEarlierPage(failedPageCursor)}
+                      >
+                        <RefreshCw size={12} aria-hidden />
+                        Retry earlier files
+                      </button>
+                    ) : !expanded && pageCursor ? (
+                      <button
+                        type="button"
+                        className="res__more"
+                        aria-expanded="false"
+                        onClick={() => {
+                          expandedViewKeyRef.current = disclosureKey;
+                          setExpandedViewKey(disclosureKey);
+                          loadEarlierPage(pageCursor);
+                        }}
+                      >
+                        <ChevronDown size={12} aria-hidden />
+                        {`Earlier files${remainingResources === null ? "" : ` (${remainingResources})`}`}
+                      </button>
+                    ) : expanded && pageCursor ? (
+                      <div className="res__more res__more--status">
+                        More files load as you scroll
+                      </div>
+                    ) : failedViewKey === viewKey ? (
+                      <button
+                        type="button"
+                        className="res__more"
+                        onClick={retryInitialList}
+                      >
+                        <RefreshCw size={12} aria-hidden />
+                        Retry earlier files
+                      </button>
+                    ) : !initialResponse && state.hasOlderMessages ? (
+                      <div
+                        className="res__more res__more--status"
+                        role="status"
+                      >
+                        <Loader2 size={12} className="spin" aria-hidden />
+                        Earlier files
+                      </div>
+                    ) : null}
+                  </ResourceIndex>
+                )
+              ) : (
+                <ChangesIndex />
+              )}
+            </div>
+            <PaneResizeHandle
+              orientation="horizontal"
+              container={bodyRef}
+              pane={indexRef}
+              cssVar="--pane-resize-primary-size"
+              storageKey="inspire.resources-split"
+              min={96}
+              minRemainder={160}
+              label="Resize file list and preview"
+              variant="resources"
+            />
+            <DetailRegion />
+          </>
+        )}
+      </div>
       <ScrollRail container={paneRef} scroller=".res__list" variant="ctx" />
       <ScrollRail
         container={paneRef}
