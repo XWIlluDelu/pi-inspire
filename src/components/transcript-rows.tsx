@@ -8,29 +8,29 @@ import type {
   VisibilityPreference,
 } from "../../shared/contracts";
 import {
+  type ActivityTool,
+  type ChatMessage,
   contentItems,
   messageText,
   store,
-  type ActivityTool,
-  type ChatMessage,
   type ToolCallContent,
 } from "../store";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { RichText } from "./RichText";
+import { useDynamicActivityGroup } from "./transcript-activity";
 import {
+  type CompactActivity,
   CompactActivityStrip,
-  compactCustomActivities,
   CopyAction,
   CustomMessageCard,
+  compactCustomActivities,
   GenericCard,
   genericContentTitle,
   hasRenderableAssistantContent,
+  type StaticVisibility,
   ThinkingCard,
   ToolCard,
-  type CompactActivity,
-  type StaticVisibility,
 } from "./transcript-cards";
-import { useDynamicActivityGroup } from "./transcript-activity";
 
 export function relativeTime(timestamp: number | string): string {
   const time =
@@ -182,6 +182,22 @@ export const UserBubble = memo(function UserBubble({
   );
 });
 
+function hasCompactableActivityRun(
+  items: ReturnType<typeof contentItems>,
+  trailingCustomCount: number,
+): boolean {
+  let currentToolRun = 0;
+  for (const item of items) {
+    if (item.type === "toolCall") {
+      currentToolRun += 1;
+      if (currentToolRun > 1) return true;
+    } else {
+      currentToolRun = 0;
+    }
+  }
+  return currentToolRun + trailingCustomCount > 1;
+}
+
 export const AssistantTurn = memo(function AssistantTurn({
   message,
   toolResults,
@@ -225,6 +241,10 @@ export const AssistantTurn = memo(function AssistantTurn({
     ...customActivities.map((activity) => activity.key),
   ];
   const hasActivities = activityKeys.length > 0;
+  const compactEligible = hasCompactableActivityRun(
+    items,
+    customActivities.length,
+  );
   const lifecycleObserved =
     dynamicActive ||
     customMessages.some((custom) => typeof custom.__inspireLiveId === "string");
@@ -235,6 +255,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     lifecycleObserved,
     compactRequested,
     activityKeys,
+    compactEligible,
   );
   const renderedItems: React.ReactNode[] =
     typeof message.content === "string" && message.content.length > 0
@@ -243,7 +264,8 @@ export const AssistantTurn = memo(function AssistantTurn({
   const ordinaryToolVisibility: StaticVisibility =
     toolVisibility === "compact" || dynamicTools ? "collapsed" : toolVisibility;
   const compactActivities =
-    toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact);
+    compactEligible &&
+    (toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact));
   let customActivitiesRendered = false;
   // Execution events, not membership in the current batch, own the running
   // status. After reconnect an unobserved call stays expanded but unknown.
@@ -252,31 +274,39 @@ export const AssistantTurn = memo(function AssistantTurn({
   for (let index = 0; index < items.length; ) {
     const item = items[index]!;
     if (item.type === "toolCall" && compactActivities) {
-      const activities: CompactActivity[] = [];
       const start = index;
-      while (index < items.length && items[index]?.type === "toolCall") {
-        const call = items[index] as ToolCallContent;
-        activities.push({
-          kind: "tool",
-          key: call.id || `tool:${index}`,
-          call,
-          result: toolResults.get(call.id),
-          activity: toolActivity[call.id],
-        });
-        index += 1;
+      let end = start;
+      while (end < items.length && items[end]?.type === "toolCall") end += 1;
+      const joinsTrailingCustoms =
+        end === items.length && customActivities.length > 0;
+      const runLength =
+        end - start + (joinsTrailingCustoms ? customActivities.length : 0);
+      if (runLength > 1) {
+        const activities: CompactActivity[] = [];
+        for (let cursor = start; cursor < end; cursor += 1) {
+          const call = items[cursor] as ToolCallContent;
+          activities.push({
+            kind: "tool",
+            key: call.id || `tool:${cursor}`,
+            call,
+            result: toolResults.get(call.id),
+            activity: toolActivity[call.id],
+          });
+        }
+        index = end;
+        if (joinsTrailingCustoms) {
+          activities.push(...customActivities);
+          customActivitiesRendered = true;
+        }
+        renderedItems.push(
+          <CompactActivityStrip
+            key={`tools:${activities[0]?.key ?? start}`}
+            activities={activities}
+            live={live}
+          />,
+        );
+        continue;
       }
-      if (index === items.length && customActivities.length > 0) {
-        activities.push(...customActivities);
-        customActivitiesRendered = true;
-      }
-      renderedItems.push(
-        <CompactActivityStrip
-          key={`tools:${activities[0]?.key ?? start}`}
-          activities={activities}
-          live={live}
-        />,
-      );
-      continue;
     }
     if (item.type === "text") {
       const text = (item as { text?: string }).text ?? "";
@@ -336,7 +366,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   }
 
   if (!customActivitiesRendered && customActivities.length > 0) {
-    if (compactActivities) {
+    if (compactActivities && customActivities.length > 1) {
       renderedItems.push(
         <CompactActivityStrip
           key={`customs:${customActivities[0]!.key}`}

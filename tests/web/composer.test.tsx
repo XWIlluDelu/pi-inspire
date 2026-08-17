@@ -258,7 +258,7 @@ describe("queued composer controls", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
     expect(textarea).toHaveAttribute(
       "placeholder",
       "Add a follow-up for after this task…",

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -13,6 +14,7 @@ import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  FakeWebSocket,
   installFakeWebSocket,
 } from "./helpers";
 
@@ -32,6 +34,7 @@ describe("Files pane", () => {
   let resourceListFailureCursor: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let bootstrapMessages: unknown[] = [];
+  let transcriptRevision = 1;
 
   beforeEach(async () => {
     gitStatusFails = false;
@@ -39,6 +42,7 @@ describe("Files pane", () => {
     resourceListFails = false;
     resourceListFailureCursor = null;
     resourceListRequests = [];
+    transcriptRevision = 1;
     bootstrapMessages = [
       {
         role: "assistant",
@@ -71,7 +75,7 @@ describe("Files pane", () => {
                 messages: bootstrapMessages,
                 transcriptPage: {
                   sessionId: "s1",
-                  revision: 1,
+                  revision: transcriptRevision,
                   viewId: "view-s1",
                   incarnation: "projection-1",
                   appendFromRevision: 1,
@@ -287,7 +291,7 @@ describe("Files pane", () => {
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
-            revision: 1,
+            revision: transcriptRevision,
             offset,
             total: resources.length,
             nextCursor: end < resources.length ? `cursor:${end}` : null,
@@ -301,7 +305,7 @@ describe("Files pane", () => {
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
-            revision: 1,
+            revision: transcriptRevision,
             results: body.references.map((reference) =>
               reference === missingProbeReference
                 ? {
@@ -517,6 +521,54 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("button", { name: "Earlier files (142)" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps earlier files expanded when the current transcript revision advances", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
+
+    const pane = await screen.findByRole("complementary", {
+      name: "Files and resources",
+    });
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: "Earlier files (142)" }),
+    );
+    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
+    expect(
+      within(pane).getByRole("button", { name: "Recent files" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    transcriptRevision = 2;
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          messages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: transcriptRevision,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+            hasOlder: true,
+            olderCursor: "older-s1",
+          },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(resourceListRequests).toHaveLength(4));
+    expect(resourceListRequests.slice(-2)).toEqual([
+      {},
+      { cursor: "cursor:8", limit: 64 },
+    ]);
+    expect(
+      within(pane).getByRole("button", { name: "Recent files" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(pane).queryByRole("button", { name: /Earlier files/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("retries one failed page without automatically draining the remaining cursor", async () => {

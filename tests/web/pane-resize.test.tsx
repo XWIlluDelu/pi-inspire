@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function setViewport(width: number): void {
@@ -9,7 +10,7 @@ function setViewport(width: number): void {
   });
 }
 
-describe("PaneResizeHandle responsive bounds", () => {
+describe("Pane resize handles", () => {
   beforeEach(() => {
     const values = new Map<string, string>();
     Object.defineProperty(window, "localStorage", {
@@ -29,16 +30,25 @@ describe("PaneResizeHandle responsive bounds", () => {
           ? Number.parseFloat(
               document.documentElement.style.getPropertyValue("--ctx-w"),
             ) || 500
-          : 0;
+          : 500;
+        const height = this.classList.contains("split-primary")
+          ? Number.parseFloat(
+              this.parentElement?.style.getPropertyValue(
+                "--pane-resize-primary-size",
+              ) ?? "",
+            ) || 240
+          : this.classList.contains("split-container")
+            ? 600
+            : 800;
         return {
           x: 0,
           y: 0,
           top: 0,
           right: width,
-          bottom: 800,
+          bottom: height,
           left: 0,
           width,
-          height: 800,
+          height,
           toJSON: () => ({}),
         } as DOMRect;
       },
@@ -49,6 +59,64 @@ describe("PaneResizeHandle responsive bounds", () => {
     vi.restoreAllMocks();
     window.localStorage.clear();
     document.documentElement.style.removeProperty("--ctx-w");
+  });
+
+  it("drags the horizontal boundary, supports the keyboard, and restores its saved size", async () => {
+    window.localStorage.setItem("inspire.resources-split", "300");
+    const { PaneResizeHandle } = await import(
+      "../../src/components/PaneResizeHandle"
+    );
+    function SplitHarness() {
+      const containerRef = useRef<HTMLDivElement>(null);
+      const primaryRef = useRef<HTMLDivElement>(null);
+      return (
+        <div className="split-container" ref={containerRef}>
+          <div className="split-primary" ref={primaryRef} />
+          <PaneResizeHandle
+            orientation="horizontal"
+            container={containerRef}
+            pane={primaryRef}
+            cssVar="--pane-resize-primary-size"
+            storageKey="inspire.resources-split"
+            min={96}
+            minRemainder={160}
+            label="Resize file list and preview"
+            variant="resources"
+          />
+          <div />
+        </div>
+      );
+    }
+    const view = render(<SplitHarness />);
+    const split =
+      view.container.querySelector<HTMLElement>(".split-container")!;
+    const handle = view.getByRole("separator", {
+      name: "Resize file list and preview",
+    });
+
+    await waitFor(() =>
+      expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
+        "300px",
+      ),
+    );
+    expect(handle).toHaveAttribute("aria-orientation", "horizontal");
+
+    fireEvent.pointerDown(handle, { button: 0, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 400, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientY: 400, pointerId: 1 });
+    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
+      "400px",
+    );
+    expect(window.localStorage.getItem("inspire.resources-split")).toBe("400");
+
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
+    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
+      "376px",
+    );
+    fireEvent.doubleClick(handle);
+    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe("");
+    expect(split).not.toHaveAttribute("data-pane-resize-sized");
+    expect(window.localStorage.getItem("inspire.resources-split")).toBeNull();
   });
 
   it("temporarily clamps a saved pane width when the window narrows and restores it when expanded", async () => {
