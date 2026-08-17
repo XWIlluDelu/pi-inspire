@@ -68,7 +68,17 @@ That installs dependencies if needed, builds the client when missing, starts the
 
 The launcher never kills an arbitrary process merely because it owns the configured port. Reuse requires the private state plus an authenticated constant-size health response. An unrelated or legacy occupant is reported with an inspection command; `stop`/`restart` may signal only the exact private-state process whose PID owner, process-start identity, working directory, and command line identify it as this checkout, including when that exact process is too unhealthy to answer the health probe.
 
-Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript.
+Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
+
+## Personal HTTPS relay
+
+The host remains loopback-only. A single owner may expose it through a user-controlled HTTPS reverse proxy whose upstream is an SSH reverse tunnel bound to the relay machine's loopback address; the relay never receives a directly published INSΠRE port. In that mode, run the host with:
+
+```bash
+INSPIRE_TRUST_PROXY=loopback INSPIRE_ALLOW_TOKEN_URL_PAIRING=0 ./inspire
+```
+
+`INSPIRE_TRUST_PROXY=loopback` is only for a trusted local-hop proxy that overwrites forwarded headers. Disabling token-URL pairing strips `?token=` without accepting it, so a new browser uses the Pair form instead. The public edge must enforce HTTPS, set `Secure` on the pairing cookie if the running host was not started with trusted-proxy mode, and avoid access logging token-bearing URLs. This is personal shared-token access, not multi-user collaboration or device-level authorization.
 
 ## Release package
 
@@ -114,7 +124,7 @@ npm run build
 
 ## Privacy
 
-The first release is local-only. The loopback host is the only privileged boundary: provider credentials and unrestricted filesystem access stay in the trusted host process and are never sent to browser storage.
+The default deployment is local-only. A deliberately configured personal relay keeps the loopback host as the privileged boundary: provider credentials and unrestricted filesystem access stay in the trusted host process and are never sent to browser storage or the relay's application layer.
 
 ## License
 
