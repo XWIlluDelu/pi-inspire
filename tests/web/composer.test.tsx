@@ -639,6 +639,34 @@ describe("caret completion", () => {
   });
 });
 
+describe("session-owned composer surfaces", () => {
+  it("closes a project-file picker and drop state before a session switch can retarget it", () => {
+    clearLeftovers();
+    const { container } = render(<Composer />);
+    const form = container.querySelector(".composer")!;
+    fireEvent.dragOver(form);
+    expect(form).toHaveClass("composer--drop");
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    expect(screen.getByLabelText("Search project files")).toBeInTheDocument();
+
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          sessionId: "s2",
+          sessionName: "Second session",
+          cwd: "/proj/second",
+        }),
+      }),
+    );
+
+    expect(
+      screen.queryByLabelText("Search project files"),
+    ).not.toBeInTheDocument();
+    expect(form).not.toHaveClass("composer--drop");
+  });
+});
+
 describe("project file picker", () => {
   it("orders message tools as model, effort, project files, then attachments", () => {
     clearLeftovers();

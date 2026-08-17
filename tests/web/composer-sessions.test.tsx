@@ -64,7 +64,9 @@ describe("composer drafts across sessions", () => {
         data: activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
       });
     });
-    fireEvent.change(textarea, { target: { value: "draft for B" } });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "draft for B" },
+    });
 
     release();
     await waitFor(() => expect(promptsSettled).toBe(1));
@@ -136,7 +138,7 @@ describe("project-file send ownership", () => {
 });
 
 describe("project file picker scoping", () => {
-  it("clears and re-scopes results when the session changes", async () => {
+  it("closes rather than retargeting the picker when the session changes", async () => {
     act(() => {
       FakeWebSocket.instances
         .at(-1)!
@@ -150,7 +152,8 @@ describe("project file picker scoping", () => {
     // Session A's path appears.
     await screen.findByRole("option", { name: /sA\/only\.ts/ });
 
-    // Switching to B clears A's results immediately, then lists B's own.
+    // A picker belongs to the session that opened it. Switching to B must
+    // not silently keep it open with a different search scope.
     act(() => {
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",
@@ -158,8 +161,18 @@ describe("project file picker scoping", () => {
       });
     });
     expect(
-      screen.queryByRole("option", { name: /sA\/only\.ts/ }),
+      screen.queryByLabelText("Search project files"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add project files" }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    // A fresh user gesture gets B's own scope and begins with an empty query.
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    expect(screen.getByLabelText("Search project files")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Search project files"), {
+      target: { value: "only" },
+    });
     await screen.findByRole("option", { name: /sB\/only\.ts/ });
   });
 });

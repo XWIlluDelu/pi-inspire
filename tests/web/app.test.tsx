@@ -330,22 +330,24 @@ describe("welcome flow", () => {
         ).not.toBeInTheDocument(),
       );
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "Toggle resources panel" }),
-      );
+      const resourcesToggle = screen.getByRole("button", {
+        name: "Toggle resources panel",
+      });
+      expect(resourcesToggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(resourcesToggle);
       expect(
         await screen.findByRole("complementary", {
           name: "Files and resources",
         }),
       ).toBeInTheDocument();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Close resources panel" }),
-      );
+      expect(resourcesToggle).toHaveAttribute("aria-expanded", "true");
+      fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() =>
         expect(
           screen.queryByRole("complementary", { name: "Files and resources" }),
         ).not.toBeInTheDocument(),
       );
+      expect(resourcesToggle).toHaveAttribute("aria-expanded", "false");
     } finally {
       media.mockRestore();
     }

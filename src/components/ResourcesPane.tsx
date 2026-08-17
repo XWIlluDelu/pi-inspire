@@ -786,36 +786,35 @@ function DiffRegion() {
         </div>
       ) : null}
       <div className="diff-view__lines">
-        {result.lines.map((line, index) => (
-          <div
-            className={`diff-view__line diff-view__line--${line.kind}`}
-            key={index}
-          >
-            <span
-              className="diff-view__number"
-              role="img"
-              aria-label={
-                line.oldLine === null
-                  ? "No old line"
-                  : `Old line ${line.oldLine}`
-              }
+        {result.lines.map((line, index) => {
+          const visibleLine = line.newLine ?? line.oldLine;
+          const coordinateLabel =
+            line.oldLine !== null && line.newLine !== null
+              ? line.oldLine === line.newLine
+                ? `Line ${line.newLine}`
+                : `Old line ${line.oldLine}, new line ${line.newLine}`
+              : line.oldLine !== null
+                ? `Old line ${line.oldLine}`
+                : line.newLine !== null
+                  ? `New line ${line.newLine}`
+                  : "No line number";
+          return (
+            <div
+              className={`diff-view__line diff-view__line--${line.kind}`}
+              key={index}
             >
-              {line.oldLine ?? ""}
-            </span>
-            <span
-              className="diff-view__number"
-              role="img"
-              aria-label={
-                line.newLine === null
-                  ? "No new line"
-                  : `New line ${line.newLine}`
-              }
-            >
-              {line.newLine ?? ""}
-            </span>
-            <code>{line.text}</code>
-          </div>
-        ))}
+              <span
+                className="diff-view__number"
+                role="img"
+                aria-label={coordinateLabel}
+                title={coordinateLabel}
+              >
+                {visibleLine ?? ""}
+              </span>
+              <code>{line.text}</code>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

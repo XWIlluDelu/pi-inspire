@@ -17,6 +17,7 @@ async function openMockSession(
   title: RegExp,
 ) {
   await page.locator(".nav__row-main").filter({ hasText: title }).click();
+  await expect(page.locator(".topbar__title-button")).toHaveText(title);
 }
 
 type FontTransfer = { url: string; encodedBytes: number };
@@ -190,10 +191,45 @@ test("earlier-branch banner can fork and return to the durable leaf", async ({
   await expect(banner).toBeHidden();
 });
 
+test("session transitions cannot accept input for the previous session", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+
+  let releaseOpen!: () => void;
+  const openGate = new Promise<void>((resolve) => {
+    releaseOpen = resolve;
+  });
+  await page.route("**/api/sessions/open", async (route) => {
+    await openGate;
+    await route.continue();
+  });
+
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const message = page.getByRole("textbox", { name: "Message" });
+  try {
+    await page
+      .locator(".nav__row-main")
+      .filter({ hasText: /Review extension event lifecycle/ })
+      .click();
+    await expect(composer).toHaveAttribute("aria-busy", "true");
+    await expect(message).toBeDisabled();
+  } finally {
+    releaseOpen();
+  }
+
+  await expect(page.locator(".topbar__title-button")).toHaveText(
+    /Review extension event lifecycle/,
+  );
+  await expect(message).toBeEnabled();
+});
+
 test("running composer exposes steer, queue, and abort controls", async ({
   page,
 }) => {
   await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
   const message = page.getByRole("textbox", { name: "Message" });
   await message.fill("start a run for delivery controls");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -259,6 +295,23 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const controlCenterDelta = await page
+    .locator(".composer__meta")
+    .evaluate((meta) => {
+      const model = meta.querySelector<HTMLElement>("[aria-label='Model']");
+      const effort = meta.querySelector<HTMLElement>(
+        "[aria-label='Thinking level']",
+      );
+      if (!model || !effort) return Number.POSITIVE_INFINITY;
+      const modelBox = model.getBoundingClientRect();
+      const effortBox = effort.getBoundingClientRect();
+      return Math.abs(
+        modelBox.y + modelBox.height / 2 - (effortBox.y + effortBox.height / 2),
+      );
+    });
+  expect(controlCenterDelta).toBeLessThan(2);
   const message = page.getByRole("textbox", { name: "Message" });
   await message.fill("keep the status visible");
   await page.getByRole("button", { name: "Send message" }).click();

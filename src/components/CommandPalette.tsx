@@ -9,6 +9,7 @@ import {
 } from "../../shared/contracts";
 import { isAbortableRunState, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { sessionHeading } from "./AppTopbar";
 import { relativeTime } from "./Transcript";
 
 interface PaletteItem {
@@ -51,13 +52,28 @@ export function CommandPalette({
   onOpenSession: (id: string) => void;
 }) {
   const state = useAppState();
-  const [query, setQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameInitialValue, setRenameInitialValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useModalFocus<HTMLDivElement>();
+  const exitRename = () => {
+    setRenaming(false);
+    setRenameSessionId(null);
+    setRenameValue("");
+    setRenameInitialValue("");
+  };
+  const dialogRef = useModalFocus<HTMLDivElement>(
+    true,
+    "command-palette",
+    () => {
+      if (renaming) exitRename();
+      else onClose();
+    },
+  );
   const abortable = isAbortableRunState(state.runState);
   const hasEarlierBranch = Boolean(
     state.transcriptDurableLeafId &&
@@ -73,7 +89,8 @@ export function CommandPalette({
     if (renaming && renameSessionId !== state.sessionId) {
       setRenaming(false);
       setRenameSessionId(null);
-      setQuery("");
+      setRenameValue("");
+      setRenameInitialValue("");
     }
   }, [renameSessionId, renaming, state.sessionId]);
 
@@ -148,7 +165,18 @@ export function CommandPalette({
         title: "Rename session…",
         keepOpen: true,
         run: () => {
+          const catalogTitle = state.sessions.find(
+            (session) => session.id === state.sessionId,
+          )?.title;
+          const currentTitle = sessionHeading(
+            state.sessionName,
+            catalogTitle,
+            state.messages,
+            !state.hasOlderMessages,
+          );
           setRenameSessionId(state.sessionId);
+          setRenameValue(currentTitle);
+          setRenameInitialValue(currentTitle);
           setRenaming(true);
         },
       });
@@ -255,7 +283,11 @@ export function CommandPalette({
     onOpenSession,
   ]);
 
-  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const words = searchQuery
+    .trim()
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
   const filtered =
     words.length === 0 ? items : items.filter((item) => matches(item, words));
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
@@ -289,9 +321,15 @@ export function CommandPalette({
   };
 
   const submitRename = async () => {
-    const name = query.trim();
+    const name = renameValue.trim();
     const owner = renameSessionId;
     if (!name || !owner || store.getState().sessionId !== owner) return;
+    // A prefilled presentation title may be a fallback rather than Pi-owned
+    // metadata. Enter without an edit must not promote it into a new name.
+    if (name === renameInitialValue.trim()) {
+      onClose();
+      return;
+    }
     if (await store.renameSession(owner, name)) onClose();
   };
 
@@ -309,23 +347,20 @@ export function CommandPalette({
         <input
           ref={inputRef}
           className="palette__input"
-          value={query}
+          value={renaming ? renameValue : searchQuery}
           placeholder={
             renaming ? "New session name…" : "Type a command or search…"
           }
           aria-label={renaming ? "New session name" : "Filter commands"}
           onChange={(event) => {
-            setQuery(event.target.value);
-            setIndex(0);
+            if (renaming) setRenameValue(event.target.value);
+            else {
+              setSearchQuery(event.target.value);
+              setIndex(0);
+            }
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              if (renaming) {
-                setRenaming(false);
-                setRenameSessionId(null);
-              } else onClose();
-            } else if (renaming) {
+            if (renaming) {
               if (event.key === "Enter") {
                 event.preventDefault();
                 void submitRename();

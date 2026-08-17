@@ -371,6 +371,7 @@ export function AppTopbar({
           className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
           onClick={onToggleResources}
           aria-label="Toggle resources panel"
+          aria-expanded={state.resourcesOpen}
           title="Toggle resources panel (Ctrl+.)"
         >
           <PanelRight size={15} aria-hidden />

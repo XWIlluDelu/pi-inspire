@@ -16,6 +16,8 @@ import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isAbortableRunState, store, useAppState } from "./store";
+import { hasActiveModal } from "./use-modal-focus";
+import { cacheVisualPreferences } from "./visual-preferences";
 
 // Vite replaces MODE at build time. The production false branches are folded
 // before Rollup, leaving the ordinary elements directly in the component tree.
@@ -129,11 +131,11 @@ function HostUnavailable({
           <p className="token-gate__hint">
             {hostError
               ? `The host answered at ${host}, but could not initialize: ${problem.message}`
-              : `The installed app is ready, but no insπre host is reachable at ${host}.`}
+              : `The installed app is ready, but no Inspire host is reachable at ${host}.`}
           </p>
         </div>
         <div className="token-gate__instruction">
-          <span>Start or restart it from the insπre project directory:</span>
+          <span>Start or restart it from the Inspire project directory:</span>
           <code>./inspire</code>
         </div>
         <div className="token-gate__actions">
@@ -201,16 +203,19 @@ export function App() {
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const extensionOverlayOpen = state.extensionUiRequests.length > 0;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
 
   const openSession = (id: string) => {
+    setPaletteOpen(false);
     setSettingsOpen(false);
     setMobileNavOpen(false);
     void store.openSession(id);
   };
 
   const newSession = () => {
+    setPaletteOpen(false);
     setSettingsOpen(false);
     setMobileNavOpen(false);
     const current = store.getState();
@@ -252,7 +257,36 @@ export function App() {
     if (!narrowViewport) setMobileNavOpen(false);
   }, [narrowViewport]);
 
+  // An extension dialog is an attributed operation boundary, not background
+  // chrome. It supersedes the two app-level overlays instead of competing for
+  // focus or Escape ownership.
   useEffect(() => {
+    if (state.extensionUiRequests.length === 0) return;
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+  }, [state.extensionUiRequests.length]);
+
+  const openCommandPalette = useCallback(() => {
+    if (extensionOverlayOpen || hasActiveModal()) return;
+    setSettingsOpen(false);
+    setPaletteOpen(true);
+  }, [extensionOverlayOpen]);
+
+  const toggleSettings = useCallback(() => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return;
+    }
+    if (extensionOverlayOpen || hasActiveModal()) return;
+    setPaletteOpen(false);
+    setSettingsOpen(true);
+  }, [extensionOverlayOpen, settingsOpen]);
+
+  useEffect(() => {
+    // theme-init.js owns the pre-bootstrap frame. Once the host has supplied
+    // authoritative preferences, keep both the DOM and the small local cache
+    // in sync for subsequent first paints.
+    if (!state.bootstrapped) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.theme = resolveTheme(
@@ -260,11 +294,15 @@ export function App() {
         media.matches,
       );
       document.documentElement.dataset.palette = state.prefs.palette || "amber";
+      cacheVisualPreferences({
+        theme: state.prefs.theme,
+        palette: state.prefs.palette,
+      });
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [state.prefs.theme, state.prefs.palette]);
+  }, [state.bootstrapped, state.prefs.theme, state.prefs.palette]);
 
   useEffect(() => {
     // Attention composes with Pi's extension-set title instead of replacing
@@ -289,10 +327,18 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // A modal owns every keyboard interaction until it closes. The one
+      // exception is a projection conflict: its host-level recovery Escape
+      // remains available when an extension request is visible.
+      if (
+        hasActiveModal() &&
+        !(event.key === "Escape" && state.runState === "conflict")
+      )
+        return;
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen((value) => !value);
+        openCommandPalette();
       } else if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
         toggleNavigation();
@@ -304,10 +350,14 @@ export function App() {
         setMobileNavOpen(false);
       } else if (
         event.key === "Escape" &&
+        narrowViewport &&
+        state.resourcesOpen
+      ) {
+        event.preventDefault();
+        store.setResourcesOpen(false);
+      } else if (
+        event.key === "Escape" &&
         !event.defaultPrevented &&
-        !paletteOpen &&
-        (state.extensionUiRequests.length === 0 ||
-          state.runState === "conflict") &&
         isAbortableRunState(state.runState)
       ) {
         void store.abort();
@@ -317,10 +367,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     state.runState,
-    state.extensionUiRequests.length,
-    paletteOpen,
+    state.resourcesOpen,
     narrowViewport,
     mobileNavOpen,
+    openCommandPalette,
     toggleNavigation,
     toggleResources,
   ]);
@@ -409,8 +459,8 @@ export function App() {
           mobileNavOpen={mobileNavOpen}
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
-          onOpenCommandPalette={() => setPaletteOpen(true)}
-          onToggleSettings={() => setSettingsOpen((value) => !value)}
+          onOpenCommandPalette={openCommandPalette}
+          onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
         {state.error ? (
@@ -446,7 +496,7 @@ export function App() {
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem?.kind === "host-unreachable"
-                ? `The insπre host is not reachable at ${window.location.host}. Start or restart it with ./inspire; the last settled state stays visible.`
+                ? `The Inspire host is not reachable at ${window.location.host}. Start or restart it with ./inspire; the last settled state stays visible.`
                 : state.connectionProblem?.kind === "host-error"
                   ? `The host responded but could not initialize: ${state.connectionProblem.message}`
                   : "The live host connection was interrupted. The last settled state stays visible."}
@@ -456,7 +506,7 @@ export function App() {
             </button>
           </div>
         ) : null}
-        {settingsOpen ? (
+        {settingsOpen && !extensionOverlayOpen ? (
           <Settings onClose={() => setSettingsOpen(false)} />
         ) : null}
         {state.sessionId ? (
@@ -513,7 +563,7 @@ export function App() {
           )}
         </>
       ) : null}
-      {paletteOpen ? (
+      {paletteOpen && !extensionOverlayOpen ? (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
           onToggleNav={toggleNavigation}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { store, useAppState, type ExtensionUiRequest } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
@@ -19,14 +19,6 @@ function DialogBody({
       : "",
   );
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !responding) cancel(request);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [request, responding]);
-
   const title =
     request.title ||
     (request.unsupported
@@ -39,7 +31,7 @@ function DialogBody({
         <h2 className="dialog__title">{title}</h2>
         <p className="dialog__message">
           This extension requested the unsupported interactive method{" "}
-          <code>{request.method}</code>. It cannot be completed in insπre.
+          <code>{request.method}</code>. It cannot be completed in Inspire.
         </p>
         <details className="dialog__details">
           <summary>Inspect request</summary>
@@ -202,6 +194,14 @@ export function ExtensionUiDialog() {
   const dialogRef = useModalFocus<HTMLDivElement>(
     Boolean(request),
     request ? `${request.sessionId}:${request.id}` : null,
+    request
+      ? () => {
+          // Conflict recovery is a host-owned Escape path and must remain
+          // available even when this extension request is still visible.
+          if (state.runState === "conflict") return false;
+          if (!responding) cancel(request);
+        }
+      : undefined,
   );
   if (!request) return null;
   return (

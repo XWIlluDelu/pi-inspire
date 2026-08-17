@@ -88,7 +88,7 @@
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 52px;
-  --activity-row-h: 32px;
+  --activity-row-h: 30px;
   --content-max: 820px;
   --composer-max: 820px;
   --pane-resize-primary-size: auto;
@@ -3157,11 +3157,6 @@ a {
     0 0 10px var(--error-tint);
 }
 
-.composer--settled {
-  border-color: var(--line);
-  box-shadow: var(--shadow-1);
-}
-
 .composer__file-input {
   position: absolute;
   width: 1px;
@@ -4097,7 +4092,7 @@ body.pane-resizing--vertical .nav {
   border-radius: var(--radius-xs);
   padding: 2px var(--space-2);
   background: transparent;
-  color: var(--muted);
+  color: var(--body);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   cursor: pointer;
 }
@@ -4423,14 +4418,16 @@ button.res__more:hover {
 
 .diff-view__line {
   display: grid;
-  grid-template-columns: 42px 42px minmax(max-content, 1fr);
+  grid-template-columns: 40px minmax(max-content, 1fr);
   min-height: 21px;
 }
 
 .diff-view__number {
-  padding: 1px var(--space-2);
+  overflow: hidden;
+  padding: 1px var(--space-1);
   border-right: 1px solid var(--hairline);
   color: var(--faint);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
 }
@@ -5731,21 +5728,6 @@ body.srail-dragging {
     padding: 10px;
   }
 
-  .composer__meta {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
-
-  .composer__meta .model-picker {
-    flex: 1 1 150px;
-    max-width: 100%;
-  }
-
-  .composer__meta .model-picker .dropdown__trigger {
-    width: 100%;
-    justify-content: space-between;
-  }
-
   .composer__spacer {
     display: none;
   }
@@ -5802,10 +5784,6 @@ body.srail-dragging {
 }
 
 @media (max-width: 420px) {
-  .composer__meta .model-picker {
-    flex-basis: 100%;
-  }
-
   .welcome__row-project {
     display: none;
   }

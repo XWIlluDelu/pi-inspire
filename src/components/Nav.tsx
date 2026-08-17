@@ -699,7 +699,7 @@ export function Nav({
           className="nav__brand-new"
           onClick={onNewSession}
           aria-label="New session"
-          title="New session (⌘N)"
+          title="New session"
         >
           <div className="nav__brand-lockup">
             <BrandLogo size={20} className="nav__brand-icon" />

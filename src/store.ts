@@ -218,6 +218,8 @@ export interface AppState extends EventSlice {
   attentionSessionIds: string[];
   /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
+  /** Whether an open, deselect, or create request still owns selection. */
+  sessionSelectionPending: boolean;
   /** The Hidden-row destructive action currently awaiting its host result. */
   deletingSessionId: string | null;
   /** The visible session's composer slice. Authoritative copies live in
@@ -301,6 +303,7 @@ const initialState: AppState = {
   sessionStatuses: {},
   attentionSessionIds: [],
   openingSessionId: null,
+  sessionSelectionPending: false,
   deletingSessionId: null,
   attachments: [],
   projectFiles: [],
@@ -719,15 +722,22 @@ export class AppStore {
   private claimOpening(owner: number, sessionId: string | null): void {
     this.readyWhileOpening.clear();
     this.openingOwner = owner;
-    this.set({ openingSessionId: sessionId });
+    this.set({ openingSessionId: sessionId, sessionSelectionPending: true });
   }
 
   private releaseOpening(owner?: number): void {
     if (owner !== undefined && this.openingOwner !== owner) return;
     this.readyWhileOpening.clear();
     this.openingOwner = null;
-    if (this.state.openingSessionId !== null)
-      this.set({ openingSessionId: null });
+    if (
+      this.state.openingSessionId !== null ||
+      this.state.sessionSelectionPending
+    ) {
+      this.set({
+        openingSessionId: null,
+        sessionSelectionPending: false,
+      });
+    }
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
