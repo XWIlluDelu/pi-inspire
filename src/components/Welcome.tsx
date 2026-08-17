@@ -287,17 +287,15 @@ export function Welcome({
   );
   const startReadiness = starting
     ? "Starting session…"
-    : !effectiveDirectory
-      ? "Choose a project"
-      : !hasInput
-        ? "Enter an instruction or add a file"
-        : modelStatus === "loading"
-          ? "Resolving model…"
-          : modelStatus === "error"
-            ? "Model resolution failed"
-            : !selectedModel
-              ? "Select a model"
-              : null;
+    : !effectiveDirectory || !hasInput
+      ? null
+      : modelStatus === "loading"
+        ? "Resolving model…"
+        : modelStatus === "error"
+          ? "Model resolution failed"
+          : !selectedModel
+            ? "Select a model"
+            : null;
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&

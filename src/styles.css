@@ -2968,6 +2968,8 @@ a {
 
 .composer__delivery .segmented {
   flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .composer__meta {

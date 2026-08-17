@@ -190,7 +190,7 @@ test("earlier-branch banner can fork and return to the durable leaf", async ({
   await expect(banner).toBeHidden();
 });
 
-test("running composer exposes steer, queue-next, and abort controls", async ({
+test("running composer exposes steer, queue, and abort controls", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -201,18 +201,18 @@ test("running composer exposes steer, queue-next, and abort controls", async ({
     page.getByRole("button", { name: "Steer", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Queue next", exact: true }),
+    page.getByRole("button", { name: "Queue", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Abort running task", exact: true }),
   ).toBeVisible();
 
-  const queueNext = page.getByRole("button", {
-    name: "Queue next",
+  const queue = page.getByRole("button", {
+    name: "Queue",
     exact: true,
   });
-  await queueNext.click();
-  await expect(queueNext).toHaveAttribute("aria-pressed", "true");
+  await queue.click();
+  await expect(queue).toHaveAttribute("aria-pressed", "true");
   await expect(message).toHaveAttribute(
     "placeholder",
     "Add a follow-up for after this task…",

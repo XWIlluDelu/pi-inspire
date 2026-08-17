@@ -327,15 +327,13 @@ describe("new-session start surface", () => {
     ).toBeDisabled();
   });
 
-  it("explains disabled start readiness before a project, input, and model are available", () => {
+  it("omits redundant readiness copy while awaiting a project or input", () => {
     render(<Welcome />);
-    expect(screen.getByRole("status")).toHaveTextContent("Choose a project");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Project directory"), {
       target: { value: "/proj" },
     });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Enter an instruction or add a file",
-    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("hides readiness copy once the selected project, message, and model are ready", async () => {
