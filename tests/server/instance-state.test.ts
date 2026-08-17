@@ -54,7 +54,7 @@ function state(path: string, port = 4587): InstanceState {
   };
 }
 
-describe("insπre instance state", () => {
+describe("Inspire instance state", () => {
   it("writes private atomic state and removes only the owning pid", async () => {
     const path = await temporaryStatePath();
     const value = state(path);
@@ -88,7 +88,7 @@ describe("insπre instance state", () => {
         return;
       }
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ appName: "insπre", mock: false }));
+      response.end(JSON.stringify({ appName: "inspire", mock: false }));
     });
     servers.push(server);
     await new Promise<void>((resolve) =>

@@ -16,7 +16,7 @@ scope:
 
 ## Objective
 
-Let the same trusted insπre product surface connect from one or more personal client devices to an explicitly selected host machine, while that host remains the sole authority for Pi runtimes, sessions, settings, credentials, projects, authorization, and mutation outcomes.
+Let the same trusted Inspire product surface connect from one or more personal client devices to an explicitly selected host machine, while that host remains the sole authority for Pi runtimes, sessions, settings, credentials, projects, authorization, and mutation outcomes.
 
 The planning round must settle the user experience and trust model before selecting transport or writing relay code. Remote access is a new product boundary around the completed local baseline, not a cloud rewrite of it.
 

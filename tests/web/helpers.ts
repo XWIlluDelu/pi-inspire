@@ -135,7 +135,7 @@ export function sessionSummary(
 
 export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
   return {
-    appName: "insπre",
+    appName: "inspire",
     version: "0.1.0",
     piVersion: "0.80.10",
     mock: false,

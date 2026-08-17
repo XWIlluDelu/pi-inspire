@@ -98,7 +98,7 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     return;
 
   pi.registerCommand(command, {
-    description: "Internal insπre branch navigation bridge",
+    description: "Internal Inspire branch navigation bridge",
     handler: async (argument, ctx) => {
       let request: BranchBridgeRequest | null = null;
       let result: BranchBridgeResult = {

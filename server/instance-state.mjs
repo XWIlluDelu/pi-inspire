@@ -45,7 +45,7 @@ async function readState(path) {
 }
 
 export async function writeInstanceState(path, state) {
-  if (!validState(state)) throw new Error("Invalid insπre instance state");
+  if (!validState(state)) throw new Error("Invalid Inspire instance state");
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -141,7 +141,7 @@ export async function inspectInstance(path, expected, options = {}) {
     });
     if (!response.ok) return { kind: "unavailable", state };
     const body = await response.json();
-    if (body?.appName !== "insπre" || body?.mock !== state.mock) return { kind: "unavailable", state };
+    if (body?.appName !== "inspire" || body?.mock !== state.mock) return { kind: "unavailable", state };
     return { kind: "healthy", state, url: instanceUrl(state) };
   } catch {
     return { kind: "unavailable", state };
@@ -219,7 +219,7 @@ async function cli() {
   if (command === "stop") {
     const result = await stopManagedInstance(path, expected, { processMarker });
     if (result.kind === "stopped") {
-      console.log(`Stopped insπre process ${result.state.pid}.`);
+      console.log(`Stopped INSΠRE process ${result.state.pid}.`);
       return;
     }
     if (result.kind === "timeout") process.exitCode = 6;

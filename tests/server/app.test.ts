@@ -202,10 +202,10 @@ describe("local host API", () => {
       .get("/api/health")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(health.body).toEqual({ appName: "insπre", mock: true });
+    expect(health.body).toEqual({ appName: "inspire", mock: true });
     const response = await api().expect(200);
     expect(response.body).toMatchObject({
-      appName: "insπre",
+      appName: "inspire",
       mock: true,
       piVersion: "0.80.10",
       availableModels: [
@@ -277,7 +277,7 @@ describe("local host API", () => {
     await writeFile(join(dist, "theme-init.js"), "/* theme */\n");
     await writeFile(
       join(dist, "index.html"),
-      "<!doctype html><title>insπre</title>",
+      "<!doctype html><title>INSΠRE</title>",
     );
     const served = createInspireServer({
       token,
@@ -328,6 +328,7 @@ describe("local host API", () => {
       await rm(dist, { recursive: true, force: true });
     }
   });
+
 
   it("lists and opens Pi sessions through the typed API", async () => {
     const sessions = await request(application.server)

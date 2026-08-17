@@ -56,7 +56,7 @@ const piPackage = JSON.parse(
 
 const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
 if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
-  throw new Error("insπre binds to loopback only in the local release");
+  throw new Error("Inspire binds to loopback only in the local release");
 }
 const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535)
@@ -207,7 +207,7 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
     try {
       if (statePath) await removeInstanceState(statePath, process.pid);
     } catch (error) {
-      console.error("Failed to remove the insπre instance state", error);
+      console.error("Failed to remove the Inspire instance state", error);
       exitCode = 1;
     } finally {
       process.exit(exitCode);
@@ -221,10 +221,10 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 application.server.once("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
     console.error(
-      `Port ${host}:${port} is already in use. insπre will not stop an unknown process.`,
+      `Port ${host}:${port} is already in use. Inspire will not stop an unknown process.`,
     );
   } else {
-    console.error("Unable to start the insπre host", error);
+    console.error("Unable to start the Inspire host", error);
   }
   void shutdown("startup failure", 1);
 });
@@ -250,7 +250,7 @@ async function announceStarted(): Promise<void> {
     try {
       await statePublication;
     } catch (error) {
-      console.error("Unable to publish the insπre instance state", error);
+      console.error("Unable to publish the Inspire instance state", error);
       await shutdown("instance-state failure", 1);
       return;
     }
@@ -258,7 +258,7 @@ async function announceStarted(): Promise<void> {
   if (shuttingDown) return;
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = instanceUrl(instanceState);
-  console.log(`\n  insπre ${packageJson.version}${mock ? " (mock)" : ""}`);
+  console.log(`\n  INSΠRE ${packageJson.version}${mock ? " (mock)" : ""}`);
   console.log(`  ${url}\n`);
   if (process.env.INSPIRE_OPEN === "1") {
     const { spawn } = await import("node:child_process");

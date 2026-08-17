@@ -666,7 +666,8 @@ export interface ActiveSnapshot {
 }
 
 export interface BootstrapResponse {
-  appName: "insπre";
+  /** Stable wire identifier; visual branding lives in the client. */
+  appName: "inspire";
   version: string;
   piVersion: string;
   mock: boolean;

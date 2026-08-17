@@ -157,7 +157,7 @@ export interface AppState extends EventSlice {
   connectionProblem: ConnectionProblem;
   bootstrapped: boolean;
   mock: boolean;
-  /** Host-reported insπre version, shown on the settings page. */
+  /** Host-reported Inspire version, shown on the settings page. */
   version: string;
   prefs: InspirePreferences;
   sessionId: string | null;
@@ -1657,7 +1657,7 @@ export class AppStore {
   resolveNewSessionDefaults = async (
     cwd: string,
   ): Promise<NewSessionDefaults> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.newSessionDefaults(cwd);
   };
 
@@ -1683,13 +1683,13 @@ export class AppStore {
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.browseHostRoots();
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
   browseHostDirs = async (path?: string): Promise<HostDirListing> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.browseHostDirs(path);
   };
 

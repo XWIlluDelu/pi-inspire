@@ -108,7 +108,7 @@ function renderNotices(notices: PackageNotice[]): string {
   return [
     "THIRD-PARTY SOFTWARE NOTICES",
     "",
-    "Generated from the third-party modules included in the insπre browser bundle.",
+    "Generated from the third-party modules included in the INSΠRE browser bundle.",
     "The project license is in ../LICENSE. Bundled font licenses are under ../src/assets/licenses/.",
     "",
     sections.join(`\n\n${"=".repeat(79)}\n\n`),

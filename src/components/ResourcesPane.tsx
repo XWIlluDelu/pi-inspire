@@ -718,7 +718,7 @@ function DiffRegion() {
         <AlertTriangle size={18} aria-hidden />
         <p className="res__state-title">Unresolved conflict</p>
         <p className="res__state-hint">
-          Conflict state {result.code}; resolve it outside insπre.
+          Conflict state {result.code}; resolve it outside Inspire.
         </p>
       </div>
     );

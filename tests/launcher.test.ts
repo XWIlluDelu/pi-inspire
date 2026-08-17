@@ -92,7 +92,7 @@ describe("production launcher", () => {
     const port = await freePort();
     const env = launcherEnv(statePath, port, join(directory, "home"));
     expect(runLauncher(["stop"], env)).toContain(
-      "No managed insπre instance is running.",
+      "No managed INSΠRE instance is running.",
     );
     // CI builds the browser before its parallel unit suite. Remove only this
     // source-checkout stamp so this serial lifecycle test still proves that a
@@ -111,7 +111,7 @@ describe("production launcher", () => {
 
     await waitFor(() => {
       try {
-        return runLauncher(["status"], env).startsWith("insπre is running.");
+        return runLauncher(["status"], env).startsWith("INSΠRE is running.");
       } catch {
         return false;
       }
@@ -122,11 +122,11 @@ describe("production launcher", () => {
     };
     expect(firstState.schemaVersion).toBe(1);
     expect(Buffer.concat(output).toString()).toContain(
-      "No managed insπre instance is running.",
+      "No managed INSΠRE instance is running.",
     );
 
     const stopOutput = runLauncher(["stop"], env);
-    expect(stopOutput).toContain("Stopped insπre process");
+    expect(stopOutput).toContain("Stopped INSΠRE process");
     const exitCode = await new Promise<number | null>((resolveExit) =>
       child.once("close", (code) => resolveExit(code)),
     );
@@ -145,7 +145,7 @@ describe("production launcher", () => {
     children.push(restarted);
     await waitFor(() => {
       try {
-        return runLauncher(["status"], env).startsWith("insπre is running.");
+        return runLauncher(["status"], env).startsWith("INSΠRE is running.");
       } catch {
         return false;
       }
@@ -154,7 +154,7 @@ describe("production launcher", () => {
       token: string;
     };
     expect(secondState.token).toBe(firstState.token);
-    expect(runLauncher(["stop"], env)).toContain("Stopped insπre process");
+    expect(runLauncher(["stop"], env)).toContain("Stopped INSΠRE process");
     const restartedExit =
       restarted.exitCode ??
       (await new Promise<number | null>((resolveExit) =>

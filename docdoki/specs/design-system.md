@@ -1,5 +1,5 @@
 ---
-purpose: The concrete design-token and component contract for insπre’s front end; single design authority that styles.css and the components implement.
+purpose: The concrete design-token and component contract for Inspire’s front end; single design authority that styles.css and the components implement.
 covers:
   - index.html
   - public/favicon.svg
@@ -78,7 +78,6 @@ tokens:
     git-conflict: "= error"
   typography:
     sans: "'IBM Plex Sans SC', system-ui, sans-serif"
-    serif: "'IBM Plex Serif', Georgia, serif"          # wordmark only
     mono: "'Flux Mono SC', ui-monospace, monospace"
     size-xs: 11.5px      # chip, meta rows
     size-sm: 12.5px      # secondary UI, code, card summaries
@@ -243,8 +242,6 @@ discriminate within the list.
   only ranges intersecting rendered text and caches them; the three complete
   3.8–4.0 MiB faces are deliberately absent. `system-ui`/`sans-serif` closes
   the stack for characters outside the IBM repertoire.
-- **Serif — IBM Plex Serif**: the `insπre` wordmark only. No reading mode,
-  no serif body text; the wordmark is Latin + π so no CJK serif is needed.
 - **Mono — Flux Mono SC** (Regular 400, Medium 500): code blocks, inline
   code, session IDs, paths, tool arguments and results. Its independent OFL
   v0.1.0 release derives from IBM Plex Mono and IBM Plex Sans SC under a new
@@ -353,19 +350,17 @@ tracking, 2px×10px padding): each semantic variant fills with its hue at
 10% over a 22% border — accent, warning, info, error — while muted sits on
 `surface-inset` with a plain hairline. Chips are single-line, icon 12px.
 Motion is part of the grammar: every chip enters with a 96%→100%
-fade-scale, and a state still in progress (running, retrying, compacting,
-live tool, reconnect) breathes a soft halo in its own hue
-(`{motion.breathe}`); terminal states rest. Running and retrying use the
-warning capsule, keeping active work visually separate from green completion
-and red failure. The mock badge shares the warning capsule surface.
+fade-scale, while stable status capsules remain still. Running and retrying
+use the warning capsule, keeping active work visually separate from green
+completion and red failure. Mock state is not product chrome.
 
 ### Workbench chrome
 
 - **Header row** — all three regions (nav, topbar, context pane) share a
   48px header height with no underline; the seam is the background step and,
-  in the center, the scroll-under fade. The nav header holds the italic
-  serif wordmark (π in KaTeX math italic) and the mock badge; the rail shows
-  the math-italic π alone.
+  in the center, the scroll-under fade. The nav header holds the 20px optical
+  reticle and uppercase `INSΠRE` wordmark; the collapsed rail carries the
+  reticle alone. Mock state is not product chrome.
 - **Installed-app identity** — the Open Reticle mark has three deliberately
   separated fields: a solid square aperture at the center, four detached accent
   datum ticks around it, and opposing ink brackets at the upper-right and
@@ -434,13 +429,11 @@ and red failure. The mock badge shares the warning capsule surface.
   above or below the tree.
 - **Start surface** — the welcome canvas carries the brand at its one full
   scale: the hero composes the display-master reticle at 36px beside the large
-  wordmark, while the nav header uses the optical mark at 20px, over the tagline;
-  and the one piece of brand ornament — a huge KaTeX math-italic π watermark
-  at 4% ink (5% in dark)
-  receding into the lower-right corner, clipped by its own layer so it
-  never scrolls or intercepts input. Its recent-session list appears only
-  when navigation is collapsed; the expanded navigation already owns the same
-  session choices and the welcome surface does not duplicate them.
+  wordmark over the tagline, while the nav header uses the optical mark at
+  20px. There is no separate watermark or decorative π field. Its
+  recent-session list appears only when navigation is collapsed; the expanded
+  navigation already owns the same session choices and the welcome surface does
+  not duplicate them.
 
 ### Navigation
 
@@ -672,8 +665,7 @@ marks arrival. `prefers-reduced-motion` reduces everything to opacity.
 
 ### Don't
 
-- No serif outside the wordmark and the welcome watermark; no reading-mode
-  font switching.
+- No reading-mode font switching or secondary display family.
 - No weight 700+, no letter-spacing on CJK running text (the 0.02em chip
   micro-labels are the sanctioned exception), no font-size improvisation
   outside the scale.

@@ -11,50 +11,6 @@
 @import "./assets/fonts/ibm-plex-sans-sc/faces.css";
 @import "./assets/fonts/flux-mono-sc/flux-mono-sc.css";
 
-@font-face {
-  font-family: "IBM Plex Serif";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-serif-latin-400-normal.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Serif";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-serif-latin-500-normal.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Serif";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-serif-latin-600-normal.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Serif";
-  font-style: italic;
-  font-weight: 500;
-  font-display: swap;
-  src: url("./assets/fonts/ibm-plex-serif-latin-500-italic.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
 /* --- Tokens --- */
 
 :root {
@@ -93,7 +49,6 @@
   --composer-max: 820px;
   --pane-resize-primary-size: auto;
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
-  --font-serif: "IBM Plex Serif", Georgia, serif;
   --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;
@@ -1556,7 +1511,9 @@ a {
   padding: 1px var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--faint);
+  /* Both are interactive workspace identifiers; muted clears AA on every
+     surface while still yielding hierarchy to the session title. */
+  color: var(--muted);
   transition: color var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
 }
@@ -5545,11 +5502,6 @@ body.srail-dragging {
   :root {
     --content-max: 800px;
     --composer-max: 800px;
-  }
-
-  /* The environment marker yields to the fused brand target, not vice versa. */
-  .nav__mock {
-    display: none;
   }
 }
 
