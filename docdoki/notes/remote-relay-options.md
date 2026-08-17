@@ -1,10 +1,12 @@
 ---
-purpose: Current relay transports and hosting costs constrain a future personal remote path that keeps Pi state on the selected machine and relay payloads opaque.
+purpose: Comparative transport and hosting evidence constrains a future general remote path that keeps Pi state on the selected machine and relay payloads opaque; it does not select the deployed personal relay.
 ---
 
 # Remote-relay options
 
 The candidate transports were compared against an outbound machine connection, explicit pairing, visible machine identity, end-to-end authenticated encryption, and no canonical conversation or credential store at the relay. TLS to a public relay is necessary but not sufficient because it terminates at that relay; application payloads remain confidential from the relay only when endpoints protect them separately.
+
+This is not the record of the deployed single-owner HTTPS relay. That operational boundary and its remaining hardening work belong to [[groom-personal-remote-relay-2026-08-01]]; this note compares a later general remote product without selecting its transport.
 
 ## Transport evidence
 

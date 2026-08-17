@@ -219,6 +219,10 @@ export interface AppDependencies {
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
+  /** Accept forwarded protocol only from a local trusted reverse proxy. */
+  trustProxy?: "loopback";
+  /** False strips rather than accepts `?token=` browser bootstrap URLs. */
+  allowTokenUrlPairing?: boolean;
   distDir?: string;
 }
 
@@ -378,6 +382,9 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  // A reverse SSH destination is still loopback-local. Do not broaden this to
+  // arbitrary proxy hops: the forwarded protocol controls the Secure cookie.
+  if (deps.trustProxy === "loopback") app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   app.use((request, response, next) => {
     response.set({
@@ -794,17 +801,21 @@ export function createInspireServer(deps: AppDependencies): {
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // The launcher URL pairs before the application bundle runs, then removes
-    // the bearer from browser history. Invalid credentials are also stripped
-    // and fall through to the ordinary pairing surface.
+    // A local launcher may pair before the application bundle runs, then
+    // removes the bearer from browser history. Relay mode still strips this
+    // parameter but deliberately falls through to the ordinary pairing form.
     app.get("/", (request, response, next) => {
       const candidate =
         typeof request.query.token === "string"
           ? request.query.token
           : undefined;
       if (candidate === undefined) return next();
-      if (tokenMatches(candidate, deps.token))
+      if (
+        deps.allowTokenUrlPairing !== false &&
+        tokenMatches(candidate, deps.token)
+      ) {
         setAccessCookie(request, response, deps.token);
+      }
       const clean = new URL(
         request.originalUrl,
         `http://${request.get("host") ?? "127.0.0.1"}`,
@@ -893,8 +904,11 @@ export function createInspireServer(deps: AppDependencies): {
     }
     const queryToken = url.searchParams.get("token") ?? undefined;
     const pairedToken = cookieToken(request.headers.cookie);
+    const queryTokenAllowed =
+      deps.allowTokenUrlPairing !== false || queryToken === undefined;
     if (
       url.pathname !== "/events" ||
+      !queryTokenAllowed ||
       (!tokenMatches(queryToken, deps.token) &&
         !tokenMatches(pairedToken, deps.token)) ||
       !originAllowed(request.headers.origin, request.headers.host)

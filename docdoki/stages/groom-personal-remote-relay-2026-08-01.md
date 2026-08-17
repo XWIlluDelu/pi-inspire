@@ -10,47 +10,45 @@ scope:
   - inspire
   - package.json
   - package-lock.json
+  - README.md
 ---
 
 # Host and multi-device access
 
 ## Objective
 
-Let the same trusted Inspire product surface connect from one or more personal client devices to an explicitly selected host machine, while that host remains the sole authority for Pi runtimes, sessions, settings, credentials, projects, authorization, and mutation outcomes.
+Maintain the deployed, explicitly authorized single-owner HTTPS relay for one trusted Inspire host and harden its operational boundary without changing that host's authority for Pi runtimes, sessions, settings, credentials, projects, authorization, or mutation outcomes.
 
-The planning round must settle the user experience and trust model before selecting transport or writing relay code. Remote access is a new product boundary around the completed local baseline, not a cloud rewrite of it.
+This does not select a general multi-device, multi-user, opaque-relay, or cloud-synchronization product. Those larger journeys remain planning work.
 
 ## Current state
 
-- Working: planning was selected by the human on 2026-08-09 after the local `v0.1.0` scope closed. The local loopback host already separates an authenticated typed API, bounded live events, replaceable browser projection, and Pi authority; this behavior is the baseline to preserve.
-- Working: [[remote-relay-options]] records the current direct-network, Tailscale, WebRTC/TURN, opaque WebSocket relay, client-distribution, and cost evidence without selecting one.
-- Working: no relay dependency, remote protocol scaffold, public endpoint, remote-only UI, or partial deployment exists. The current release remains local-only.
-- Blocked before implementation: client and host cardinality, trusted remote-client distribution, connection topology, composed-protocol review, control ownership across devices, permission policy, public endpoint and operations authority, and an authorized outside-LAN exercise are unresolved.
+- Completed (initial deployment): the local loopback host remains the Pi/data authority, and its typed API, bounded live events, replaceable browser projection, and one-writer behavior are unchanged.
+- Completed (initial deployment): the authorized route is `browser -> HTTPS Caddy on a public server -> 127.0.0.1:14587 -> restricted SSH reverse tunnel -> host 127.0.0.1:4587`. Caddy is the only public edge; both tunnel endpoints are loopback-bound.
+- Completed (initial deployment): browser pairing over that route was exercised through HTTPS and WebSocket using a 64-character (384-bit) generated token, `HttpOnly; SameSite=Strict; Secure` cookie, exact-origin checks, HSTS, and no Caddy access log for this route.
+- Working: the current host still runs in ordinary loopback mode, so Caddy appends `Secure` to pairing cookies at the edge. The application supports `INSPIRE_TRUST_PROXY=loopback` and `INSPIRE_ALLOW_TOKEN_URL_PAIRING=0`, but this deployment has not yet been restarted with those hardening settings.
+- Working: [[remote-relay-options]] remains comparative evidence for a future general solution; no opaque relay, remote-only browser path, or cloud state exists.
+- Deferred: client/device inventory, revocation, read/control permissions, simultaneous-control policy, trustworthy remote client distribution, and general relay protocol are unresolved because they are outside this single shared-token personal deployment.
 
 ## Next actions
 
-- [ ] Define the first release boundary in concrete journeys: first pairing, returning from a paired client, host offline, reconnect during observation, reconnect during mutation, local and remote clients open together, device revocation, lost-device recovery, host switching, and product upgrade. Decide whether the first version is one host with many clients, many hosts per client, LAN-only, outside-LAN, or a deliberately smaller subset.
-- [ ] Define the host/client identity and connection state model. The UI must name which machine owns the visible Pi state and distinguish unpaired, pairing, connected, reconnecting, offline, revoked, incompatible-version, read-only, controlling, and outcome-unknown states without turning browser selection into a second runtime authority.
-- [ ] Decide multi-device control ownership independently from Pi's one-writer rule. Several browsers can route through one host worker without becoming several Pi writers, but the product must still choose between simultaneous control, one explicit controller lease, or a smaller single-client boundary and define takeover, stale input, dialogs, queues, abort, and attention behavior.
-- [ ] Select a trusted client distribution and update authority. Compare an installed PWA, a separately signed or verifiable static artifact, and a native wrapper; the ciphertext relay must not also be able to replace the JavaScript that holds endpoint keys or plaintext.
-- [ ] Write the threat model before transport selection: attacker positions, host compromise, relay compromise, stolen or revoked client, pairing interception, replay and reordering, version downgrade, metadata leakage, slow clients, denial of service, and disconnect after a mutation may have committed.
-- [ ] Select the smallest topology that satisfies the approved journeys. Compare direct LAN or user-owned VPN access with direct-plus-relay and relay-only paths; keep Express loopback-only and machine connections outbound unless a separately reviewed design proves another boundary.
-- [ ] Define one typed operation registry shared by local and remote transports. Never tunnel arbitrary HTTP or expose the local bearer token. Mutations need bounded operation identities, durable deduplication where retry is safe, and conservative reconciliation where acceptance is unknown.
-- [ ] Define pairing, permissions, and recovery: high-entropy one-time enrollment, visible host and client fingerprints, protected machine and paired-client stores, read versus control grants, approval and revocation on the host, key rotation, device inventory, immediate disable, and lost-device handling.
-- [ ] Define relay and operations authority only if the selected topology needs them: routing metadata, frame and rate limits, bounded backpressure, no plaintext or offline application queue, retention, privacy-safe observability, DNS and TLS lifecycle, abuse controls, hosting budget, incident response, rollback, and named owner.
-- [ ] Freeze acceptance before implementation: protocol tamper/MITM/replay/wrong-pair tests, multi-client race tests, revocation and version-skew tests, slow-client bounds, disconnect-during-mutation reconciliation, reconnect snapshots, no-plaintext-storage checks, independent security review, and authorized LAN plus outside-LAN browser exercises where those paths are in scope.
-- [ ] Promote only settled standing contracts into living specs, then split implementation into the smallest coherent stages. Until the decisions above close, do not scaffold cryptography, a public relay, or a second browser state path.
+- [x] Deploy and validate the initial personal HTTPS relay while retaining a loopback-only host and public-edge TLS termination.
+- [ ] Harden the personal remote scheme during a controlled maintenance window: start the host with `INSPIRE_TRUST_PROXY=loopback` and `INSPIRE_ALLOW_TOKEN_URL_PAIRING=0`, verify HTTPS pairing and WebSocket operation, verify token URLs are stripped without pairing, then remove the Caddy cookie normalization after the host emits one `Secure` cookie itself.
+- [ ] Verify the public-server and tunnel operating boundary: Caddy remains the only public edge for this service, the reverse-tunnel listener remains loopback-only, the SSH key remains restricted to that listener, and the restart/recovery path preserves those conditions.
+- [ ] Rotate the shared token if it is exposed; do not treat it as a device identity or authorization system.
+- [ ] Before any general remote-product work, define concrete journeys, client/host cardinality, identity, device revocation, read/control grants, and simultaneous-control behavior independently from Pi's one-writer rule.
+- [ ] Select a trusted client distribution and relay topology only after its threat model covers relay compromise, stolen client, pairing/replay, version downgrade, metadata, slow-client limits, and disconnect-after-mutation reconciliation.
 
 ## Decisions
 
-- Host access is transport and identity substitution, not cloud synchronization. Canonical Pi data, credentials, settings, project files, authorization, and mutation decisions stay on the selected host by default.
-- The completed local UI, message projection, operation semantics, and safety limits are one product surface for both local and remote use; remote mode may add host, trust, permission, and connection state but may not fork conversation behavior.
-- Multi-device means personal access unless a later stage explicitly selects multi-user collaboration. Relay-owned conversation state, cloud history, and implicit shared editing remain out of scope.
-- An offline client may retain only the versioned application shell needed to explain host state. It does not become transcript authority and does not queue mutations for later replay.
-- A relay may know random routing metadata, bounded connection state, and ciphertext only. It does not serve mutable trusted client code, receive the local pairing bearer, or become an application queue.
-- Public deployment is a separate externally shared operation and is not authorized by planning or source implementation alone.
-- Direct non-loopback host binding, reverse SSH as product architecture, broker-served mutable client code, bearer-token tunneling, and unauthenticated bespoke cryptography are not fallback paths.
+- Host access is transport and identity substitution, not cloud synchronization. Canonical Pi data, credentials, settings, project files, authorization, and mutation decisions stay on the selected host.
+- The authorized first boundary is one owner sharing a high-entropy host token across personally trusted browsers. It has no device inventory, per-device revocation, read/control role, or multi-user claim.
+- The host binds only to loopback. For this service, a public server exposes only Caddy HTTPS; its reverse-tunnel listener is loopback-bound and authenticated by a restricted SSH key permitted to listen only on that port.
+- The public edge preserves exact-origin pairing, HSTS, `HttpOnly; SameSite=Strict; Secure` cookies, and avoids route access logs. It is a trusted TLS terminator, not an opaque ciphertext relay.
+- Caddy cookie normalization is a temporary deployment bridge, not a substitute for application trusted-proxy mode. The hardening step must retire it only after the host receives forwarded protocol from the loopback tunnel and disables token-URL pairing.
+- The completed local UI, message projection, operation semantics, and safety limits remain one product surface; no second browser state path or relay-owned conversation state exists.
+- Direct non-loopback host binding, cloud transcript authority, implicit shared editing, broker-served mutable client code, and unauthenticated bespoke cryptography remain out of scope.
 
 ## Handoff
 
-Planning is active; implementation is not. Start by settling the first-version host/client cardinality and journeys, then the multi-device control model and trusted client distribution authority. Use [[remote-relay-options]] as comparative evidence, but do not let a transport choice pre-decide the product experience or composed protocol.
+The initial personal HTTPS relay is complete. Continue with the first unchecked hardening action; preserve the loopback-only host and the current single-owner boundary rather than generalizing this shared-token proxy into a multi-device product. Use [[remote-relay-options]] only as comparative evidence for a later, separately designed remote-access product.
