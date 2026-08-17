@@ -4,6 +4,7 @@ import {
   ASSISTANT_ROUND_DISPLAYS,
   TOOL_VISIBILITY_PREFERENCES,
   VISIBILITY_PREFERENCES,
+  type PalettePreference,
   type ThemePreference,
 } from "../../shared/contracts";
 import { isAbortableRunState, store, useAppState } from "../store";
@@ -23,6 +24,11 @@ const THEME_LABELS: Record<ThemePreference, string> = {
   light: "Light",
   dark: "Dark",
   system: "System",
+};
+
+const PALETTE_LABELS: Record<PalettePreference, string> = {
+  amber: "Amber",
+  teal: "Jade",
 };
 
 function matches(item: PaletteItem, words: string[]): boolean {
@@ -163,6 +169,16 @@ export function CommandPalette({
         title: `Theme: ${THEME_LABELS[theme]}`,
         hint: state.prefs.theme === theme ? "current" : undefined,
         run: () => store.setTheme(theme),
+      });
+    }
+    for (const palette of Object.keys(PALETTE_LABELS) as PalettePreference[]) {
+      actions.push({
+        id: `palette-${palette}`,
+        group: "Preferences",
+        title: `Palette: ${PALETTE_LABELS[palette]}`,
+        hint:
+          (state.prefs.palette ?? "amber") === palette ? "current" : undefined,
+        run: () => store.setPalette(palette),
       });
     }
     actions.push(

@@ -240,7 +240,7 @@ describe("welcome flow", () => {
         false,
       ),
     ).toBe("New session");
-    expect(composeDocumentTitle(null, "", 0)).toBe("insπre");
+    expect(composeDocumentTitle(null, "", 0)).toBe("INSΠRE");
   });
 
   it("avoids a duplicate recent list beside expanded navigation and opens a session from the nav", async () => {
@@ -946,14 +946,27 @@ function sessionRowButton(nav: HTMLElement, title: string): HTMLElement {
 }
 
 describe("session attention indicators", () => {
-  it("uses the yellow live status for selected-session work", () => {
+  it("marks live composer work while keeping terminal state explicit and still", () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;
 
     act(() => ws.emit({ type: "agent_start" }));
-    const running = screen.getByText("Running").closest(".chip");
-    expect(running).toHaveClass("chip--warning", "chip--live");
-    expect(running).not.toHaveClass("chip--accent");
+    const composer = document.querySelector(".composer");
+    expect(composer).toHaveClass("composer--running");
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+
+    act(() => ws.emit({ type: "agent_settled" }));
+    expect(composer).not.toHaveClass("composer--running");
+    expect(composer).not.toHaveClass("composer--settled");
+
+    act(() =>
+      ws.emit({
+        type: "runtime_error",
+        error: "test worker crashed",
+      }),
+    );
+    expect(composer).toHaveClass("composer--failed");
+    expect(screen.getByText("Failed")).toBeInTheDocument();
 
     act(() => ws.emit({ type: "agent_settled" }));
   });

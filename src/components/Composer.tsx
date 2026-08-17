@@ -73,6 +73,19 @@ export function Composer() {
   // is not part of the host's active/queued busy ownership set.
   const composerBusy = busy || state.runState === "conflict";
   const abortable = isAbortableRunState(state.runState);
+  const isRunning = state.runState === "running";
+  const isRetrying = state.runState === "retrying";
+  const isCompacting = state.runState === "compacting";
+  const isFailed = state.runState === "failed";
+  const runStateClass = isRunning
+    ? "composer--running"
+    : isRetrying
+      ? "composer--retrying"
+      : isCompacting
+        ? "composer--compacting"
+        : isFailed
+          ? "composer--failed"
+          : "";
 
   const updateDraft = (text: string) => {
     setDraft(text);
@@ -149,8 +162,9 @@ export function Composer() {
 
   return (
     <form
-      className={`composer ${dropActive ? "composer--drop" : ""}`}
+      className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
       aria-label="Message composer"
+      aria-busy={busy || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(activeBehavior);

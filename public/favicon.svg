@@ -1,10 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-labelledby="title">
-  <title id="title">insπre</title>
+  <title id="title">INSΠRE</title>
   <style>
-    svg { color: #00726d; }
-    @media (prefers-color-scheme: dark) { svg { color: #ffffff; } }
+    .bracket { fill: #131517; }
+    .reticle { fill: #D95A00; }
+    @media (prefers-color-scheme: dark) {
+      .bracket { fill: #F4F6F8; }
+      .reticle { fill: #FF8330; }
+    }
   </style>
-  <circle cx="8" cy="8" r="1.25" fill="none" stroke="currentColor" stroke-width="1"/>
-  <path d="M8 1.5v4.25M14.5 8h-4.25M8 14.5v-4.25M1.5 8h4.25" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="butt"/>
-  <path d="M9.6 2.4a5.75 5.75 0 0 1 4 4M6.4 13.6a5.75 5.75 0 0 1-4-4" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="butt"/>
+  <!-- Pixel-fitted 16px optical master: every clear-space band survives rasterization. -->
+  <g shape-rendering="crispEdges">
+    <path class="bracket" d="M11 2h4v4h-2V4h-2zM1 10h2v2h2v2H1z"/>
+    <path class="reticle" d="M7 1h2v3H7zM7 12h2v3H7zM1 7h3v2H1zM12 7h3v2h-3zM7 7h2v2H7z"/>
+  </g>
 </svg>

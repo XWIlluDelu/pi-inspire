@@ -22,6 +22,7 @@ import {
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   projectionConflictSeverity,
+  type PalettePreference,
   type ProjectionConflict,
   type ProjectionHealth,
   type ResourceProbeResult,
@@ -1801,6 +1802,8 @@ export class AppStore {
   }
 
   setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
+  setPalette = (palette: PalettePreference): void =>
+    this.savePrefs({ palette });
   setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
   setCompletionAttention = async (
     completionAttention: CompletionAttentionPreference,

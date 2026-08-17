@@ -31,7 +31,7 @@ import {
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
-import { Wordmark } from "./Wordmark";
+import { BrandLogo, Wordmark } from "./Wordmark";
 
 export interface SessionGroup {
   cwd: string;
@@ -640,7 +640,7 @@ export function Nav({
           title="New session"
           aria-label="New session"
         >
-          <span className="nav__brand-icon nav__brand-icon--rail" aria-hidden />
+          <BrandLogo size={22} className="nav__brand-icon--rail" />
         </button>
       </nav>
     );
@@ -699,14 +699,17 @@ export function Nav({
           className="nav__brand-new"
           onClick={onNewSession}
           aria-label="New session"
+          title="New session (⌘N)"
         >
-          <span className="nav__brand-icon" aria-hidden />
-          <Wordmark />
-          <span className="nav__brand-action">
-            <Plus size={13} aria-hidden /> New session
+          <div className="nav__brand-lockup">
+            <BrandLogo size={20} className="nav__brand-icon" />
+            <Wordmark />
+          </div>
+          <span className="nav__new-session">
+            <Plus size={12} className="nav__new-session-icon" aria-hidden />
+            <span className="nav__new-session-label">New session</span>
           </span>
         </button>
-        {state.mock ? <span className="nav__mock">mock</span> : null}
       </div>
       <div className="nav__controls">
         <label className="nav__search">

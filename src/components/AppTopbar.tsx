@@ -1,14 +1,11 @@
 import {
   AlertTriangle,
-  Ban,
   Check,
-  Clock,
   Command,
   GitBranch,
   Loader2,
   PanelLeft,
   PanelRight,
-  RefreshCw,
   Settings as SettingsIcon,
   XCircle,
 } from "lucide-react";
@@ -78,77 +75,27 @@ function StateChip({
   runState: RunState;
   conflict: ProjectionConflict | null;
 }) {
-  // Keys force a remount across state changes so the entrance animation
-  // replays; `chip--live` marks states still in progress (they breathe).
-  switch (runState) {
-    case "running":
-      return (
-        <StatusChip
-          key="running"
-          className="chip chip--warning chip--live"
-          label="Running"
-        >
-          <Loader2 size={12} className="spin" aria-hidden />
-        </StatusChip>
-      );
-    case "retrying":
-      return (
-        <StatusChip
-          key="retrying"
-          className="chip chip--warning chip--live"
-          label="Retrying"
-        >
-          <AlertTriangle size={12} aria-hidden />
-        </StatusChip>
-      );
-    case "compacting":
-      return (
-        <StatusChip
-          key="compacting"
-          className="chip chip--info chip--live"
-          label="Compacting"
-        >
-          <RefreshCw size={12} className="spin-slow" aria-hidden />
-        </StatusChip>
-      );
-    case "queued":
-      return (
-        <StatusChip key="queued" className="chip chip--muted" label="Queued">
-          <Clock size={12} aria-hidden />
-        </StatusChip>
-      );
-    case "aborted":
-      return (
-        <StatusChip key="aborted" className="chip chip--muted" label="Stopped">
-          <Ban size={12} aria-hidden />
-        </StatusChip>
-      );
-    case "failed":
-      return (
-        <StatusChip key="failed" className="chip chip--error" label="Failed">
-          <XCircle size={12} aria-hidden />
-        </StatusChip>
-      );
-    case "conflict": {
-      const attention = projectionConflictSeverity(conflict) === "attention";
-      const label = attention ? "Needs recovery" : "Conflict";
-      return (
-        <StatusChip
-          key="conflict"
-          className={`chip chip--${attention ? "warning" : "error"}`}
-          label={label}
-        >
-          <AlertTriangle size={12} aria-hidden />
-        </StatusChip>
-      );
-    }
-    case "idle":
-      return null;
-    default: {
-      const exhaustive: never = runState;
-      return exhaustive;
-    }
+  if (runState === "conflict") {
+    const attention = projectionConflictSeverity(conflict) === "attention";
+    const label = attention ? "Needs recovery" : "Conflict";
+    return (
+      <StatusChip
+        key="conflict"
+        className={`chip chip--${attention ? "warning" : "error"}`}
+        label={label}
+      >
+        <AlertTriangle size={12} aria-hidden />
+      </StatusChip>
+    );
   }
+  if (runState === "failed") {
+    return (
+      <StatusChip key="failed" className="chip chip--error" label="Failed">
+        <XCircle size={12} aria-hidden />
+      </StatusChip>
+    );
+  }
+  return null;
 }
 
 function GitSummary({ sessionId }: { sessionId: string }) {
@@ -373,11 +320,9 @@ export function AppTopbar({
           conflict={state.projectionConflict}
         />
         {statuses.map(([key, text]) => (
-          <StatusChip
-            key={key}
-            className="chip chip--muted topbar__extension-status"
-            label={text}
-          />
+          <span key={key} className="topbar__extension-status" title={text}>
+            {text}
+          </span>
         ))}
         {state.connection !== "open"
           ? (() => {

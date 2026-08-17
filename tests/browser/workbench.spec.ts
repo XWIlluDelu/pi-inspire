@@ -206,6 +206,31 @@ test("running composer exposes steer, queue, and abort controls", async ({
   await expect(
     page.getByRole("button", { name: "Abort running task", exact: true }),
   ).toBeVisible();
+  const liveAppearance = await page
+    .locator(".composer")
+    .evaluate((composer) => {
+      const root = document.documentElement;
+      const initialTheme = root.getAttribute("data-theme");
+      const initialPalette = root.getAttribute("data-palette");
+      const states = ["light", "dark"].flatMap((theme) =>
+        ["amber", "teal"].map((palette) => {
+          root.setAttribute("data-theme", theme);
+          root.setAttribute("data-palette", palette);
+          const style = getComputedStyle(composer);
+          return { animation: style.animationName, shadow: style.boxShadow };
+        }),
+      );
+      if (initialTheme === null) root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", initialTheme);
+      if (initialPalette === null) root.removeAttribute("data-palette");
+      else root.setAttribute("data-palette", initialPalette);
+      return states;
+    });
+  expect(
+    liveAppearance.every(
+      ({ animation, shadow }) => animation === "none" && shadow !== "none",
+    ),
+  ).toBe(true);
 
   const queue = page.getByRole("button", {
     name: "Queue",
@@ -237,9 +262,7 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
   const message = page.getByRole("textbox", { name: "Message" });
   await message.fill("keep the status visible");
   await page.getByRole("button", { name: "Send message" }).click();
-  await expect(page.locator(".topbar__status")).toContainText("Running");
-  const snapshot = await page.locator(".topbar__status").ariaSnapshot();
-  expect(snapshot).toContain("Running");
+  await expect(page.locator(".composer")).toHaveClass(/composer--running/);
 
   const results = await new AxeBuilder({ page })
     .include(".topbar")

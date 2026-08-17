@@ -571,6 +571,7 @@ describe("local host API", () => {
       .expect(200);
     expect(stored.body).toEqual({
       theme: "dark",
+      palette: "amber",
       launch: "welcome",
       thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
@@ -647,6 +648,7 @@ describe("local host API", () => {
       .expect(200);
     expect(response.body).toEqual({
       ...legacy,
+      palette: "amber",
       assistantRoundDisplay: "divider",
       projectDisplay: "folder",
       completionAttention: "off",

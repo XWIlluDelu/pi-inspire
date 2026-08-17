@@ -7,6 +7,7 @@ import {
   type AssistantRoundDisplayPreference,
   type CompletionAttentionPreference,
   type LaunchPreference,
+  type PalettePreference,
   type ProjectDisplayPreference,
   type ThemePreference,
   type ToolVisibilityPreference,
@@ -29,6 +30,14 @@ const THEMES: Array<{
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
   { value: "dark", label: "Dark", icon: <Moon size={13} aria-hidden /> },
   { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
+];
+
+const PALETTES: Array<{
+  value: PalettePreference;
+  label: string;
+}> = [
+  { value: "amber", label: "Amber" },
+  { value: "teal", label: "Jade" },
 ];
 
 function preferenceLabel(value: string): string {
@@ -136,6 +145,22 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 >
                   {theme.icon}
                   <span>{theme.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="settings__field">
+            <span className="settings__field-label">Color palette</span>
+            <div className="segmented" role="group" aria-label="Color palette">
+              {PALETTES.map(({ value, label }) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={`segmented__item ${(state.prefs.palette ?? "amber") === value ? "segmented__item--active" : ""}`}
+                  onClick={() => store.setPalette(value)}
+                  aria-pressed={(state.prefs.palette ?? "amber") === value}
+                >
+                  <span>{label}</span>
                 </button>
               ))}
             </div>

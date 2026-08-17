@@ -32,7 +32,7 @@ import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 import { relativeTime } from "./Transcript";
-import { Wordmark } from "./Wordmark";
+import { BrandLogo, Wordmark } from "./Wordmark";
 
 interface WelcomeAttachment extends PendingAttachment {
   file: File;
@@ -345,7 +345,7 @@ export function Welcome({
       <span className="welcome__mark" aria-hidden />
       <div className="welcome__hero">
         <div className="welcome__lockup">
-          <span className="welcome__hero-icon" aria-hidden />
+          <BrandLogo size={36} className="welcome__hero-icon" />
           <Wordmark large />
         </div>
         <p className="welcome__tagline">A workbench for Pi</p>

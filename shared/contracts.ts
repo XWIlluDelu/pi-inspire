@@ -45,6 +45,8 @@ export type AssistantRoundDisplayPreference =
   (typeof ASSISTANT_ROUND_DISPLAYS)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
+export type PalettePreference = "amber" | "teal";
+export const PALETTE_PREFERENCES = ["amber", "teal"] as const;
 export type LaunchPreference = "welcome" | "continue";
 export type ProjectDisplayPreference = "folder" | "path";
 export type CompletionAttentionPreference = "off" | "title" | "desktop";
@@ -133,6 +135,7 @@ export interface SessionRuntimeStatus {
 
 export interface InspirePreferences {
   theme: ThemePreference;
+  palette: PalettePreference;
   launch: LaunchPreference;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
@@ -160,6 +163,7 @@ export interface InspirePreferences {
 
 export const defaultPreferences: InspirePreferences = {
   theme: "system",
+  palette: "amber",
   launch: "welcome",
   thinkingVisibility: "dynamic",
   toolVisibility: "dynamic",

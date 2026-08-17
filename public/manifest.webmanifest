@@ -1,13 +1,13 @@
 {
   "id": "/",
-  "name": "insπre — Pi workbench",
-  "short_name": "insπre",
+  "name": "INSΠRE — Pi workbench",
+  "short_name": "INSΠRE",
   "description": "A local workbench for Pi coding sessions.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f7f9f8",
-  "theme_color": "#00726d",
+  "background_color": "#F7F6F3",
+  "theme_color": "#D95A00",
   "categories": ["productivity", "utilities"],
   "icons": [
     {

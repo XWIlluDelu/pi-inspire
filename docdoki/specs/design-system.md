@@ -123,32 +123,29 @@ tokens:
 
 ## Overview
 
-insπre reads as a restrained scientific instrument: near-neutral paper
-surfaces with a faint cool-green cast, hairline boundaries, soft radii, one
-teal accent family, and one IBM Plex type system — Sans SC for interface and
-Chinese/Latin text, Serif for the wordmark, and Mono for code. Content —
-Markdown, KaTeX mathematics, highlighted code — carries the character; chrome
-stays quiet.
+INSΠRE reads as a restrained scientific instrument: near-neutral paper
+surfaces, hairline boundaries, soft radii, one selected brand accent family,
+and one IBM Plex type system — Sans SC for interface, Chinese/Latin text, and
+the engineered uppercase wordmark; Mono owns code. Content — Markdown, KaTeX
+mathematics, highlighted code — carries the character; chrome stays quiet.
 
-The two themes share one component architecture, one information hierarchy,
-and one accent hue: **teal `{colors-light.accent}` in light**, the same hue
-raised to a **luminous teal `{colors-dark.accent}` in dark**. High-chroma lime
-against muted green-grays reads harsh and murky; the brighter teal keeps the
-brand hue and calms the theme. Beyond the accent, a small **annotation palette**
-color-codes conversation block types in both themes. Light is the primary
-tuning target; dark follows it and is verified, not separately designed.
+Palette and luminosity are independent choices. **Amber** (琥珀) is the warm
+default palette; **Jade** (青玉) is the cool alternative. Each has separately
+tuned light and dark values while retaining one component architecture and one
+information hierarchy. Only the selected accent family enters ordinary chrome;
+a separate semantic annotation palette identifies conversation block types.
+Light remains the primary tuning target and dark is verified independently.
 
 Key characteristics:
 
 - Paper-not-cream neutrals: the light canvas is a cool-green-tinted white,
   deliberately away from both Anthropic cream and dev-tool blue-gray.
-- One interactive accent family per theme with named roles (`accent`,
-  `accent-fill`, `accent-deep`, `accent-tint`); annotation hues are
-  semantic block coding, never decoration.
-- IBM Plex Sans SC everywhere, so Chinese and Latin share one family with no
-  fallback seam; Serif exists only in the `insπre` wordmark (set italic,
-  with the π in KaTeX's math italic face); Plex Mono owns code and machine
-  data with Sans SC as its Chinese fallback.
+- One selected interactive accent family at a time, with named roles (`accent`,
+  `accent-fill`, `accent-deep`, `accent-tint`); annotation hues are semantic
+  block coding, never decoration.
+- IBM Plex Sans SC carries both interface text and the uppercase `INSΠRE`
+  wordmark, so Chinese and Latin share one family with no fallback seam;
+  Flux Mono SC owns code and machine data.
 - KaTeX renders with its own bundled fonts; the system never restyles formula
   glyphs, only the spacing around them.
 - Hairline borders do the separating; shadows are reserved for genuinely
@@ -157,6 +154,13 @@ Key characteristics:
   hierarchy and accent, never from heavy or oversized type.
 
 ## Colors
+
+### Brand palettes
+
+The visible palette names are **Amber** / **琥珀** and **Jade** / **青玉**.
+They are orthogonal to System, Light, and Dark theme selection. The persisted
+implementation identifiers remain `amber` and `teal`; those identifiers are
+storage compatibility rather than user-facing names.
 
 ### Roles
 
@@ -362,18 +366,20 @@ and red failure. The mock badge shares the warning capsule surface.
   in the center, the scroll-under fade. The nav header holds the italic
   serif wordmark (π in KaTeX math italic) and the mock badge; the rail shows
   the math-italic π alone.
-- **Installed-app identity** — the mark is a precision optical reticle: four
-  cardinal sight lines converge on a small hollow circle, while one 60° arc in
-  the upper-right and its 180° counterpart in the lower-left carry the circular
-  visual reference to Pi without reusing the π glyph. The geometry is teal and
-  white only. Sight lines, arcs, and the closed center ring have separately
-  compensated weights; exposed master-mark terminals receive only a sub-unit
-  manufacturing radius, preserving the instrument character without brittle
-  knife edges. Ordinary launcher assets place the master mark on the deep-teal
-  rounded tile; maskable and Apple assets use a full-bleed deep-teal field so
-  the operating system owns the final silhouette. The transparent browser
-  favicon is a separately drawn 16-unit optical size with one-pixel key strokes
-  and a white dark-scheme projection, not a mechanical reduction of the master.
+- **Installed-app identity** — the Open Reticle mark has three deliberately
+  separated fields: a solid square aperture at the center, four detached accent
+  datum ticks around it, and opposing ink brackets at the upper-right and
+  lower-left. The gaps are part of the geometry, not leftover space: the datum
+  ring is widest, while the diagonal bracket-to-aperture gap is tighter but
+  never closes. Square terminals and mitered 90° corners preserve the precision
+  instrument character; the mark itself has no radius, enclosure, glow, or
+  gradient. Display and sub-24px masters compensate stroke weight and aperture
+  size independently instead of mechanically scaling. The transparent favicon
+  uses a filled, pixel-fitted 16-unit optical master so its clear-space bands
+  survive browser rasterization. Launcher assets place a centered 59%-width
+  master on a carbon field, with titanium brackets and Signal Orange ticks;
+  ordinary icons use the authored rounded tile while maskable assets remain
+  full bleed so the operating system owns the final silhouette.
 - **Topbar identity** — the session heading (600) is the rename affordance. An
   explicit Pi session name wins; otherwise the same normalized first-prompt
   projection used by navigation is shown, while a conversation with no prompt
@@ -427,8 +433,8 @@ and red failure. The mock badge shares the warning capsule surface.
   non-empty composer draft. Host truncation and stale/error state remain visible
   above or below the tree.
 - **Start surface** — the welcome canvas carries the brand at its one full
-  scale: the hero composes the reticle mark at 32px beside the large
-  wordmark, the same pair the nav header carries at 22px, over the tagline;
+  scale: the hero composes the display-master reticle at 36px beside the large
+  wordmark, while the nav header uses the optical mark at 20px, over the tagline;
   and the one piece of brand ornament — a huge KaTeX math-italic π watermark
   at 4% ink (5% in dark)
   receding into the lower-right corner, clipped by its own layer so it
@@ -469,16 +475,17 @@ and red failure. The mock badge shares the warning capsule surface.
   subtree reads from the root. The New session surface hides the
   prior runtime's explorer rather than presenting its workspace as current.
 - The nav column begins with one brand/new-session target: the transparent
-  22px reticle favicon + wordmark align to the same left content axis as Search,
+  20px optical reticle + wordmark align to the same left content axis as Search,
   while `New session` occupies the trailing side. The untouched default column
   width scales continuously from 272px to its 220px floor; neither the brand
   action's typography nor the adjacent topbar toggle changes its anchor at the
-  1280/1100px content breakpoints. The collapsed rail carries the same reticle
-  alone at 26px. The rail
+  1280/1100px content breakpoints. The collapsed rail carries the same optical
+  reticle alone at 22px. The rail
   already supplies product identity, so the topbar continues to show the
   visible session title and shows no duplicate wordmark on the welcome surface.
-  It follows the favicon's theme colors (teal in light, white in dark) and opens
-  the welcome/new-session surface without creating a session. It remains an
+  Its ink follows the theme and its datum/aperture color follows the active
+  brand palette; activating it opens the welcome/new-session surface without
+  creating a session. It remains an
   action button even while that surface is open: no selected/current-page state
   or persistent fill is shown. On narrow columns
   the action chip disappears before it can clip. Search, sessions, and the

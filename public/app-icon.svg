@@ -1,19 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
-  <title id="title">insπre</title>
-  <desc id="description">A precision optical reticle on a teal field.</desc>
-  <rect width="512" height="512" rx="112" fill="#00726d"/>
-  <g transform="translate(99 99) scale(4.90625)" fill="#ffffff" stroke="#ffffff">
-    <circle cx="32" cy="32" r="3.5" fill="none" stroke-width="2.25"/>
-    <rect x="30.75" y="5" width="2.5" height="18" rx="0.45" stroke="none"/>
-    <rect x="41" y="30.75" width="18" height="2.5" rx="0.45" stroke="none"/>
-    <rect x="30.75" y="41" width="2.5" height="18" rx="0.45" stroke="none"/>
-    <rect x="5" y="30.75" width="18" height="2.5" rx="0.45" stroke="none"/>
-    <path d="M38.5 9.4A23.5 23.5 0 0 1 54.6 25.5M25.5 54.6A23.5 23.5 0 0 1 9.4 38.5" fill="none" stroke-width="3" stroke-linecap="butt"/>
-    <g stroke="none">
-      <rect x="-0.45" y="-1.5" width="0.9" height="3" rx="0.45" transform="translate(38.5 9.4) rotate(16)"/>
-      <rect x="-0.45" y="-1.5" width="0.9" height="3" rx="0.45" transform="translate(54.6 25.5) rotate(74)"/>
-      <rect x="-0.45" y="-1.5" width="0.9" height="3" rx="0.45" transform="translate(25.5 54.6) rotate(196)"/>
-      <rect x="-0.45" y="-1.5" width="0.9" height="3" rx="0.45" transform="translate(9.4 38.5) rotate(254)"/>
-    </g>
-  </g>
+  <title id="title">INSΠRE</title>
+  <desc id="description">A precision Open Reticle mark on a carbon matte field.</desc>
+  <rect width="512" height="512" rx="112" fill="#14171A"/>
+  <!-- Opposing frame brackets in titanium white -->
+  <path d="M306 136h70v74M206 376h-70v-74" fill="none" stroke="#F4F6F8" stroke-width="28" stroke-linecap="square" stroke-linejoin="miter"/>
+  <!-- Detached datum ticks in Signal Orange -->
+  <path d="M256 105v50M256 357v50M105 256h50M357 256h50" fill="none" stroke="#FF8330" stroke-width="28" stroke-linecap="square"/>
+  <!-- Center precision aperture -->
+  <rect x="233" y="233" width="46" height="46" fill="#FF8330"/>
 </svg>

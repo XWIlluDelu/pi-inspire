@@ -14,7 +14,7 @@ import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
-import { Wordmark } from "./components/Wordmark";
+import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isAbortableRunState, store, useAppState } from "./store";
 
 // Vite replaces MODE at build time. The production false branches are folded
@@ -25,7 +25,8 @@ export function resolveTheme(
   pref: ThemePreference,
   systemDark: boolean,
 ): "light" | "dark" {
-  return pref === "system" ? (systemDark ? "dark" : "light") : pref;
+  if (pref === "system") return systemDark ? "dark" : "light";
+  return pref;
 }
 
 export function composeDocumentTitle(
@@ -34,7 +35,7 @@ export function composeDocumentTitle(
   attentionCount: number,
 ): string {
   const base =
-    windowTitle ?? (sessionName ? `${sessionName} · insπre` : "insπre");
+    windowTitle ?? (sessionName ? `${sessionName} · INSΠRE` : "INSΠRE");
   return attentionCount > 0 ? `● ${base}` : base;
 }
 
@@ -47,7 +48,10 @@ function TokenGate() {
   return (
     <div className="token-gate">
       <div className="token-gate__card">
-        <Wordmark large />
+        <div className="token-gate__lockup">
+          <BrandLogo size={28} />
+          <Wordmark large />
+        </div>
         <div>
           <h1 className="token-gate__title">Pair this browser</h1>
           <p className="token-gate__hint">
@@ -114,7 +118,10 @@ function HostUnavailable({
   return (
     <div className="token-gate">
       <div className="token-gate__card">
-        <Wordmark large />
+        <div className="token-gate__lockup">
+          <BrandLogo size={28} />
+          <Wordmark large />
+        </div>
         <div>
           <h1 className="token-gate__title">
             {hostError ? "Host needs attention" : "Host not reachable"}
@@ -252,11 +259,12 @@ export function App() {
         state.prefs.theme,
         media.matches,
       );
+      document.documentElement.dataset.palette = state.prefs.palette || "amber";
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [state.prefs.theme]);
+  }, [state.prefs.theme, state.prefs.palette]);
 
   useEffect(() => {
     // Attention composes with Pi's extension-set title instead of replacing
@@ -452,7 +460,7 @@ export function App() {
           <Settings onClose={() => setSettingsOpen(false)} />
         ) : null}
         {state.sessionId ? (
-          <>
+          <section className="reading-stage">
             {MAINTENANCE_BENCHMARK ? (
               <Profiler id="transcript" onRender={recordBenchmarkCommit}>
                 {transcriptContent}
@@ -467,7 +475,7 @@ export function App() {
             ) : (
               composerContent
             )}
-          </>
+          </section>
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
