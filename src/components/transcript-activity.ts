@@ -68,19 +68,19 @@ export function useDynamicCardOpen(
 }
 
 /** Tool calls and displayed custom messages share one density lifecycle.
- * Cards collapse independently; a batch changes geometry only after every card
- * has closed, the collapsed state has remained perceptible, and its next Pi
- * boundary has arrived. */
+ * Cards collapse independently; a multi-activity run changes geometry only
+ * after every card has closed, the collapsed state has remained perceptible,
+ * and its next Pi boundary has arrived. A singleton remains a useful card. */
 function useDynamicActivityBatch(
   dynamic: boolean,
   lifecycleObserved: boolean,
   compactRequested: boolean,
-  hasActivities: boolean,
+  compactEligible: boolean,
   inspectionHeld: boolean,
   allCardsClosed: boolean,
 ) {
   const [phase, setPhase] = useState<DynamicActivityPhase>(
-    dynamic && !lifecycleObserved ? "compact" : "cards",
+    dynamic && compactEligible && !lifecycleObserved ? "compact" : "cards",
   );
   const phaseRef = useRef(phase);
   const observedLifecycle = useRef(lifecycleObserved);
@@ -99,7 +99,7 @@ function useDynamicActivityBatch(
   }, [allCardsClosed]);
 
   useEffect(() => {
-    if (!dynamic || !hasActivities) {
+    if (!dynamic || !compactEligible) {
       observedLifecycle.current = lifecycleObserved;
       setPhase("cards");
       return;
@@ -151,7 +151,7 @@ function useDynamicActivityBatch(
     allCardsClosed,
     compactRequested,
     dynamic,
-    hasActivities,
+    compactEligible,
     inspectionHeld,
     lifecycleObserved,
     phase,
@@ -172,6 +172,7 @@ export function useDynamicActivityGroup(
   lifecycleObserved: boolean,
   compactRequested: boolean,
   activityKeys: string[],
+  compactEligible: boolean,
 ) {
   const keySignature = JSON.stringify(activityKeys);
   const currentKeys = useMemo(
@@ -202,7 +203,7 @@ export function useDynamicActivityGroup(
     dynamic,
     lifecycleObserved,
     compactRequested,
-    activityKeys.length > 0,
+    compactEligible,
     inspectionHeld,
     allCardsClosed,
   );

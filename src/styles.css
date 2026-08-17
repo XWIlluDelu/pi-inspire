@@ -81,6 +81,7 @@
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 48px;
+  --activity-row-h: 30px;
   --content-max: 880px;
   --composer-max: 880px;
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
@@ -2217,8 +2218,8 @@ a {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 34px;
-  padding: var(--space-1) 8px var(--space-1) 6px;
+  min-height: calc(var(--activity-row-h) - 2px);
+  padding: 2px 8px 2px 6px;
   font-size: var(--text-sm);
   text-align: left;
   color: var(--muted);
@@ -2233,14 +2234,14 @@ a {
 .card__disclosure {
   flex: 0 1 auto;
   min-width: 0;
-  min-height: 26px;
+  min-height: 24px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  padding: 2px 4px;
+  padding: 1px 4px;
   color: inherit;
   text-align: left;
   transition: background var(--dur-micro) var(--ease-standard);
@@ -2256,8 +2257,8 @@ a {
 }
 
 .card__copy.icon-button {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
   color: var(--faint);
   opacity: 0;
@@ -2359,7 +2360,7 @@ a {
 
 .activity-strip__item {
   min-width: 56px;
-  height: 30px;
+  height: var(--activity-row-h);
   display: inline-flex;
   align-items: center;
   justify-content: center;
