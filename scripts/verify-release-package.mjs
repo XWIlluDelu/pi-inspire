@@ -326,6 +326,7 @@ try {
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
     "connections/ssh-reverse/systemd/inspire-connection-ssh-reverse.service.in",
+    "deploy/systemd/control.mjs",
     "deploy/systemd/inspire-host.service.in",
     "docs/ssh-reverse.md",
     "dist/index.html",

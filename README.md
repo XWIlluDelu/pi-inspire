@@ -55,7 +55,7 @@ Simplest:
 ./inspire
 ```
 
-That installs dependencies if needed, builds the client when missing, starts the loopback host, and opens the browser with the one-time launch token. Running it again is idempotent: a healthy instance from the same checkout is reused and reopened rather than replaced. Lifecycle commands and other modes:
+Without an installed host user service, that installs dependencies if needed, builds the client when missing, starts the loopback host, and opens the browser with the one-time launch token. Running it again is idempotent: a healthy instance from the same checkout is reused and reopened rather than replaced. Lifecycle commands and other modes:
 
 ```bash
 ./inspire status   # show the managed local instance and URL
@@ -67,6 +67,17 @@ That installs dependencies if needed, builds the client when missing, starts the
 ```
 
 The launcher never kills an arbitrary process merely because it owns the configured port. Reuse requires the private state plus an authenticated constant-size health response. An unrelated or legacy occupant is reported with an inspection command; `stop`/`restart` may signal only the exact private-state process whose PID owner, process-start identity, working directory, and command line identify it as this checkout, including when that exact process is too unhealthy to answer the health probe.
+
+### Persistent host service
+
+To make the host a persistent user service, install and enable it once:
+
+```bash
+./inspire service install-host
+./inspire service enable-host
+```
+
+After that, the same `./inspire`, `./inspire status`, `./inspire restart`, and `./inspire stop` commands delegate to the matching `inspire-host.service`; no `systemctl` syntax is needed. The service is verified against the current checkout before delegation, and a checkout without that service continues to use direct-launcher mode.
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
