@@ -3390,7 +3390,9 @@ describe("selection race ownership", () => {
     const { store } = await initStore();
 
     const deselecting = store.deselectSession();
+    expect(store.getState().sessionSelectionPending).toBe(true);
     await store.openSession("s-B");
+    expect(store.getState().sessionSelectionPending).toBe(false);
     releaseDeselect();
     await expect(deselecting).resolves.toBe(false);
     expect(store.getState().sessionId).toBe("s-B");

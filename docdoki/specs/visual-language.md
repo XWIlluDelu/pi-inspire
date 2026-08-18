@@ -1,5 +1,5 @@
 ---
-purpose: The high-level visual direction that keeps insπre a restrained scientific workbench; concrete tokens and component contracts live in the design-system spec.
+purpose: The high-level visual direction that keeps Inspire a restrained scientific workbench; concrete tokens and component contracts live in the design-system spec.
 covers:
   - index.html
   - src/**/*.tsx
@@ -11,7 +11,7 @@ covers:
 
 ## Goal
 
-Give insπre a coherent front-end character that is calm enough for long
+Give Inspire a coherent front-end character that is calm enough for long
 technical conversations, polished enough to replace the terminal as the
 primary interface, and visually independent from its references.
 
@@ -28,21 +28,20 @@ primary interface, and visually independent from its references.
 - Light and dark themes share one component architecture, default to the
   system preference, and preserve the same information hierarchy; light is
   the primary tuning target.
-- Each theme carries exactly one brand accent family — the same teal hue
-  in light and dark, tuned per theme for contrast on its surfaces — plus
-  a small fixed set of semantic annotation hues (thinking violet, tool
-  info blue, failure red) that mark meaning rather than decorate; the
-  exact values, roles, and usage discipline are the [[design-system]]
-  contract.
-- One IBM Plex voice per role — Sans SC owns the interface and all reading
-  flow (Latin and CJK in a single family), Serif exists only in the italic
-  `insπre` wordmark whose π sets in the KaTeX math face, and Mono owns code
-  and machine-oriented data with Sans SC as its Chinese fallback. There is no
-  reading-mode font switch.
+- Each theme carries exactly one selected brand accent family — Amber is the
+  warm default and Jade the cool alternative, each tuned independently in
+  light and dark — plus a small fixed set of semantic annotation hues
+  (thinking violet, tool info blue, failure red) that mark meaning rather
+  than decorate; the exact values, roles, and usage discipline are the
+  [[design-system]] contract.
+- One IBM Plex voice per role — Sans SC owns the interface, all reading flow,
+  and the uppercase `INSΠRE` wordmark (Latin and CJK in a single family);
+  Mono owns code and machine-oriented data with Sans SC as its Chinese
+  fallback. There is no reading-mode font switch.
 - All palette, type, spacing, radius, elevation, and motion values remain
   centralized as shared CSS tokens in `src/styles.css`, implementing the
   token table in [[design-system]]; components never hold local values.
-- The `insπre` wordmark and π symbol remain small, stable identifiers
+- The `INSΠRE` wordmark and Open Reticle mark remain small, stable identifiers
   rather than recurring decorative motifs.
 - Motion explains state, continuity, or spatial change, stays responsive
   during streaming, and respects reduced-motion preferences.

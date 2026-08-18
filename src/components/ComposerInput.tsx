@@ -114,6 +114,7 @@ export function ComposerInput({
   onChange,
   commands,
   completionDisabled = false,
+  disabled = false,
   completionScope,
   searchProjectFiles,
   onPickProjectFile,
@@ -130,6 +131,7 @@ export function ComposerInput({
   onChange: (value: string) => void;
   commands: readonly PiCommand[];
   completionDisabled?: boolean;
+  disabled?: boolean;
   completionScope?: string | null;
   searchProjectFiles?: (query: string) => Promise<ProjectFileResult[]>;
   onPickProjectFile?: (file: ProjectFileResult) => void;
@@ -338,6 +340,7 @@ export function ComposerInput({
           rows={rows}
           value={value}
           placeholder={placeholder}
+          disabled={disabled}
           onChange={(event) => {
             inputValueRef.current = event.target.value;
             onChange(event.target.value);

@@ -115,18 +115,18 @@ async function verifyPrivateDirectory(
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(
-      `The insπre diagnostics directory is not a private directory: ${path}`,
+      `The Inspire diagnostics directory is not a private directory: ${path}`,
     );
   }
   if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
     throw new Error(
-      `The insπre diagnostics directory is not owned by the current user: ${path}`,
+      `The Inspire diagnostics directory is not owned by the current user: ${path}`,
     );
   }
   if ((info.mode & 0o077) !== 0) {
     if (!create)
       throw new Error(
-        `The insπre diagnostics directory must not be accessible by other users: ${path}`,
+        `The Inspire diagnostics directory must not be accessible by other users: ${path}`,
       );
     await chmod(path, PRIVATE_DIRECTORY_MODE);
   }
@@ -144,11 +144,11 @@ async function openPrivateAppend(path: string): Promise<FileHandle> {
     const info = await handle.stat();
     if (!info.isFile())
       throw new Error(
-        `The insπre diagnostics path is not a regular file: ${path}`,
+        `The Inspire diagnostics path is not a regular file: ${path}`,
       );
     if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
       throw new Error(
-        `The insπre diagnostics file is not owned by the current user: ${path}`,
+        `The Inspire diagnostics file is not owned by the current user: ${path}`,
       );
     }
     if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_FILE_MODE);
@@ -229,7 +229,7 @@ export class FileDiagnosticLogger implements DiagnosticLogger {
         if (this.reportedFailure) return;
         this.reportedFailure = true;
         console.error(
-          "Unable to persist insπre diagnostics",
+          "Unable to persist Inspire diagnostics",
           error instanceof Error ? error.message : String(error),
         );
       });

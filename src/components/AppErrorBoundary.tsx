@@ -30,7 +30,7 @@ export class AppErrorBoundary extends Component<
         aria-labelledby="app-error-title"
       >
         <div className="app-error__card">
-          <div className="app-error__eyebrow">insπre</div>
+          <div className="app-error__eyebrow">INSΠRE</div>
           <h1 id="app-error-title">This view could not be rendered</h1>
           <p>
             Reload the page to restore the workbench. The active Pi session is

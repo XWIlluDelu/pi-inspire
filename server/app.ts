@@ -440,7 +440,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/health", (_request, response) => {
-    response.json({ appName: "insπre", mock: deps.mock });
+    response.json({ appName: "inspire", mock: deps.mock });
   });
 
   app.get("/api/bootstrap", async (_request, response) => {
@@ -450,7 +450,7 @@ export function createInspireServer(deps: AppDependencies): {
       deps.runtime.snapshot(),
     ]);
     const body: BootstrapResponse = {
-      appName: "insπre",
+      appName: "inspire",
       version: deps.version,
       piVersion: deps.piVersion,
       mock: deps.mock,

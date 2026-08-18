@@ -28,6 +28,7 @@ Keep one ordered selection surface for product work that is not yet true of the 
 
 ## Unscheduled exploration
 
+- [ ] Repository merge governance — decide whether branch protection should require the `quality` GitHub job and pull-request merges. This is shared repository policy, not a source-only change to apply implicitly.
 - [ ] Square-style redesign — exploratory only; not selected for implementation. `docs/redesign/` preserves the Trace and Renault references. Any later work begins with fresh product evidence and feedback, not by copying the prototype.
 
 ## Decisions

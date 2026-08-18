@@ -22,6 +22,7 @@ import {
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   projectionConflictSeverity,
+  type PalettePreference,
   type ProjectionConflict,
   type ProjectionHealth,
   type ResourceProbeResult,
@@ -156,7 +157,7 @@ export interface AppState extends EventSlice {
   connectionProblem: ConnectionProblem;
   bootstrapped: boolean;
   mock: boolean;
-  /** Host-reported insπre version, shown on the settings page. */
+  /** Host-reported Inspire version, shown on the settings page. */
   version: string;
   prefs: InspirePreferences;
   sessionId: string | null;
@@ -217,6 +218,8 @@ export interface AppState extends EventSlice {
   attentionSessionIds: string[];
   /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
+  /** Whether an open, deselect, or create request still owns selection. */
+  sessionSelectionPending: boolean;
   /** The Hidden-row destructive action currently awaiting its host result. */
   deletingSessionId: string | null;
   /** The visible session's composer slice. Authoritative copies live in
@@ -300,6 +303,7 @@ const initialState: AppState = {
   sessionStatuses: {},
   attentionSessionIds: [],
   openingSessionId: null,
+  sessionSelectionPending: false,
   deletingSessionId: null,
   attachments: [],
   projectFiles: [],
@@ -718,15 +722,22 @@ export class AppStore {
   private claimOpening(owner: number, sessionId: string | null): void {
     this.readyWhileOpening.clear();
     this.openingOwner = owner;
-    this.set({ openingSessionId: sessionId });
+    this.set({ openingSessionId: sessionId, sessionSelectionPending: true });
   }
 
   private releaseOpening(owner?: number): void {
     if (owner !== undefined && this.openingOwner !== owner) return;
     this.readyWhileOpening.clear();
     this.openingOwner = null;
-    if (this.state.openingSessionId !== null)
-      this.set({ openingSessionId: null });
+    if (
+      this.state.openingSessionId !== null ||
+      this.state.sessionSelectionPending
+    ) {
+      this.set({
+        openingSessionId: null,
+        sessionSelectionPending: false,
+      });
+    }
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
@@ -1646,7 +1657,7 @@ export class AppStore {
   resolveNewSessionDefaults = async (
     cwd: string,
   ): Promise<NewSessionDefaults> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.newSessionDefaults(cwd);
   };
 
@@ -1672,13 +1683,13 @@ export class AppStore {
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.browseHostRoots();
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
   browseHostDirs = async (path?: string): Promise<HostDirListing> => {
-    if (!this.api) throw new Error("Not connected to the insπre host");
+    if (!this.api) throw new Error("Not connected to the Inspire host");
     return this.api.browseHostDirs(path);
   };
 
@@ -1801,6 +1812,8 @@ export class AppStore {
   }
 
   setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
+  setPalette = (palette: PalettePreference): void =>
+    this.savePrefs({ palette });
   setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
   setCompletionAttention = async (
     completionAttention: CompletionAttentionPreference,

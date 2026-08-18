@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build **inspire**, displayed as **ins$\pi$re**, into a high-quality graphical home for Pi Coding Agent. The name is both the word “inspire” and “inspect Pi rendering”: the product makes Pi’s conversations and activity easier to inspect while preserving Pi as the agent underneath.
+Build **Inspire**, displayed as **INSΠRE**, into a high-quality graphical home for Pi Coding Agent. The name reflects both “inspire” and “inspect Pi rendering”: the product makes Pi’s conversations and activity easier to inspect while preserving Pi as the agent underneath.
 
 The product begins as a Linux local web application for personal daily use. Its interface should grow toward a scientific workbench rather than remain a generic chat page: conversations are central, while sessions, agent activity, files, changes, and later artifacts or subagents occupy coherent surrounding surfaces.
 
@@ -23,10 +23,10 @@ The product begins as a Linux local web application for personal daily use. Its 
 
 ## Hard constraints
 
-- Pi remains the authoritative agent runtime and its session records remain the authoritative conversation history; inspire must not create a parallel conversation database.
+- Pi remains the authoritative agent runtime and its session records remain the authoritative conversation history; Inspire must not create a parallel conversation database.
 - The browser never receives stored provider credentials, private keys, or unrestricted direct access to the local machine. Privileged Pi and filesystem operations stay in a trusted local host process.
 - The interface must render untrusted model and artifact content defensively. Raw HTML is not trusted by default, mathematical rendering cannot enable trusted commands, and active artifact content requires isolation.
 - One process at a time owns writes to a given Pi session. This is a general Pi usage rule handled as ordinary product behavior, not a burden the user must understand or manage manually.
-- Extension-originated failures are diagnosed and recorded before adaptation. inspire does not add broad retries, suppression, or fallback behavior merely to conceal an extension conflict; material adaptation or disabling the extension remains an explicit product decision.
+- Extension-originated failures are diagnosed and recorded before adaptation. Inspire does not add broad retries, suppression, or fallback behavior merely to conceal an extension conflict; material adaptation or disabling the extension remains an explicit product decision.
 - Remote access, when introduced, keeps sessions, settings, and credentials on the connected machine by default; the public service relays connections rather than becoming the canonical data store.
 - The open-source implementation may borrow product ideas from reference applications but must not copy unavailable, minified, or ambiguously licensed proprietary GUI code.

@@ -1,21 +1,21 @@
-# insπre
+# INSΠRE
 
-A Linux-first local web workbench for [Pi Coding Agent](https://github.com/earendil-works/pi). The name is both *inspire* and *inspect Pi rendering*: insπre keeps Pi as the runtime and session authority while making its conversations, activity, and files easier to inspect — streaming Markdown and mathematics, session navigation, tool and thinking cards, and file-aware input, in a scientific-workbench interface.
+A Linux-first local workbench for [Pi Coding Agent](https://github.com/earendil-works/pi). **INSΠRE** is the visual lockup; *Inspire* is the product name in prose, reflecting both *inspire* and *inspect Pi rendering*. Inspire keeps Pi as the runtime and session authority while making conversations, activity, and files easier to inspect — streaming Markdown and mathematics, session navigation, tool and thinking cards, and file-aware input, in a scientific-workbench interface.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/conversation-dark.png">
-  <img src="docs/screenshots/conversation-light.png" alt="insπre conversation view with streaming Markdown, KaTeX mathematics, tables, code, and tool activity cards">
+  <img src="docs/screenshots/conversation-light.png" alt="INSΠRE conversation view with streaming Markdown, KaTeX mathematics, tables, code, and tool activity cards">
 </picture>
 
 ## What you get
 
-- **Pi underneath, unchanged.** Sessions are real Pi sessions running under Pi's own runtime. insπre creates no parallel conversation database: refresh or reconnect and the visible state is rebuilt from Pi's session records.
+- **Pi underneath, unchanged.** Sessions are real Pi sessions running under Pi's own runtime. Inspire creates no parallel conversation database: refresh or reconnect and the visible state is rebuilt from Pi's session records.
 - **Rich defensive rendering.** One Markdown pipeline covers both streaming and settled text — headings, tables, task lists, links, syntax-highlighted code, and KaTeX inline and display mathematics — rendered defensively, so untrusted model output cannot inject markup or fire network requests.
 - **Session navigation that respects running work.** Find, open, continue, rename, and switch sessions; pin or hide both sessions and project folders; restore hidden work from one reversible group. Multiple sessions run concurrently under independent Pi runtimes, and navigating away never stops background work — the navigation distinguishes running, unseen success, and unseen error. On narrow screens the same navigation becomes an off-canvas drawer instead of compressing the conversation.
 - **A complete composer.** Text, searchable project-file references, pasted or dropped images, and ordinary file attachments, plus steering messages and follow-ups while a run is active. Model and thinking-level pickers use your existing Pi configuration.
 - **Adaptive activity cards.** Thinking and tool activity render as distinguishable, inspectable cards with file links and status. The default Dynamic mode keeps the current work expanded, collapses each completed tool, and compacts a completed tool batch at the next model call; fixed expanded, collapsed, Compact, and hidden choices remain available independently.
 - **Session-bound file previews.** Files referenced by Pi messages or tool activity open beside the conversation as defensive previews — images, HTML, PDF, and text/code — without granting the browser arbitrary filesystem access.
-- **A workbench, not a chat page.** Collapsible navigation, a contextual resources panel, a command palette with keyboard accelerators, and a coherent light-and-dark design system (IBM Plex Sans SC for interface and reading, IBM Plex Serif for the wordmark, Flux Mono SC for code and CJK-aligned data).
+- **A workbench, not a chat page.** Collapsible navigation, a contextual resources panel, a command palette with keyboard accelerators, and a coherent light-and-dark design system (IBM Plex Sans SC for interface, reading, and the INSΠRE wordmark; Flux Mono SC for code and CJK-aligned data).
 
 <table>
   <tr>
@@ -27,6 +27,21 @@ A Linux-first local web workbench for [Pi Coding Agent](https://github.com/earen
     <td align="center"><em>Welcome screen — start work in any project directory</em></td>
     <td align="center"><em>Command palette — every action a keystroke away</em></td>
     <td align="center"><em>Settings — theme, card defaults, launch behavior</em></td>
+  </tr>
+</table>
+
+### Additional current surfaces
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/conversation-jade-light.png" alt="INSΠRE conversation in the Jade light palette"></td>
+    <td><img src="docs/screenshots/resources-dark.png" alt="INSΠRE resources panel in the Amber dark palette"></td>
+    <td><img src="docs/screenshots/mobile-amber-light.png" alt="INSΠRE conversation at a 390 pixel Amber light viewport"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Jade palette</em></td>
+    <td align="center"><em>Resources</em></td>
+    <td align="center"><em>390px mobile workbench</em></td>
   </tr>
 </table>
 
@@ -57,7 +72,7 @@ Equivalent npm entry points remain available (`npm start`, `npm run start:mock`,
 
 ## Release package
 
-insπre is packaged as a standalone npm CLI application, not as a Pi resource package: it intentionally has no `pi` manifest or `pi-package` keyword. The exact Pi Coding Agent runtime remains a production dependency, while the browser toolchain is used only to produce the release.
+INSΠRE is packaged as a standalone npm CLI application, not as a Pi resource package: it intentionally has no `pi` manifest or `pi-package` keyword. The exact Pi Coding Agent runtime remains a production dependency, while the browser toolchain is used only to produce the release.
 
 ```bash
 npm run release:verify

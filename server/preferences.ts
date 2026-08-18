@@ -13,6 +13,7 @@ import {
 // clobber stored values on every patch.
 const preferenceFields = {
   theme: z.enum(["system", "light", "dark"]),
+  palette: z.enum(["amber", "teal"]),
   launch: z.enum(["welcome", "continue"]),
   thinkingVisibility: z.enum(["dynamic", "expanded", "collapsed", "hidden"]),
   toolVisibility: z.enum([

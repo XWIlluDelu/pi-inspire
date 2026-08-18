@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import {
   ASSISTANT_ROUND_DISPLAYS,
   TOOL_VISIBILITY_PREFERENCES,
@@ -7,6 +7,7 @@ import {
   type AssistantRoundDisplayPreference,
   type CompletionAttentionPreference,
   type LaunchPreference,
+  type PalettePreference,
   type ProjectDisplayPreference,
   type ThemePreference,
   type ToolVisibilityPreference,
@@ -29,6 +30,14 @@ const THEMES: Array<{
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
   { value: "dark", label: "Dark", icon: <Moon size={13} aria-hidden /> },
   { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
+];
+
+const PALETTES: Array<{
+  value: PalettePreference;
+  label: string;
+}> = [
+  { value: "amber", label: "Amber" },
+  { value: "teal", label: "Jade" },
 ];
 
 function preferenceLabel(value: string): string {
@@ -82,19 +91,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
     subscribeInstallAvailability,
     installAvailability,
   );
-  const dialogRef = useModalFocus<HTMLDivElement>();
-
-  useEffect(() => {
-    // Capture phase: the dialog must own Escape before the global abort
-    // shortcut (which honors defaultPrevented) can see it.
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  const dialogRef = useModalFocus<HTMLDivElement>(true, "settings", onClose);
 
   return (
     <div className="overlay" role="presentation" onClick={onClose}>
@@ -136,6 +133,22 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 >
                   {theme.icon}
                   <span>{theme.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="settings__field">
+            <span className="settings__field-label">Color palette</span>
+            <div className="segmented" role="group" aria-label="Color palette">
+              {PALETTES.map(({ value, label }) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={`segmented__item ${(state.prefs.palette ?? "amber") === value ? "segmented__item--active" : ""}`}
+                  onClick={() => store.setPalette(value)}
+                  aria-pressed={(state.prefs.palette ?? "amber") === value}
+                >
+                  <span>{label}</span>
                 </button>
               ))}
             </div>
@@ -262,7 +275,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 className="button"
                 onClick={() => void requestInstall()}
               >
-                Install insπre
+                Install INSΠRE
               </button>
             </div>
           ) : (
@@ -271,8 +284,8 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 <span className="settings__field-label">Install as an app</span>
                 <p className="settings__field-help">
                   {install === "installed"
-                    ? "insπre is installed and running in its own window."
-                    : "insπre can run installed in its own window, without browser chrome. Your browser offers installation from its address bar or menu."}
+                    ? "Inspire is installed and running in its own window."
+                    : "Inspire can run installed in its own window, without browser chrome. Your browser offers installation from its address bar or menu."}
                 </p>
               </div>
             </div>
@@ -282,7 +295,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
         <section className="settings__section" aria-label="About">
           <h3 className="settings__section-title">About</h3>
           <p className="settings__about">
-            insπre {state.version ? <code>v{state.version}</code> : null} — a
+            INSΠRE {state.version ? <code>v{state.version}</code> : null} — a
             local workbench for{" "}
             <a
               href="https://github.com/earendil-works/pi"
