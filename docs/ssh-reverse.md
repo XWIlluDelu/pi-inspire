@@ -68,7 +68,7 @@ Install the local host and tunnel user services:
 ./inspire stop
 ./inspire service install-host
 ./inspire connection ssh-reverse install-service
-systemctl --user enable --now inspire-host.service
+./inspire service enable-host
 systemctl --user enable --now inspire-connection-ssh-reverse.service
 ```
 

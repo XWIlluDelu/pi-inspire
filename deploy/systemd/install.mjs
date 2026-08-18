@@ -59,7 +59,7 @@ async function main() {
   if (reloaded.code !== 0)
     throw new Error(`Installed ${path}, but systemd could not reload (${reloaded.stderr.trim()})`);
   console.log(`Installed ${path}.`);
-  console.log("Enable it with: systemctl --user enable --now inspire-host.service");
+  console.log("Enable it with: ./inspire service enable-host");
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

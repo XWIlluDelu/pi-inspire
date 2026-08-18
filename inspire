@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # One-command local host for INSΠRE.
 # Usage:
-#   ./inspire          start, or reopen the already-running instance
-#   ./inspire restart  gracefully replace the managed local instance
-#   ./inspire stop     stop the managed local instance
-#   ./inspire status   show the managed local instance
+#   ./inspire          start the configured system service or local instance
+#   ./inspire restart  restart the configured system service or local instance
+#   ./inspire stop     stop the configured system service or local instance
+#   ./inspire status   show the configured system service or local instance
 #   ./inspire mock     mock host for UI-only acceptance
 #   ./inspire dev      Vite + host with hot reload
 #   ./inspire build    build only
 #   ./inspire connection <name> [action]
 #   ./inspire --ssh-reverse [action]  shorthand for the ssh-reverse connection
 #   ./inspire service install-host    install the generic host user service
+#   ./inspire service enable-host     enable and start that user service
+#   ./inspire service disable-host    stop and disable that user service
 set -euo pipefail
 
 script_path="${BASH_SOURCE[0]}"
@@ -31,6 +33,7 @@ release_runtime="$root/build/server/index.js"
 instance_state="$root/server/instance-state.mjs"
 connection_dispatcher="$root/connections/dispatch.mjs"
 host_service_installer="$root/deploy/systemd/install.mjs"
+host_service_controller="$root/deploy/systemd/control.mjs"
 distribution=0
 if [[ ! -f "$source_runtime" && -f "$release_runtime" ]]; then
   distribution=1
@@ -126,6 +129,34 @@ open_url() {
   elif command -v gio >/dev/null 2>&1; then
     gio open "$url" >/dev/null 2>&1 || true
   fi
+}
+
+# A service's ExecStart is this launcher too. Only that exact process skips
+# delegation. Explicit instance inputs preserve isolated tests and alternate
+# local instances.
+is_host_service_exec() {
+  [[ -n "${SYSTEMD_EXEC_PID:-}" && "${SYSTEMD_EXEC_PID}" == "$$" ]]
+}
+
+should_manage_host_service() {
+  is_host_service_exec && return 1
+  [[ ! -v INSPIRE_STATE_PATH ]] || return 1
+  [[ ! -v INSPIRE_HOST ]] || return 1
+  [[ ! -v INSPIRE_PORT ]] || return 1
+  [[ ! -v INSPIRE_TOKEN ]] || return 1
+  [[ ! -v INSPIRE_MOCK ]] || return 1
+  return 0
+}
+
+manage_host_service() {
+  local action="$1" code
+  should_manage_host_service || return 3
+  if node "$host_service_controller" --root "$root" "$action"; then
+    return 0
+  else
+    code=$?
+  fi
+  return "$code"
 }
 
 init_instance() {
@@ -247,8 +278,12 @@ require_free_port() {
 }
 
 run_host() {
-  local mock="${1:-0}" lock_result
+  local mock="${1:-0}" lock_result service_result
   need_node
+  if [[ "$mock" == "0" ]]; then
+    if manage_host_service start; then return 0; else service_result=$?; fi
+    [[ "$service_result" == "3" ]] || return "$service_result"
+  fi
   export NODE_ENV=production
   export INSPIRE_OPEN="${INSPIRE_OPEN:-1}"
   init_instance
@@ -319,8 +354,10 @@ finish_stop() {
 }
 
 stop_host() {
-  local retain_lock="${1:-0}" code
+  local retain_lock="${1:-0}" code service_result
   need_node
+  if manage_host_service stop; then return 0; else service_result=$?; fi
+  [[ "$service_result" == "3" ]] || return "$service_result"
   if ! command -v flock >/dev/null 2>&1; then
     echo "flock is required for safe instance shutdown." >&2
     return 1
@@ -401,8 +438,32 @@ stop_host() {
   return $?
 }
 
-status_host() {
+restart_host() {
+  local service_result
   need_node
+  if manage_host_service restart; then return 0; else service_result=$?; fi
+  [[ "$service_result" == "3" ]] || return "$service_result"
+  stop_host 1
+  run_host 0
+}
+
+status_host() {
+  local service_result url
+  need_node
+  if manage_host_service status; then
+    # Preserve the established direct-launcher status contract when the
+    # service has published its authenticated instance state.
+    init_instance
+    if url="$(inspect_instance 0)"; then echo "$url"; fi
+    return 0
+  else
+    service_result=$?
+  fi
+  case "$service_result" in
+    3) ;;
+    5) return 1 ;;
+    *) return "$service_result" ;;
+  esac
   init_instance
   local url code
   if url="$(inspect_instance 0)"; then
@@ -434,8 +495,7 @@ case "$mode" in
     run_host 0
     ;;
   restart)
-    stop_host 1
-    run_host 0
+    restart_host
     ;;
   stop)
     stop_host
@@ -477,14 +537,31 @@ case "$mode" in
   service)
     shift
     need_node
-    exec node "$host_service_installer" --root "$root" "$@"
+    case "${1:-}" in
+      install-host)
+        exec node "$host_service_installer" --root "$root" "$@"
+        ;;
+      enable-host)
+        exec node "$host_service_controller" --root "$root" enable
+        ;;
+      disable-host)
+        exec node "$host_service_controller" --root "$root" disable
+        ;;
+      status-host)
+        exec node "$host_service_controller" --root "$root" status
+        ;;
+      *)
+        echo "Use: ./inspire service [install-host|enable-host|disable-host|status-host]" >&2
+        exit 64
+        ;;
+    esac
     ;;
   -h | --help | help)
-    sed -n '2,10p' "$0"
+    sed -n '/^# Usage:/,/^set -euo pipefail$/ { /^#/ { s/^# //; p } }' "$0"
     ;;
   *)
     echo "Unknown mode: $mode" >&2
-    echo "Use: ./inspire | ./inspire restart | ./inspire stop | ./inspire status | ./inspire mock | ./inspire dev | ./inspire build | ./inspire connection <name> [action] | ./inspire service install-host" >&2
+    echo "Use: ./inspire | ./inspire restart | ./inspire stop | ./inspire status | ./inspire mock | ./inspire dev | ./inspire build | ./inspire connection <name> [action] | ./inspire service [install-host|enable-host|disable-host|status-host]" >&2
     exit 1
     ;;
 esac
