@@ -1,6 +1,13 @@
 import { createServer } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +47,84 @@ function launcherEnv(
     INSPIRE_PORT: String(port),
     INSPIRE_STATE_PATH: statePath,
     INSPIRE_OPEN: "0",
+  };
+}
+
+async function serviceLauncherEnv(
+  directory: string,
+): Promise<NodeJS.ProcessEnv> {
+  const bin = join(directory, "bin");
+  const configHome = join(directory, "config");
+  const state = join(directory, "service-state");
+  const unitFileState = join(directory, "unit-file-state");
+  const log = join(directory, "systemctl.log");
+  await mkdir(join(configHome, "systemd", "user"), { recursive: true });
+  await mkdir(bin);
+  await writeFile(state, "inactive\n");
+  await writeFile(unitFileState, "enabled\n");
+  await writeFile(
+    join(bin, "systemctl"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_SYSTEMD_LOG"
+case "\${2:-}" in
+  show)
+    active="$(< "$FAKE_SYSTEMD_STATE")"
+    unit_file_state="$(< "$FAKE_SYSTEMD_UNIT_FILE_STATE")"
+    substate="dead"
+    [[ "$active" == "active" ]] && substate="running"
+    printf '%s\\n' \\
+      'LoadState=loaded' \\
+      "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-host.service" \\
+      "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
+      "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
+      "UnitFileState=$unit_file_state" \\
+      "ActiveState=$active" \\
+      "SubState=$substate"
+    ;;
+  start|restart)
+    printf 'active\\n' > "$FAKE_SYSTEMD_STATE"
+    ;;
+  stop)
+    printf 'inactive\\n' > "$FAKE_SYSTEMD_STATE"
+    ;;
+  enable)
+    printf 'active\\n' > "$FAKE_SYSTEMD_STATE"
+    printf 'enabled\\n' > "$FAKE_SYSTEMD_UNIT_FILE_STATE"
+    ;;
+  disable)
+    printf 'inactive\\n' > "$FAKE_SYSTEMD_STATE"
+    printf 'disabled\\n' > "$FAKE_SYSTEMD_UNIT_FILE_STATE"
+    ;;
+  *)
+    printf 'unexpected systemctl invocation: %s\\n' "$*" >&2
+    exit 64
+    ;;
+esac
+`,
+  );
+  await chmod(join(bin, "systemctl"), 0o755);
+
+  const environment = { ...process.env };
+  for (const key of [
+    "INSPIRE_HOST",
+    "INSPIRE_MOCK",
+    "INSPIRE_PORT",
+    "INSPIRE_STATE_PATH",
+    "INSPIRE_TOKEN",
+  ]) {
+    delete environment[key];
+  }
+  return {
+    ...environment,
+    HOME: join(directory, "home"),
+    XDG_CONFIG_HOME: configHome,
+    PATH: `${bin}:${environment.PATH ?? ""}`,
+    INSPIRE_OPEN: "0",
+    FAKE_SYSTEMD_LOG: log,
+    FAKE_SYSTEMD_ROOT: root,
+    FAKE_SYSTEMD_STATE: state,
+    FAKE_SYSTEMD_UNIT_FILE_STATE: unitFileState,
   };
 }
 
@@ -85,6 +170,53 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
+  it("delegates a matching installed host service through systemd", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-"));
+    temporaryDirectories.push(directory);
+    const environment = await serviceLauncherEnv(directory);
+
+    expect(runLauncher([], environment)).toContain(
+      "Started INSΠRE system service.",
+    );
+    expect(runLauncher(["status"], environment)).toContain(
+      "INSΠRE system service is running (enabled).",
+    );
+    expect(runLauncher(["restart"], environment)).toContain(
+      "Restarted INSΠRE system service.",
+    );
+    expect(runLauncher(["stop"], environment)).toContain(
+      "Stopped INSΠRE system service.",
+    );
+    expect(runLauncher(["service", "enable-host"], environment)).toContain(
+      "Enabled and started INSΠRE system service.",
+    );
+    expect(runLauncher(["service", "disable-host"], environment)).toContain(
+      "Disabled and stopped INSΠRE system service.",
+    );
+    const log = await readFile(environment.FAKE_SYSTEMD_LOG!, "utf8");
+    expect(log).toContain("--user start inspire-host.service");
+    expect(log).toContain("--user restart inspire-host.service");
+    expect(log).toContain("--user stop inspire-host.service");
+    expect(log).toContain("--user enable --now inspire-host.service");
+    expect(log).toContain("--user disable --now inspire-host.service");
+  });
+
+  it("keeps explicit local instances out of systemd delegation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-direct-"));
+    temporaryDirectories.push(directory);
+    const environment = await serviceLauncherEnv(directory);
+    environment.INSPIRE_HOST = "127.0.0.1";
+    environment.INSPIRE_PORT = "4589";
+    environment.INSPIRE_STATE_PATH = join(directory, "instance.json");
+
+    expect(() => runLauncher(["status"], environment)).toThrow();
+    await expect(
+      readFile(environment.FAKE_SYSTEMD_LOG!, "utf8"),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("restarts without an existing instance and owns one isolated lifecycle", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-launcher-"));
     temporaryDirectories.push(directory);
