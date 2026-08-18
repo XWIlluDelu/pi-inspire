@@ -325,3 +325,90 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
   const fontTransfer = await stopFontTransfer();
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
 });
+
+test.describe("touch narrow workbench", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test("keeps control hit areas separate and honors simulated safe edges", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await pairedPage(page);
+    await page.evaluate(() => {
+      const root = document.documentElement.style;
+      root.setProperty("--safe-top", "24px");
+      root.setProperty("--safe-right", "20px");
+      root.setProperty("--safe-bottom", "16px");
+      root.setProperty("--safe-left", "18px");
+    });
+    await page.getByRole("button", { name: "Toggle navigation" }).click();
+    await openMockSession(page, /Formula rendering and spectral analysis/);
+
+    const layout = await page.evaluate(() => {
+      const box = (element: Element) => {
+        const rect = (element as HTMLElement).getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      };
+      const overlaps = (
+        left: ReturnType<typeof box>,
+        right: ReturnType<typeof box>,
+      ) =>
+        left.x < right.x + right.width &&
+        left.x + left.width > right.x &&
+        left.y < right.y + right.height &&
+        left.y + left.height > right.y;
+      const topbarButtons = [
+        ...document.querySelectorAll(".topbar .icon-button"),
+      ].map(box);
+      const composerButtons = [
+        ...document.querySelectorAll(
+          ".composer__meta .icon-button, .composer__send",
+        ),
+      ].map(box);
+      const topbar = getComputedStyle(document.querySelector(".topbar")!);
+      const dock = getComputedStyle(document.querySelector(".composer-dock")!);
+      return {
+        composerButtons,
+        composerButtonsOverlap: composerButtons.some((button, index) =>
+          composerButtons
+            .slice(index + 1)
+            .some((other) => overlaps(button, other)),
+        ),
+        documentOverflow:
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+        dockPaddingLeft: Number.parseFloat(dock.paddingLeft),
+        dockPaddingRight: Number.parseFloat(dock.paddingRight),
+        topbarButtons,
+        topbarButtonsOverlap: topbarButtons.some((button, index) =>
+          topbarButtons
+            .slice(index + 1)
+            .some((other) => overlaps(button, other)),
+        ),
+        topbarPaddingLeft: Number.parseFloat(topbar.paddingLeft),
+        topbarPaddingRight: Number.parseFloat(topbar.paddingRight),
+        topbarPaddingTop: Number.parseFloat(topbar.paddingTop),
+      };
+    });
+
+    expect(layout.documentOverflow).toBeLessThanOrEqual(1);
+    expect(layout.topbarPaddingTop).toBeGreaterThanOrEqual(24);
+    expect(layout.topbarPaddingLeft).toBeGreaterThanOrEqual(18);
+    expect(layout.topbarPaddingRight).toBeGreaterThanOrEqual(20);
+    expect(layout.dockPaddingLeft).toBeGreaterThanOrEqual(18);
+    expect(layout.dockPaddingRight).toBeGreaterThanOrEqual(20);
+    expect(layout.topbarButtons).toHaveLength(4);
+    expect(
+      layout.topbarButtons.every(
+        (button) => button.width >= 36 && button.height >= 36,
+      ),
+    ).toBe(true);
+    expect(layout.topbarButtonsOverlap).toBe(false);
+    expect(
+      layout.composerButtons.every(
+        (button) => button.width >= 36 && button.height >= 36,
+      ),
+    ).toBe(true);
+    expect(layout.composerButtonsOverlap).toBe(false);
+  });
+});
