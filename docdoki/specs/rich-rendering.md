@@ -16,7 +16,7 @@ Render technical and scientific answers accurately enough that the GUI materiall
 ## Checks
 
 - Settled assistant text supports CommonMark-style Markdown, GitHub-flavored tables and task lists, fenced code, links, images, inline mathematics, and display mathematics.
-- Mathematical notation renders the project name `ins$\pi$re`, ordinary inline expressions such as `$E=mc^2$`, and display expressions without exposing trusted TeX commands.
+- Mathematical notation renders ordinary inline expressions such as `$E=mc^2$` and `$\pi r^2$`, plus display expressions, without exposing trusted TeX commands.
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and remain copyable as source text.
 - Streaming output keeps incomplete fences, links, tables, inline mathematics, and display mathematics readable until they become complete constructs.
 - Final rendering after message completion is equivalent to rendering the complete source once.

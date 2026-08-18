@@ -53,7 +53,7 @@ Sources:
 
 Three Pi web clients demonstrate the same useful boundary. `pi-web` keeps active runtimes and activity state in maps keyed by session identity, then derives separate unread completion state from active-to-idle transitions. `pi-dashboard` likewise owns a map of independently started slots, while Piface owns a dictionary of live sessions and groups its dashboard by working directory and recency.
 
-insπre adopts the common product boundary rather than any implementation: one long-lived worker per opened session, browser selection as a view operation, per-session live/completion/error projection, and exact-working-directory navigation groups. This boundary keeps state in the running host without importing peer-specific persistence, health sweeps, terminal surfaces, or broad compatibility layers.
+Inspire adopts the common product boundary rather than any implementation: one long-lived worker per opened session, browser selection as a view operation, per-session live/completion/error projection, and exact-working-directory navigation groups. This boundary keeps state in the running host without importing peer-specific persistence, health sweeps, terminal surfaces, or broad compatibility layers.
 
 Sources:
 
@@ -68,7 +68,7 @@ Sources:
 
 VS Code and Zed both connect a changed-file index to a file diff and project-tree status decorations; Zed also distinguishes opening the current file from opening its diff and reflects command-line changes immediately. GitHub Desktop makes the changed-file list and diff one review flow, with unified or split layouts and expandable context.
 
-The common fit for insπre is an informational layer over its existing Files and preview surfaces: a Changes index, compact status decorations, and one shared `File` / `Diff` detail region. The contextual pane favors a bounded unified diff; repository mutations, split layout, history, and blame are separate product choices rather than implied parts of inspection.
+The common fit for Inspire is an informational layer over its existing Files and preview surfaces: a Changes index, compact status decorations, and one shared `File` / `Diff` detail region. The contextual pane favors a bounded unified diff; repository mutations, split layout, history, and blame are separate product choices rather than implied parts of inspection.
 
 Sources:
 
@@ -78,11 +78,11 @@ Sources:
 
 ## Visual direction
 
-Both references use compact user bubbles and open assistant document flows. Their interfaces combine neutral surfaces, fine borders, soft radii, restrained shadows, and keyboard accelerators with visible controls. These common patterns are suitable references for insπre’s conversation-centered scientific-workbench character.
+Both references use compact user bubbles and open assistant document flows. Their interfaces combine neutral surfaces, fine borders, soft radii, restrained shadows, and keyboard accelerators with visible controls. These common patterns are suitable references for Inspire’s conversation-centered scientific-workbench character.
 
 Claude Science is the primary visual benchmark. Its released style system supports light, dark, and system modes; uses Anthropic Sans for the interface and default response flow, Anthropic Serif for title or optional response treatment, and Anthropic Mono for code; and combines neutral surfaces with clay branding and controlled semantic colors. OpenAI4S follows a related but more utilitarian treatment: its body and Markdown flow are sans-serif, serif type marks the wordmark and selected titles, monospaced type carries code and data, and its warm-neutral surface system uses a blue primary accent with limited clay, status, and tool colors.
 
-insπre adopts the shared visual grammar rather than either reference brand. Claude Science leads typography roles, surfaces, boundaries, radii, shadows, and finish. OpenAI4S remains a secondary reference for direct local-tool interaction, command-palette behavior, and practical information organization. Its light and dark palettes are original project tokens; IBM Plex is an independently selected, openly licensed type system obtained from IBM's official distribution, not a reference-application asset.
+Inspire adopts the shared visual grammar rather than either reference brand. Claude Science leads typography roles, surfaces, boundaries, radii, shadows, and finish. OpenAI4S remains a secondary reference for direct local-tool interaction, command-palette behavior, and practical information organization. Its light and dark palettes are original project tokens; IBM Plex is an independently selected, openly licensed type system obtained from IBM's official distribution, not a reference-application asset.
 
 Sources:
 
