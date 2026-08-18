@@ -267,7 +267,7 @@ describe("local host API", () => {
     }
   });
 
-  it("sets a Secure pairing cookie only through the explicit loopback proxy mode", async () => {
+  it("sets a Secure pairing cookie through a trusted loopback HTTPS proxy", async () => {
     const proxied = createInspireServer({
       token,
       runtime: new MockRuntime(),
@@ -281,7 +281,6 @@ describe("local host API", () => {
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
-      trustProxy: "loopback",
     });
     await new Promise<void>((resolve) =>
       proxied.server.listen(0, "127.0.0.1", resolve),
@@ -362,7 +361,7 @@ describe("local host API", () => {
     }
   });
 
-  it("scrubs rather than accepts token URLs in relay mode", async () => {
+  it("keeps direct token URLs local and rejects them through forwarded HTTPS", async () => {
     const dist = await mkdtemp(join(tmpdir(), "inspire-relay-dist-"));
     await writeFile(
       join(dist, "index.html"),
@@ -379,23 +378,81 @@ describe("local host API", () => {
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
-      allowTokenUrlPairing: false,
       distDir: dist,
     });
     await new Promise<void>((resolve) =>
       relay.server.listen(0, "127.0.0.1", resolve),
     );
+    const address = relay.server.address() as AddressInfo;
+    const forwardedOrigin = `https://127.0.0.1:${address.port}`;
     try {
-      const browser = request.agent(relay.server);
-      const launch = await browser
+      const direct = request.agent(relay.server);
+      const directLaunch = await direct
         .get(`/?token=${encodeURIComponent(token)}`)
         .redirects(0)
         .expect(303);
-      expect(launch.headers.location).toBe("/");
-      expect(String(launch.headers["set-cookie"])).not.toContain(
+      expect(directLaunch.headers.location).toBe("/");
+      expect(String(directLaunch.headers["set-cookie"])).toContain(
         `${ACCESS_COOKIE}=`,
       );
-      await browser.get("/api/bootstrap").expect(401);
+      expect(String(directLaunch.headers["set-cookie"])).not.toContain(
+        "Secure",
+      );
+      await direct.get("/api/bootstrap").expect(200);
+
+      const forwardedLaunch = await request(relay.server)
+        .get(`/?token=${encodeURIComponent(token)}`)
+        .set("X-Forwarded-Proto", "https")
+        .redirects(0)
+        .expect(303);
+      expect(forwardedLaunch.headers.location).toBe("/");
+      expect(String(forwardedLaunch.headers["set-cookie"])).not.toContain(
+        `${ACCESS_COOKIE}=`,
+      );
+
+      const paired = await request(relay.server)
+        .post("/api/auth/pair")
+        .set("Origin", forwardedOrigin)
+        .set("X-Forwarded-Proto", "https")
+        .send({ token })
+        .expect(204);
+      const cookie = String(paired.headers["set-cookie"]).split(";", 1)[0]!;
+      expect(String(paired.headers["set-cookie"])).toContain("Secure");
+
+      const rejected = new WebSocket(
+        `ws://127.0.0.1:${address.port}/events?token=${encodeURIComponent(token)}`,
+        {
+          headers: { "X-Forwarded-Proto": "https" },
+          origin: forwardedOrigin,
+        },
+      );
+      await new Promise<void>((resolveRejected, rejectRejected) => {
+        rejected.once("open", () =>
+          rejectRejected(new Error("forwarded query-token socket opened")),
+        );
+        rejected.once("close", () => resolveRejected());
+        rejected.once("error", () => resolveRejected());
+      });
+
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/events`, {
+        headers: { Cookie: cookie, "X-Forwarded-Proto": "https" },
+        origin: forwardedOrigin,
+      });
+      try {
+        const firstFrame = await new Promise<Record<string, unknown>>(
+          (resolveFrame, rejectFrame) => {
+            socket.once("message", (data) =>
+              resolveFrame(
+                JSON.parse(data.toString()) as Record<string, unknown>,
+              ),
+            );
+            socket.once("error", rejectFrame);
+          },
+        );
+        expect(firstFrame.type).toBe("snapshot");
+      } finally {
+        socket.close();
+      }
     } finally {
       await relay.close();
       await rm(dist, { recursive: true, force: true });

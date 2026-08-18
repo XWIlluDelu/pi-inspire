@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
 import express, {
   type NextFunction,
@@ -219,10 +219,6 @@ export interface AppDependencies {
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
-  /** Accept forwarded protocol only from a local trusted reverse proxy. */
-  trustProxy?: "loopback";
-  /** False strips rather than accepts `?token=` browser bootstrap URLs. */
-  allowTokenUrlPairing?: boolean;
   distDir?: string;
 }
 
@@ -306,6 +302,25 @@ function originAllowed(
   }
 }
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  return (
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1"
+  );
+}
+
+/** An HTTPS edge must overwrite this header while forwarding over a local hop.
+ * Direct loopback requests never carry it, so their launch URL remains local. */
+function trustedForwardedHttps(request: IncomingMessage): boolean {
+  const forwarded = request.headers["x-forwarded-proto"];
+  return (
+    isLoopbackAddress(request.socket.remoteAddress) &&
+    typeof forwarded === "string" &&
+    forwarded.trim().toLowerCase() === "https"
+  );
+}
+
 /** This endpoint deliberately supports one byte range. Express owns RFC
  * parsing (including suffix and open-ended forms); malformed, unsatisfiable,
  * non-byte, and multi-range requests fail rather than unexpectedly receiving
@@ -382,9 +397,9 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
-  // A reverse SSH destination is still loopback-local. Do not broaden this to
-  // arbitrary proxy hops: the forwarded protocol controls the Secure cookie.
-  if (deps.trustProxy === "loopback") app.set("trust proxy", "loopback");
+  // The host itself remains loopback-only. A local reverse proxy may report
+  // the original HTTPS protocol, but arbitrary network hops never gain trust.
+  app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   app.use((request, response, next) => {
     response.set({
@@ -801,9 +816,10 @@ export function createInspireServer(deps: AppDependencies): {
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // A local launcher may pair before the application bundle runs, then
-    // removes the bearer from browser history. Relay mode still strips this
-    // parameter but deliberately falls through to the ordinary pairing form.
+    // A direct local launcher may pair before the application bundle runs,
+    // then removes the bearer from browser history. An HTTPS request forwarded
+    // through a trusted loopback proxy still strips this parameter, but must
+    // use the ordinary Pair form rather than treating a public URL as a bearer.
     app.get("/", (request, response, next) => {
       const candidate =
         typeof request.query.token === "string"
@@ -811,7 +827,7 @@ export function createInspireServer(deps: AppDependencies): {
           : undefined;
       if (candidate === undefined) return next();
       if (
-        deps.allowTokenUrlPairing !== false &&
+        !trustedForwardedHttps(request) &&
         tokenMatches(candidate, deps.token)
       ) {
         setAccessCookie(request, response, deps.token);
@@ -905,7 +921,7 @@ export function createInspireServer(deps: AppDependencies): {
     const queryToken = url.searchParams.get("token") ?? undefined;
     const pairedToken = cookieToken(request.headers.cookie);
     const queryTokenAllowed =
-      deps.allowTokenUrlPairing !== false || queryToken === undefined;
+      !trustedForwardedHttps(request) || queryToken === undefined;
     if (
       url.pathname !== "/events" ||
       !queryTokenAllowed ||

@@ -8,6 +8,9 @@
 #   ./inspire mock     mock host for UI-only acceptance
 #   ./inspire dev      Vite + host with hot reload
 #   ./inspire build    build only
+#   ./inspire connection <name> [action]
+#   ./inspire --ssh-reverse [action]  shorthand for the ssh-reverse connection
+#   ./inspire service install-host    install the generic host user service
 set -euo pipefail
 
 script_path="${BASH_SOURCE[0]}"
@@ -26,6 +29,8 @@ cd "$root"
 source_runtime="$root/server/index.ts"
 release_runtime="$root/build/server/index.js"
 instance_state="$root/server/instance-state.mjs"
+connection_dispatcher="$root/connections/dispatch.mjs"
+host_service_installer="$root/deploy/systemd/install.mjs"
 distribution=0
 if [[ ! -f "$source_runtime" && -f "$release_runtime" ]]; then
   distribution=1
@@ -35,8 +40,6 @@ fi
 mode="${1:-start}"
 instance_host=""
 instance_port=""
-instance_trust_proxy=""
-instance_allow_token_url_pairing=""
 state_path=""
 lock_path=""
 stop_request_path=""
@@ -128,22 +131,6 @@ open_url() {
 init_instance() {
   instance_host="${INSPIRE_HOST:-127.0.0.1}"
   instance_port="${INSPIRE_PORT:-4587}"
-  case "${INSPIRE_TRUST_PROXY:-}" in
-    "") instance_trust_proxy=0 ;;
-    loopback) instance_trust_proxy=1 ;;
-    *)
-      echo "INSPIRE_TRUST_PROXY must be \`loopback\` when configured." >&2
-      return 1
-      ;;
-  esac
-  case "${INSPIRE_ALLOW_TOKEN_URL_PAIRING:-1}" in
-    0) instance_allow_token_url_pairing=0 ;;
-    1) instance_allow_token_url_pairing=1 ;;
-    *)
-      echo "INSPIRE_ALLOW_TOKEN_URL_PAIRING must be \`0\` or \`1\`." >&2
-      return 1
-      ;;
-  esac
   if [[ -n "${INSPIRE_STATE_PATH:-}" ]]; then
     state_path="$INSPIRE_STATE_PATH"
     mkdir -p "$(dirname "$state_path")"
@@ -163,8 +150,7 @@ init_instance() {
 inspect_instance() {
   local mock="$1"
   node "$instance_state" inspect \
-    "$state_path" "$root" "$instance_host" "$instance_port" "$mock" \
-    "$instance_trust_proxy" "$instance_allow_token_url_pairing"
+    "$state_path" "$root" "$instance_host" "$instance_port" "$mock"
 }
 
 show_existing() {
@@ -478,12 +464,27 @@ case "$mode" in
     ensure_deps
     do_build
     ;;
+  connection)
+    shift
+    need_node
+    exec node "$connection_dispatcher" --root "$root" "$@"
+    ;;
+  --ssh-reverse)
+    shift
+    need_node
+    exec node "$connection_dispatcher" --root "$root" ssh-reverse "$@"
+    ;;
+  service)
+    shift
+    need_node
+    exec node "$host_service_installer" --root "$root" "$@"
+    ;;
   -h | --help | help)
     sed -n '2,10p' "$0"
     ;;
   *)
     echo "Unknown mode: $mode" >&2
-    echo "Use: ./inspire | ./inspire restart | ./inspire stop | ./inspire status | ./inspire mock | ./inspire dev | ./inspire build" >&2
+    echo "Use: ./inspire | ./inspire restart | ./inspire stop | ./inspire status | ./inspire mock | ./inspire dev | ./inspire build | ./inspire connection <name> [action] | ./inspire service install-host" >&2
     exit 1
     ;;
 esac
