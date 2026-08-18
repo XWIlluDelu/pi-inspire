@@ -116,27 +116,32 @@ anatomy that must remain stable rather than duplicating every declaration.
 
 - Below the narrow-workbench breakpoint, navigation and contextual work become
   independent off-canvas drawers instead of squeezing both side regions around
-  phone-sized conversation content. A drawer starts beneath the center topbar
-  so its own close/open control remains reachable.
+  phone-sized conversation content. Fixed narrow surfaces honor all four safe
+  insets; a drawer starts beneath the center topbar so its own close/open
+  control remains reachable.
 - Motion explains a transient surface, disclosure, or live work. Shared
   durations are 90ms micro, 150ms standard, and 180ms panel; active work may
-  spin, but terminal states do not breathe or flash. Short card/palette
-  entrance and disclosure transforms are permitted. Reduced-motion mode
-  removes nonessential animation and collapses transitions to a negligible
-  duration.
+  spin and the composer may retain a quiet static semantic halo, but terminal
+  states do not breathe or flash. Short card/palette entrance and disclosure
+  transforms are permitted. Reduced-motion mode removes nonessential animation
+  and collapses transitions to a negligible duration.
 - Text meets WCAG AA contrast, and graphical focus/status cues meet their UI
   contrast threshold. `:focus-visible` uses the shared 2px accent outline;
   controls retain named roles, native semantic structure, visible keyboard
-  focus, and focus restoration after overlay close.
+  focus, and focus restoration after overlay close. Touch layouts allocate
+  compact controls in flow rather than overlapping pseudo-targets, while the
+  390px composer toolbar remains one row.
 
 ## Checks
 
 - `tests/web/styles-contract.test.ts` verifies declared CSS variables, the
   permanent brand/surface/activity token families, traffic-light navigation
-  roles, and the absence of breathing or completion-flash keyframes.
+  roles, all-edge narrow safe-area use, and the absence of composer pulse or
+  completion-flash keyframes.
 - Theme bootstrap and overlay ownership have focused web tests; mock-host
   browser coverage checks desktop and narrow workbench behavior, including the
-  390px toolbar and accessibility paths.
+  390px one-row toolbar, non-overlapping touch controls, and accessibility
+  paths.
 - A visual change is evaluated in both luminosity modes and both palettes when
   its affected role appears in each; it does not create a second component
   architecture or a local exception token.

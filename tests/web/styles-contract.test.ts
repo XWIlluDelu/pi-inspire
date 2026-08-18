@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const stylesheet = new URL("../../src/styles.css", import.meta.url);
+const documentTemplate = new URL("../../index.html", import.meta.url);
 
 describe("design token contract", () => {
   it("does not reference undeclared project CSS variables", async () => {
@@ -28,8 +29,23 @@ describe("design token contract", () => {
     );
     expect(css).not.toMatch(/@keyframes dot-breathe/);
     expect(css).not.toMatch(/@keyframes chip-breathe/);
-    expect(css).not.toMatch(/@keyframes composer-breathe/);
-    expect(css).not.toMatch(/@keyframes composer-settle/);
+    expect(css).not.toMatch(/@keyframes composer-(?:breathe|settle|pulse)/);
+    expect(css).not.toMatch(/\.composer--settled\b/);
+  });
+
+  it("keeps mobile edge insets and touch targets in the layout flow", async () => {
+    const [css, html] = await Promise.all([
+      readFile(stylesheet, "utf8"),
+      readFile(documentTemplate, "utf8"),
+    ]);
+    expect(css).toMatch(/padding-top:\s*var\(--safe-top\)/);
+    expect(css).toMatch(/padding-right:\s*var\(--safe-right\)/);
+    expect(css).toMatch(/padding-bottom:\s*var\(--safe-bottom\)/);
+    expect(css).toMatch(/padding-left:\s*var\(--safe-left\)/);
+    expect(css).not.toMatch(/\.icon-button::after/);
+    expect(css).toMatch(/\.pane-scrim\s*{[^}]*backdrop-filter:\s*blur\(2px\)/s);
+    expect(html).toContain("viewport-fit=cover");
+    expect(html).toContain("interactive-widget=resizes-content");
   });
 
   it("declares permanent brand and dedicated surface tokens", async () => {
