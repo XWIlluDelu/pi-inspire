@@ -61,21 +61,6 @@ if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
 const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535)
   throw new Error("INSPIRE_PORT must be a valid TCP port");
-const configuredTrustProxy = process.env.INSPIRE_TRUST_PROXY;
-if (configuredTrustProxy !== undefined && configuredTrustProxy !== "loopback") {
-  throw new Error("INSPIRE_TRUST_PROXY must be `loopback` when configured");
-}
-const trustProxy =
-  configuredTrustProxy === "loopback" ? ("loopback" as const) : undefined;
-const configuredTokenUrlPairing = process.env.INSPIRE_ALLOW_TOKEN_URL_PAIRING;
-if (
-  configuredTokenUrlPairing !== undefined &&
-  configuredTokenUrlPairing !== "0" &&
-  configuredTokenUrlPairing !== "1"
-) {
-  throw new Error("INSPIRE_ALLOW_TOKEN_URL_PAIRING must be `0` or `1`");
-}
-const allowTokenUrlPairing = configuredTokenUrlPairing !== "0";
 const tokenPath =
   process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
@@ -192,8 +177,6 @@ const application = createInspireServer({
   piVersion: piPackage.version,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
-  trustProxy,
-  allowTokenUrlPairing,
   distDir: join(root, "dist"),
 });
 
@@ -261,8 +244,6 @@ async function announceStarted(): Promise<void> {
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
     mock,
-    trustProxy: trustProxy === "loopback",
-    allowTokenUrlPairing,
   };
   if (statePath) {
     statePublication = writeInstanceState(statePath, instanceState);
@@ -277,8 +258,10 @@ async function announceStarted(): Promise<void> {
   if (shuttingDown) return;
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = instanceUrl(instanceState);
-  console.log(`\n  INSΠRE ${packageJson.version}${mock ? " (mock)" : ""}`);
-  console.log(`  ${url}\n`);
+  if (process.env.INSPIRE_QUIET !== "1") {
+    console.log(`\n  INSΠRE ${packageJson.version}${mock ? " (mock)" : ""}`);
+    console.log(`  ${url}\n`);
+  }
   if (process.env.INSPIRE_OPEN === "1") {
     const { spawn } = await import("node:child_process");
     const opener =

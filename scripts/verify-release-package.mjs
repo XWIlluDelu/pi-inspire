@@ -322,6 +322,12 @@ try {
   }
   const required = new Set([
     "build/server/index.js",
+    "connections/dispatch.mjs",
+    "connections/ssh-reverse/manifest.json",
+    "connections/ssh-reverse/runner.mjs",
+    "connections/ssh-reverse/systemd/inspire-connection-ssh-reverse.service.in",
+    "deploy/systemd/inspire-host.service.in",
+    "docs/ssh-reverse.md",
     "dist/index.html",
     "dist/THIRD_PARTY_NOTICES.txt",
     "inspire",

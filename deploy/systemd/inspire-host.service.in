@@ -1,0 +1,17 @@
+[Unit]
+Description=INSΠRE local host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=INSPIRE_OPEN=0
+Environment=INSPIRE_QUIET=1
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@LAUNCHER@
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

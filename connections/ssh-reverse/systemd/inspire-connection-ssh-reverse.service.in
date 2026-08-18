@@ -1,0 +1,14 @@
+[Unit]
+Description=INSΠRE ssh-reverse connection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+ExecStart=@NODE@ @RUNNER@ --root @ROOT@ supervise
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

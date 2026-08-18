@@ -70,15 +70,16 @@ The launcher never kills an arbitrary process merely because it owns the configu
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
-## Personal HTTPS relay
+## SSH reverse connection
 
-The host remains loopback-only. A single owner may expose it through a user-controlled HTTPS reverse proxy whose upstream is an SSH reverse tunnel bound to the relay machine's loopback address; the relay never receives a directly published INSΠRE port. In that mode, run the host with:
+The optional `ssh-reverse` connection module opens a loopback-only reverse SSH tunnel from the local host to a user-controlled HTTPS edge. It is separate from the core host lifecycle and may be started, inspected, stopped, or installed as a user service independently:
 
 ```bash
-INSPIRE_TRUST_PROXY=loopback INSPIRE_ALLOW_TOKEN_URL_PAIRING=0 ./inspire
+./inspire connection ssh-reverse init
+./inspire connection ssh-reverse start
 ```
 
-`INSPIRE_TRUST_PROXY=loopback` is only for a trusted local-hop proxy that overwrites forwarded headers. Disabling token-URL pairing strips `?token=` without accepting it, so a new browser uses the Pair form instead. The public edge must enforce HTTPS, set `Secure` on the pairing cookie if the running host was not started with trusted-proxy mode, and avoid access logging token-bearing URLs. This is personal shared-token access, not multi-user collaboration or device-level authorization.
+See [the SSH reverse connection guide](docs/ssh-reverse.md) for local configuration, automatic recovery, and a minimal server-side HTTPS proxy example. The module is personal shared-token access, not multi-user collaboration or device-level authorization.
 
 ## Release package
 
