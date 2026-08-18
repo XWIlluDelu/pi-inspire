@@ -25,25 +25,6 @@ const fluxManifestDigest =
   "3c2b68ef00d466260b24b4db97d17cb0e552c2d4194a7c4432cff8f69f20181b";
 const fluxSumsDigest =
   "24612c6ced4a164a61f355bcc3e7a3acc5159b8bf5f921f0e2cae0b6b394c281";
-const fixedFontDigests = new Map([
-  [
-    "ibm-plex-serif-latin-400-normal.woff2",
-    "cb2c5eee2c0a43ff30d2365407c7bc8b20e3bd90720a4a64102ba0b328022a02",
-  ],
-  [
-    "ibm-plex-serif-latin-500-italic.woff2",
-    "42fde68f485b8d3096a22711a16702013d437830f7293ecc4cc75554d479a363",
-  ],
-  [
-    "ibm-plex-serif-latin-500-normal.woff2",
-    "677082fc2e9ee60701b874fe5983c98ea9fb3b588cc1b02058ff9bf29ea783e4",
-  ],
-  [
-    "ibm-plex-serif-latin-600-normal.woff2",
-    "e279e4f8baa0d4634d98868092f2198ae0dcd9e142c935822c385b9843352a9b",
-  ],
-]);
-
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -121,11 +102,6 @@ async function verifySourceFonts() {
       );
     }
   }
-  for (const [filename, expected] of fixedFontDigests) {
-    const actual = sha256(await readFile(join(fontRoot, filename)));
-    if (actual !== expected)
-      throw new Error(`IBM Plex provenance mismatch: ${filename}`);
-  }
 
   const fluxRoot = join(fontRoot, "flux-mono-sc");
   const fluxManifestBytes = await readFile(join(fluxRoot, "manifest.json"));
@@ -195,7 +171,6 @@ async function verifySourceFonts() {
     ...[...fluxEntries]
       .filter(([filename]) => filename.endsWith(".woff2"))
       .map(([, digest]) => digest),
-    ...fixedFontDigests.values(),
   ]);
 }
 
@@ -257,7 +232,7 @@ async function waitForHealth(url, token, expectedMock, timeoutMs = 20_000) {
       });
       if (response.ok) {
         const body = await response.json();
-        if (body.appName === "insπre" && body.mock === expectedMock) return;
+        if (body.appName === "inspire" && body.mock === expectedMock) return;
       }
     } catch {}
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
@@ -472,11 +447,11 @@ try {
   }
   if (installedPackage.pi !== undefined)
     throw new Error(
-      "Standalone insπre must not declare a Pi resource manifest",
+      "Standalone INSΠRE must not declare a Pi resource manifest",
     );
   if (installedPackage.keywords?.includes("pi-package"))
     throw new Error(
-      "Standalone insπre must not use the Pi resource-package keyword",
+      "Standalone INSΠRE must not use the Pi resource-package keyword",
     );
   const expectedPi =
     sourcePackage.dependencies?.["@earendil-works/pi-coding-agent"];

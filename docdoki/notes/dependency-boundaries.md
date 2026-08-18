@@ -23,7 +23,7 @@ Sources:
 
 ### Session ownership
 
-Pi sessions are append-only JSONL trees with stable entry identifiers and parent links. The v0.80.10 manager loads an in-memory snapshot and persists with direct append or whole-file rewrite operations; it does not hold a lifetime session lock or perform optimistic revision checks. Two independent Pi processes therefore should not write one session concurrently. This is a general Pi operating rule, not a GUI-specific deficiency. inspire should prevent accidental conflicts and otherwise stay out of the user’s way.
+Pi sessions are append-only JSONL trees with stable entry identifiers and parent links. Pi’s session manager loads an in-memory snapshot and persists with direct append or whole-file rewrite operations; it does not hold a lifetime session lock or perform optimistic revision checks. Two independent Pi processes therefore should not write one session concurrently. This is a general Pi operating rule, not a GUI-specific deficiency. Inspire should prevent accidental conflicts and otherwise stay out of the user’s way.
 
 Sources:
 

@@ -1,5 +1,5 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clipboardFiles } from "../clipboard-files";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import {
@@ -69,10 +69,26 @@ export function Composer() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const busy = isBusyRunState(state.runState);
+  const sessionOpening = state.sessionSelectionPending;
+
   // Conflict recovery keeps the existing steer-shaped keyboard path, but it
   // is not part of the host's active/queued busy ownership set.
   const composerBusy = busy || state.runState === "conflict";
   const abortable = isAbortableRunState(state.runState);
+  const isRunning = state.runState === "running";
+  const isRetrying = state.runState === "retrying";
+  const isCompacting = state.runState === "compacting";
+  const isFailed = state.runState === "failed";
+
+  const runStateClass = isRunning
+    ? "composer--running"
+    : isRetrying
+      ? "composer--retrying"
+      : isCompacting
+        ? "composer--compacting"
+        : isFailed
+          ? "composer--failed"
+          : "";
 
   const updateDraft = (text: string) => {
     setDraft(text);
@@ -80,13 +96,16 @@ export function Composer() {
   };
 
   const previousSessionRef = useRef(sessionId);
-  useEffect(() => {
+  // Restore the target draft before paint so immediate typing after navigation
+  // cannot be overwritten by delayed session synchronization.
+  useLayoutEffect(() => {
     if (previousSessionRef.current === sessionId) return;
     previousSessionRef.current = sessionId;
+    // Every transient composer surface belongs to the session that opened it.
+    // Reset before paint so it cannot silently retarget the newly visible one.
     setDraft(sessionId ? sessionDraft(sessionId) : "");
-  }, [sessionId]);
-
-  useEffect(() => {
+    setPickerOpen(false);
+    setDropActive(false);
     setDeliveryBehavior("steer");
   }, [sessionId]);
 
@@ -102,7 +121,8 @@ export function Composer() {
   }, [editorNonce]);
 
   const canSend = Boolean(
-    sessionId &&
+    !sessionOpening &&
+      sessionId &&
       (draft.trim() ||
         state.attachments.length > 0 ||
         state.projectFiles.length > 0),
@@ -114,7 +134,7 @@ export function Composer() {
       : undefined;
   const submit = async (behavior?: "steer" | "followUp") => {
     const message = draft;
-    if (!canSend || state.sending) return;
+    if (!canSend || state.sending || sessionOpening) return;
     const owner = sessionId;
     const sent = await store.sendPrompt(message, behavior);
     if (!sent || !owner) return;
@@ -149,8 +169,9 @@ export function Composer() {
 
   return (
     <form
-      className={`composer ${dropActive ? "composer--drop" : ""}`}
+      className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
       aria-label="Message composer"
+      aria-busy={busy || sessionOpening || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(activeBehavior);
@@ -163,16 +184,19 @@ export function Composer() {
       onDrop={(event) => {
         event.preventDefault();
         setDropActive(false);
-        void store.addFiles(Array.from(event.dataTransfer?.files ?? []));
+        if (!sessionOpening)
+          void store.addFiles(Array.from(event.dataTransfer?.files ?? []));
       }}
     >
       <input
+        key={`file-input-${sessionId ?? "none"}`}
         ref={fileInputRef}
         type="file"
         multiple
         className="composer__file-input"
         aria-label="Attach files"
         tabIndex={-1}
+        disabled={sessionOpening}
         onChange={(event) => {
           void store.addFiles(Array.from(event.target.files ?? []));
           event.target.value = "";
@@ -180,19 +204,21 @@ export function Composer() {
       />
       <AttachmentList
         items={state.attachments}
-        disabled={state.sending}
+        disabled={state.sending || sessionOpening}
         onRemove={store.removeAttachment}
       />
       <ProjectFileChips
         paths={state.projectFiles}
-        disabled={state.sending}
+        disabled={state.sending || sessionOpening}
         onRemove={store.removeProjectFile}
       />
       <ComposerInput
+        key={`input-${sessionId ?? "none"}`}
         value={draft}
         onChange={updateDraft}
         commands={state.commands}
-        completionDisabled={state.sending}
+        completionDisabled={state.sending || sessionOpening}
+        disabled={sessionOpening}
         completionScope={sessionId}
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
@@ -213,6 +239,7 @@ export function Composer() {
             <button
               type="button"
               aria-pressed={deliveryBehavior === "steer"}
+              disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("steer")}
               title="Influence the task that is running now"
             >
@@ -221,6 +248,7 @@ export function Composer() {
             <button
               type="button"
               aria-pressed={deliveryBehavior === "followUp"}
+              disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("followUp")}
               title="Queue this message after the current task"
             >
@@ -231,12 +259,15 @@ export function Composer() {
       ) : null}
       <div className="composer__meta">
         <ModelSelector
+          key={`model-${sessionId ?? "none"}`}
           value={activeModel}
           models={state.availableModels}
           recent={state.prefs.recentModelIds}
+          disabled={sessionOpening}
           onChange={(provider, id) => void store.setModel(provider, id)}
         />
         <Dropdown
+          key={`thinking-${sessionId ?? "none"}`}
           label="Thinking level"
           title={
             thinkingSupported
@@ -248,7 +279,7 @@ export function Composer() {
           display={
             thinkingSupported ? state.thinkingLevel : "thinking unavailable"
           }
-          disabled={!thinkingSupported}
+          disabled={!thinkingSupported || sessionOpening}
           options={THINKING_LEVELS.map((level) => ({
             value: level,
             label: level,
@@ -259,6 +290,7 @@ export function Composer() {
           ref={projectPickerButtonRef}
           type="button"
           className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
+          disabled={sessionOpening}
           onClick={() => setPickerOpen((value) => !value)}
           aria-label="Add project files"
           aria-expanded={pickerOpen}
@@ -269,6 +301,7 @@ export function Composer() {
         <button
           type="button"
           className="icon-button"
+          disabled={sessionOpening}
           onClick={() => fileInputRef.current?.click()}
           aria-label="Attach files"
           title="Attach files (or paste / drop them)"
@@ -300,6 +333,7 @@ export function Composer() {
           <button
             type="button"
             className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
+            disabled={sessionOpening}
             onClick={() => void store.abort()}
             aria-label={
               state.runState === "conflict"
@@ -326,7 +360,7 @@ export function Composer() {
         <ProjectFilePicker
           scope={sessionId}
           selected={state.projectFiles}
-          disabled={state.sending}
+          disabled={state.sending || sessionOpening}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
           onClose={() => {

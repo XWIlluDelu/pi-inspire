@@ -34,7 +34,7 @@ function ImageLightbox({
   alt: string;
   onClose: () => void;
 }) {
-  const dialogRef = useModalFocus<HTMLDivElement>(true, src);
+  const dialogRef = useModalFocus<HTMLDivElement>(true, src, onClose);
   const canvasRef = useRef<HTMLButtonElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const gestureRef = useRef<PanGesture | null>(null);
@@ -42,16 +42,6 @@ function ImageLightbox({
   const [zoomed, setZoomed] = useState(false);
   const [panning, setPanning] = useState(false);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
 
   const constrainPan = useCallback((next: Point): Point => {
     const canvas = canvasRef.current;

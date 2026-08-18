@@ -24,7 +24,11 @@ export function DirectoryPicker({
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const dialogRef = useModalFocus<HTMLDivElement>();
+  const dialogRef = useModalFocus<HTMLDivElement>(
+    true,
+    "directory-picker",
+    onCancel,
+  );
   // Only the newest request may write state — rapid navigation must not
   // let a slow earlier level overwrite a later one.
   const ticket = useRef(0);
@@ -72,18 +76,6 @@ export function DirectoryPicker({
       discoverRoots: true,
     });
   }, []);
-
-  // Escape closes the picker before the global handlers can see it.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onCancel]);
 
   return (
     <div className="overlay" role="presentation" onClick={onCancel}>

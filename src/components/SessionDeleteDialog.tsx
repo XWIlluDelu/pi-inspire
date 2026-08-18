@@ -1,5 +1,4 @@
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
-import { useEffect } from "react";
 import type { SessionSummary } from "../../shared/contracts";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
@@ -12,18 +11,10 @@ export function SessionDeleteDialog({
   onClose: () => void;
 }) {
   const state = useAppState();
-  const dialogRef = useModalFocus<HTMLDivElement>(true, session.id);
   const deleting = state.deletingSessionId === session.id;
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || deleting) return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [deleting, onClose]);
+  const dialogRef = useModalFocus<HTMLDivElement>(true, session.id, () => {
+    if (!deleting) onClose();
+  });
 
   const confirm = async () => {
     if (await store.deleteSession(session.id)) onClose();

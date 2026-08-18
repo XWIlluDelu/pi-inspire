@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command local host for insπre.
+# One-command local host for INSΠRE.
 # Usage:
 #   ./inspire          start, or reopen the already-running instance
 #   ./inspire restart  gracefully replace the managed local instance
@@ -104,7 +104,7 @@ do_build() {
 ensure_build() {
   if [[ "$distribution" == "1" ]]; then
     if [[ ! -f "$root/dist/index.html" || ! -f "$release_runtime" || ! -f "$instance_state" ]]; then
-      echo "The installed insπre package is incomplete." >&2
+      echo "The installed INSΠRE package is incomplete." >&2
       return 1
     fi
     return 0
@@ -151,7 +151,7 @@ inspect_instance() {
 show_existing() {
   local mock="$1" url code
   if url="$(inspect_instance "$mock")"; then
-    echo "insπre is already running."
+    echo "INSΠRE is already running."
     echo "$url"
     if [[ "${INSPIRE_OPEN:-1}" == "1" ]]; then open_url "$url"; fi
     return 0
@@ -161,17 +161,17 @@ show_existing() {
   case "$code" in
     3) return 3 ;;
     4)
-      echo "A managed insπre process exists but is not responding." >&2
+      echo "A managed INSΠRE process exists but is not responding." >&2
       echo "Use './inspire restart' for an explicit graceful replacement." >&2
       return 1
       ;;
     5)
-      echo "This port is occupied by insπre in a different runtime mode." >&2
+      echo "This port is occupied by INSΠRE in a different runtime mode." >&2
       echo "Use './inspire stop' before switching between real and mock modes." >&2
       return 1
       ;;
     *)
-      echo "Unable to inspect the existing insπre instance." >&2
+      echo "Unable to inspect the existing INSΠRE instance." >&2
       return 1
       ;;
   esac
@@ -218,7 +218,7 @@ acquire_instance_lock() {
   for _ in {1..75}; do
     if try_acquire_instance_lock; then return 0; fi
     if [[ "$detect_existing" == "1" ]] && url="$(inspect_instance "$mock" 2>/dev/null)"; then
-      echo "insπre is already running."
+      echo "INSΠRE is already running."
       echo "$url"
       if [[ "${INSPIRE_OPEN:-1}" == "1" ]]; then open_url "$url"; fi
       release_instance_lock
@@ -226,7 +226,7 @@ acquire_instance_lock() {
     fi
     sleep 0.2
   done
-  echo "Another insπre launcher is still starting or stopping this instance." >&2
+  echo "Another INSΠRE launcher is still starting or stopping this instance." >&2
   release_instance_lock
   return 1
 }
@@ -234,7 +234,7 @@ acquire_instance_lock() {
 require_free_port() {
   if ! node "$instance_state" port \
     "$state_path" "$root" "$instance_host" "$instance_port"; then
-    echo "Port ${instance_host}:${instance_port} is already in use, but no healthy managed insπre state was found." >&2
+    echo "Port ${instance_host}:${instance_port} is already in use, but no healthy managed INSΠRE state was found." >&2
     echo "Refusing to stop an unknown process. Inspect it with:" >&2
     echo "  ss -ltnp 'sport = :${instance_port}'" >&2
     return 1
@@ -285,7 +285,7 @@ run_host() {
   fi
   if [[ -e "$stop_request_path" ]]; then
     rm -f "$stop_request_path"
-    echo "insπre startup was cancelled by a concurrent stop request."
+    echo "INSΠRE startup was cancelled by a concurrent stop request."
     release_instance_lock
     return 0
   fi
@@ -324,7 +324,7 @@ stop_host() {
   if node "$instance_state" stop \
     "$state_path" "$root" "$instance_host" "$instance_port"; then
     if [[ "$retain_lock" == "1" ]] && ! acquire_instance_lock 0 0; then
-      echo "Unable to retain the insπre launcher lock for restart." >&2
+      echo "Unable to retain the INSΠRE launcher lock for restart." >&2
       return 1
     fi
     finish_stop 0 "$retain_lock"
@@ -339,13 +339,13 @@ stop_host() {
       return $?
       ;;
     6)
-      echo "Timed out waiting for insπre to stop; it was not force-killed." >&2
+      echo "Timed out waiting for INSΠRE to stop; it was not force-killed." >&2
       finish_stop 1 "$retain_lock"
       return $?
       ;;
     3) ;;
     *)
-      echo "Unable to stop the managed insπre instance." >&2
+      echo "Unable to stop the managed INSΠRE instance." >&2
       finish_stop 1 "$retain_lock"
       return $?
       ;;
@@ -356,7 +356,7 @@ stop_host() {
   # wait until that launcher either exits or publishes a stoppable process.
   if try_acquire_instance_lock; then
     rm -f "$stop_request_path"
-    echo "No managed insπre instance is running."
+    echo "No managed INSΠRE instance is running."
     finish_stop 0 "$retain_lock"
     return $?
   fi
@@ -365,9 +365,9 @@ stop_host() {
     if node "$instance_state" stop \
       "$state_path" "$root" "$instance_host" "$instance_port" >/dev/null 2>&1; then
       rm -f "$stop_request_path"
-      echo "Stopped the insπre instance that was starting."
+      echo "Stopped the INSΠRE instance that was starting."
       if [[ "$retain_lock" == "1" ]] && ! acquire_instance_lock 0 0; then
-        echo "Unable to retain the insπre launcher lock for restart." >&2
+        echo "Unable to retain the INSΠRE launcher lock for restart." >&2
         finish_stop 1 "$retain_lock"
         return $?
       fi
@@ -378,20 +378,20 @@ stop_host() {
     fi
     if [[ "$code" != "3" ]]; then
       rm -f "$stop_request_path"
-      echo "Unable to stop the insπre instance that was starting." >&2
+      echo "Unable to stop the INSΠRE instance that was starting." >&2
       finish_stop 1 "$retain_lock"
       return $?
     fi
     if try_acquire_instance_lock; then
       rm -f "$stop_request_path"
-      echo "Cancelled the pending insπre startup."
+      echo "Cancelled the pending INSΠRE startup."
       finish_stop 0 "$retain_lock"
       return $?
     fi
     sleep 0.1
   done
   rm -f "$stop_request_path"
-  echo "Timed out waiting for the pending insπre startup; it was not force-killed." >&2
+  echo "Timed out waiting for the pending INSΠRE startup; it was not force-killed." >&2
   finish_stop 1 "$retain_lock"
   return $?
 }
@@ -401,7 +401,7 @@ status_host() {
   init_instance
   local url code
   if url="$(inspect_instance 0)"; then
-    echo "insπre is running."
+    echo "INSΠRE is running."
     echo "$url"
     return 0
   else
@@ -409,7 +409,7 @@ status_host() {
   fi
   if [[ "$code" == "5" ]]; then
     if url="$(inspect_instance 1)"; then
-      echo "insπre mock is running."
+      echo "INSΠRE mock is running."
       echo "$url"
       return 0
     else
@@ -417,9 +417,9 @@ status_host() {
     fi
   fi
   if [[ "$code" == "4" ]]; then
-    echo "A managed insπre process exists but is not responding." >&2
+    echo "A managed INSΠRE process exists but is not responding." >&2
   else
-    echo "insπre is not running."
+    echo "INSΠRE is not running."
   fi
   return 1
 }

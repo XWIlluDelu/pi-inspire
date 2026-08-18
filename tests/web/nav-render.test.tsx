@@ -143,20 +143,20 @@ describe("session navigation controls", () => {
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });
 
-  it("uses one icon-and-wordmark target for brand and new session in both nav widths", () => {
+  it("renders brand lockup and provides new session action in both nav widths", () => {
     const onNewSession = vi.fn();
-    const { rerender } = render(
+    const { container, rerender } = render(
       <Nav
         collapsed={false}
         onNewSession={onNewSession}
         onSelectSession={() => undefined}
       />,
     );
-    const brand = screen.getByRole("button", { name: "New session" });
-    expect(brand).not.toHaveAttribute("aria-current");
-    expect(brand.querySelector(".nav__brand-icon")).not.toBeNull();
-    expect(brand).toHaveTextContent("insπre");
-    fireEvent.click(brand);
+    const newSessionBtn = screen.getByRole("button", { name: "New session" });
+    expect(newSessionBtn).not.toHaveAttribute("aria-current");
+    expect(container.querySelector(".nav__brand-icon")).not.toBeNull();
+    expect(container.querySelector(".wordmark")).toHaveTextContent("INSΠRE");
+    fireEvent.click(newSessionBtn);
     expect(onNewSession).toHaveBeenCalledOnce();
 
     rerender(
@@ -168,7 +168,6 @@ describe("session navigation controls", () => {
     );
     const railBrand = screen.getByRole("button", { name: "New session" });
     expect(railBrand.querySelector(".nav__brand-icon--rail")).not.toBeNull();
-    expect(railBrand).not.toHaveTextContent("π");
   });
 
   it("keeps the runtime owner unselected while the New session surface is visible", () => {

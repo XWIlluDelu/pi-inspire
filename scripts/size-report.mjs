@@ -33,7 +33,7 @@ function category(path) {
 }
 
 function coldStartFont(path) {
-  return /(?:ibm-plex-serif|fluxmonosc-(?:regular|medium)-core|katex_(?:main|math|sansserif)-(?:regular|italic))/i.test(
+  return /(?:fluxmonosc-(?:regular|medium)-core|katex_(?:main|math|sansserif)-(?:regular|italic))/i.test(
     path,
   );
 }

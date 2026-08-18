@@ -19,15 +19,28 @@ describe("design token contract", () => {
 
   it("keeps navigation run outcomes on distinct traffic-light tokens", async () => {
     const css = await readFile(stylesheet, "utf8");
-    expect(css).toMatch(
-      /\.nav__row-dot--running\s*{[^}]*background:\s*var\(--warning\)/s,
-    );
+    expect(css).toMatch(/\.nav__row-dot--running\s*{[^}]*animation:\s*spin/s);
     expect(css).toMatch(
       /\.nav__row-dot--completed\s*{[^}]*background:\s*var\(--success\)/s,
     );
     expect(css).toMatch(
       /\.nav__row-dot--failed\s*{[^}]*background:\s*var\(--error\)/s,
     );
-    expect(css).toMatch(/@keyframes dot-breathe\s*{.*?var\(--warning\)/s);
+    expect(css).not.toMatch(/@keyframes dot-breathe/);
+    expect(css).not.toMatch(/@keyframes chip-breathe/);
+    expect(css).not.toMatch(/@keyframes composer-breathe/);
+    expect(css).not.toMatch(/@keyframes composer-settle/);
+  });
+
+  it("declares permanent brand and dedicated surface tokens", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    expect(css).toMatch(/--brand-accent\s*:/);
+    expect(css).toMatch(/--brand-ink\s*:/);
+    expect(css).toMatch(/--bg-prompt\s*:/);
+    expect(css).toMatch(/--bg-activity\s*:/);
+    expect(css).toMatch(/--bg-code\s*:/);
+    expect(css).toMatch(/--bg-control\s*:/);
+    expect(css).toMatch(/--activity-tool\s*:/);
+    expect(css).toMatch(/--activity-think\s*:/);
   });
 });

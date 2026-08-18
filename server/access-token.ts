@@ -37,12 +37,12 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(
-      `The insπre access-token directory is not a private directory: ${path}`,
+      `The Inspire access-token directory is not a private directory: ${path}`,
     );
   }
   if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
     throw new Error(
-      `The insπre access-token directory is not owned by the current user: ${path}`,
+      `The Inspire access-token directory is not owned by the current user: ${path}`,
     );
   }
   if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_DIRECTORY_MODE);
@@ -56,23 +56,23 @@ async function readPrivateToken(path: string): Promise<string> {
     const info = await handle.stat();
     if (!info.isFile())
       throw new Error(
-        `The insπre access-token path is not a regular file: ${path}`,
+        `The Inspire access-token path is not a regular file: ${path}`,
       );
     if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
       throw new Error(
-        `The insπre access-token file is not owned by the current user: ${path}`,
+        `The Inspire access-token file is not owned by the current user: ${path}`,
       );
     }
     if ((info.mode & 0o077) !== 0) {
       throw new Error(
-        `The insπre access-token file must not be accessible by other users: ${path}`,
+        `The Inspire access-token file must not be accessible by other users: ${path}`,
       );
     }
     if (info.size > 256)
-      throw new Error(`The insπre access-token file is invalid: ${path}`);
+      throw new Error(`The Inspire access-token file is invalid: ${path}`);
     const token = (await handle.readFile("utf8")).trim();
     if (!TOKEN_PATTERN.test(token))
-      throw new Error(`The insπre access-token file is invalid: ${path}`);
+      throw new Error(`The Inspire access-token file is invalid: ${path}`);
     return token;
   } finally {
     await handle.close();
