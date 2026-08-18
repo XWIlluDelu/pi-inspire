@@ -51,8 +51,6 @@ function state(path: string, port = 4587): InstanceState {
     startedAt: new Date().toISOString(),
     processStartTime: "test-process-start",
     mock: false,
-    trustProxy: false,
-    allowTokenUrlPairing: true,
   };
 }
 
@@ -66,9 +64,9 @@ describe("Inspire instance state", () => {
     expect(instanceUrl({ ...value, token: "custom/token?" })).toContain(
       "token=custom%2Ftoken%3F",
     );
-    expect(
-      instanceUrl({ ...value, allowTokenUrlPairing: false }),
-    ).not.toContain("token=");
+    expect(instanceUrl({ ...value, token: "local-token" })).toContain(
+      "token=local-token",
+    );
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     await removeInstanceState(path, value.pid + 1);
     await expect(stat(path)).resolves.toBeDefined();
@@ -118,20 +116,6 @@ describe("Inspire instance state", () => {
       inspectInstance(
         path,
         { root: value.root, host: value.host, port: value.port, mock: true },
-        { processMarker },
-      ),
-    ).resolves.toMatchObject({ kind: "mode-conflict" });
-    await expect(
-      inspectInstance(
-        path,
-        {
-          root: value.root,
-          host: value.host,
-          port: value.port,
-          mock: false,
-          trustProxy: true,
-          allowTokenUrlPairing: false,
-        },
         { processMarker },
       ),
     ).resolves.toMatchObject({ kind: "mode-conflict" });

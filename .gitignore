@@ -5,6 +5,7 @@
 /dist/
 /build/
 /.inspire-build
+/.inspire/
 *.tgz
 /coverage/
 /test-results/

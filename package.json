@@ -23,6 +23,8 @@
   },
   "files": [
     "build/",
+    "connections/",
+    "deploy/",
     "dist/",
     "docs/screenshots/command-palette-dark.png",
     "docs/screenshots/conversation-dark.png",
@@ -32,6 +34,7 @@
     "docs/screenshots/resources-dark.png",
     "docs/screenshots/settings-light.png",
     "docs/screenshots/welcome-dark.png",
+    "docs/ssh-reverse.md",
     "inspire",
     "LICENSE",
     "README.md",

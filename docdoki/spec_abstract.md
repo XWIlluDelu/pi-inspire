@@ -12,6 +12,7 @@
 | Rich content | [[rich-rendering]] | One defensive Markdown pipeline owns both settled and streaming text, including mathematical notation. |
 | Session continuity | [[session-continuity]] | Pi’s JSONL session tree remains canonical while the browser holds only a reloadable, virtualized projection. |
 | Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported extension dialogs natively. |
+| Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 
 ## Cross-spec direction
@@ -20,6 +21,6 @@ The product separates durable Pi state, a safe browser projection, and transient
 
 The local baseline defines the complete daily-use conversation slice inside the adaptable workbench frame: session discovery and continuation, independent background runtimes, bounded history and Pi branch actions, defensive rich rendering, complete composer input, typed activity cards, extension dialogs, essential runtime controls, curated navigation, Git-aware project and Changes inspection, session-bound file previews, and keyboard-accelerated visible actions. Later subagents, timelines, and richer artifact surfaces extend that frame rather than complete a missing local conversation loop.
 
-Host and multi-device access must preserve this same browser projection and operation semantics while making the selected host, connection, trust, permission, and control owner explicit. Pi state and privileged capability remain on that host; an optional relay transports bounded endpoint-protected messages but neither becomes conversation authority nor controls the trusted client artifact.
+Optional connection modules preserve this same browser projection and operation semantics while adding independently managed ingress paths to the selected loopback host. Pi state and privileged capability remain on that host; a module neither becomes conversation authority nor controls the trusted client artifact. Generic proxy handling may harden forwarded HTTPS requests only when direct loopback behavior remains unchanged.
 
 The front end uses one coherent light-and-dark component system at medium information density. IBM Plex Sans SC owns the interface, Chinese/Latin reading flow, and uppercase `INSΠRE` wordmark; Flux Mono SC v0.1.0 owns code and machine-oriented data on a native 600/1200 CJK grid. Neutral paper surfaces, an Amber default or Jade alternative palette tuned independently per theme, a small semantic annotation palette, fine boundaries, soft radii, and performance-safe state motion keep content dominant.
