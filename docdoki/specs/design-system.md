@@ -100,8 +100,10 @@ anatomy that must remain stable rather than duplicating every declaration.
   work above the writing field and a quiet metadata toolbar below. Model,
   thinking, project files, attachments, context usage, and send/abort stay
   aligned to that toolbar; at the 390px target they remain on one row rather
-  than promoting model or effort controls to a second row. The detailed input,
-  delivery, and ownership contract lives in [[composer]].
+  than promoting model or effort controls to a second row. A constrained model
+  label truncates inside its trigger rather than painting across adjacent
+  controls. The detailed input, delivery, and ownership contract lives in
+  [[composer]].
 - Files, Changes, and History share the contextual pane rather than creating a
   fourth workbench column. File/resource safety and diff semantics belong to
   [[resource-preview]]; branch behavior belongs to [[session-continuity]].
