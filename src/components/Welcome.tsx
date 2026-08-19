@@ -17,6 +17,7 @@ import {
 import type { ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
+import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
 import {
@@ -414,10 +415,9 @@ export function Welcome({
             addFiles(files);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void start();
-            }
+            if (!shouldSubmitComposerEnter(event.nativeEvent)) return;
+            event.preventDefault();
+            void start();
           }}
         />
         <div className="composer__meta">

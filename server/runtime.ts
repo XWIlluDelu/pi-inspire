@@ -30,6 +30,7 @@ import {
   type BranchTreeResponse,
   type ExtensionUiRequest,
   type GenericExtensionDisplay,
+  type HiddenFolderDeleteResponse,
   type NewSessionOptions,
   type ProjectionConflict,
   type PromptRequest,
@@ -157,6 +158,10 @@ export interface RuntimeLike {
     options?: NewSessionOptions,
   ): Promise<ActiveSnapshot>;
   deleteSession(sessionId: string): Promise<SessionDeleteResponse>;
+  deleteHiddenFolderSessions(
+    cwd: string,
+    expectedSessionIds: readonly string[],
+  ): Promise<HiddenFolderDeleteResponse>;
   prompt(request: PromptRequest): Promise<void>;
   abort(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
@@ -415,6 +420,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
    * identity from the moment the request is accepted until the file outcome
    * is known. Concurrent duplicate DELETEs share the same result. */
   private readonly deleting = new Map<string, Promise<SessionDeleteResponse>>();
+  /** Folder deletion reserves every target identity after one full catalog
+   * snapshot, so a later browser operation cannot open or mutate a subset. */
+  private readonly deletingFolders = new Map<
+    string,
+    Promise<HiddenFolderDeleteResponse>
+  >();
+  private readonly folderDeletionIds = new Set<string>();
   /** Public operations retain this count from admission through every await,
    * closing gaps before they obtain a slot or enter a slot FIFO. */
   private maintenanceOperations = 0;
@@ -581,7 +593,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.forkReservationsById.size > 0 ||
       this.forkReservationsByPath.size > 0 ||
       this.provisionalSlots.size > 0 ||
-      this.deleting.size > 0
+      this.deleting.size > 0 ||
+      this.deletingFolders.size > 0
     )
       return true;
     return [...this.slots.values()].some(
@@ -1596,11 +1609,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       throw Object.assign(new Error("Runtime is closing"), { status: 503 });
   }
 
+  private isDeletingSession(sessionId: string): boolean {
+    return (
+      this.deleting.has(sessionId) || this.folderDeletionIds.has(sessionId)
+    );
+  }
+
   /** Writes are addressed: the caller names the session, and a concurrent
    * selection change on the host can never redirect them. */
   private requireSlot(sessionId: string): RuntimeSlot {
     this.assertNotClosing();
-    if (this.deleting.has(sessionId)) {
+    if (this.isDeletingSession(sessionId)) {
       throw Object.assign(new Error("That session is being deleted"), {
         status: 409,
       });
@@ -2159,6 +2178,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return { stats, models, commands };
   }
 
+  /** Pi delays writing a new session's startup thinking selection to JSONL.
+   * Until that active-path record exists, the explicit worker argument is more
+   * truthful than the pending projection's structural `off` default. */
+  private effectiveThinkingLevel(
+    slot: RuntimeSlot,
+    runtimeThinkingLevel?: unknown,
+  ): string {
+    if (slot.projection?.hasActiveEntryType("thinking_level_change"))
+      return slot.projection.thinkingLevel;
+    if (slot.startupThinkingLevel) return slot.startupThinkingLevel;
+    if (typeof runtimeThinkingLevel === "string") return runtimeThinkingLevel;
+    return (
+      slot.preview?.thinkingLevel ?? slot.projection?.thinkingLevel ?? "off"
+    );
+  }
+
   private previewSnapshot(
     slot: RuntimeSlot,
     sessionStatuses: Record<
@@ -2178,7 +2213,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       active: {
         ...slot.preview,
         model: slot.projection.model ?? slot.preview.model,
-        thinkingLevel: slot.projection.thinkingLevel,
+        thinkingLevel: this.effectiveThinkingLevel(slot),
         messages: page.messages,
         transcriptPage: page,
         projectionHealth: slot.projection.health,
@@ -2399,7 +2434,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async openSessionInside(id: string): Promise<ActiveSnapshot> {
     this.assertNotClosing();
-    if (this.deleting.has(id)) {
+    if (this.isDeletingSession(id)) {
       throw Object.assign(new Error("That session is being deleted"), {
         status: 409,
       });
@@ -2471,22 +2506,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async deletionCatalogRecord(
     sessionId: string,
   ): Promise<SessionRecord> {
-    const matches = (await this.catalog.refresh(true)).filter(
-      (candidate) => candidate.id === sessionId,
-    );
-    if (matches.length === 0)
+    const session = this.catalog.getUnique
+      ? await this.catalog.getUnique(sessionId)
+      : await this.catalog.get(sessionId);
+    if (!session)
       throw Object.assign(new Error("Session not found"), { status: 404 });
-    if (matches.length > 1) {
-      throw Object.assign(
-        new Error("The session identity is ambiguous in the Pi catalog"),
-        { status: 409 },
-      );
-    }
-    return matches[0]!;
+    return session;
   }
 
   private async deleteSessionInside(
     sessionId: string,
+    authorizedSession?: SessionRecord,
   ): Promise<SessionDeleteResponse> {
     if (this.selectedSessionId === sessionId) {
       throw Object.assign(
@@ -2518,7 +2548,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       );
     }
 
-    const initial = await this.deletionCatalogRecord(sessionId);
+    const initial =
+      authorizedSession ?? (await this.deletionCatalogRecord(sessionId));
     const path = resolve(initial.path);
     await this.loadingPaths.get(path)?.catch(() => undefined);
     if (
@@ -2638,6 +2669,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.assertNotClosing();
     const pending = this.deleting.get(sessionId);
     if (pending) return pending;
+    if (this.folderDeletionIds.has(sessionId)) {
+      return Promise.reject(
+        Object.assign(new Error("That session is being deleted"), {
+          status: 409,
+        }),
+      );
+    }
     const deletion = this.deleteSessionInside(sessionId);
     this.deleting.set(sessionId, deletion);
     const clear = () => {
@@ -2646,6 +2684,164 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     };
     void deletion.then(clear, clear);
     return deletion;
+  }
+
+  /** Deletes precisely the complete catalog snapshot for one hidden cwd. The
+   * caller owns the visibility policy; this boundary only preserves session
+   * identity, active-work checks, and an explicit partial-result outcome. */
+  async deleteHiddenFolderSessions(
+    cwd: string,
+    expectedSessionIds: readonly string[],
+  ): Promise<HiddenFolderDeleteResponse> {
+    return this.withMaintenanceOperation(() =>
+      this.deleteHiddenFolderSessionsRequest(cwd, expectedSessionIds),
+    );
+  }
+
+  private deleteHiddenFolderSessionsRequest(
+    cwd: string,
+    expectedSessionIds: readonly string[],
+  ): Promise<HiddenFolderDeleteResponse> {
+    this.assertNotClosing();
+    const pending = this.deletingFolders.get(cwd);
+    if (pending) return pending;
+    const deletion = this.deleteHiddenFolderSessionsInside(
+      cwd,
+      expectedSessionIds,
+    );
+    this.deletingFolders.set(cwd, deletion);
+    const clear = () => {
+      if (this.deletingFolders.get(cwd) === deletion)
+        this.deletingFolders.delete(cwd);
+    };
+    void deletion.then(clear, clear);
+    return deletion;
+  }
+
+  private assertHiddenFolderDeletionReady(
+    records: readonly SessionRecord[],
+  ): void {
+    for (const session of records) {
+      const sessionId = session.id;
+      const path = resolve(session.path);
+      if (this.selectedSessionId === sessionId) {
+        throw Object.assign(
+          new Error("Switch to another session before deleting this folder"),
+          { status: 409 },
+        );
+      }
+      if (
+        this.selectionReservations.has(sessionId) ||
+        this.loadingSlots.has(sessionId) ||
+        this.loadingPaths.has(path) ||
+        this.opening.has(sessionId) ||
+        this.forkReservationsById.has(sessionId) ||
+        this.forkReservationsByPath.has(path)
+      ) {
+        throw Object.assign(
+          new Error(
+            "Wait for every session in this folder to finish opening or changing before deleting it",
+          ),
+          { status: 409 },
+        );
+      }
+      const slot = this.slots.get(sessionId);
+      if (
+        slot &&
+        (slot.stopping ||
+          slot.activeOperations > 0 ||
+          slot.mutationPending > 0 ||
+          slot.extensionResponsePending > 0 ||
+          isBusyRunState(slot.runState) ||
+          slot.pendingExtensionUiRequests.size > 0 ||
+          slot.pendingQueues.steering.length > 0 ||
+          slot.pendingQueues.followUp.length > 0 ||
+          slot.persistenceExpectations.length > 0 ||
+          slot.pendingPartialPersistence ||
+          slot.pendingBranchBridge ||
+          slot.rebinding ||
+          slot.conflict ||
+          slot.navigationLease)
+      ) {
+        throw Object.assign(
+          new Error(
+            "Wait for every session in this folder to finish active work or interaction before deleting it",
+          ),
+          { status: 409 },
+        );
+      }
+    }
+  }
+
+  private async deleteHiddenFolderSessionsInside(
+    cwd: string,
+    expectedSessionIds: readonly string[],
+  ): Promise<HiddenFolderDeleteResponse> {
+    const records = (await this.catalog.refresh(true)).filter(
+      (session) => session.cwd === cwd,
+    );
+    if (records.length === 0)
+      throw Object.assign(new Error("No sessions remain in this folder"), {
+        status: 404,
+      });
+    const ids = new Set(records.map((session) => session.id));
+    const expected = new Set(expectedSessionIds);
+    if (
+      expected.size !== expectedSessionIds.length ||
+      ids.size !== expected.size ||
+      [...ids].some((sessionId) => !expected.has(sessionId))
+    ) {
+      throw Object.assign(
+        new Error("The folder's sessions changed; review it before deleting"),
+        { status: 409 },
+      );
+    }
+    if (ids.size !== records.length) {
+      throw Object.assign(
+        new Error("The folder contains ambiguous Pi session identities"),
+        { status: 409 },
+      );
+    }
+    if (records.some((session) => this.isDeletingSession(session.id))) {
+      throw Object.assign(
+        new Error("A session in this folder is being deleted"),
+        {
+          status: 409,
+        },
+      );
+    }
+    for (const session of records) this.folderDeletionIds.add(session.id);
+    const deleted: HiddenFolderDeleteResponse["deleted"] = [];
+    try {
+      // Admission is all-or-nothing. Once every identity is reserved, a
+      // pre-existing active/open/mutation operation rejects the whole batch
+      // before any sibling session can be moved to Trash.
+      this.assertHiddenFolderDeletionReady(records);
+      for (const session of records) {
+        try {
+          const result = await this.deleteSessionInside(session.id, session);
+          deleted.push({
+            sessionId: result.sessionId,
+            disposition: result.disposition,
+          });
+        } catch (error) {
+          return {
+            cwd,
+            deleted,
+            failure: {
+              sessionId: session.id,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to delete session",
+            },
+          };
+        }
+      }
+      return { cwd, deleted };
+    } finally {
+      for (const session of records) this.folderDeletionIds.delete(session.id);
+    }
   }
 
   async newSession(
@@ -2690,6 +2886,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       id: `pending-${++this.provisionalSequence}`,
       cwd,
       sessionPath: null,
+      startupThinkingLevel: options.thinkingLevel ?? null,
       process: rpc,
       preview: null,
       projection: null,
@@ -2798,9 +2995,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         sessionName: name,
         cwd,
         model: projection.model ?? state.model,
-        thinkingLevel: projection.hasActiveEntryType("thinking_level_change")
-          ? projection.thinkingLevel
-          : String(state.thinkingLevel ?? "off"),
+        thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
         isStreaming: false,
         isCompacting: false,
         messages: page.messages,
@@ -3966,7 +4161,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               : undefined,
           cwd: slot.cwd,
           model: slot.projection.model ?? state.model,
-          thinkingLevel: slot.projection.thinkingLevel,
+          thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
           isStreaming: Boolean(state.isStreaming),
           activeAssistantMessageKey: this.activeAssistantSnapshotKey(
             slot,

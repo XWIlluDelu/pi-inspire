@@ -2,10 +2,12 @@ import { Loader2, X } from "lucide-react";
 import { Profiler, useCallback, useEffect, useState } from "react";
 import { type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
+import type { Notice } from "./events";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandPalette } from "./components/CommandPalette";
+import { CopyAction } from "./components/CopyAction";
 import { Composer } from "./components/Composer";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
@@ -156,27 +158,43 @@ function HostUnavailable({
   );
 }
 
+function NoticeItem({ notice }: { notice: Notice }) {
+  const copyLabel =
+    notice.kind === "warning"
+      ? "Warning"
+      : notice.kind === "error"
+        ? "Error"
+        : null;
+
+  return (
+    <div className={`notice notice--${notice.kind}`} role="status">
+      <span className="notice__text">{notice.text}</span>
+      {copyLabel ? (
+        <CopyAction
+          text={notice.text}
+          label={copyLabel}
+          className="notice__copy"
+        />
+      ) : null}
+      <button
+        type="button"
+        className="notice__dismiss"
+        onClick={() => store.dismissNotice(notice.id)}
+        aria-label="Dismiss notification"
+      >
+        <X size={12} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
 function Notices() {
   const state = useAppState();
   if (state.notices.length === 0) return null;
   return (
     <div className="notices" aria-live="polite">
       {state.notices.map((notice) => (
-        <div
-          key={notice.id}
-          className={`notice notice--${notice.kind}`}
-          role="status"
-        >
-          <span className="notice__text">{notice.text}</span>
-          <button
-            type="button"
-            className="notice__dismiss"
-            onClick={() => store.dismissNotice(notice.id)}
-            aria-label="Dismiss notification"
-          >
-            <X size={12} aria-hidden />
-          </button>
-        </div>
+        <NoticeItem key={notice.id} notice={notice} />
       ))}
     </div>
   );

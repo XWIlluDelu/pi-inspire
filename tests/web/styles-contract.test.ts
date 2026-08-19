@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 
 const stylesheet = new URL("../../src/styles.css", import.meta.url);
 const documentTemplate = new URL("../../index.html", import.meta.url);
+const launcherIcons = [
+  new URL("../../public/app-icon-192.png", import.meta.url),
+  new URL("../../public/app-icon-512.png", import.meta.url),
+];
 
 describe("design token contract", () => {
   it("does not reference undeclared project CSS variables", async () => {
@@ -46,6 +50,15 @@ describe("design token contract", () => {
     expect(css).toMatch(/\.pane-scrim\s*{[^}]*backdrop-filter:\s*blur\(2px\)/s);
     expect(html).toContain("viewport-fit=cover");
     expect(html).toContain("interactive-widget=resizes-content");
+  });
+
+  it("keeps ordinary launcher icons alpha-capable at their rounded corners", async () => {
+    for (const icon of launcherIcons) {
+      const png = await readFile(icon);
+      expect(png.subarray(12, 16).toString("ascii")).toBe("IHDR");
+      // PNG IHDR byte 9 is the color type; 6 is truecolor with alpha.
+      expect(png[25]).toBe(6);
+    }
   });
 
   it("declares permanent brand and dedicated surface tokens", async () => {

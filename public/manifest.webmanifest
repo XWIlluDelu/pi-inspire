@@ -1,6 +1,6 @@
 {
   "id": "/",
-  "name": "INSΠRE — Pi workbench",
+  "name": "INSΠRE",
   "short_name": "INSΠRE",
   "description": "A local workbench for Pi coding sessions.",
   "start_url": "/",
@@ -11,19 +11,19 @@
   "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "/app-icon-192.png",
+      "src": "/app-icon-192.png?v=3",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/app-icon-512.png",
+      "src": "/app-icon-512.png?v=3",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/app-icon-maskable-512.png",
+      "src": "/app-icon-maskable-512.png?v=3",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

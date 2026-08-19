@@ -948,7 +948,7 @@ function sessionRowButton(nav: HTMLElement, title: string): HTMLElement {
 }
 
 describe("session attention indicators", () => {
-  it("marks live composer work while keeping terminal state explicit and still", () => {
+  it("keeps run-state feedback on the composer rather than duplicating it in the topbar", () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;
 
@@ -968,7 +968,7 @@ describe("session attention indicators", () => {
       }),
     );
     expect(composer).toHaveClass("composer--failed");
-    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 
     act(() => ws.emit({ type: "agent_settled" }));
   });

@@ -7,7 +7,6 @@ import {
   PanelLeft,
   PanelRight,
   Settings as SettingsIcon,
-  XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -85,13 +84,6 @@ function StateChip({
         label={label}
       >
         <AlertTriangle size={12} aria-hidden />
-      </StatusChip>
-    );
-  }
-  if (runState === "failed") {
-    return (
-      <StatusChip key="failed" className="chip chip--error" label="Failed">
-        <XCircle size={12} aria-hidden />
       </StatusChip>
     );
   }

@@ -43,6 +43,12 @@ const openSchema = z.object({ id: z.string().min(1).max(128) });
 const deleteSessionParamsSchema = z.object({
   sessionId: z.string().min(1).max(128),
 });
+const deleteHiddenFolderSchema = z
+  .object({
+    cwd: z.string().min(1).max(4_096),
+    sessionIds: z.array(z.string().min(1).max(128)).min(1).max(10_000),
+  })
+  .strict();
 const newSchema = z
   .object({
     cwd: z.string().min(1).max(4_096),
@@ -571,6 +577,38 @@ export function createInspireServer(deps: AppDependencies): {
       // failure into a retryable DELETE whose second execution is ambiguous.
       console.error(
         `[session ${sessionId}] navigation metadata cleanup failed`,
+        error,
+      );
+      response.json({ ...result, preferenceCleanupFailed: true });
+    }
+  });
+  app.post("/api/sessions/delete-hidden-folder", async (request, response) => {
+    const { cwd, sessionIds } = deleteHiddenFolderSchema.parse(request.body);
+    const current = await deps.preferences.inspect();
+    if (!current.preferences.hiddenProjectCwds.includes(cwd)) {
+      return response.status(409).json({
+        error:
+          "The folder must remain in Hidden before its sessions can be deleted",
+      });
+    }
+    const result = await deps.runtime.deleteHiddenFolderSessions(
+      cwd,
+      sessionIds,
+    );
+    for (const session of result.deleted)
+      deps.resources.forgetSession(session.sessionId);
+    if (result.deleted.length === 0) return response.json(result);
+    try {
+      const preferences = await deps.preferences.removeSessions(
+        result.deleted.map((session) => session.sessionId),
+        result.failure ? undefined : cwd,
+      );
+      response.json({ ...result, preferences });
+    } catch (error) {
+      // Earlier files are already in Trash (or permanently removed). Return
+      // that committed subset and never turn it into a retryable batch.
+      console.error(
+        `[folder ${cwd}] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
         error,
       );
       response.json({ ...result, preferenceCleanupFailed: true });
