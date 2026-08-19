@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOST_SERVICE_NAME = "inspire-host.service";
+export const IDLE_MAINTENANCE_TIMER_NAME =
+  "inspire-idle-maintenance-restart.timer";
 
 function configHome(environment = process.env) {
   return environment.XDG_CONFIG_HOME || join(environment.HOME || homedir(), ".config");
@@ -121,18 +123,29 @@ async function manageHostService(root, action, options) {
   if (service.kind !== "managed") return service;
 
   const commands = {
-    start: ["start", HOST_SERVICE_NAME],
-    stop: ["stop", HOST_SERVICE_NAME],
-    restart: ["restart", HOST_SERVICE_NAME],
-    enable: ["enable", "--now", HOST_SERVICE_NAME],
-    disable: ["disable", "--now", HOST_SERVICE_NAME],
+    start: [["start", HOST_SERVICE_NAME]],
+    stop: [["stop", HOST_SERVICE_NAME]],
+    restart: [["restart", HOST_SERVICE_NAME]],
+    enable: [
+      ["enable", "--now", HOST_SERVICE_NAME],
+      ["enable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
+    ],
+    disable: [
+      ["disable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
+      ["disable", "--now", HOST_SERVICE_NAME],
+    ],
   };
-  const arguments_ = commands[action];
-  if (!arguments_) throw new Error(`Unsupported host-service action: ${action}`);
+  const commandsForAction = commands[action];
+  if (!commandsForAction)
+    throw new Error(`Unsupported host-service action: ${action}`);
 
-  const result = await (options?.run ?? runSystemctl)(["--user", ...arguments_], options?.environment);
-  if (result.code !== 0) {
-    return { kind: "control-failed", action, detail: commandDetail(result) };
+  for (const arguments_ of commandsForAction) {
+    const result = await (options?.run ?? runSystemctl)(
+      ["--user", ...arguments_],
+      options?.environment,
+    );
+    if (result.code !== 0)
+      return { kind: "control-failed", action, detail: commandDetail(result) };
   }
   const settled = await inspectHostService(root, options);
   if (settled.kind !== "managed") return settled;
@@ -224,8 +237,8 @@ async function main() {
     start: "Started",
     stop: "Stopped",
     restart: "Restarted",
-    enable: "Enabled and started",
-    disable: "Disabled and stopped",
+    enable: "Enabled and started (with daily idle maintenance)",
+    disable: "Disabled and stopped (with daily idle maintenance)",
   };
   console.log(`${verbs[action]} INSΠRE system service.`);
   console.log(serviceStatusLine(result.service));

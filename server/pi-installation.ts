@@ -19,12 +19,15 @@ interface PiPackageManifest {
   exports?: unknown;
 }
 
-export interface PiInstallation {
+export interface PiInstallationIdentity {
   commandPath: string;
   packageRoot: string;
   cliPath: string;
   sdkEntryPath: string;
   version: string;
+}
+
+export interface PiInstallation extends PiInstallationIdentity {
   sdk: typeof import("@earendil-works/pi-coding-agent");
 }
 
@@ -128,9 +131,12 @@ async function inspectCandidate(commandPath: string): Promise<{
   };
 }
 
-export async function resolvePiInstallation(
+/** Resolve the external package identity without importing its SDK. Maintenance
+ * uses this to compare an installed upgrade without loading it into the host
+ * that is still serving the old runtime. */
+export async function resolvePiInstallationIdentity(
   options: PiInstallationOptions = {},
-): Promise<PiInstallation> {
+): Promise<PiInstallationIdentity> {
   const explicitCommand = options.command ?? process.env.INSPIRE_PI_COMMAND;
   const command = explicitCommand || "pi";
   const searchPath = options.path ?? process.env.PATH ?? "";
@@ -152,14 +158,12 @@ export async function resolvePiInstallation(
     if (typeof version !== "string") {
       throw new Error(`The Pi package at ${candidate} has no version.`);
     }
-    const imported = await import(pathToFileURL(inspected.sdkEntryPath).href);
     return {
       commandPath: candidate,
       packageRoot: inspected.packageRoot,
       cliPath: inspected.cliPath,
       sdkEntryPath: inspected.sdkEntryPath,
       version,
-      sdk: imported as PiInstallation["sdk"],
     };
   }
 
@@ -174,6 +178,17 @@ export async function resolvePiInstallation(
       ? `INSPIRE_PI_COMMAND does not identify a ${PI_PACKAGE_NAME} installation: ${explicitCommand}`
       : "INSΠRE requires Pi to be installed and available on PATH. Install Pi globally, then restart INSΠRE.",
   );
+}
+
+export async function resolvePiInstallation(
+  options: PiInstallationOptions = {},
+): Promise<PiInstallation> {
+  const identity = await resolvePiInstallationIdentity(options);
+  const imported = await import(pathToFileURL(identity.sdkEntryPath).href);
+  return {
+    ...identity,
+    sdk: imported as PiInstallation["sdk"],
+  };
 }
 
 export const piInstallation = await resolvePiInstallation();

@@ -103,6 +103,16 @@ describe("local host API", () => {
       .get("/api/bootstrap")
       .set("Authorization", `Bearer ${token}`);
 
+  it("keeps maintenance restart coordination behind local authentication", async () => {
+    await request(application.server)
+      .post("/api/maintenance/restart")
+      .expect(401);
+    await request(application.server)
+      .post("/api/maintenance/restart")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200, { kind: "skipped", reason: "runtime-unsupported" });
+  });
+
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
