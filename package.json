@@ -71,7 +71,7 @@
     "ci": "npm run check && npm run test:browser"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.2",
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "ws": "^8.21.1",
@@ -80,7 +80,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.8",
-    "@earendil-works/pi-tui": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.2",
     "@playwright/test": "1.62.1",
     "@tanstack/react-virtual": "^3.14.7",
     "@testing-library/jest-dom": "^7.0.0",
