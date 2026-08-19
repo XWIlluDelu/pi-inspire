@@ -19,7 +19,7 @@ interface PackageNotice {
 const projectRoot = resolve(import.meta.dirname, "..");
 const licenseOverrides = new Map<string, string>([
   [
-    "@earendil-works/pi-tui@0.84.1",
+    "@earendil-works/pi-tui@0.84.2",
     resolve(projectRoot, "scripts/licenses/earendil-works-pi-MIT.txt"),
   ],
   [

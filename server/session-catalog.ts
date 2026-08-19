@@ -1,8 +1,5 @@
-import {
-  SessionManager,
-  SettingsManager,
-  type SessionInfo,
-} from "@earendil-works/pi-coding-agent";
+import type { SessionInfo } from "@earendil-works/pi-coding-agent";
+import { SessionManager, SettingsManager } from "./pi-runtime.js";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,

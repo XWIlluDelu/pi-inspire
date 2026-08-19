@@ -1,12 +1,12 @@
 ---
-purpose: The pinned Pi runtime supplies the runtime, event, resource, and session APIs needed by Inspire; this note records the integration boundaries and non-obvious compatibility traps.
+purpose: The user's installed Pi supplies the runtime, event, resource, and session APIs needed by Inspire; this note records the integration boundaries and non-obvious compatibility traps.
 ---
 
 # Pi capabilities and boundaries
 
 ## Supported foundation
 
-Pi’s public SDK explicitly supports custom web, desktop, and mobile interfaces. `AgentSession` owns prompts, queues, messages, model state, compaction, abort, and typed events. `AgentSessionRuntime` owns new, switch, fork, clone, and import flows and is the same replacement layer used by Pi’s built-in modes. The normal `agentDir` and working directory locate global and project settings, credentials, models, extensions, skills, prompts, context files, and sessions.
+Pi’s public SDK explicitly supports custom web, desktop, and mobile interfaces. Inspire resolves the installed `pi` executable and uses that one package root for both SDK calls and RPC workers; the recorded Pi version is diagnostic metadata rather than a separate compatibility policy. `AgentSession` owns prompts, queues, messages, model state, compaction, abort, and typed events. `AgentSessionRuntime` owns new, switch, fork, clone, and import flows and is the same replacement layer used by Pi’s built-in modes. The normal `agentDir` and working directory locate global and project settings, credentials, models, extensions, skills, prompts, context files, and sessions.
 
 RPC is a practical initial process boundary. It exposes commands, responses, streaming message and tool events, session switching and branching, and `get_entries` with stable entry cursors. A local host must still provide the browser-facing transport and security boundary because Pi RPC itself is stdin/stdout JSONL, not a network service.
 
