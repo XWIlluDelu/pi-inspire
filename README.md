@@ -47,7 +47,7 @@ A Linux-first local workbench for [Pi Coding Agent](https://github.com/earendil-
 
 ## Run locally
 
-Requirements: Node.js 22.19 or newer and an existing Pi configuration under `~/.pi/agent/`.
+Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so the terminal and web workbench use one runtime installation and the same `~/.pi/agent/` state.
 
 Simplest:
 
@@ -94,14 +94,14 @@ See [the SSH reverse connection guide](docs/ssh-reverse.md) for local configurat
 
 ## Release package
 
-INSΠRE is packaged as a standalone npm CLI application, not as a Pi resource package: it intentionally has no `pi` manifest or `pi-package` keyword. The exact Pi Coding Agent runtime remains a production dependency, while the browser toolchain is used only to produce the release.
+INSΠRE is packaged as a standalone npm CLI application, not as a Pi resource package: it intentionally has no `pi` manifest or `pi-package` keyword and does not bundle a second Pi runtime. Pi Coding Agent is a development dependency for type-checking and compatibility tests; an installed release resolves the user's external Pi package as its sole SDK and RPC authority.
 
 ```bash
 npm run release:verify
 npm pack
 ```
 
-`prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then starts a real Pi worker through the compiled branch bridge and creates an empty session without invoking a model.
+`prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, proves that Pi is absent from that installation, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then uses one separately installed Pi package for both the public SDK and a real RPC worker and creates an empty session without invoking a model.
 
 The current release is distributed through GitHub Releases rather than the npm registry. Download, verify, and install its local tarball:
 

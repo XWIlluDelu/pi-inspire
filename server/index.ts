@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, piInstallation } from "./pi-runtime.js";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
@@ -47,12 +47,6 @@ const root = resolve(process.env.INSPIRE_INSTALLATION_ROOT || inferredRoot);
 const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 ) as { version: string };
-const piEntry = fileURLToPath(
-  import.meta.resolve("@earendil-works/pi-coding-agent"),
-);
-const piPackage = JSON.parse(
-  await readFile(join(dirname(dirname(piEntry)), "package.json"), "utf8"),
-) as { version: string };
 
 const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
 if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
@@ -90,7 +84,7 @@ const diagnostics = await openDiagnosticLogger({
   base: {
     processId: process.pid,
     version: packageJson.version,
-    piVersion: piPackage.version,
+    piVersion: piInstallation.version,
     mock,
     host,
     port,
@@ -174,7 +168,7 @@ const application = createInspireServer({
   git,
   mock,
   version: packageJson.version,
-  piVersion: piPackage.version,
+  piVersion: piInstallation.version,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),

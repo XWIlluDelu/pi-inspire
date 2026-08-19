@@ -8,15 +8,17 @@ import { watch, type FSWatcher } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { EventEmitter } from "node:events";
+import type {
+  SessionEntry,
+  SessionHeader,
+} from "@earendil-works/pi-coding-agent";
 import {
   buildContextEntries,
   buildSessionContext,
   CURRENT_SESSION_VERSION,
   migrateSessionEntries,
   sessionEntryToContextMessages,
-  type SessionEntry,
-  type SessionHeader,
-} from "@earendil-works/pi-coding-agent";
+} from "./pi-runtime.js";
 import type {
   BranchTreeResponse,
   ProjectionHealth,

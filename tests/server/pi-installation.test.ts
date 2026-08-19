@@ -1,0 +1,104 @@
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { resolvePiInstallation } from "../../server/pi-installation.js";
+
+const directories: string[] = [];
+
+async function fakePi(parent: string, version: string) {
+  const packageRoot = join(
+    parent,
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+  );
+  const binDirectory = join(parent, "bin");
+  await Promise.all([
+    mkdir(join(packageRoot, "dist"), { recursive: true }),
+    mkdir(binDirectory, { recursive: true }),
+  ]);
+  await writeFile(
+    join(packageRoot, "package.json"),
+    `${JSON.stringify({
+      name: "@earendil-works/pi-coding-agent",
+      version,
+      type: "module",
+      bin: { pi: "dist/cli.js" },
+      exports: { ".": { import: "./dist/index.js" } },
+    })}\n`,
+  );
+  await writeFile(
+    join(packageRoot, "dist/index.js"),
+    "export const marker = true;\n",
+  );
+  await writeFile(join(packageRoot, "dist/cli.js"), "#!/usr/bin/env node\n", {
+    mode: 0o755,
+  });
+  const commandPath = join(binDirectory, "pi");
+  await symlink(join(packageRoot, "dist/cli.js"), commandPath);
+  await chmod(commandPath, 0o755);
+  return { packageRoot, binDirectory, commandPath };
+}
+
+afterEach(async () => {
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
+describe("Pi installation authority", () => {
+  it("loads the SDK and RPC CLI from one explicit Pi package without version gating", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pi-installation-"));
+    directories.push(directory);
+    const pi = await fakePi(directory, "99.0.0");
+
+    const installation = await resolvePiInstallation({
+      command: pi.commandPath,
+      installationRoot: join(directory, "inspire"),
+    });
+
+    expect(installation).toMatchObject({
+      commandPath: pi.commandPath,
+      packageRoot: pi.packageRoot,
+      version: "99.0.0",
+    });
+    expect(installation.cliPath).toBe(join(pi.packageRoot, "dist/cli.js"));
+    expect((installation.sdk as unknown as { marker: boolean }).marker).toBe(
+      true,
+    );
+  });
+
+  it("skips the checkout dependency and selects the separately installed Pi", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pi-authority-"));
+    directories.push(directory);
+    const checkout = join(directory, "inspire");
+    const local = await fakePi(checkout, "0.1.0");
+    const external = await fakePi(join(directory, "global"), "2.0.0");
+
+    const configuredCommand = process.env.INSPIRE_PI_COMMAND;
+    delete process.env.INSPIRE_PI_COMMAND;
+    try {
+      const installation = await resolvePiInstallation({
+        installationRoot: checkout,
+        path: `${local.binDirectory}:${external.binDirectory}`,
+      });
+
+      expect(installation.packageRoot).toBe(external.packageRoot);
+      expect(installation.version).toBe("2.0.0");
+    } finally {
+      if (configuredCommand === undefined)
+        delete process.env.INSPIRE_PI_COMMAND;
+      else process.env.INSPIRE_PI_COMMAND = configuredCommand;
+    }
+  });
+});

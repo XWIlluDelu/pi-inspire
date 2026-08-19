@@ -2,15 +2,29 @@
 
 ## Dependency boundaries
 
-The application pins `@earendil-works/pi-coding-agent` exactly at the latest npm release. Every dependency update must preserve that latest-Pi compatibility boundary; an advisory in Pi's own shrinkwrapped tree is not grounds to downgrade Pi or to hold inspire behind the latest release.
+The user's separately installed `pi` is the sole production runtime authority. INSΠRE resolves that executable, imports the public SDK from its package root, and starts RPC workers from the same root. Pi's version is diagnostic metadata, not an INSΠRE admission rule.
 
-Pi publishes a shrinkwrapped dependency tree. Root npm overrides do not reliably replace those nested dependencies and would misstate the supported runtime boundary, so inspire does not use an override to manufacture a clean audit. Findings in that tree remain recorded production advisories, are contained by inspire's loopback/authentication and projection boundaries where applicable, and must be tracked to an upstream Pi release that actually updates its supported tree.
+`@earendil-works/pi-coding-agent` remains exactly pinned in `devDependencies` as a reproducible TypeScript and integration-test witness. Updating that witness follows the latest published Pi so CI exercises current public APIs, but the checkout copy is neither packaged nor used as a production fallback. `@earendil-works/pi-tui` remains an exact development dependency for the browser's deliberately imported fuzzy-search implementation.
+
+The npm release therefore has two independent checks:
+
+- a production-only install contains no Pi package and has a clean `npm audit --omit=dev` result;
+- release verification supplies one external Pi package explicitly and proves the installed host uses it for both SDK access and a real RPC worker.
+
+Pi's own shrinkwrapped dependency tree belongs to the external Pi installation rather than INSΠRE's production dependency graph. INSΠRE does not override, downgrade, or silently substitute that tree.
+
+Sources:
+
+- `package.json` and `package-lock.json` for production and development dependency ownership;
+- `server/pi-installation.ts` and `server/pi-runtime.ts` for runtime resolution;
+- `scripts/verify-release-package.mjs` and installed-Pi integration tests for release evidence;
+- `npm audit --omit=dev` for the shipped production tree.
 
 ## Pi capabilities and boundaries
 
 ### Supported foundation
 
-Pi’s public SDK explicitly supports custom web, desktop, and mobile interfaces. `AgentSession` owns prompts, queues, messages, model state, compaction, abort, and typed events. `AgentSessionRuntime` owns new, switch, fork, clone, and import flows and is the same replacement layer used by Pi’s built-in modes. The normal `agentDir` and working directory locate global and project settings, credentials, models, extensions, skills, prompts, context files, and sessions.
+Pi’s public SDK explicitly supports custom web, desktop, and mobile interfaces. Inspire resolves the installed `pi` executable and uses that one package root for both SDK calls and RPC workers; the recorded Pi version is diagnostic metadata rather than a separate compatibility policy. `AgentSession` owns prompts, queues, messages, model state, compaction, abort, and typed events. `AgentSessionRuntime` owns new, switch, fork, clone, and import flows and is the same replacement layer used by Pi’s built-in modes. The normal `agentDir` and working directory locate global and project settings, credentials, models, extensions, skills, prompts, context files, and sessions.
 
 RPC is a practical initial process boundary. It exposes commands, responses, streaming message and tool events, session switching and branching, and `get_entries` with stable entry cursors. A local host must still provide the browser-facing transport and security boundary because Pi RPC itself is stdin/stdout JSONL, not a network service.
 

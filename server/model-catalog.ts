@@ -1,12 +1,12 @@
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
-  ModelRuntime,
   resolveModelScopeWithDiagnostics,
   SessionManager,
   SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "./pi-runtime.js";
 import {
   THINKING_LEVELS,
   type ModelOption,
