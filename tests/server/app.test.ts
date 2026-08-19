@@ -1560,6 +1560,54 @@ describe("local host API", () => {
     socket.close();
   });
 
+  it("deletes a complete Hidden folder and clears its curation only after the committed batch", async () => {
+    const cwd = "/tmp/hidden-folder";
+    const deleted = vi
+      .spyOn(runtime, "deleteHiddenFolderSessions")
+      .mockResolvedValue({
+        cwd,
+        deleted: [
+          { sessionId: "one", disposition: "trashed" },
+          { sessionId: "two", disposition: "deleted" },
+        ],
+      });
+    const forget = vi.spyOn(resources, "forgetSession");
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        pinnedSessionIds: ["one"],
+        hiddenSessionIds: ["two"],
+        pinnedProjectCwds: [cwd],
+        hiddenProjectCwds: [cwd],
+        navCollapsedGroups: [cwd],
+      })
+      .expect(200);
+
+    const response = await request(application.server)
+      .post("/api/sessions/delete-hidden-folder")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd, sessionIds: ["one", "two"] })
+      .expect(200);
+    expect(deleted).toHaveBeenCalledWith(cwd, ["one", "two"]);
+    expect(response.body).toMatchObject({
+      cwd,
+      deleted: [
+        { sessionId: "one", disposition: "trashed" },
+        { sessionId: "two", disposition: "deleted" },
+      ],
+      preferences: {
+        pinnedSessionIds: [],
+        hiddenSessionIds: [],
+        pinnedProjectCwds: [],
+        hiddenProjectCwds: [],
+        navCollapsedGroups: [],
+      },
+    });
+    expect(forget).toHaveBeenCalledWith("one");
+    expect(forget).toHaveBeenCalledWith("two");
+  });
+
   it("deletes an unselected session and atomically removes its navigation identities", async () => {
     await request(application.server)
       .patch("/api/preferences")

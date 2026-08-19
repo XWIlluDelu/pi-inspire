@@ -103,6 +103,9 @@ export interface RuntimeSlot {
   id: string;
   cwd: string;
   sessionPath: string | null;
+  /** An explicit `--thinking` startup intent stays visible until the Pi-owned
+   * JSONL records its matching active-path setting. */
+  startupThinkingLevel: string | null;
   process: PiRpcProcess | null;
   startupPhase: "idle" | "starting" | "complete";
   startupError: Error | null;
@@ -168,6 +171,7 @@ export interface RuntimeSlotSeed {
   id: string;
   cwd: string;
   sessionPath: string | null;
+  startupThinkingLevel?: string | null;
   process: PiRpcProcess | null;
   preview: ActiveSessionSnapshot | null;
   projection: SessionProjectionView | null;
@@ -186,6 +190,7 @@ export interface RuntimeSlotSeed {
 export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
   return {
     ...seed,
+    startupThinkingLevel: seed.startupThinkingLevel ?? null,
     startupPhase: "idle",
     startupError: null,
     startupStop: null,

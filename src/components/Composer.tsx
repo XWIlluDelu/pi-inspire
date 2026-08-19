@@ -1,6 +1,7 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clipboardFiles } from "../clipboard-files";
+import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import {
   isAbortableRunState,
@@ -144,7 +145,7 @@ export function Composer() {
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey) return;
+    if (!shouldSubmitComposerEnter(event.nativeEvent)) return;
     event.preventDefault();
     if (composerBusy && (event.ctrlKey || event.metaKey))
       void submit("followUp");

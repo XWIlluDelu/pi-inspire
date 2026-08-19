@@ -213,6 +213,17 @@ export interface SessionDeleteResponse {
   preferenceCleanupFailed?: true;
 }
 
+/** A confirmed deletion of every catalog session in one hidden project folder.
+ * A late filesystem failure can follow earlier successful Trash operations;
+ * those irreversible results are returned explicitly instead of retried. */
+export interface HiddenFolderDeleteResponse {
+  cwd: string;
+  deleted: Array<Pick<SessionDeleteResponse, "sessionId" | "disposition">>;
+  failure?: { sessionId: string; message: string };
+  preferences?: InspirePreferences;
+  preferenceCleanupFailed?: true;
+}
+
 export type ResourceKind =
   | "image"
   | "html"

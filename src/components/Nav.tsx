@@ -29,6 +29,7 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
+import { HiddenFolderDeleteDialog } from "./HiddenFolderDeleteDialog";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
@@ -360,7 +361,12 @@ function SessionRow({
   const conflicted = runtimeStatus?.runState === "conflict";
   const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
   const deleteDisabled =
-    active || opening || busy || conflicted || state.deletingSessionId !== null;
+    active ||
+    opening ||
+    busy ||
+    conflicted ||
+    state.deletingSessionId !== null ||
+    state.deletingHiddenFolderCwd !== null;
   const deleteTitle = active
     ? "Switch to another session before deleting"
     : conflicted
@@ -495,6 +501,7 @@ function ProjectGroup({
   hidden = false,
   onSelectSession,
   onDeleteSession,
+  onDeleteFolder,
 }: {
   group: SessionGroup;
   headingId: string;
@@ -504,6 +511,7 @@ function ProjectGroup({
   hidden?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (session: SessionSummary) => void;
+  onDeleteFolder?: (group: SessionGroup) => void;
 }) {
   const state = useAppState();
   // Active search must never hide results inside a collapsed folder.
@@ -515,6 +523,30 @@ function ProjectGroup({
   const activeInside = group.sessions.some(
     (session) => session.id === selectedSessionId,
   );
+  const folderDeleting = state.deletingHiddenFolderCwd === group.cwd;
+  const folderHasBusySession = group.sessions.some((session) => {
+    const status = state.sessionStatuses[session.id];
+    return status
+      ? isBusyRunState(status.runState) || status.runState === "conflict"
+      : false;
+  });
+  const folderOpening = group.sessions.some(
+    (session) => state.openingSessionId === session.id,
+  );
+  const deleteFolderDisabled =
+    folderDeleting ||
+    activeInside ||
+    folderOpening ||
+    folderHasBusySession ||
+    state.deletingSessionId !== null ||
+    state.deletingHiddenFolderCwd !== null;
+  const deleteFolderTitle = activeInside
+    ? "Switch to another session before deleting this folder"
+    : folderOpening
+      ? "Wait for every session in this folder to finish opening"
+      : folderHasBusySession
+        ? "Wait for every session in this folder to finish working"
+        : "Delete all sessions in folder";
   return (
     <section
       className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
@@ -560,7 +592,20 @@ function ProjectGroup({
               >
                 <Eye size={12} aria-hidden />
               </button>
-              <span className="nav__row-action-spacer" aria-hidden />
+              <button
+                type="button"
+                className="nav__row-action nav__row-action--danger"
+                aria-label={`Delete all sessions in folder ${group.name}`}
+                title={deleteFolderTitle}
+                disabled={deleteFolderDisabled}
+                onClick={() => onDeleteFolder?.(group)}
+              >
+                {folderDeleting ? (
+                  <Loader2 size={12} className="spin" aria-hidden />
+                ) : (
+                  <Trash2 size={12} aria-hidden />
+                )}
+              </button>
             </>
           ) : (
             <>
@@ -629,6 +674,8 @@ export function Nav({
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
     null,
   );
+  const [deleteFolderCandidate, setDeleteFolderCandidate] =
+    useState<SessionGroup | null>(null);
 
   if (collapsed) {
     return (
@@ -842,6 +889,7 @@ export function Nav({
                     hidden
                     onSelectSession={onSelectSession}
                     onDeleteSession={setDeleteCandidate}
+                    onDeleteFolder={setDeleteFolderCandidate}
                   />
                 ))}
                 {hidden.map((session) => (
@@ -885,6 +933,19 @@ export function Nav({
           onClose={() => {
             store.clearSessionDeleteError();
             setDeleteCandidate(null);
+          }}
+        />
+      ) : null}
+      {deleteFolderCandidate ? (
+        <HiddenFolderDeleteDialog
+          cwd={deleteFolderCandidate.cwd}
+          name={deleteFolderCandidate.name}
+          sessionIds={deleteFolderCandidate.sessions.map(
+            (session) => session.id,
+          )}
+          onClose={() => {
+            store.clearSessionDeleteError();
+            setDeleteFolderCandidate(null);
           }}
         />
       ) : null}

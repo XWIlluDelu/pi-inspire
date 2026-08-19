@@ -13,6 +13,7 @@ import {
   type GitStatusResponse,
   type HostDirListing,
   type HostRootsResponse,
+  type HiddenFolderDeleteResponse,
   type InspirePreferences,
   type LaunchPreference,
   type ModelIdentity,
@@ -222,6 +223,8 @@ export interface AppState extends EventSlice {
   sessionSelectionPending: boolean;
   /** The Hidden-row destructive action currently awaiting its host result. */
   deletingSessionId: string | null;
+  /** The Hidden-folder destructive action currently awaiting its host result. */
+  deletingHiddenFolderCwd: string | null;
   /** The visible session's composer slice. Authoritative copies live in
    * per-session partitions inside the store; a session switch swaps the
    * slice, so staged work never leaks across sessions. */
@@ -305,6 +308,7 @@ const initialState: AppState = {
   openingSessionId: null,
   sessionSelectionPending: false,
   deletingSessionId: null,
+  deletingHiddenFolderCwd: null,
   attachments: [],
   projectFiles: [],
   sending: false,
@@ -1489,11 +1493,19 @@ export class AppStore {
   deleteSession = async (
     sessionId: string,
   ): Promise<SessionDeleteDisposition | null> => {
+    const session = this.state.sessions.find(
+      (candidate) => candidate.id === sessionId,
+    );
+    const hidden =
+      this.state.prefs.hiddenSessionIds.includes(sessionId) ||
+      (session !== undefined &&
+        this.state.prefs.hiddenProjectCwds.includes(session.cwd));
     if (
       !this.api ||
       this.state.deletingSessionId ||
+      this.state.deletingHiddenFolderCwd ||
       sessionId === this.state.sessionId ||
-      !this.state.prefs.hiddenSessionIds.includes(sessionId)
+      !hidden
     )
       return null;
     const preserveQuery = this.state.sessionQuery;
@@ -1504,7 +1516,14 @@ export class AppStore {
       // Hiding is an optimistic preference write. Fence it before DELETE so a
       // late PATCH cannot resurrect the deleted id in durable navigation data.
       await this.prefsWrites;
-      if (!this.state.prefs.hiddenSessionIds.includes(sessionId)) {
+      const current = this.state.sessions.find(
+        (candidate) => candidate.id === sessionId,
+      );
+      const stillHidden =
+        this.state.prefs.hiddenSessionIds.includes(sessionId) ||
+        (current !== undefined &&
+          this.state.prefs.hiddenProjectCwds.includes(current.cwd));
+      if (!stillHidden) {
         this.set({
           sessionDeleteError:
             "The session must remain in Hidden before it can be deleted",
@@ -1562,6 +1581,116 @@ export class AppStore {
     } finally {
       if (this.state.deletingSessionId === sessionId)
         this.set({ deletingSessionId: null });
+    }
+  };
+
+  deleteHiddenFolderSessions = async (
+    cwd: string,
+    sessionIds: string[],
+  ): Promise<HiddenFolderDeleteResponse | null> => {
+    if (
+      !this.api ||
+      this.state.deletingSessionId ||
+      this.state.deletingHiddenFolderCwd ||
+      !this.state.prefs.hiddenProjectCwds.includes(cwd)
+    )
+      return null;
+    const preserveQuery = this.state.sessionQuery;
+    const preserveOffset = this.state.sessionListNextOffset;
+    const preserveTotal = this.state.sessionListTotal;
+    this.set({ deletingHiddenFolderCwd: cwd, sessionDeleteError: null });
+    try {
+      // Like individual deletion, wait for an optimistic hide write before
+      // admitting a destructive request. The host also enforces this curation
+      // boundary, so a late restore cannot target an ordinary folder.
+      await this.prefsWrites;
+      if (!this.state.prefs.hiddenProjectCwds.includes(cwd)) {
+        this.set({
+          sessionDeleteError:
+            "The folder must remain in Hidden before its sessions can be deleted",
+        });
+        return null;
+      }
+      const result = await this.api.deleteHiddenFolderSessions(cwd, sessionIds);
+      const deleted = new Set(
+        result.deleted.map((session) => session.sessionId),
+      );
+      const sessionStatuses = { ...this.state.sessionStatuses };
+      for (const sessionId of deleted) {
+        this.catalog.remove(sessionId);
+        this.attentionArms.delete(sessionId);
+        this.titleAttention.delete(sessionId);
+        delete sessionStatuses[sessionId];
+        this.discardSessionComposer(sessionId);
+      }
+      this.publishTitleAttention();
+
+      const fallbackPrefs = {
+        ...this.state.prefs,
+        pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
+          (id) => !deleted.has(id),
+        ),
+        hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
+          (id) => !deleted.has(id),
+        ),
+        ...(result.failure
+          ? {}
+          : {
+              pinnedProjectCwds: this.state.prefs.pinnedProjectCwds.filter(
+                (candidate) => candidate !== cwd,
+              ),
+              hiddenProjectCwds: this.state.prefs.hiddenProjectCwds.filter(
+                (candidate) => candidate !== cwd,
+              ),
+              navCollapsedGroups: this.state.prefs.navCollapsedGroups.filter(
+                (candidate) => candidate !== cwd,
+              ),
+            }),
+      };
+      const prefs = result.preferences ?? fallbackPrefs;
+      if (result.preferences) this.confirmedPrefs = result.preferences;
+      this.set({ prefs, sessionStatuses });
+
+      if (result.deleted.length > 0) {
+        const count = result.deleted.length;
+        const allTrashed = result.deleted.every(
+          (session) => session.disposition === "trashed",
+        );
+        this.notify(
+          "info",
+          allTrashed
+            ? `${count} ${count === 1 ? "session" : "sessions"} moved to Trash`
+            : `${count} ${count === 1 ? "session" : "sessions"} deleted`,
+        );
+        void this.preserveLoadedSessions(
+          preserveQuery,
+          preserveOffset,
+          preserveTotal,
+        );
+      }
+      if (result.preferenceCleanupFailed) {
+        this.notify(
+          "warning",
+          "Sessions were deleted, but their navigation metadata could not be saved",
+        );
+      }
+      if (result.failure) {
+        this.set({
+          sessionDeleteError: `Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "session" : "sessions"}; stopped at ${result.failure.sessionId}: ${result.failure.message}`,
+        });
+      }
+      return result;
+    } catch (error) {
+      this.set({
+        sessionDeleteError:
+          error instanceof Error
+            ? error.message
+            : "Failed to delete the folder's sessions",
+      });
+      return null;
+    } finally {
+      if (this.state.deletingHiddenFolderCwd === cwd)
+        this.set({ deletingHiddenFolderCwd: null });
     }
   };
 

@@ -151,6 +151,15 @@ function catalog(records: SessionRecord[]): SessionCatalogLike {
   return {
     refresh: async () => records,
     get: async (id) => byId.get(id),
+    getUnique: async (id) => {
+      const matches = records.filter((record) => record.id === id);
+      if (matches.length > 1)
+        throw Object.assign(
+          new Error("The session identity is ambiguous in the Pi catalog"),
+          { status: 409 },
+        );
+      return matches[0];
+    },
     list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
     listByIds: async () => [],
     listByCwds: async () => [],
@@ -1355,6 +1364,9 @@ describe("RuntimeController concurrent sessions", () => {
       store,
       (options) => {
         worker = new FakeRpc(options);
+        // Match Pi's normal new-session behavior: it reserves a JSONL pathname
+        // before the first prompt, but has not written a thinking-level entry.
+        worker.sessionPath = "/tmp/new-id.jsonl";
         const request = worker.request.bind(worker);
         worker.request = async <T>(
           command: Record<string, unknown>,
@@ -1391,6 +1403,11 @@ describe("RuntimeController concurrent sessions", () => {
       expect(worker?.options.args?.at(-2)).toBe("--extension");
       expect(snapshot.active).toMatchObject({
         model: { provider: "anthropic", id: "claude-sonnet-4" },
+        thinkingLevel: "high",
+      });
+      // A later snapshot previously painted the pending projection's `off`
+      // default while its explicit --thinking selection still awaited JSONL.
+      expect((await runtime.snapshot()).active).toMatchObject({
         thinkingLevel: "high",
       });
     } finally {
@@ -2057,8 +2074,87 @@ describe("RuntimeController concurrent sessions", () => {
     expect(remove).toHaveBeenCalledWith(
       expect.objectContaining({ id: "a", path: "/sessions/a.jsonl" }),
     );
-    expect(source.refresh).toHaveBeenCalledOnce();
+    expect(source.refresh).not.toHaveBeenCalled();
     expect(source.invalidate).toHaveBeenCalledOnce();
+    await runtime.close();
+  });
+
+  it("deletes the complete hidden-folder snapshot after reserving every identity", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const source = catalog([record("a", "/tmp"), record("b", "/tmp")]);
+    source.refresh = vi.fn(source.refresh);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      source,
+      store,
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await expect(
+      runtime.deleteHiddenFolderSessions("/tmp", ["a", "b"]),
+    ).resolves.toEqual({
+      cwd: "/tmp",
+      deleted: [
+        { sessionId: "a", disposition: "trashed" },
+        { sessionId: "b", disposition: "trashed" },
+      ],
+    });
+    expect(source.refresh).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledTimes(2);
+    await runtime.close();
+  });
+
+  it("rejects a Hidden-folder batch if its reviewed session snapshot changed", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await expect(
+      runtime.deleteHiddenFolderSessions("/tmp", ["a"]),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "The folder's sessions changed; review it before deleting",
+    });
+    expect(remove).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("rejects a Hidden-folder batch before moving any session when one is selected", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+    await runtime.openSession("a");
+
+    await expect(
+      runtime.deleteHiddenFolderSessions("/tmp", ["a", "b"]),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Switch to another session before deleting this folder",
+    });
+    expect(remove).not.toHaveBeenCalled();
     await runtime.close();
   });
 
