@@ -33,6 +33,7 @@ import { HiddenFolderDeleteDialog } from "./HiddenFolderDeleteDialog";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
+import { useModalFocus } from "../use-modal-focus";
 
 export interface SessionGroup {
   cwd: string;
@@ -658,18 +659,28 @@ function ProjectGroup({
 export function Nav({
   collapsed,
   selectedSessionId,
+  isModal = false,
+  onClose,
   onNewSession,
   onSelectSession,
 }: {
   collapsed: boolean;
   selectedSessionId?: string | null;
+  isModal?: boolean;
+  onClose?: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
 }) {
   const state = useAppState();
   const visibleSessionId =
     selectedSessionId === undefined ? state.sessionId : selectedSessionId;
-  const navRef = useRef<HTMLElement>(null);
+  const internalNavRef = useRef<HTMLElement>(null);
+  const modalNavRef = useModalFocus<HTMLDivElement>(
+    isModal,
+    undefined,
+    onClose,
+  );
+  const navRef = isModal ? modalNavRef : internalNavRef;
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
     null,
@@ -738,8 +749,8 @@ export function Nav({
     hidden.length +
     hiddenGroups.reduce((total, group) => total + group.sessions.length, 0);
 
-  return (
-    <nav className="nav" aria-label="Sessions" ref={navRef}>
+  const contents = (
+    <>
       <div className="nav__header">
         <button
           type="button"
@@ -949,6 +960,22 @@ export function Nav({
           }}
         />
       ) : null}
+    </>
+  );
+  return isModal ? (
+    <div
+      className="nav"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Sessions"
+      tabIndex={-1}
+      ref={modalNavRef}
+    >
+      {contents}
+    </div>
+  ) : (
+    <nav className="nav" aria-label="Sessions" ref={internalNavRef}>
+      {contents}
     </nav>
   );
 }

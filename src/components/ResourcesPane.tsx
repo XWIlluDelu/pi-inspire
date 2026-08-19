@@ -21,6 +21,7 @@ import type {
 } from "../../shared/contracts";
 import { RESOURCE_LIST_PAGE_SIZE } from "../../shared/resource-references";
 import { formatBytes } from "../format";
+import { useModalFocus } from "../use-modal-focus";
 import {
   gitDecorationForChange,
   gitHeadLabel,
@@ -859,9 +860,21 @@ function DetailRegion() {
   return <PreviewRegion />;
 }
 
-export function ResourcesPane() {
+export function ResourcesPane({
+  isModal = false,
+  onClose,
+}: {
+  isModal?: boolean;
+  onClose?: () => void;
+} = {}) {
   const state = useAppState();
-  const paneRef = useRef<HTMLElement>(null);
+  const internalPaneRef = useRef<HTMLElement>(null);
+  const modalPaneRef = useModalFocus<HTMLDivElement>(
+    isModal,
+    undefined,
+    onClose,
+  );
+  const paneRef = isModal ? modalPaneRef : internalPaneRef;
   const bodyRef = useRef<HTMLDivElement>(null);
   const indexRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1069,13 +1082,8 @@ export function ResourcesPane() {
     event.preventDefault();
     void store.openResource(reference);
   };
-  return (
-    <aside
-      className="ctx res"
-      aria-label="Files and resources"
-      onClick={openNestedReference}
-      ref={paneRef}
-    >
+  const contents = (
+    <>
       <div className="ctx__header">
         <div className="ctx__modes" role="group" aria-label="Resource mode">
           <button
@@ -1336,6 +1344,28 @@ export function ResourcesPane() {
         scroller=".res__preview-fill"
         variant="ctx"
       />
+    </>
+  );
+  return isModal ? (
+    <div
+      className="ctx res"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Files and resources"
+      tabIndex={-1}
+      onClick={openNestedReference}
+      ref={modalPaneRef}
+    >
+      {contents}
+    </div>
+  ) : (
+    <aside
+      className="ctx res"
+      aria-label="Files and resources"
+      onClick={openNestedReference}
+      ref={internalPaneRef}
+    >
+      {contents}
     </aside>
   );
 }

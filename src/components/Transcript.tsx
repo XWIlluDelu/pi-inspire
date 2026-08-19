@@ -90,6 +90,7 @@ export function Transcript({
   viewingEarlierBranch?: boolean;
 }) {
   const searchOwnsViewportRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Tool-call pairing is derived data: recompute only when the message list changes.
   const { toolResults, toolCallIds } = useMemo(() => {
@@ -381,8 +382,13 @@ export function Transcript({
   return (
     <div
       className={`transcript-wrap ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
+      tabIndex={-1}
       onKeyDownCapture={(event) => {
-        if (
+        if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        } else if (
           viewport.scrollRef.current?.contains(event.target as Node) &&
           [
             "ArrowUp",
@@ -403,8 +409,18 @@ export function Transcript({
         className={`transcript-search ${search.query ? "transcript-search--active" : ""}`}
         role="search"
         aria-label="Search settled transcript"
+        onClick={(event) => {
+          if (
+            event.target === event.currentTarget ||
+            (event.target instanceof HTMLElement &&
+              (event.target.tagName === "svg" ||
+                event.target.closest(".transcript-search__icon")))
+          ) {
+            searchInputRef.current?.focus();
+          }
+        }}
       >
-        <Search size={14} aria-hidden />
+        <Search size={14} className="transcript-search__icon" aria-hidden />
         <Dropdown
           label="Search scope"
           value={search.scope}
@@ -413,6 +429,7 @@ export function Transcript({
           className="transcript-search__scope"
         />
         <input
+          ref={searchInputRef}
           type="search"
           value={search.query}
           onChange={(event) => search.setQuery(event.target.value)}
@@ -422,6 +439,7 @@ export function Transcript({
               search.navigate(event.shiftKey ? -1 : 1);
             } else if (event.key === "Escape") {
               search.clear();
+              searchInputRef.current?.blur();
             }
           }}
           placeholder="Search conversation"
