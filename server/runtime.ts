@@ -105,6 +105,7 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
   ),
 );
 const MAX_PROMPT_CHARS = 500_000;
+const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
 const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
@@ -131,6 +132,14 @@ function consoleRuntimeError(sessionId: string, error: unknown): void {
     ...(typeof detail === "string" ? [detail] : []),
   );
 }
+
+export type MaintenanceRestartBusyReason =
+  | "active-work"
+  | "in-flight-operation";
+
+export type MaintenanceRestartDecision =
+  | { kind: "ready"; expiresAt: number }
+  | { kind: "busy"; reason: MaintenanceRestartBusyReason };
 
 export interface RuntimeLike {
   /** Id of the currently visible session; session-bound routes compare
@@ -166,6 +175,9 @@ export interface RuntimeLike {
   ): Promise<BranchNavigateResponse>;
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
+  /** Fence new work for a short, scheduled service replacement after every
+   * runtime slot has been proven idle. */
+  reserveMaintenanceRestart?(): MaintenanceRestartDecision;
   close(): Promise<void>;
 }
 
@@ -403,6 +415,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
    * identity from the moment the request is accepted until the file outcome
    * is known. Concurrent duplicate DELETEs share the same result. */
   private readonly deleting = new Map<string, Promise<SessionDeleteResponse>>();
+  /** Public operations retain this count from admission through every await,
+   * closing gaps before they obtain a slot or enter a slot FIFO. */
+  private maintenanceOperations = 0;
+  private maintenanceRestartExpiresAt: number | null = null;
+  private maintenanceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
   private closePromise: Promise<void> | null = null;
 
@@ -516,6 +533,105 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   get activeSessionId(): string | null {
     return this.selectedSessionId;
+  }
+
+  /** Reserve a short no-new-work window only after every known runtime owner
+   * is idle. The timer must restart the host before it expires; otherwise this
+   * automatically restores normal admission without a recovery action. */
+  reserveMaintenanceRestart(): MaintenanceRestartDecision {
+    this.assertNotClosing();
+    this.expireMaintenanceRestart();
+    if (this.maintenanceRestartExpiresAt !== null)
+      return { kind: "busy", reason: "in-flight-operation" };
+    if (this.hasActiveRuntimeWork())
+      return { kind: "busy", reason: "active-work" };
+    if (this.maintenanceOperations > 0 || this.hasInFlightRuntimeOperation())
+      return { kind: "busy", reason: "in-flight-operation" };
+
+    const expiresAt = Date.now() + MAINTENANCE_RESTART_LEASE_MS;
+    this.maintenanceRestartExpiresAt = expiresAt;
+    this.maintenanceRestartTimer = setTimeout(
+      () => this.expireMaintenanceRestart(),
+      MAINTENANCE_RESTART_LEASE_MS,
+    );
+    this.maintenanceRestartTimer.unref?.();
+    this.diagnostics.record("info", "maintenance_restart_reserved", {
+      expiresAt,
+    });
+    return { kind: "ready", expiresAt };
+  }
+
+  private hasActiveRuntimeWork(): boolean {
+    return [...this.slots.values()].some(
+      (slot) =>
+        isBusyRunState(slot.runState) ||
+        slot.runState === "conflict" ||
+        slot.pendingExtensionUiRequests.size > 0 ||
+        slot.pendingQueues.steering.length > 0 ||
+        slot.pendingQueues.followUp.length > 0,
+    );
+  }
+
+  private hasInFlightRuntimeOperation(): boolean {
+    if (
+      this.loadingSlots.size > 0 ||
+      this.loadingPaths.size > 0 ||
+      this.opening.size > 0 ||
+      this.selectionReservations.size > 0 ||
+      this.forkReservationsById.size > 0 ||
+      this.forkReservationsByPath.size > 0 ||
+      this.provisionalSlots.size > 0 ||
+      this.deleting.size > 0
+    )
+      return true;
+    return [...this.slots.values()].some(
+      (slot) =>
+        slot.activeOperations > 0 ||
+        slot.mutationPending > 0 ||
+        slot.extensionResponsePending > 0 ||
+        slot.stopping !== null ||
+        slot.startupStop !== null ||
+        slot.startupPhase === "starting" ||
+        slot.rebinding ||
+        slot.forkOverflowCleanup !== null ||
+        slot.navigationLease !== null ||
+        slot.pendingBranchBridge !== null ||
+        slot.pendingPartialPersistence !== null ||
+        slot.persistenceExpectations.length > 0,
+    );
+  }
+
+  private expireMaintenanceRestart(): void {
+    const expiresAt = this.maintenanceRestartExpiresAt;
+    if (expiresAt === null || Date.now() < expiresAt) return;
+    this.maintenanceRestartExpiresAt = null;
+    if (this.maintenanceRestartTimer !== null) {
+      clearTimeout(this.maintenanceRestartTimer);
+      this.maintenanceRestartTimer = null;
+    }
+    this.diagnostics.record("warning", "maintenance_restart_expired", {});
+  }
+
+  private assertMaintenanceAvailable(): void {
+    this.assertNotClosing();
+    this.expireMaintenanceRestart();
+    if (this.maintenanceRestartExpiresAt !== null)
+      throw Object.assign(
+        new Error("INSΠRE is preparing a scheduled maintenance restart"),
+        { status: 503 },
+      );
+  }
+
+  private async withMaintenanceOperation<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.assertMaintenanceAvailable();
+    this.maintenanceOperations += 1;
+    try {
+      return await operation();
+    } finally {
+      this.maintenanceOperations -= 1;
+    }
   }
 
   sessionCwd(sessionId: string): string | null {
@@ -2278,6 +2394,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async openSession(id: string): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(() => this.openSessionInside(id));
+  }
+
+  private async openSessionInside(id: string): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     if (this.deleting.has(id)) {
       throw Object.assign(new Error("That session is being deleted"), {
@@ -2325,6 +2445,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async deselectSession(): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(() => this.deselectSessionInside());
+  }
+
+  private async deselectSessionInside(): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     ++this.selectionSequence;
     const previousSessionId = this.selectedSessionId;
@@ -2503,6 +2627,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
+    return this.withMaintenanceOperation(() =>
+      this.deleteSessionRequest(sessionId),
+    );
+  }
+
+  private deleteSessionRequest(
+    sessionId: string,
+  ): Promise<SessionDeleteResponse> {
     this.assertNotClosing();
     const pending = this.deleting.get(sessionId);
     if (pending) return pending;
@@ -2519,6 +2651,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async newSession(
     cwdInput: string,
     options: NewSessionOptions = {},
+  ): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(() =>
+      this.newSessionInside(cwdInput, options),
+    );
+  }
+
+  private async newSessionInside(
+    cwdInput: string,
+    options: NewSessionOptions,
   ): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
@@ -2751,6 +2892,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async prompt(request: PromptRequest): Promise<void> {
+    return this.withMaintenanceOperation(() => this.promptInside(request));
+  }
+
+  private async promptInside(request: PromptRequest): Promise<void> {
     const slot = this.requireSlot(request.sessionId);
     const entered = request.message.trim();
     if (slot.bridge) {
@@ -2870,6 +3015,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async branchTree(sessionId: string): Promise<BranchTreeResponse> {
+    this.assertMaintenanceAvailable();
     const slot = this.requireSlot(sessionId);
     return this.useSlot(slot, async () => {
       await this.reconcileSlot(slot, true);
@@ -2952,6 +3098,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async navigateBranch(
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse> {
+    return this.withMaintenanceOperation(() =>
+      this.navigateBranchInside(request),
+    );
+  }
+
+  private async navigateBranchInside(
     request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse> {
     const slot = this.requireSlot(request.sessionId);
@@ -3165,6 +3319,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
+    return this.withMaintenanceOperation(() => this.forkBranchInside(request));
+  }
+
+  private async forkBranchInside(
+    request: BranchForkRequest,
+  ): Promise<BranchForkResponse> {
     const source = this.requireSlot(request.sessionId);
     return this.mutateSlot(source, async () => {
       if (this.selectedSessionId !== source.id) {
@@ -3475,6 +3635,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async abort(sessionId: string): Promise<void> {
+    return this.withMaintenanceOperation(() => this.abortInside(sessionId));
+  }
+
+  private async abortInside(sessionId: string): Promise<void> {
     const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
       await this.useSlot(initialSlot, async () => {
@@ -3574,6 +3738,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async rename(sessionId: string, name: string): Promise<void> {
+    return this.withMaintenanceOperation(() =>
+      this.renameInside(sessionId, name),
+    );
+  }
+
+  private async renameInside(sessionId: string, name: string): Promise<void> {
     const slot = this.requireSlot(sessionId);
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
@@ -3600,6 +3770,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async setModel(
+    sessionId: string,
+    provider: string,
+    modelId: string,
+  ): Promise<unknown> {
+    return this.withMaintenanceOperation(() =>
+      this.setModelInside(sessionId, provider, modelId),
+    );
+  }
+
+  private async setModelInside(
     sessionId: string,
     provider: string,
     modelId: string,
@@ -3632,6 +3812,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    return this.withMaintenanceOperation(() =>
+      this.setThinkingLevelInside(sessionId, level),
+    );
+  }
+
+  private async setThinkingLevelInside(
+    sessionId: string,
+    level: string,
+  ): Promise<void> {
     const slot = this.requireSlot(sessionId);
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
@@ -3657,6 +3846,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async extensionUiResponse(response: Record<string, unknown>): Promise<void> {
+    return this.withMaintenanceOperation(() =>
+      this.extensionUiResponseInside(response),
+    );
+  }
+
+  private async extensionUiResponseInside(
+    response: Record<string, unknown>,
+  ): Promise<void> {
     const sessionId =
       typeof response.sessionId === "string" ? response.sessionId : "";
     const requestId = typeof response.id === "string" ? response.id : "";
@@ -3805,7 +4002,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async snapshot(): Promise<ActiveSnapshot> {
-    this.assertNotClosing();
+    this.assertMaintenanceAvailable();
     while (true) {
       const slot = this.selectedSlot();
       if (!slot)
@@ -3825,6 +4022,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     sessionId: string,
     cursor: string,
   ): Promise<TranscriptPage> {
+    this.assertMaintenanceAvailable();
     const slot = this.requireSlot(sessionId);
     return this.useSlot(slot, async () => {
       if (!slot.projection)
@@ -3841,6 +4039,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async resourceContext(sessionId: string): Promise<ResourceContext> {
+    this.assertMaintenanceAvailable();
     const slot = this.selectedSlot();
     if (!slot || slot.id !== sessionId) {
       throw Object.assign(
@@ -3879,6 +4078,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     viewId: string,
     revision: number,
   ): Promise<unknown[]> {
+    this.assertMaintenanceAvailable();
     return this.useSlot(slot, async () => {
       if (
         this.selectedSessionId !== slot.id ||
@@ -3911,6 +4111,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
+    if (this.maintenanceRestartTimer !== null)
+      clearTimeout(this.maintenanceRestartTimer);
+    this.maintenanceRestartTimer = null;
+    this.maintenanceRestartExpiresAt = null;
     this.closing = true;
     this.selectionSequence += 1;
     this.closePromise = this.closeInside();

@@ -34,6 +34,7 @@ import type { GitInspectionLike } from "./git-inspection.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
+import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 
@@ -204,6 +205,10 @@ export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
 export const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
 
+interface MaintenanceRestartLike {
+  reserve(): Promise<MaintenanceRestartOutcome>;
+}
+
 export interface AppDependencies {
   token: string;
   runtime: RuntimeLike;
@@ -215,6 +220,9 @@ export interface AppDependencies {
   mock: boolean;
   version: string;
   piVersion: string;
+  /** Authenticated timer coordination; it detects installed updates and asks
+   * the runtime for its short idle fence, never restarts systemd itself. */
+  maintenanceRestart?: MaintenanceRestartLike;
   /** Browser-safe configured model metadata, available without a live worker. */
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
@@ -463,6 +471,16 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  /** A successful response is a short exclusive lease. The local user timer
+   * consumes it immediately by asking systemd to restart the verified unit. */
+  app.post("/api/maintenance/restart", async (_request, response) => {
+    response.json(
+      deps.maintenanceRestart
+        ? await deps.maintenanceRestart.reserve()
+        : { kind: "skipped", reason: "runtime-unsupported" },
+    );
   });
 
   app.get("/api/bootstrap", async (_request, response) => {
