@@ -296,7 +296,7 @@ describe("welcome flow", () => {
     await store.openSession("s1");
   });
 
-  it("uses an off-canvas navigation drawer instead of squeezing the phone viewport", async () => {
+  it("uses modal off-canvas drawers instead of squeezing the phone viewport", async () => {
     const media = vi
       .spyOn(window, "matchMedia")
       .mockImplementation((query) => ({
@@ -313,20 +313,20 @@ describe("welcome flow", () => {
       render(<App />);
       await waitFor(() =>
         expect(
-          screen.queryByRole("navigation", { name: "Sessions" }),
+          screen.queryByRole("dialog", { name: "Sessions" }),
         ).not.toBeInTheDocument(),
       );
       const toggle = screen.getByRole("button", { name: "Toggle navigation" });
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       fireEvent.click(toggle);
       expect(
-        await screen.findByRole("navigation", { name: "Sessions" }),
-      ).toBeInTheDocument();
+        await screen.findByRole("dialog", { name: "Sessions" }),
+      ).toHaveAttribute("aria-modal", "true");
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
       await waitFor(() =>
         expect(
-          screen.queryByRole("navigation", { name: "Sessions" }),
+          screen.queryByRole("dialog", { name: "Sessions" }),
         ).not.toBeInTheDocument(),
       );
 
@@ -336,15 +336,15 @@ describe("welcome flow", () => {
       expect(resourcesToggle).toHaveAttribute("aria-expanded", "false");
       fireEvent.click(resourcesToggle);
       expect(
-        await screen.findByRole("complementary", {
+        await screen.findByRole("dialog", {
           name: "Files and resources",
         }),
-      ).toBeInTheDocument();
+      ).toHaveAttribute("aria-modal", "true");
       expect(resourcesToggle).toHaveAttribute("aria-expanded", "true");
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() =>
         expect(
-          screen.queryByRole("complementary", { name: "Files and resources" }),
+          screen.queryByRole("dialog", { name: "Files and resources" }),
         ).not.toBeInTheDocument(),
       );
       expect(resourcesToggle).toHaveAttribute("aria-expanded", "false");

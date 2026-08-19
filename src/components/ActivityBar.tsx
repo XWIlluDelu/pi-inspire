@@ -4,20 +4,20 @@ import { useAppState } from "../store";
 /**
  * Transient, truthful activity surface: tools currently executing, automatic
  * retries in progress, failed tool calls since the last settle, and a concise
- * queued-input count. Full queued text remains at the transcript boundary.
+ * pending-input count. Full pending text remains at the transcript boundary.
  */
 export function ActivityBar() {
   const state = useAppState();
   const tools = Object.values(state.tools);
   const running = tools.filter((tool) => tool.phase === "running");
   const failed = tools.filter((tool) => tool.phase === "error");
-  const queued = state.queue.steering.length + state.queue.followUp.length;
+  const pending = state.queue.steering.length + state.queue.followUp.length;
 
   if (
     running.length === 0 &&
     failed.length === 0 &&
     !state.retry &&
-    queued === 0
+    pending === 0
   )
     return null;
 
@@ -56,8 +56,8 @@ export function ActivityBar() {
           ))}
         </div>
       ) : null}
-      {queued > 0 ? (
-        <span className="chip chip--info">{queued} queued</span>
+      {pending > 0 ? (
+        <span className="chip chip--info">{pending} pending</span>
       ) : null}
     </div>
   );

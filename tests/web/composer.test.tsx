@@ -254,7 +254,7 @@ describe("composer keyboard submission", () => {
 });
 
 describe("queued composer controls", () => {
-  it("shows a concise queued count outside the live region", () => {
+  it("shows a concise pending count outside the live region", () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;
     const queued = activeSnapshot();
@@ -265,8 +265,8 @@ describe("queued composer controls", () => {
     act(() => socket.emit({ type: "snapshot", data: queued }));
 
     render(<ActivityBar />);
-    expect(screen.getByText("2 queued")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Queued input")).not.toBeInTheDocument();
+    expect(screen.getByText("2 pending")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Pending input")).not.toBeInTheDocument();
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
