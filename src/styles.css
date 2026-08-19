@@ -2968,6 +2968,19 @@ a {
   color: var(--muted);
 }
 
+.rich-text--user p,
+.rich-text--user li {
+  white-space: pre-wrap;
+}
+
+.rich-text--user p {
+  margin: var(--space-1) 0;
+}
+
+.rich-text--user .katex-display {
+  margin: var(--space-2) 0;
+}
+
 /* --- Code blocks --- */
 
 .code-block {
@@ -3070,6 +3083,10 @@ a {
 
 /* KaTeX renders with its own fonts; the system only owns spacing. The inner
    padding keeps tall ascenders clear of the scroll container's clip edge. */
+.rich-text .katex {
+  font-size: 1.05em;
+}
+
 .rich-text .katex-display {
   margin: var(--space-3) 0;
   padding: var(--space-1) 2px;
@@ -4588,6 +4605,8 @@ button.res__more:hover {
 
 .token-gate__card {
   width: min(420px, 90vw);
+  max-width: 100%;
+  box-sizing: border-box;
   background: var(--bg-surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
@@ -4650,13 +4669,17 @@ button.res__more:hover {
 
 .token-gate form {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   gap: var(--space-2);
 }
 
 .token-gate input {
-  flex: 1;
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-sm);
   background: var(--bg-canvas);
@@ -4664,6 +4687,11 @@ button.res__more:hover {
   transition:
     border-color var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.token-gate form .button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .token-gate input:focus-visible {
@@ -5816,11 +5844,13 @@ body.srail-dragging {
   }
 
   .composer__spacer {
-    display: none;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .composer__meta {
     gap: var(--space-1);
+    min-width: 0;
   }
 
   .composer__meta .dropdown__trigger {
@@ -5828,8 +5858,27 @@ body.srail-dragging {
     padding: 2px 6px;
   }
 
+  /* The model trigger can be the only elastic control in a narrow composer.
+     Keep its label inside that control rather than letting a long model id
+     paint over adjacent picker and action hit targets. */
+  .composer__meta .model-picker__trigger {
+    overflow: hidden;
+  }
+
+  .composer__meta .model-picker__trigger-copy {
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .composer__meta .model-picker__trigger-copy > .dropdown__value {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
   .composer__meta .icon-button,
   .composer__send {
+    flex-shrink: 0;
     width: 36px;
     height: 36px;
     min-width: 36px;
@@ -5837,13 +5886,7 @@ body.srail-dragging {
   }
 
   .composer__meta .meter {
-    margin-left: auto;
-  }
-
-  /* The welcome composer has no meter; its send owns the trailing edge of the
-     wrapped meta row, matching the session composer. */
-  .welcome__composer .composer__send {
-    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .welcome {

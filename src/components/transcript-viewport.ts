@@ -1,10 +1,10 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type MutableRefObject,
   useCallback,
   useEffect,
   useRef,
   useState,
-  type MutableRefObject,
 } from "react";
 
 const VIRTUALIZE_AT = 60;
@@ -80,6 +80,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const virtualizedFollowRef = useRef<((index: number) => void) | null>(null);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | null>(null);
+  const geometricFollowFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
   const olderLoadInFlightRef = useRef(false);
   const onLoadOlderRef = useRef(onLoadOlder);
@@ -143,6 +144,14 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       element.scrollHeight - element.clientHeight,
     );
   }, []);
+
+  const scheduleGeometricFollow = useCallback(() => {
+    if (geometricFollowFrameRef.current !== null) return;
+    geometricFollowFrameRef.current = requestAnimationFrame(() => {
+      geometricFollowFrameRef.current = null;
+      followLatest();
+    });
+  }, [followLatest]);
 
   const requestOlderRef = useRef<() => void>(() => {});
   const loadOlder = useCallback(async () => {
@@ -273,16 +282,27 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     followLatest();
   }, [followLatest, followSignal]);
 
-  // Markdown layout, card animation, font loading, and virtualizer measurement
-  // can increase the transcript after React's message effect. Preserve latest
-  // through those real geometry changes without moving a user-owned viewport.
+  // Markdown layout, card animation, font loading, virtualizer measurement,
+  // and mobile keyboard changes can alter the content or scrollport after
+  // React's message effect. Preserve latest through those real geometry changes
+  // without moving a user-owned viewport. rAF coalesces a ResizeObserver burst
+  // after the browser has applied the new geometry.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => followLatest());
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [followLatest, sessionId]);
+    const scrollport = scrollRef.current;
+    if ((!content && !scrollport) || typeof ResizeObserver === "undefined")
+      return;
+    const observer = new ResizeObserver(scheduleGeometricFollow);
+    if (content) observer.observe(content);
+    if (scrollport) observer.observe(scrollport);
+    return () => {
+      observer.disconnect();
+      if (geometricFollowFrameRef.current !== null) {
+        cancelAnimationFrame(geometricFollowFrameRef.current);
+        geometricFollowFrameRef.current = null;
+      }
+    };
+  }, [scheduleGeometricFollow, sessionId]);
 
   // The existing scroll handler is the single proximity authority. This runs
   // after initial latest-follow so a short transcript can fill its viewport,
