@@ -2283,3 +2283,56 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 });
+
+describe("maintenance restart admission", () => {
+  it("fences every new runtime command after an idle lease", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+    );
+
+    const decision = runtime.reserveMaintenanceRestart();
+    expect(decision.kind).toBe("ready");
+    await expect(runtime.newSession("/tmp")).rejects.toMatchObject({
+      status: 503,
+    });
+    await runtime.close();
+  });
+
+  it("does not grant a lease while an open request is still in flight", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const reachedPreview = new Promise<void>((resolveEntered) => {
+      entered = resolveEntered;
+    });
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      async (session) => {
+        entered();
+        await gate;
+        return preview(session);
+      },
+    );
+
+    const opening = runtime.openSession("a");
+    await reachedPreview;
+    expect(runtime.reserveMaintenanceRestart()).toEqual({
+      kind: "busy",
+      reason: "in-flight-operation",
+    });
+    release();
+    await opening;
+    await runtime.close();
+  });
+});

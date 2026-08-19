@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily INSΠRE idle maintenance restart check
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Unit=inspire-idle-maintenance-restart.service
+
+[Install]
+WantedBy=timers.target

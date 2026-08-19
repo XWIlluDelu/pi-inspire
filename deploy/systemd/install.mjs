@@ -44,22 +44,45 @@ async function main() {
     return;
   }
   const root = resolve(rootValue);
-  const template = await readFile(
-    join(dirname(fileURLToPath(import.meta.url)), "inspire-host.service.in"),
-    "utf8",
-  );
-  const content = template
-    .replaceAll("@ROOT@", systemdEscape(root))
-    .replaceAll("@NODE_BIN@", systemdEscape(dirname(process.execPath)))
-    .replaceAll("@LAUNCHER@", systemdEscape(join(root, "inspire")));
+  const templateDirectory = dirname(fileURLToPath(import.meta.url));
+  const replace = (template) =>
+    template
+      .replaceAll("@ROOT@", systemdEscape(root))
+      .replaceAll("@NODE_BIN@", systemdEscape(dirname(process.execPath)))
+      .replaceAll("@LAUNCHER@", systemdEscape(join(root, "inspire")));
+  const [hostTemplate, maintenanceTemplate, timerTemplate] = await Promise.all([
+    readFile(join(templateDirectory, "inspire-host.service.in"), "utf8"),
+    readFile(
+      join(templateDirectory, "inspire-idle-maintenance-restart.service.in"),
+      "utf8",
+    ),
+    readFile(
+      join(templateDirectory, "inspire-idle-maintenance-restart.timer.in"),
+      "utf8",
+    ),
+  ]);
   const configHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
-  const path = join(configHome, "systemd", "user", "inspire-host.service");
-  await writeUnit(path, content);
+  const unitDirectory = join(configHome, "systemd", "user");
+  const paths = {
+    host: join(unitDirectory, "inspire-host.service"),
+    maintenance: join(unitDirectory, "inspire-idle-maintenance-restart.service"),
+    timer: join(unitDirectory, "inspire-idle-maintenance-restart.timer"),
+  };
+  await Promise.all([
+    writeUnit(paths.host, replace(hostTemplate)),
+    writeUnit(paths.maintenance, replace(maintenanceTemplate)),
+    writeUnit(paths.timer, replace(timerTemplate)),
+  ]);
   const reloaded = await run("systemctl", ["--user", "daemon-reload"]);
   if (reloaded.code !== 0)
-    throw new Error(`Installed ${path}, but systemd could not reload (${reloaded.stderr.trim()})`);
-  console.log(`Installed ${path}.`);
-  console.log("Enable it with: ./inspire service enable-host");
+    throw new Error(
+      `Installed user units, but systemd could not reload (${reloaded.stderr.trim()})`,
+    );
+  console.log(`Installed ${paths.host}.`);
+  console.log(`Installed ${paths.maintenance} and ${paths.timer}.`);
+  console.log(
+    "Enable the host and its daily idle maintenance timer with: ./inspire service enable-host",
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

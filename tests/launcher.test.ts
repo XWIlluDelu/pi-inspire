@@ -188,10 +188,10 @@ describe("production launcher", () => {
       "Stopped INSΠRE system service.",
     );
     expect(runLauncher(["service", "enable-host"], environment)).toContain(
-      "Enabled and started INSΠRE system service.",
+      "Enabled and started (with daily idle maintenance) INSΠRE system service.",
     );
     expect(runLauncher(["service", "disable-host"], environment)).toContain(
-      "Disabled and stopped INSΠRE system service.",
+      "Disabled and stopped (with daily idle maintenance) INSΠRE system service.",
     );
     const log = await readFile(environment.FAKE_SYSTEMD_LOG!, "utf8");
     expect(log).toContain("--user start inspire-host.service");
@@ -199,6 +199,12 @@ describe("production launcher", () => {
     expect(log).toContain("--user stop inspire-host.service");
     expect(log).toContain("--user enable --now inspire-host.service");
     expect(log).toContain("--user disable --now inspire-host.service");
+    expect(log).toContain(
+      "--user enable --now inspire-idle-maintenance-restart.timer",
+    );
+    expect(log).toContain(
+      "--user disable --now inspire-idle-maintenance-restart.timer",
+    );
   });
 
   it("keeps explicit local instances out of systemd delegation", async () => {

@@ -2,6 +2,10 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime, piInstallation } from "./pi-runtime.js";
+import {
+  inspectInspireSource,
+  MaintenanceRestartController,
+} from "./maintenance-restart.js";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
@@ -59,6 +63,9 @@ const tokenPath =
   process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
 const mock = process.env.INSPIRE_MOCK === "1";
+const runningSource = mock
+  ? { kind: "package" as const, version: packageJson.version }
+  : await inspectInspireSource(root);
 const configuredMockStreamInterval = mock
   ? process.env.INSPIRE_MOCK_STREAM_INTERVAL_MS
   : undefined;
@@ -158,6 +165,16 @@ const readNewSessionDefaults = async (cwd: string) => {
     });
   return resolveNewSessionDefaults(modelRuntime, cwd);
 };
+const maintenanceRestart = mock
+  ? undefined
+  : new MaintenanceRestartController({
+      runtime,
+      root,
+      piVersion: piInstallation.version,
+      runningSource,
+      diagnostics,
+    });
+
 const application = createInspireServer({
   token,
   runtime,
@@ -169,6 +186,7 @@ const application = createInspireServer({
   mock,
   version: packageJson.version,
   piVersion: piInstallation.version,
+  maintenanceRestart,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),

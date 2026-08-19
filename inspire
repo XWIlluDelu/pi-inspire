@@ -12,7 +12,7 @@
 #   ./inspire --ssh-reverse [action]  shorthand for the ssh-reverse connection
 #   ./inspire service install-host    install the generic host user service
 #   ./inspire service enable-host     enable and start that user service
-#   ./inspire service disable-host    stop and disable that user service
+#   ./inspire service disable-host    stop and disable that user service and its maintenance timer
 set -euo pipefail
 
 script_path="${BASH_SOURCE[0]}"
@@ -34,6 +34,7 @@ instance_state="$root/server/instance-state.mjs"
 connection_dispatcher="$root/connections/dispatch.mjs"
 host_service_installer="$root/deploy/systemd/install.mjs"
 host_service_controller="$root/deploy/systemd/control.mjs"
+idle_maintenance_runner="$root/deploy/systemd/idle-maintenance-restart.mjs"
 distribution=0
 if [[ ! -f "$source_runtime" && -f "$release_runtime" ]]; then
   distribution=1
@@ -447,6 +448,17 @@ restart_host() {
   run_host 0
 }
 
+idle_maintenance_restart() {
+  need_node
+  init_instance
+  # The runner reads the private state token and makes the authenticated lease
+  # request. It only invokes systemd after the host atomically fences new work.
+  exec node "$idle_maintenance_runner" \
+    --root "$root" \
+    --state "$state_path" \
+    --controller "$host_service_controller"
+}
+
 status_host() {
   local service_result url
   need_node
@@ -502,6 +514,9 @@ case "$mode" in
     ;;
   status)
     status_host
+    ;;
+  maintenance-restart)
+    idle_maintenance_restart
     ;;
   mock)
     run_host 1
