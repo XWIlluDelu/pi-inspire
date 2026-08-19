@@ -1,7 +1,7 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import AxeBuilder from "@axe-core/playwright";
+import { expect, test } from "@playwright/test";
 
 const token = "inspire-browser-test-token";
 
@@ -109,6 +109,110 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   expect(externalRequests).toEqual([]);
   const fontTransfer = await stopFontTransfer();
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+});
+
+test("narrow pairing controls contain a long access token", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto("/");
+  await page.getByLabel("Access token").fill("x".repeat(64));
+
+  const layout = await page.locator(".token-gate__card").evaluate((card) => {
+    const form = card.querySelector("form");
+    const input = card.querySelector("input");
+    const button = card.querySelector("button");
+    if (!form || !input || !button) throw new Error("Missing pairing controls");
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, width: rect.width };
+    };
+    const cardBox = box(card);
+    const fits = (element: Element) => {
+      const rect = box(element);
+      return rect.left >= cardBox.left && rect.right <= cardBox.right;
+    };
+    return {
+      cardOverflow: card.scrollWidth > card.clientWidth,
+      documentOverflow:
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+      form: fits(form),
+      input: fits(input),
+      button: fits(button),
+    };
+  });
+
+  expect(layout.cardOverflow).toBe(false);
+  expect(layout.documentOverflow).toBe(false);
+  expect(layout.form).toBe(true);
+  expect(layout.input).toBe(true);
+  expect(layout.button).toBe(true);
+});
+
+test("narrow composer keeps its trailing action stable without a context meter", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(
+    page.getByRole("form", { name: "Start a session" }),
+  ).toBeVisible();
+
+  const layout = await page
+    .locator(".welcome__composer .composer__meta")
+    .evaluate((meta) => {
+      const action = meta.querySelector<HTMLElement>(
+        "[aria-label='Start session']",
+      );
+      if (!action) throw new Error("Missing start-session action");
+      const metaBox = meta.getBoundingClientRect();
+      const actionBox = action.getBoundingClientRect();
+      return {
+        actionAtTrailingEdge: Math.abs(metaBox.right - actionBox.right) < 1,
+        metaOverflow: meta.scrollWidth > meta.clientWidth,
+      };
+    });
+
+  expect(layout.metaOverflow).toBe(false);
+  expect(layout.actionAtTrailingEdge).toBe(true);
+});
+
+test("narrow user prompts preserve source lines and normal-sized math", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await page
+    .getByRole("textbox", { name: "Message" })
+    .fill("第一行说明\n第二行含有 $E = mc^2$\n第三行结论");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const prompt = page.locator(".turn--user").last();
+  await expect(prompt).toContainText("第一行说明");
+  await expect(prompt).toContainText("第三行结论");
+
+  const layout = await prompt.evaluate((turn) => {
+    const root = turn.querySelector<HTMLElement>(".rich-text--user");
+    const paragraph = root?.querySelector<HTMLElement>("p");
+    const math = root?.querySelector<HTMLElement>(".katex");
+    if (!root || !paragraph || !math) throw new Error("Missing user math");
+    return {
+      overflow: root.scrollWidth > root.clientWidth,
+      whiteSpace: getComputedStyle(paragraph).whiteSpace,
+      mathScale:
+        Number.parseFloat(getComputedStyle(math).fontSize) /
+        Number.parseFloat(getComputedStyle(paragraph).fontSize),
+    };
+  });
+
+  expect(layout.overflow).toBe(false);
+  expect(layout.whiteSpace).toBe("pre-wrap");
+  expect(layout.mathScale).toBeCloseTo(1.05, 2);
+  await page.getByRole("button", { name: "Abort running task" }).click();
 });
 
 test("project-file picker restores focus to its trigger", async ({ page }) => {
@@ -324,6 +428,64 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
   expect(results.violations).toEqual([]);
   const fontTransfer = await stopFontTransfer();
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+});
+
+test("narrow running composer contains a long model label at 360px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await page.getByRole("textbox", { name: "Message" }).fill("start layout run");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("button", { name: "Abort running task" }),
+  ).toBeVisible();
+
+  const layout = await page.locator(".composer__meta").evaluate((meta) => {
+    const model = meta.querySelector<HTMLElement>("[aria-label='Model']");
+    const label = model?.querySelector<HTMLElement>(".dropdown__value");
+    if (!model || !label) throw new Error("Missing model trigger");
+    label.textContent = "claude-3-7-sonnet-thinking-experimental";
+    const box = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+      };
+    };
+    const controls = [...meta.children]
+      .map((element) => box(element as HTMLElement))
+      .filter((control) => control.width > 0);
+    const overlaps = controls.some((control, index) =>
+      controls
+        .slice(index + 1)
+        .some(
+          (other) =>
+            control.left < other.right &&
+            control.right > other.left &&
+            control.top < other.bottom &&
+            control.bottom > other.top,
+        ),
+    );
+    return {
+      controls,
+      metaOverflow: meta.scrollWidth > meta.clientWidth,
+      modelContentOverflow: model.scrollWidth > model.clientWidth,
+      labelIsTruncated: label.scrollWidth > label.clientWidth,
+      overlaps,
+    };
+  });
+
+  expect(layout.metaOverflow).toBe(false);
+  expect(layout.modelContentOverflow).toBe(false);
+  expect(layout.labelIsTruncated).toBe(true);
+  expect(layout.overlaps).toBe(false);
+  await page.getByRole("button", { name: "Abort running task" }).click();
 });
 
 test.describe("touch narrow workbench", () => {

@@ -59,4 +59,27 @@ describe("design token contract", () => {
     expect(css).toMatch(/--activity-tool\s*:/);
     expect(css).toMatch(/--activity-think\s*:/);
   });
+
+  it("preserves user prompt line breaks, bounds token-gate controls, and keeps composer spacers elastic", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    expect(css).toMatch(
+      /\.rich-text--user\s+p,\s*\.rich-text--user\s+li\s*{[^}]*white-space:\s*pre-wrap/s,
+    );
+    expect(css).toMatch(
+      /\.token-gate\s+form\s*{[^}]*width:\s*100%[^}]*max-width:\s*100%/s,
+    );
+    expect(css).toMatch(
+      /\.token-gate\s+input\s*{[^}]*flex:\s*1\s+1\s+0[^}]*width:\s*0[^}]*min-width:\s*0/s,
+    );
+    expect(css).toMatch(
+      /@media\s*\(max-width:\s*600px\)[\s\S]*?\.composer__spacer\s*{[^}]*flex:\s*1\s+1\s+0/s,
+    );
+    expect(css).toMatch(
+      /\.model-picker__trigger-copy\s*{[^}]*flex:\s*1\s+1\s+auto[^}]*overflow:\s*hidden/s,
+    );
+    expect(css).toMatch(/\.model-picker__trigger\s*{[^}]*overflow:\s*hidden/s);
+    expect(css).toMatch(
+      /\.model-picker__trigger-copy\s*>\s*\.dropdown__value\s*{[^}]*width:\s*100%[^}]*max-width:\s*none/s,
+    );
+  });
 });

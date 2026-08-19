@@ -2,8 +2,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
-  RichText,
   projectKatexSelection,
+  RichText,
   scanBackslashMath,
 } from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
@@ -489,5 +489,13 @@ describe("markdown constructs", () => {
     expect(
       screen.getByRole("button", { name: "Copy code" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders user-variant text with dedicated container class", () => {
+    const { container } = render(
+      <RichText text={"Line 1\nLine 2\n$$E = mc^2$$"} variant="user" />,
+    );
+    expect(container.querySelector(".rich-text--user")).toBeTruthy();
+    expect(container.querySelector(".katex")).toBeTruthy();
   });
 });
