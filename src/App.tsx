@@ -402,10 +402,16 @@ export function App() {
     return <HostUnavailable problem={state.connectionProblem} />;
   }
 
+  const isNavModal = narrowViewport && mobileNavOpen;
+  const isResourcesModal = narrowViewport && state.resourcesOpen;
+  const isAnyDrawerModal = isNavModal || isResourcesModal;
+
   const navigationContent =
     narrowViewport && !mobileNavOpen ? null : (
       <Nav
         collapsed={narrowViewport ? false : navCollapsed}
+        isModal={isNavModal}
+        onClose={() => setMobileNavOpen(false)}
         selectedSessionId={state.sessionId}
         onNewSession={newSession}
         onSelectSession={openSession}
@@ -440,7 +446,12 @@ export function App() {
       <Composer />
     </div>
   ) : null;
-  const resourcesContent = state.resourcesOpen ? <ResourcesPane /> : null;
+  const resourcesContent = state.resourcesOpen ? (
+    <ResourcesPane
+      isModal={isResourcesModal}
+      onClose={() => store.setResourcesOpen(false)}
+    />
+  ) : null;
 
   return (
     <div className={`app ${narrowViewport ? "app--narrow" : ""}`}>
@@ -471,7 +482,7 @@ export function App() {
           variant="nav"
         />
       ) : null}
-      <main className="center">
+      <main className="center" inert={isAnyDrawerModal ? true : undefined}>
         <AppTopbar
           narrowViewport={narrowViewport}
           mobileNavOpen={mobileNavOpen}

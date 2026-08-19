@@ -15,13 +15,13 @@ import {
   store,
   type ToolCallContent,
 } from "../store";
+import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { RichText } from "./RichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
 import {
   type CompactActivity,
   CompactActivityStrip,
-  CopyAction,
   CustomMessageCard,
   compactCustomActivities,
   GenericCard,
@@ -482,40 +482,83 @@ export const UnknownRoleRow = memo(function UnknownRoleRow({
 
 export function PendingQueueGroups({ queue }: { queue: PendingQueues }) {
   const groups = [
-    { key: "steering", label: "Pending steering", items: queue.steering },
-    { key: "follow-up", label: "Pending follow-up", items: queue.followUp },
-  ];
+    {
+      key: "steering",
+      label: "Steer",
+      mark: "S",
+      start: 0,
+      items: queue.steering,
+    },
+    {
+      key: "follow-up",
+      label: "Queue",
+      mark: "Q",
+      start: queue.steering.length,
+      items: queue.followUp,
+    },
+  ].filter((group) => group.items.length > 0);
+  const entries = [...queue.steering, ...queue.followUp];
+  const copyAllText = entries
+    .map((text, index) => `${index + 1}. ${text.replace(/\n/g, "\n   ")}`)
+    .join("\n");
+
   return (
-    <div
-      className="pending-groups"
-      role="group"
-      aria-label="Pending input queues"
-    >
-      {groups
-        .filter((group) => group.items.length > 0)
-        .map((group) => (
-          <section
-            key={group.key}
-            className="pending-group"
-            aria-label={group.label}
-          >
-            <div className="pending-group__head">
-              <span>{group.label}</span>
-              <span>
-                <span aria-hidden>{group.items.length}</span>
-                <span className="visually-hidden"> items</span>
+    <section className="pending-groups" aria-label="Pending input">
+      <div className="pending-groups__head">
+        <span>Pending input</span>
+        <span className="pending-groups__actions">
+          <span>
+            <span aria-hidden>{entries.length}</span>
+            <span className="visually-hidden">
+              {entries.length} pending items
+            </span>
+          </span>
+          <CopyAction
+            text={copyAllText}
+            label="all pending input"
+            className="pending-group__copy"
+          />
+        </span>
+      </div>
+      {groups.map((group) => (
+        <section
+          key={group.key}
+          className="pending-group"
+          aria-label={`Pending ${group.label.toLowerCase()}`}
+        >
+          <div className="pending-group__head">
+            <span>{group.label}</span>
+            <span>
+              <span aria-hidden>{group.items.length}</span>
+              <span className="visually-hidden">
+                {group.items.length} items
               </span>
-            </div>
-            <ol className="pending-group__list">
-              {group.items.map((text, index) => (
+            </span>
+          </div>
+          <ol className="pending-group__list" start={group.start + 1}>
+            {group.items.map((text, index) => {
+              const number = group.start + index + 1;
+              return (
                 <li key={index} className="pending-group__item">
+                  <span className="pending-group__number" aria-hidden>
+                    {number}.
+                  </span>
+                  <span className="pending-group__mark" title={group.label}>
+                    {group.mark}
+                  </span>
                   <pre>{text}</pre>
+                  <CopyAction
+                    text={text}
+                    label={`${group.label} item ${index + 1}`}
+                    className="pending-group__copy"
+                  />
                 </li>
-              ))}
-            </ol>
-          </section>
-        ))}
-    </div>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
+    </section>
   );
 }
 

@@ -1340,7 +1340,12 @@ describe("message actions", () => {
 });
 
 describe("transient conversation projections", () => {
-  it("renders separate ordered pending queues without cancellation or cross-queue chronology", () => {
+  it("distinguishes, numbers, and copies multiple ordered pending inputs", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     render(
       <Transcript
         messages={[{ role: "user", content: "persisted", timestamp: 1 }]}
@@ -1349,22 +1354,41 @@ describe("transient conversation projections", () => {
         toolVisibility="collapsed"
         queue={{
           steering: ["steer first", "steer second"],
-          followUp: ["follow first", "follow second"],
+          followUp: ["follow first", "follow second\ncontinued"],
         }}
       />,
     );
-    const steering = screen.getByRole("region", { name: "Pending steering" });
-    const followUp = screen.getByRole("region", { name: "Pending follow-up" });
+    const pending = screen.getByRole("region", { name: "Pending input" });
+    const steering = screen.getByRole("region", { name: "Pending steer" });
+    const followUp = screen.getByRole("region", { name: "Pending queue" });
     expect(
       within(steering)
         .getAllByRole("listitem")
-        .map((item) => item.textContent),
+        .map((item) => item.querySelector("pre")?.textContent),
     ).toEqual(["steer first", "steer second"]);
     expect(
       within(followUp)
         .getAllByRole("listitem")
-        .map((item) => item.textContent),
-    ).toEqual(["follow first", "follow second"]);
+        .map((item) => item.querySelector("pre")?.textContent),
+    ).toEqual(["follow first", "follow second\ncontinued"]);
+    expect(within(steering).getAllByText("S")).toHaveLength(2);
+    expect(within(followUp).getAllByText("Q")).toHaveLength(2);
+
+    fireEvent.click(
+      within(steering).getByRole("button", { name: "Copy steer item 1" }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenLastCalledWith("steer first"),
+    );
+
+    fireEvent.click(
+      within(pending).getByRole("button", { name: "Copy all pending input" }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenLastCalledWith(
+        "1. steer first\n2. steer second\n3. follow first\n4. follow second\n   continued",
+      ),
+    );
     expect(
       screen.queryByRole("button", { name: /cancel/i }),
     ).not.toBeInTheDocument();

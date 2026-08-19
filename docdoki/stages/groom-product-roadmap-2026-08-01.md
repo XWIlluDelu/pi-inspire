@@ -28,6 +28,7 @@ Keep one ordered selection surface for product work that is not yet true of the 
 
 ## Unscheduled exploration
 
+- [ ] [[follow-pending-input-takeback-2026-08-19]] — add truthful Take back all / Held behavior after Pi exposes an atomic, lossless dequeue RPC.
 - [ ] Repository merge governance — decide whether branch protection should require the `quality` GitHub job and pull-request merges. This is shared repository policy, not a source-only change to apply implicitly.
 - [ ] Square-style redesign — exploratory only; not selected for implementation. `docs/redesign/` preserves the Trace and Renault references. Any later work begins with fresh product evidence and feedback, not by copying the prototype.
 
