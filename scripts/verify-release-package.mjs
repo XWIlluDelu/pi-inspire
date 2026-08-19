@@ -322,6 +322,8 @@ try {
   }
   const required = new Set([
     "build/server/index.js",
+    "build/server/pi-installation.js",
+    "build/server/pi-runtime.js",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -444,7 +446,7 @@ try {
     "utf8",
   );
   for (const identity of [
-    "@earendil-works/pi-tui@0.84.1",
+    "@earendil-works/pi-tui@0.84.2",
     "katex@",
     "react@",
     "rehype-katex@",
@@ -460,21 +462,26 @@ try {
     throw new Error(
       "Standalone INSΠRE must not use the Pi resource-package keyword",
     );
-  const expectedPi =
-    sourcePackage.dependencies?.["@earendil-works/pi-coding-agent"];
-  const installedPi = JSON.parse(
+  if (installedPackage.dependencies?.["@earendil-works/pi-coding-agent"])
+    throw new Error("Installed INSΠRE must not bundle a second Pi runtime");
+  const bundledPiManifest = join(
+    installDirectory,
+    "node_modules/@earendil-works/pi-coding-agent/package.json",
+  );
+  if (
+    await readFile(bundledPiManifest).then(
+      () => true,
+      () => false,
+    )
+  )
+    throw new Error("Production installation unexpectedly contains Pi");
+  const externalPiCommand = join(root, "node_modules/.bin/pi");
+  const externalPi = JSON.parse(
     await readFile(
-      join(
-        installDirectory,
-        "node_modules/@earendil-works/pi-coding-agent/package.json",
-      ),
+      join(root, "node_modules/@earendil-works/pi-coding-agent/package.json"),
       "utf8",
     ),
   );
-  if (expectedPi !== installedPi.version)
-    throw new Error(
-      "Installed release package did not retain the exact Pi runtime",
-    );
 
   const port = await freePort();
   const token = "inspire-release-smoke-token";
@@ -495,6 +502,7 @@ try {
     XDG_CACHE_HOME: join(homeDirectory, ".cache"),
     PI_CODING_AGENT_DIR: agentDirectory,
     PI_OFFLINE: "1",
+    INSPIRE_PI_COMMAND: externalPiCommand,
   };
   host = spawn(bin, ["mock"], {
     cwd: temporary,
@@ -609,8 +617,9 @@ try {
       piManifest: false,
       sourceOnlyFiles: 0,
       requiredFiles: "present",
-      piRuntime: installedPi.version,
-      installMode: "production dependencies only",
+      piRuntime: externalPi.version,
+      piAuthority: "external installation",
+      installMode: "production dependencies only; Pi not bundled",
       cliSymlink: "resolved",
       mockHealth: "ok",
       realPiStartup: "ok",

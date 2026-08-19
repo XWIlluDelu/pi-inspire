@@ -1,10 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath } from "node:url";
 import { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 import type { DiagnosticLevel } from "./diagnostics.js";
+import { piInstallation } from "./pi-runtime.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
@@ -84,13 +83,6 @@ export interface PiRpcOptions {
   ) => void;
 }
 
-function resolvePiCliPath(): string {
-  const entry = fileURLToPath(
-    import.meta.resolve("@earendil-works/pi-coding-agent"),
-  );
-  return join(dirname(entry), "cli.js");
-}
-
 export class PiRpcProcess extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<string, PendingRequest>();
@@ -122,7 +114,7 @@ export class PiRpcProcess extends EventEmitter {
   async start(): Promise<void> {
     if (this.child) throw new Error("Pi RPC process is already running");
 
-    const cliPath = this.options.cliPath ?? resolvePiCliPath();
+    const cliPath = this.options.cliPath ?? piInstallation.cliPath;
     const child = spawn(
       process.execPath,
       [cliPath, "--mode", "rpc", ...(this.options.args ?? [])],
