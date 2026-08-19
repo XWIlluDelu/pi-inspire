@@ -2,13 +2,7 @@ const BUILD_ID = new URL(self.location.href).searchParams.get("v")?.replace(/[^a
 const CACHE = `inspire-shell-${BUILD_ID}`;
 const SHELL = [
   "/",
-  "/manifest.webmanifest",
   "/favicon.svg",
-  "/app-icon.svg",
-  "/app-icon-192.png",
-  "/app-icon-512.png",
-  "/app-icon-maskable-512.png",
-  "/apple-touch-icon.png",
   "/theme-init.js",
 ];
 
@@ -39,6 +33,21 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname === "/events") return;
+
+  // PWA metadata and launcher icons are mutable outside Vite's hashed asset
+  // graph. Always retrieve them from the host so installed apps see updates.
+  if (
+    [
+      "/manifest.webmanifest",
+      "/app-icon-192.png",
+      "/app-icon-512.png",
+      "/app-icon-maskable-512.png",
+      "/apple-touch-icon.png",
+    ].includes(url.pathname)
+  ) {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(

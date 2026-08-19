@@ -208,6 +208,51 @@ describe("composer attachments", () => {
   });
 });
 
+describe("composer keyboard submission", () => {
+  it("keeps software-keyboard Return as a line break on touch-first devices", async () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query === "(hover: none) and (pointer: coarse)",
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    });
+
+    try {
+      const promptsBefore = promptBodies.length;
+      render(<Composer />);
+      const textarea = screen.getByLabelText("Message");
+      typeDraft("first line");
+      expect(fireEvent.keyDown(textarea, { key: "Enter" })).toBe(true);
+      await act(async () => Promise.resolve());
+      expect(promptBodies).toHaveLength(promptsBefore);
+
+      typeDraft("first line\nsecond line");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() =>
+        expect(promptBodies.at(-1)).toMatchObject({
+          message: "first line\nsecond line",
+        }),
+      );
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+});
+
 describe("queued composer controls", () => {
   it("shows a concise queued count outside the live region", () => {
     clearLeftovers();

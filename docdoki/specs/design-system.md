@@ -43,8 +43,11 @@ anatomy that must remain stable rather than duplicating every declaration.
 - The Open Reticle is the compact identifier: opposing square ink brackets,
   four detached accent datum ticks, and a centered square aperture. Its small
   and display masters compensate independently; the transparent 16px favicon
-  is a pixel-fitted optical master. Launcher tiles are a separate
-  operating-system asset, not a rounded reticle enclosure.
+  is a pixel-fitted optical master. Launcher assets place the mark on a carbon
+  tile: ordinary PWA PNGs preserve transparency outside the rounded tile so a
+  desktop shell cannot paint white corner wedges, while maskable and Apple
+  touch assets use the full-bleed carbon master and rely on the operating
+  system's own mask.
 - Palette and luminosity are independent. **Amber** (琥珀) is the default and
   persists as `amber`; **Jade** (青玉) is the optional alternative and retains
   the compatibility identifier `teal`. Light, Dark, and System select

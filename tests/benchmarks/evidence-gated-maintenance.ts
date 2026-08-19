@@ -1606,7 +1606,7 @@ async function browserIteration(
     );
     await waitFor(
       client,
-      `document.body.textContent.includes('Pending steering') && document.body.textContent.includes('Pending follow-up')`,
+      `document.querySelector('[aria-label="Pending steer"]') && document.querySelector('[aria-label="Pending queue"]')`,
     );
     await waitFor(
       client,
@@ -1666,7 +1666,7 @@ async function browserIteration(
         checks: {
           files: Boolean(document.querySelector('[aria-label="Referenced files"]')),
           search: document.querySelector('[aria-label="Search conversation"]')?.value === 'benchmark',
-          queueSettled: !document.body.textContent.includes('Pending steering') && !document.body.textContent.includes('Pending follow-up'),
+          queueSettled: !document.querySelector('[aria-label="Pending input"]'),
           backgroundSettled: JSON.stringify(completedBackgroundRows) === ${JSON.stringify(JSON.stringify(expectedCompleted))},
           streamed: document.body.textContent.includes('Frozen evaluator stream completed'),
           tool: settledToolCard || settledCompactTool

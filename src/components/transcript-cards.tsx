@@ -1,10 +1,8 @@
 import {
   Brain,
-  Check,
   CheckCircle2,
   ChevronRight,
   Circle,
-  Copy,
   FilePen,
   FilePlus2,
   FileSearch,
@@ -37,7 +35,7 @@ import {
   type ToolCallContent,
   toolResultText,
 } from "../store";
-import { useCopied } from "../use-copied";
+import { CopyAction } from "./CopyAction";
 import { RichText } from "./RichText";
 import {
   CARD_TRANSITION_MS,
@@ -49,32 +47,6 @@ import {
 } from "./transcript-activity";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
-
-interface CopyActionProps {
-  text: string;
-  label: string;
-  className: string;
-}
-
-export function CopyAction({ text, label, className }: CopyActionProps) {
-  const { copied, copy } = useCopied();
-  if (!text) return null;
-  return (
-    <button
-      type="button"
-      className={`icon-button ${className}`}
-      aria-label={copied ? `${label} copied` : `Copy ${label.toLowerCase()}`}
-      title={copied ? "Copied" : `Copy ${label.toLowerCase()}`}
-      onClick={() => void copy(text)}
-    >
-      {copied ? (
-        <Check size={13} aria-hidden />
-      ) : (
-        <Copy size={13} aria-hidden />
-      )}
-    </button>
-  );
-}
 
 interface CardHeaderProps {
   expanded: boolean;

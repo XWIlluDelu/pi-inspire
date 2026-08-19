@@ -96,6 +96,9 @@ export function newestPerCwd(
 export interface SessionCatalogLike {
   refresh(force?: boolean): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
+  /** Returns one identity from the last complete catalog projection, refusing
+   * a duplicate instead of guessing which same-id JSONL the caller meant. */
+  getUnique?(id: string): Promise<SessionRecord | undefined>;
   list(options?: {
     query?: string;
     offset?: number;
@@ -156,6 +159,21 @@ export class SessionCatalog implements SessionCatalogLike {
     if (cached) return cached;
     await this.refresh();
     return this.byId.get(id);
+  }
+
+  async getUnique(id: string): Promise<SessionRecord | undefined> {
+    // Deletion is already path-local and identity-checked again immediately
+    // before Trash. Reuse the same complete catalog projection that produced
+    // the browser row rather than rescan every JSONL merely to rediscover it.
+    if (this.loadedAt === 0 && this.cached.length === 0) await this.refresh();
+    const matches = this.cached.filter((session) => session.id === id);
+    if (matches.length > 1) {
+      throw Object.assign(
+        new Error("The session identity is ambiguous in the Pi catalog"),
+        { status: 409 },
+      );
+    }
+    return matches[0];
   }
 
   async list(

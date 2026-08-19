@@ -102,6 +102,44 @@ describe("session navigation controls", () => {
       }
       if (url.startsWith("/api/sessions/by-id"))
         return { body: { sessions: [] } };
+      if (
+        url.startsWith("/api/sessions/delete-hidden-folder") &&
+        init.method === "POST"
+      ) {
+        const cwd = String(jsonBody(init).cwd ?? "");
+        const targets = [alpha, beta].filter(
+          (session) => session.cwd === cwd && !deletedSessions.has(session.id),
+        );
+        for (const session of targets) deletedSessions.add(session.id);
+        const prefs = store.getState().prefs;
+        return {
+          body: {
+            cwd,
+            deleted: targets.map((session) => ({
+              sessionId: session.id,
+              disposition: "trashed",
+            })),
+            preferences: {
+              ...prefs,
+              pinnedSessionIds: prefs.pinnedSessionIds.filter(
+                (id) => !targets.some((session) => session.id === id),
+              ),
+              hiddenSessionIds: prefs.hiddenSessionIds.filter(
+                (id) => !targets.some((session) => session.id === id),
+              ),
+              pinnedProjectCwds: prefs.pinnedProjectCwds.filter(
+                (candidate) => candidate !== cwd,
+              ),
+              hiddenProjectCwds: prefs.hiddenProjectCwds.filter(
+                (candidate) => candidate !== cwd,
+              ),
+              navCollapsedGroups: prefs.navCollapsedGroups.filter(
+                (candidate) => candidate !== cwd,
+              ),
+            },
+          },
+        };
+      }
       if (url.startsWith("/api/sessions/") && init.method === "DELETE") {
         const sessionId = decodeURIComponent(url.split("/").at(-1)!);
         deletedSessions.add(sessionId);
@@ -334,6 +372,70 @@ describe("session navigation controls", () => {
     expect(
       screen.getByRole("button", { name: "Hide folder alpha" }),
     ).toBeInTheDocument();
+  });
+
+  it("deletes every session in a Hidden folder after an explicit confirmation", async () => {
+    render(
+      <Nav
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder beta" }));
+    await screen.findByRole("heading", { name: "Hidden" });
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Delete all sessions in folder beta",
+      }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete all sessions?",
+    });
+    expect(within(dialog).getByText("beta · 1 session")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Project files and the folder itself are unchanged.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Delete all sessions in folder beta",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete 1 session" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Beta session")).not.toBeInTheDocument(),
+    );
+    expect(deletedSessions).toEqual(new Set(["beta"]));
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+  });
+
+  it("allows an individual session to be deleted from a hidden folder", async () => {
+    render(
+      <Nav
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder beta" }));
+    await screen.findByRole("heading", { name: "Hidden" });
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: 'Delete "Beta session"' }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete session" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Beta session")).not.toBeInTheDocument(),
+    );
+    expect(deletedSessions).toEqual(new Set(["beta"]));
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/beta"]);
   });
 
   it("deletes only through Hidden after an explicit confirmation", async () => {

@@ -9,6 +9,7 @@ import type {
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
+  HiddenFolderDeleteResponse,
   HostDirListing,
   HostRootsResponse,
   InspirePreferences,
@@ -243,6 +244,12 @@ export function createApi(token: string | null = null) {
         token,
         `/api/sessions/${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
+      ),
+    deleteHiddenFolderSessions: (cwd: string, sessionIds: string[]) =>
+      post<HiddenFolderDeleteResponse>(
+        token,
+        "/api/sessions/delete-hidden-folder",
+        { cwd, sessionIds },
       ),
     prompt: (body: PromptRequest) =>
       post<{ accepted: boolean }>(token, "/api/prompt", body),

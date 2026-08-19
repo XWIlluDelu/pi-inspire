@@ -204,10 +204,14 @@ export class PreferencesStore {
     });
   }
 
-  /** Remove navigation identities after their authoritative session file has
+  /** Remove navigation identities after their authoritative session files have
    * gone. The read/transform/write stays in the same serialized preference
    * operation, so a concurrent pin or hide patch cannot be overwritten. */
-  async removeSession(sessionId: string): Promise<InspirePreferences> {
+  async removeSessions(
+    sessionIds: readonly string[],
+    deletedProjectCwd?: string,
+  ): Promise<InspirePreferences> {
+    const deleted = new Set(sessionIds);
     return this.enqueue(async () => {
       const current = await this.readDisk();
       const invalid = this.invalidSourceError(current);
@@ -215,14 +219,31 @@ export class PreferencesStore {
       const preferences = preferencesSchema.parse({
         ...current.preferences,
         pinnedSessionIds: current.preferences.pinnedSessionIds.filter(
-          (id) => id !== sessionId,
+          (id) => !deleted.has(id),
         ),
         hiddenSessionIds: current.preferences.hiddenSessionIds.filter(
-          (id) => id !== sessionId,
+          (id) => !deleted.has(id),
         ),
+        ...(deletedProjectCwd
+          ? {
+              pinnedProjectCwds: current.preferences.pinnedProjectCwds.filter(
+                (cwd) => cwd !== deletedProjectCwd,
+              ),
+              hiddenProjectCwds: current.preferences.hiddenProjectCwds.filter(
+                (cwd) => cwd !== deletedProjectCwd,
+              ),
+              navCollapsedGroups: current.preferences.navCollapsedGroups.filter(
+                (cwd) => cwd !== deletedProjectCwd,
+              ),
+            }
+          : {}),
       });
       await this.persist(preferences);
       return preferences;
     });
+  }
+
+  removeSession(sessionId: string): Promise<InspirePreferences> {
+    return this.removeSessions([sessionId]);
   }
 }

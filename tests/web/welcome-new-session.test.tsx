@@ -221,6 +221,64 @@ describe("new-session start surface", () => {
     );
   });
 
+  it("uses touch-first Return for a multiline first message instead of starting", async () => {
+    newSessionBody = null;
+    promptBody = null;
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query === "(hover: none) and (pointer: coarse)",
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    });
+
+    try {
+      render(<Welcome />);
+      fireEvent.change(screen.getByLabelText("Project directory"), {
+        target: { value: "/proj" },
+      });
+      const message = screen.getByLabelText("First message");
+      fireEvent.change(message, { target: { value: "first line" } });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeEnabled(),
+      );
+
+      expect(fireEvent.keyDown(message, { key: "Enter" })).toBe(true);
+      await act(async () => Promise.resolve());
+      expect(newSessionBody).toBeNull();
+
+      fireEvent.change(message, {
+        target: { value: "first line\nsecond line" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() =>
+        expect(promptBody).toMatchObject({
+          message: "first line\nsecond line",
+        }),
+      );
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+
   it("resolves Pi's default model and searches project files from the typed workspace", async () => {
     newSessionBody = null;
     promptBody = null;
