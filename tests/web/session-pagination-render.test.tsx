@@ -94,6 +94,7 @@ beforeAll(async () => {
     return undefined;
   });
   await store.init("token");
+  FakeWebSocket.instances.at(-1)?.open();
   await waitFor(() => expect(store.getState().sessionListNextOffset).toBe(1));
 });
 

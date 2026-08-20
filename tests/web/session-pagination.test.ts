@@ -588,7 +588,10 @@ describe("session list pagination", () => {
     const { store } = await initStore();
 
     await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(601));
-    expect(chunkSizes).toEqual([600, 1]);
+    // The stream snapshot can concurrently request its active row while the
+    // catalog hydrates the full curated union; every request remains bounded.
+    expect(chunkSizes).toContain(600);
+    expect(chunkSizes).toContain(1);
     expect(chunkSizes.every((size) => size <= 600)).toBe(true);
     expect(store.getState().sessionListError).toBeNull();
   });

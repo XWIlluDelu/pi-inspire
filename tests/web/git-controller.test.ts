@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GitStatusResponse } from "../../shared/contracts";
 import type { Api } from "../../src/api";
@@ -54,7 +55,10 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
 }
 
 describe("GitController", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
 
   it("does not publish a status response after its selection generation changes", async () => {
     let resolve!: (status: GitStatusResponse) => void;
@@ -91,6 +95,48 @@ describe("GitController", () => {
     harness.controller.setSurfaceVisible("test", false);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(harness.gitStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a lower polling cadence when only the topbar summary is visible", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.gitStatus.mockResolvedValue(notRepository);
+
+    harness.controller.setSurfaceVisible("topbar-git", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
+
+    harness.controller.setSurfaceVisible("topbar-git", false);
+  });
+
+  it("pauses polling while the page is hidden and refreshes on return", async () => {
+    vi.useFakeTimers();
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(
+      () => visibility,
+    );
+    const harness = createHarness();
+    harness.gitStatus.mockResolvedValue(notRepository);
+
+    harness.controller.setSurfaceVisible("test", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+
+    visibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
+    harness.controller.setSurfaceVisible("test", false);
   });
 
   it("clears Git selection only when a Files resource replaces it", () => {

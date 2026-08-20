@@ -24,6 +24,17 @@ export function installFetch(handler: RouteHandler) {
       status: 404,
       body: { error: `No mock route for ${url}` },
     };
+    if (
+      url.startsWith("/api/bootstrap") &&
+      (route.status ?? 200) < 400 &&
+      route.body &&
+      typeof route.body === "object" &&
+      "snapshot" in route.body
+    ) {
+      FakeWebSocket.bootstrapSnapshot = (
+        route.body as { snapshot: ActiveSnapshot }
+      ).snapshot;
+    }
     return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
       headers: { "Content-Type": "application/json" },
@@ -41,18 +52,27 @@ export function jsonBody(init: RequestInit): Record<string, unknown> {
 
 export class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  static bootstrapSnapshot: ActiveSnapshot | undefined;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  private opened = false;
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
   }
 
   close(): void {}
-  open(): void {
+  open(snapshot = FakeWebSocket.bootstrapSnapshot): void {
+    if (this.opened) return;
+    this.opened = true;
     this.onopen?.({});
+    if (snapshot)
+      this.emit({
+        type: "snapshot",
+        data: snapshot,
+      });
   }
   emit(event: unknown): void {
     this.onmessage?.({ data: JSON.stringify(event) });
@@ -61,6 +81,7 @@ export class FakeWebSocket {
 
 export function installFakeWebSocket(): void {
   FakeWebSocket.instances = [];
+  FakeWebSocket.bootstrapSnapshot = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 }
 

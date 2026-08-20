@@ -1064,6 +1064,71 @@ describe("local host API", () => {
     }
   });
 
+  it("keeps joined sockets observable and terminates clients that stop answering pings", async () => {
+    const heartbeatApp = createInspireServer({
+      token,
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "uploads-heartbeat")),
+      preferences: new PreferencesStore(
+        join(temporary, "preferences-heartbeat.json"),
+      ),
+      resources: new ResourceStore(),
+      git,
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+      distDir: join(temporary, "missing-dist"),
+      websocketHeartbeatIntervalMs: 20,
+    });
+    await new Promise<void>((resolve) =>
+      heartbeatApp.server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = heartbeatApp.server.address() as AddressInfo;
+    const url = `ws://127.0.0.1:${address.port}/events?token=${token}`;
+    const responsive = new WebSocket(url);
+    try {
+      const ping = new Promise<void>((resolve) =>
+        responsive.once("ping", resolve),
+      );
+      const heartbeat = new Promise<void>((resolve, reject) => {
+        responsive.on("message", (data) => {
+          try {
+            const frame = JSON.parse(data.toString()) as { type?: unknown };
+            if (frame.type === "heartbeat") resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        responsive.once("error", reject);
+      });
+      await Promise.race([
+        Promise.all([ping, heartbeat]),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("heartbeat was not observed")),
+            1_000,
+          ),
+        ),
+      ]);
+      responsive.close();
+
+      const unresponsive = new WebSocket(url, { autoPong: false });
+      const closed = new Promise<number>((resolve, reject) => {
+        unresponsive.once("close", resolve);
+        unresponsive.once("error", () => undefined);
+        setTimeout(
+          () => reject(new Error("unresponsive socket remained open")),
+          1_000,
+        );
+      });
+      expect(await closed).toBe(1006);
+    } finally {
+      responsive.close();
+      await heartbeatApp.close();
+    }
+  });
+
   it("closes a joining socket whose pre-snapshot event backlog exceeds the bound", async () => {
     let releaseSnapshot!: () => void;
     const gate = new Promise<void>(

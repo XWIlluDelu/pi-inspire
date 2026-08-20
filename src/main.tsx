@@ -11,6 +11,18 @@ import "./styles.css";
 // HttpOnly pairing cookie.
 void store.init(resolveToken());
 
+// Browser freezes and network changes can strand an apparently open socket
+// without promptly delivering `close`. Re-enter through the same bootstrap +
+// authoritative-snapshot path instead of creating a parallel resync protocol.
+window.addEventListener("online", () => store.recoverConnection("online"));
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) store.recoverConnection("pageshow");
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible")
+    store.recoverConnection("visible");
+});
+
 // The service worker owns only the static shell. Session APIs and the event
 // stream stay network-only because Pi and the local host remain authoritative.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
