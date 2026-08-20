@@ -35,7 +35,7 @@ interface BranchViewTicket {
   selectionRequest: number;
 }
 
-export interface BranchControllerHost {
+interface BranchControllerHost {
   state(): BranchControllerState;
   patch(patch: BranchControllerPatch): void;
   api(): Api | null;

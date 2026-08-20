@@ -53,7 +53,7 @@ type SessionListRetry =
   | { kind: "preserve"; query: string; offset: number; total: number }
   | { kind: "hydrate"; owner: HydrationOwner };
 
-export interface SessionCatalogControllerHost {
+interface SessionCatalogControllerHost {
   state(): SessionCatalogState;
   patch(patch: SessionCatalogPatch): void;
   api(): Api | null;

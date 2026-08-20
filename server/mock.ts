@@ -425,6 +425,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const summary = summaries.find((item) => item.id === id);
     let active = this.sessions.get(id);
     if (!active) {
+      const fixtureMessages = summary
+        ? structuredClone(messagesForFixture(id))
+        : [];
       active = {
         sessionId: id,
         sessionFile: `/mock/${id}.jsonl`,
@@ -436,7 +439,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,
-        messages: summary ? structuredClone(messagesForFixture(id)) : [],
         transcriptPage: {
           sessionId: id,
           revision: id === BRANCH_FIXTURE_SESSION_ID ? 7 : 1,
@@ -444,7 +446,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
           ...(id === BRANCH_FIXTURE_SESSION_ID
             ? { effectiveLeafId: BRANCH_EARLIER_LEAF_ID }
             : {}),
-          messages: summary ? structuredClone(messagesForFixture(id)) : [],
+          messages: fixtureMessages,
           hasOlder: false,
           olderCursor: null,
         },
@@ -635,7 +637,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const sessionId = active.sessionId;
     const timestamp = Date.now();
     const user = { role: "user", content: request.message, timestamp };
-    active.messages.push(user);
+    active.transcriptPage.messages.push(user);
     active.isStreaming = true;
     if (this.state.active?.sessionId === sessionId)
       this.state.runState = "running";
@@ -655,7 +657,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       stopReason: "stop",
       timestamp: timestamp + 1,
     };
-    active.messages.push(assistant);
+    active.transcriptPage.messages.push(assistant);
     this.emitSession(sessionId, { type: "message_start", message: assistant });
     const chunks = answer.match(/.{1,14}/gs) ?? [answer];
     let index = 0;
@@ -742,9 +744,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
   async extensionUiResponse(): Promise<void> {}
   async snapshot(): Promise<ActiveSnapshot> {
-    if (this.state.active) {
-      this.state.active.transcriptPage.messages = this.state.active.messages;
-    }
     return structuredClone(this.state);
   }
   async transcriptPage(
@@ -885,7 +884,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       title: "Fork of earlier branch",
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
-      messageCount: destination.messages.length,
+      messageCount: destination.transcriptPage.messages.length,
     });
     return { sessionId, snapshot: await this.snapshot(), editorText: "" };
   }
@@ -902,7 +901,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       viewId: active.transcriptPage.viewId,
       revision: active.transcriptPage.revision,
       cwd: active.cwd,
-      messages: active.messages,
+      messages: active.transcriptPage.messages,
     };
   }
   async close(): Promise<void> {

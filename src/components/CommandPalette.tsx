@@ -2,15 +2,16 @@ import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ASSISTANT_ROUND_DISPLAYS,
+  isAbortableRunState,
   TOOL_VISIBILITY_PREFERENCES,
   VISIBILITY_PREFERENCES,
   type PalettePreference,
   type ThemePreference,
 } from "../../shared/contracts";
-import { isAbortableRunState, store, useAppState } from "../store";
+import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { sessionHeading } from "./AppTopbar";
-import { relativeTime } from "./Transcript";
+import { relativeTime } from "./transcript-rows";
 
 interface PaletteItem {
   id: string;

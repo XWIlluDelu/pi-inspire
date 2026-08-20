@@ -2,7 +2,7 @@
  * change as a unified diff; rendering it as colored lines instead of a raw
  * dump is the single biggest readability win in the transcript. */
 
-export type DiffLineType = "add" | "del" | "context" | "hunk" | "meta";
+type DiffLineType = "add" | "del" | "context" | "hunk" | "meta";
 
 export interface DiffLine {
   type: DiffLineType;

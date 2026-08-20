@@ -16,23 +16,20 @@ import {
 } from "../../shared/contracts";
 import type { ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
+import type { PiCommand } from "../composer-completion";
+import type { PendingAttachment } from "../controllers/composer-controller";
 import { clipboardFiles } from "../clipboard-files";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
-import {
-  store,
-  useAppState,
-  type PendingAttachment,
-  type PiCommand,
-} from "../store";
+import { store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
-import { relativeTime } from "./Transcript";
+import { relativeTime } from "./transcript-rows";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 interface WelcomeAttachment extends PendingAttachment {

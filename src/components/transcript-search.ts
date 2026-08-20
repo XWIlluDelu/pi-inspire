@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 
-export interface TranscriptSearchMatch {
+interface TranscriptSearchMatch {
   rowIndex: number;
   offset: number;
 }
@@ -16,7 +16,7 @@ export const TRANSCRIPT_SEARCH_SCOPES: Array<{
   { value: "model", label: "Model" },
 ];
 
-export interface TranscriptSearchRow {
+interface TranscriptSearchRow {
   searchText: string;
   searchScope: Exclude<TranscriptSearchScope, "all"> | null;
 }
@@ -43,7 +43,7 @@ export function findLiteralMatches(
   return matches;
 }
 
-export interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {
+interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {
   rows: readonly Row[];
   sessionId: string;
   searchOwnsViewportRef: MutableRefObject<boolean>;

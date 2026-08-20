@@ -37,13 +37,11 @@ import {
   resourceRows,
 } from "../resources";
 import {
-  gitChangeForWorkspacePath,
   MAX_MEDIA_PREVIEW_BYTES,
   type ResourcePreview,
-  store,
   TEXT_PREVIEW_BYTES,
-  useAppState,
-} from "../store";
+} from "../resource-preview";
+import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { BranchTree } from "./BranchTree";
 import { PaneResizeHandle } from "./PaneResizeHandle";
 import { CodeBlock, RichText } from "./RichText";

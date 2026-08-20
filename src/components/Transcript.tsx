@@ -12,11 +12,11 @@ import {
   contentItems,
   messageKey,
   messageText,
-  store,
   type ActivityTool,
   type ChatMessage,
   type ToolCallContent,
-} from "../store";
+} from "../events";
+import { store } from "../store";
 import { Dropdown } from "./Dropdown";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { handleRichTextCopy } from "./RichText";
@@ -41,14 +41,6 @@ import {
   type TranscriptSearchScope,
 } from "./transcript-search";
 import { useTranscriptViewport } from "./transcript-viewport";
-
-export { toolFileArguments } from "./transcript-cards";
-export { relativeTime } from "./transcript-rows";
-export {
-  findLiteralMatches,
-  type TranscriptSearchMatch,
-  type TranscriptSearchScope,
-} from "./transcript-search";
 
 // --- Transcript with pinned auto-scroll ---
 

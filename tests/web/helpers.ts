@@ -89,28 +89,28 @@ export function installFakeWebSocket(): void {
 
 export const DEFAULT_PREFS = defaultPreferences;
 
+type ActiveSnapshotValue = NonNullable<ActiveSnapshot["active"]>;
+type ActiveSnapshotOverrides = Omit<
+  Partial<ActiveSnapshotValue>,
+  "transcriptPage"
+> & {
+  pageMessages?: unknown[];
+  transcriptPage?: Partial<ActiveSnapshotValue["transcriptPage"]>;
+};
+
 export function activeSnapshot(
-  overrides: Record<string, unknown> = {},
+  overrides: ActiveSnapshotOverrides = {},
 ): ActiveSnapshot {
-  const active: NonNullable<ActiveSnapshot["active"]> = {
-    sessionId: "s1",
+  const { pageMessages = [], transcriptPage, ...activeOverrides } = overrides;
+  const sessionId = activeOverrides.sessionId ?? "s1";
+  const active: ActiveSnapshotValue = {
+    sessionId,
     sessionName: "Test session",
     cwd: "/proj",
     model: { provider: "kimi-coding", id: "kimi-k3" },
     thinkingLevel: "medium",
     isStreaming: false,
     isCompacting: false,
-    messages: [],
-    transcriptPage: {
-      sessionId: "s1",
-      revision: 1,
-      viewId: "view-s1",
-      incarnation: "projection-1",
-      appendFromRevision: 1,
-      messages: [],
-      hasOlder: false,
-      olderCursor: null,
-    },
     projectionHealth: { status: "ok" as const },
     projectionConflict: null,
     stats: {
@@ -118,20 +118,19 @@ export function activeSnapshot(
     },
     availableModels: [],
     commands: [],
-    ...overrides,
-  };
-  if (!("transcriptPage" in overrides)) {
-    active.transcriptPage = {
-      sessionId: String(active.sessionId),
+    ...activeOverrides,
+    transcriptPage: {
+      sessionId,
       revision: 1,
-      viewId: `view-${String(active.sessionId)}`,
+      viewId: `view-${sessionId}`,
       incarnation: "projection-1",
       appendFromRevision: 1,
-      messages: active.messages as unknown[],
+      messages: pageMessages,
       hasOlder: false,
       olderCursor: null,
-    };
-  }
+      ...transcriptPage,
+    },
+  };
   return {
     active,
     runState: "idle",

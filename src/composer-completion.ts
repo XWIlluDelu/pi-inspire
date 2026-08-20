@@ -1,7 +1,14 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
 import { INSPIRE_COMMANDS } from "../shared/commands";
 import type { ProjectFileResult } from "./api";
-import type { PiCommand } from "./store";
+
+export interface PiCommand {
+  name: string;
+  description?: string;
+  /** Pi currently reports extension/prompt/skill. Keep unknown future sources
+   * attributable instead of collapsing or rejecting them. */
+  source?: string;
+}
 
 export type CaretCompletion =
   | { kind: "file"; start: number; end: number; query: string }

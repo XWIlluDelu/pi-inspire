@@ -55,7 +55,7 @@ interface DiskPreferences {
   warning?: string;
 }
 
-export interface PreferencesInspection {
+interface PreferencesInspection {
   preferences: InspirePreferences;
   warning?: string;
 }

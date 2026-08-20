@@ -134,9 +134,7 @@ function consoleRuntimeError(sessionId: string, error: unknown): void {
   );
 }
 
-export type MaintenanceRestartBusyReason =
-  | "active-work"
-  | "in-flight-operation";
+type MaintenanceRestartBusyReason = "active-work" | "in-flight-operation";
 
 export type MaintenanceRestartDecision =
   | { kind: "ready"; expiresAt: number }
@@ -1373,13 +1371,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.projectionCoordinator.captureWriterBaseline(slot);
   }
 
-  private captureWriterProjectionResult(
-    slot: RuntimeSlot,
-    result: ProjectionReconcileResult,
-  ): void {
-    this.projectionCoordinator.captureWriterResult(slot, result);
-  }
-
   private clearWriterProjectionBaseline(slot: RuntimeSlot): void {
     this.projectionCoordinator.clearWriterBaseline(slot);
   }
@@ -2214,7 +2205,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ...slot.preview,
         model: slot.projection.model ?? slot.preview.model,
         thinkingLevel: this.effectiveThinkingLevel(slot),
-        messages: page.messages,
         transcriptPage: page,
         projectionHealth: slot.projection.health,
         projectionConflict: slot.conflict,
@@ -2281,7 +2271,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         thinkingLevel: projection.thinkingLevel,
         isStreaming: false,
         isCompacting: false,
-        messages: page.messages,
         transcriptPage: page,
         projectionHealth: projection.health,
         availableModels: [],
@@ -2400,10 +2389,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (this.loadingPaths.get(path) === loading)
         this.loadingPaths.delete(path);
     }
-  }
-
-  private startSlot(slot: RuntimeSlot): Promise<RuntimeSlot> {
-    return this.workerLifecycle.start(slot);
   }
 
   private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
@@ -2970,7 +2955,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           thinkingLevel: String(state.thinkingLevel ?? "off"),
           isStreaming: false,
           isCompacting: false,
-          messages: [],
           transcriptPage: {
             sessionId,
             revision: 1,
@@ -2998,7 +2982,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
         isStreaming: false,
         isCompacting: false,
-        messages: page.messages,
         transcriptPage: page,
         projectionHealth: projection.health,
         availableModels: [],
@@ -3724,7 +3707,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               String(state.thinkingLevel ?? "off"),
             isStreaming: false,
             isCompacting: false,
-            messages: page.messages,
             transcriptPage: page,
             projectionHealth: destinationProjection.health,
             stats: extras.stats,
@@ -4168,7 +4150,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             page.messages,
           ),
           isCompacting: Boolean(state.isCompacting),
-          messages: page.messages,
           transcriptPage: page,
           projectionHealth: slot.projection.health,
           projectionConflict: slot.conflict,

@@ -14,7 +14,7 @@ import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
  * This collaborator owns only the lifecycle of an already-addressed Pi worker:
  * fresh-start attestation, safe stop, and writer freshness checks.
  */
-export interface RuntimeWorkerLifecycleHost {
+interface RuntimeWorkerLifecycleHost {
   selectedSessionId(): string | null;
   createProcess(options: PiRpcOptions): PiRpcProcess;
   workerOptions(

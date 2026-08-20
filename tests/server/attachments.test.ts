@@ -1,7 +1,6 @@
 import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Express } from "express";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import {

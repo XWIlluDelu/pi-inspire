@@ -15,8 +15,9 @@ import {
   type ProjectionConflict,
   type RunState,
 } from "../../shared/contracts";
+import { messageText, type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
-import { messageText, store, type ChatMessage, useAppState } from "../store";
+import { store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);

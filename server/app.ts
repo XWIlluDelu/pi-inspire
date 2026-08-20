@@ -207,8 +207,8 @@ const gitDiffSchema = z.object({
 });
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
-export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
-export const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
+const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
+const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 export const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
 
@@ -216,7 +216,7 @@ interface MaintenanceRestartLike {
   reserve(): Promise<MaintenanceRestartOutcome>;
 }
 
-export interface AppDependencies {
+interface AppDependencies {
   token: string;
   runtime: RuntimeLike;
   catalog: SessionCatalogLike;
@@ -745,8 +745,8 @@ export function createInspireServer(deps: AppDependencies): {
     const page = await deps.resources.list(context, { cursor, limit });
     response.json({
       sessionId,
-      viewId: context.viewId ?? `legacy-view:${sessionId}`,
-      revision: context.revision ?? 0,
+      viewId: context.viewId,
+      revision: context.revision,
       ...page,
     });
   });
@@ -755,8 +755,8 @@ export function createInspireServer(deps: AppDependencies): {
     const context = await deps.runtime.resourceContext(sessionId);
     response.json({
       sessionId,
-      viewId: context.viewId ?? `legacy-view:${sessionId}`,
-      revision: context.revision ?? 0,
+      viewId: context.viewId,
+      revision: context.revision,
       results: await deps.resources.probe(context, references),
     });
   });
@@ -774,11 +774,6 @@ export function createInspireServer(deps: AppDependencies): {
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
-    if (!context.viewId)
-      throw Object.assign(
-        new Error("The runtime did not provide a branch view identity"),
-        { status: 409 },
-      );
     const resource = deps.resources.get(
       String(request.params.id),
       sessionId,

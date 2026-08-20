@@ -46,7 +46,7 @@ describe("loadSessionPreview", () => {
       searchText: "legacy",
     };
     const loaded = await loadSessionPreview(record);
-    expect(loaded.messages[0]).toMatchObject({
+    expect(loaded.transcriptPage.messages[0]).toMatchObject({
       role: "user",
       content: "legacy",
     });
@@ -125,10 +125,12 @@ describe("loadSessionPreview", () => {
       model: { provider: "test", id: "model-a" },
       thinkingLevel: "high",
       isStreaming: false,
-      messages: [
-        { role: "user", content: "hello" },
-        { role: "assistant", provider: "test", model: "model-a" },
-      ],
+      transcriptPage: {
+        messages: [
+          { role: "user", content: "hello" },
+          { role: "assistant", provider: "test", model: "model-a" },
+        ],
+      },
     });
     expect(await readFile(path, "utf8")).toBe(original);
   });

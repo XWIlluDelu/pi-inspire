@@ -5,7 +5,7 @@ import { SessionProjection } from "./session-projection.js";
 
 export type ActiveSessionSnapshot = NonNullable<ActiveSnapshot["active"]>;
 
-/** One-shot compatibility facade over the sole Pi JSONL parser authority. */
+/** One-shot preview adapter over the sole Pi JSONL parser authority. */
 export async function loadSessionPreview(
   session: SessionRecord,
 ): Promise<ActiveSessionSnapshot> {
@@ -21,7 +21,6 @@ export async function loadSessionPreview(
       thinkingLevel: projection.thinkingLevel,
       isStreaming: false,
       isCompacting: false,
-      messages: page.messages,
       transcriptPage: page,
       projectionHealth: projection.health,
       availableModels: [],

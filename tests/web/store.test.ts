@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import {
-  AppStore,
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
-} from "../../src/store";
+} from "../../src/resource-preview";
+import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -69,7 +69,7 @@ async function initStore(): Promise<{
   const store = new AppStore();
   await store.init("token");
   const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
+  socket.open(FakeWebSocket.bootstrapSnapshot ?? activeSnapshot());
   return { store, socket };
 }
 
@@ -254,8 +254,10 @@ describe("multi-session event routing", () => {
       data: activeSnapshot({
         projectionHealth: { status: "error", message: "wrong session header" },
         projectionConflict: {
+          kind: "external-change",
           message: "external writer conflict",
           revision: 3,
+          incidentId: "incident-external-writer",
         },
       }),
     });
@@ -483,7 +485,7 @@ describe("multi-session event routing", () => {
         snapshotCalls += 1;
         return {
           body: activeSnapshot({
-            messages: [
+            pageMessages: [
               { role: "assistant", content: "projected", timestamp: 8 },
             ],
             transcriptPage: {
@@ -676,7 +678,12 @@ describe("multi-session event routing", () => {
               status: "error",
               message: "malformed replacement",
             },
-            projectionConflict: { message: "ownership conflict", revision: 2 },
+            projectionConflict: {
+              kind: "projection-failure",
+              message: "ownership conflict",
+              revision: 2,
+              incidentId: "incident-ownership",
+            },
             transcriptPage: {
               sessionId: "s1",
               revision: 2,
@@ -807,7 +814,7 @@ describe("multi-session event routing", () => {
         snapshotCalls += 1;
         return {
           body: activeSnapshot({
-            messages: [
+            pageMessages: [
               { role: "assistant", content: "live runtime", timestamp: 2 },
             ],
           }),
@@ -849,7 +856,7 @@ describe("multi-session event routing", () => {
             JSON.stringify(
               activeSnapshot({
                 sessionId: "s2",
-                messages: [
+                pageMessages: [
                   { role: "assistant", content: "preview B", timestamp: 2 },
                 ],
               }),
@@ -863,7 +870,7 @@ describe("multi-session event routing", () => {
             JSON.stringify(
               activeSnapshot({
                 sessionId: "s2",
-                messages: [
+                pageMessages: [
                   { role: "assistant", content: "live B", timestamp: 3 },
                 ],
               }),
@@ -919,7 +926,7 @@ describe("multi-session event routing", () => {
             JSON.stringify(
               activeSnapshot({
                 sessionId: "s1",
-                messages: [
+                pageMessages: [
                   { role: "assistant", content: "stale A", timestamp: 3 },
                 ],
               }),
@@ -950,7 +957,9 @@ describe("multi-session event routing", () => {
       data: activeSnapshot({
         sessionId: "s2",
         sessionName: "Session B",
-        messages: [{ role: "assistant", content: "current B", timestamp: 4 }],
+        pageMessages: [
+          { role: "assistant", content: "current B", timestamp: 4 },
+        ],
       }),
     });
     releaseSnapshot();
@@ -1059,7 +1068,7 @@ describe("transcript paging", () => {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
-              messages: [{ role: "user", content: "new", timestamp: 2 }],
+              pageMessages: [{ role: "user", content: "new", timestamp: 2 }],
               transcriptPage: {
                 sessionId: "s1",
                 revision: 4,
@@ -1104,7 +1113,7 @@ describe("transcript paging", () => {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
-              messages: [{ role: "user", content: "new", timestamp: 3 }],
+              pageMessages: [{ role: "user", content: "new", timestamp: 3 }],
               transcriptPage: {
                 sessionId: "s1",
                 revision: 4,
@@ -1436,8 +1445,10 @@ describe("transcript paging", () => {
                 message: "projection damaged",
               },
               projectionConflict: {
+                kind: "projection-failure",
                 message: "projection conflict",
                 revision: 4,
+                incidentId: "incident-projection",
               },
               transcriptPage: {
                 sessionId: "s1",
@@ -1495,7 +1506,7 @@ describe("transcript paging", () => {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
-              messages: [{ role: "user", content: "new", timestamp: 2 }],
+              pageMessages: [{ role: "user", content: "new", timestamp: 2 }],
               transcriptPage: {
                 sessionId: "s1",
                 revision: 4,

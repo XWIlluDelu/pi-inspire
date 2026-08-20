@@ -19,16 +19,15 @@ import {
   GitInspectionError,
   spawnGit,
   type GitRunner,
-  type GitRunOptions,
   type GitRunResult,
 } from "./git-runner.js";
 
 export { GIT_STDERR_BYTES, GIT_TIMEOUT_MS, GitInspectionError, spawnGit };
-export type { GitRunner, GitRunOptions, GitRunResult };
+export type { GitRunner };
 export const GIT_STATUS_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const GIT_DIFF_OUTPUT_BYTES = 1024 * 1024;
-export const MAX_GIT_STATUS_FILES = 1_000;
-export const MAX_GIT_DIFF_LINES = 2_000;
+const MAX_GIT_STATUS_FILES = 1_000;
+const MAX_GIT_DIFF_LINES = 2_000;
 const MAX_PATH_ID_LENGTH = 16 * 1024;
 
 const fatalDecoder = new TextDecoder("utf-8", { fatal: true });

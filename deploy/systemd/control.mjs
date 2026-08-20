@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOST_SERVICE_NAME = "inspire-host.service";
-export const IDLE_MAINTENANCE_TIMER_NAME =
+const HOST_SERVICE_NAME = "inspire-host.service";
+const IDLE_MAINTENANCE_TIMER_NAME =
   "inspire-idle-maintenance-restart.timer";
 
 function configHome(environment = process.env) {

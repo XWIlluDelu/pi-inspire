@@ -15,8 +15,8 @@ import {
   replaceCompletionToken,
   resolveCommandInventory,
   type CaretCompletion,
+  type PiCommand,
 } from "../composer-completion";
-import type { PiCommand } from "../store";
 
 interface CompletionItem {
   key: string;

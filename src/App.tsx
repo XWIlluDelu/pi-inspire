@@ -1,6 +1,6 @@
 import { Loader2, X } from "lucide-react";
 import { Profiler, useCallback, useEffect, useState } from "react";
-import { type ThemePreference } from "../shared/contracts";
+import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
 import type { Notice } from "./events";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
@@ -17,7 +17,7 @@ import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
-import { isAbortableRunState, store, useAppState } from "./store";
+import { store, useAppState } from "./store";
 import { hasActiveModal } from "./use-modal-focus";
 import { cacheVisualPreferences } from "./visual-preferences";
 

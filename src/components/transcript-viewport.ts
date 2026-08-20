@@ -19,7 +19,7 @@ interface TranscriptScrollAnchor {
   offset: number;
 }
 
-export interface TranscriptViewportOptions<Row extends TranscriptViewportRow> {
+interface TranscriptViewportOptions<Row extends TranscriptViewportRow> {
   rows: readonly Row[];
   sessionId: string;
   hasOlder: boolean;
