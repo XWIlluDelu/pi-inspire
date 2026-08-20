@@ -1,6 +1,6 @@
 {
   "name": "inspire-pi-gui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Linux-first local web workbench for Pi Coding Agent",
   "type": "module",
   "license": "MIT",
@@ -87,7 +87,7 @@
   "dependencies": {
     "express": "^5.2.1",
     "multer": "^2.2.0",
-    "ws": "^8.21.1",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

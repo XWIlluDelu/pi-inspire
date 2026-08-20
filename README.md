@@ -106,10 +106,10 @@ npm pack
 The current release is distributed through GitHub Releases rather than the npm registry. Download, verify, and install its local tarball:
 
 ```bash
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.1.0/inspire-pi-gui-0.1.0.tgz
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.1.0/SHA256SUMS.txt
+curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/inspire-pi-gui-0.2.0.tgz
+curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/SHA256SUMS.txt
 sha256sum -c SHA256SUMS.txt
-npm install --global ./inspire-pi-gui-0.1.0.tgz
+npm install --global ./inspire-pi-gui-0.2.0.tgz
 inspire
 ```
 
