@@ -1765,8 +1765,12 @@ describe("notice expiry", () => {
     expect(store.getState().notices).toHaveLength(0);
     listener.mockClear();
 
-    // the cancelled timer must never fire a stray publish afterwards
-    vi.advanceTimersByTime(60_000);
+    // The fake server's keepalive mirrors production while the notice expiry
+    // window advances; heartbeat frames themselves never publish store state.
+    for (let elapsed = 0; elapsed < 60_000; elapsed += 20_000) {
+      vi.advanceTimersByTime(20_000);
+      socket.emit({ type: "heartbeat" });
+    }
     expect(listener).not.toHaveBeenCalled();
     expect(store.getState().notices).toHaveLength(0);
   });

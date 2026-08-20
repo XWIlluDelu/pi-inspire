@@ -5,7 +5,9 @@ import type {
 } from "../../shared/contracts";
 import type { Api } from "../api";
 
-const GIT_REFRESH_INTERVAL_MS = 4_000;
+const GIT_DETAIL_REFRESH_INTERVAL_MS = 4_000;
+const GIT_TOPBAR_REFRESH_INTERVAL_MS = 20_000;
+const TOPBAR_SURFACE = "topbar-git";
 
 export type GitDiffView =
   | { status: "loading"; pathId: string; side: GitDiffSide }
@@ -61,6 +63,7 @@ export class GitController {
   private diffRequest: AbortController | null = null;
   private surfaces = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private observingVisibility = false;
 
   constructor(private readonly host: GitControllerHost) {}
 
@@ -69,13 +72,22 @@ export class GitController {
   }
 
   setSurfaceVisible(surface: string, visible: boolean): void {
-    const wasVisible = this.hasVisibleSurface();
+    const previousInterval = this.refreshInterval();
     if (visible) this.surfaces.add(surface);
     else this.surfaces.delete(surface);
-    if (this.hasVisibleSurface()) {
-      if (!wasVisible) void this.refreshStatus();
+    const nextInterval = this.refreshInterval();
+    if (nextInterval !== null) {
+      this.observeVisibility();
+      if (previousInterval === null) {
+        void this.refreshStatus();
+      } else if (previousInterval !== nextInterval) {
+        this.clearRefreshTimer();
+        if (nextInterval < previousInterval) void this.refreshStatus();
+        else if (!this.statusPromise) this.scheduleRefresh();
+      }
       return;
     }
+    this.unobserveVisibility();
     this.clearRefreshTimer();
     this.refreshQueued = false;
     this.statusRequest?.abort();
@@ -87,7 +99,7 @@ export class GitController {
   }
 
   refreshStatus(): Promise<void> {
-    if (!this.host.api() || !this.host.state().sessionId)
+    if (!this.pageVisible() || !this.host.api() || !this.host.state().sessionId)
       return Promise.resolve();
     if (this.statusPromise) {
       this.refreshQueued = true;
@@ -302,7 +314,11 @@ export class GitController {
           });
         }
       }
-    } while (this.refreshQueued && this.hasVisibleSurface());
+    } while (
+      this.refreshQueued &&
+      this.hasVisibleSurface() &&
+      this.pageVisible()
+    );
   }
 
   private cancelDiff(): void {
@@ -316,10 +332,49 @@ export class GitController {
   }
 
   private scheduleRefresh(): void {
-    if (!this.hasVisibleSurface() || this.refreshTimer) return;
+    const interval = this.refreshInterval();
+    if (interval === null || !this.pageVisible() || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       void this.refreshStatus();
-    }, GIT_REFRESH_INTERVAL_MS);
+    }, interval);
+  }
+
+  private refreshInterval(): number | null {
+    if (!this.hasVisibleSurface()) return null;
+    return [...this.surfaces].some((surface) => surface !== TOPBAR_SURFACE)
+      ? GIT_DETAIL_REFRESH_INTERVAL_MS
+      : GIT_TOPBAR_REFRESH_INTERVAL_MS;
+  }
+
+  private pageVisible(): boolean {
+    return (
+      typeof document === "undefined" || document.visibilityState !== "hidden"
+    );
+  }
+
+  private readonly handleVisibilityChange = (): void => {
+    if (!this.pageVisible()) {
+      this.clearRefreshTimer();
+      this.refreshQueued = false;
+      this.statusRequest?.abort();
+      return;
+    }
+    if (this.hasVisibleSurface()) void this.refreshStatus();
+  };
+
+  private observeVisibility(): void {
+    if (this.observingVisibility || typeof document === "undefined") return;
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    this.observingVisibility = true;
+  }
+
+  private unobserveVisibility(): void {
+    if (!this.observingVisibility || typeof document === "undefined") return;
+    document.removeEventListener(
+      "visibilitychange",
+      this.handleVisibilityChange,
+    );
+    this.observingVisibility = false;
   }
 }

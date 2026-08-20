@@ -208,6 +208,7 @@ const gitDiffSchema = z.object({
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
+export const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 export const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
 
@@ -234,6 +235,8 @@ export interface AppDependencies {
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
+  /** Internal cadence override used by the transport liveness test. */
+  websocketHeartbeatIntervalMs?: number;
 }
 
 async function prospectiveWorkspaceRoot(cwd: string): Promise<string> {
@@ -945,6 +948,31 @@ export function createInspireServer(deps: AppDependencies): {
     socket.send(message);
     return true;
   };
+  const responsiveSockets = new Map<WebSocket, boolean>();
+  const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
+  const heartbeatInterval = setInterval(() => {
+    for (const socket of sockets) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      if (!responsiveSockets.get(socket)) {
+        joining.delete(socket);
+        socket.terminate();
+        continue;
+      }
+      responsiveSockets.set(socket, false);
+      try {
+        socket.ping();
+      } catch {
+        joining.delete(socket);
+        socket.terminate();
+        continue;
+      }
+      // Never overtake the authoritative first snapshot. Once joined, this
+      // application frame also gives browser clients an observable watchdog.
+      if (!joining.has(socket)) sendBounded(socket, heartbeatMessage);
+    }
+  }, deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS);
+  heartbeatInterval.unref();
+
   deps.runtime.on("event", (event) => {
     const message = JSON.stringify(event);
     const messageBytes = Buffer.byteLength(message);
@@ -997,9 +1025,12 @@ export function createInspireServer(deps: AppDependencies): {
   websocket.on("connection", (socket) => {
     sockets.add(socket);
     joining.set(socket, { messages: [], bytes: 0 });
+    responsiveSockets.set(socket, true);
+    socket.on("pong", () => responsiveSockets.set(socket, true));
     socket.on("close", () => {
       sockets.delete(socket);
       joining.delete(socket);
+      responsiveSockets.delete(socket);
     });
     void deps.runtime.snapshot().then(
       (snapshot) => {
@@ -1028,6 +1059,7 @@ export function createInspireServer(deps: AppDependencies): {
     app,
     server,
     close: async () => {
+      clearInterval(heartbeatInterval);
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening

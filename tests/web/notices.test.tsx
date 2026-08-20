@@ -33,6 +33,7 @@ describe("right-corner notices", () => {
       return undefined;
     });
     await store.init("token");
+    FakeWebSocket.instances.at(-1)?.open();
   });
 
   it("copies visible warning and error text, but keeps informational notices compact", async () => {
