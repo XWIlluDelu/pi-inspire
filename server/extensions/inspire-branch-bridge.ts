@@ -12,12 +12,6 @@ import {
   type BranchBridgeResult,
 } from "../../shared/branch-bridge-protocol.js";
 
-export {
-  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-  BRANCH_BRIDGE_MAX_RESULT_BYTES,
-  BRANCH_BRIDGE_VERSION,
-} from "../../shared/branch-bridge-protocol.js";
-
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,200}$/;
 

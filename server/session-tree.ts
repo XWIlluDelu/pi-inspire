@@ -4,9 +4,9 @@ import type { BranchNodeRole, BranchTreeNode } from "../shared/contracts.js";
 export const BRANCH_TREE_MAX_NODES = 500;
 export const BRANCH_TREE_MAX_BYTES = 512 * 1024;
 const BRANCH_TREE_WRAPPER_RESERVE_BYTES = 4 * 1024;
-export const BRANCH_SNIPPET_CHARS = 240;
-export const BRANCH_ENTRY_ID_MAX_CHARS = 200;
-export const BRANCH_ENTRY_ID_MAX_BYTES = 512;
+const BRANCH_SNIPPET_CHARS = 240;
+const BRANCH_ENTRY_ID_MAX_CHARS = 200;
+const BRANCH_ENTRY_ID_MAX_BYTES = 512;
 
 function validateEntryIdentity(
   value: unknown,
@@ -87,7 +87,7 @@ function nodeLabel(
   return snippet ? `${kind}: ${snippet}`.slice(0, 280) : kind;
 }
 
-export function activePathFor(
+function activePathFor(
   entries: readonly SessionEntry[],
   leafId: string | null,
 ): string[] {

@@ -12,7 +12,7 @@ import type { PiRpcProcess } from "./pi-rpc.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import type { SessionProjectionView } from "./session-projection.js";
 
-export type CompletionAttention = "completed" | "failed";
+type CompletionAttention = "completed" | "failed";
 
 export type PersistenceMatcher = (entry: SessionEntry) => boolean;
 
@@ -23,7 +23,7 @@ export interface PersistenceExpectation {
   settle(matcher: PersistenceMatcher | null): void;
 }
 
-export type OwnershipRejectionReason =
+type OwnershipRejectionReason =
   | "projection-unavailable"
   | "not-append"
   | "entries-unavailable"
@@ -63,7 +63,7 @@ export interface PendingBranchBridge {
   result: Promise<BranchBridgeResult>;
 }
 
-export interface PendingPartialPersistence {
+interface PendingPartialPersistence {
   committedBytes: number;
   bytes: number;
   fingerprint: string;
@@ -74,7 +74,7 @@ export interface PendingPartialPersistence {
   timer: ReturnType<typeof setTimeout>;
 }
 
-export interface NavigationLease {
+interface NavigationLease {
   workerId: string;
   sourceRevision: number;
   durableLeafId: string | null;
@@ -167,7 +167,7 @@ export interface RuntimeSlot {
   viewId: string;
 }
 
-export interface RuntimeSlotSeed {
+interface RuntimeSlotSeed {
   id: string;
   cwd: string;
   sessionPath: string | null;

@@ -18,7 +18,7 @@ export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
  * and browser event authority. This narrow host surface lets the coordinator
  * own only projection reconciliation and its persistence provenance checks.
  */
-export interface RuntimeProjectionCoordinatorHost {
+interface RuntimeProjectionCoordinatorHost {
   isClosing(): boolean;
   reconcileOverlay(
     slot: RuntimeSlot,

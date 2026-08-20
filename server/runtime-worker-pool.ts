@@ -11,7 +11,7 @@ export const MAX_IDLE_WORKERS = 3;
  * This collaborator owns only bounded idle-worker and dormant-projection
  * reclamation over that registry; every host callback is identity-preserving.
  */
-export interface RuntimeWorkerPoolHost {
+interface RuntimeWorkerPoolHost {
   isClosing(): boolean;
   selectedSessionId(): string | null;
   slots(): Iterable<RuntimeSlot>;

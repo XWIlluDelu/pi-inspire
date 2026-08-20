@@ -101,7 +101,7 @@ async function processAlive(pid) {
   }
 }
 
-export async function verifyManagedProcess(state, processMarker = "server/index.ts") {
+async function verifyManagedProcess(state, processMarker = "server/index.ts") {
   if (!(await processAlive(state.pid))) return false;
   if (process.platform !== "linux") return false;
   try {
@@ -152,7 +152,7 @@ export async function inspectInstance(path, expected, options = {}) {
   }
 }
 
-export async function stopManagedInstance(path, expected, options = {}) {
+async function stopManagedInstance(path, expected, options = {}) {
   const state = await readState(path);
   if (!state) return { kind: "absent" };
   if (!expectedState(state, expected) || !(await verifyManagedProcess(state, options.processMarker))) {

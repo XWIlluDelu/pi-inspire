@@ -15,7 +15,7 @@ const CACHE_MS = 5_000;
 let cache: { cwd: string; expiresAt: number; paths: Promise<string[]> } | null =
   null;
 
-export interface ProjectFileResult {
+interface ProjectFileResult {
   path: string;
   name: string;
 }

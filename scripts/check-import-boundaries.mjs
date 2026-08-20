@@ -144,7 +144,7 @@ export async function findImportBoundaryViolations(projectRoot = defaultRoot) {
   return violations;
 }
 
-export async function assertImportBoundaries(projectRoot = defaultRoot) {
+async function assertImportBoundaries(projectRoot = defaultRoot) {
   const violations = await findImportBoundaryViolations(projectRoot);
   if (violations.length > 0) {
     throw new Error(

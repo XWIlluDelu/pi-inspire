@@ -37,7 +37,7 @@ export interface ProjectFileResult {
 // Deterministic development-only token, matched by the dev:host script.
 // Production authentication is an origin-scoped HttpOnly pairing cookie; the
 // query token remains only long enough to establish that pairing.
-export const DEV_TOKEN = "inspire-dev-token";
+const DEV_TOKEN = "inspire-dev-token";
 
 export function resolveToken(): string | null {
   const url = new URL(window.location.href);
@@ -108,7 +108,7 @@ interface ResourceContentOptions {
   signal?: AbortSignal;
 }
 
-export interface ResourceContentResponse {
+interface ResourceContentResponse {
   blob: Blob;
   /** Current total bytes reported by this transfer, not resolve metadata. */
   totalSize: number;

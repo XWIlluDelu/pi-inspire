@@ -13,7 +13,7 @@ export type InspireSourceIdentity =
   | { kind: "source"; revision: string | null }
   | { kind: "package"; version: string | null };
 
-export interface MaintenanceRestartReady {
+interface MaintenanceRestartReady {
   kind: "ready";
   expiresAt: number;
   updates: Array<"inspire" | "pi">;
@@ -23,7 +23,7 @@ export type MaintenanceRestartOutcome =
   | MaintenanceRestartReady
   | { kind: "skipped"; reason: string };
 
-export interface MaintenanceRestartControllerOptions {
+interface MaintenanceRestartControllerOptions {
   runtime: RuntimeLike;
   root: string;
   piVersion: string;

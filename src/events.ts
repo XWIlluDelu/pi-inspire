@@ -7,18 +7,16 @@ import {
   type GenericExtensionDisplay,
   type RunState,
 } from "../shared/contracts";
-export { isAbortableRunState, isBusyRunState } from "../shared/contracts";
 import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import { structuralMessageIdentity } from "../shared/message-identity";
-export type { ExtensionUiRequest } from "../shared/contracts";
 
 // --- Chat message model (structural typing over Pi session messages) ---
 
-export interface TextContent {
+interface TextContent {
   type: "text";
   text: string;
 }
-export interface ThinkingContent {
+interface ThinkingContent {
   type: "thinking";
   thinking: string;
 }
@@ -28,7 +26,7 @@ export interface ToolCallContent {
   name: string;
   arguments?: unknown;
 }
-export type AssistantContent =
+type AssistantContent =
   | TextContent
   | ThinkingContent
   | ToolCallContent
@@ -112,18 +110,16 @@ export interface ActivityTool {
   detail?: string;
 }
 
-export interface RetryInfo {
+interface RetryInfo {
   attempt: number;
   maxAttempts: number;
   message: string;
 }
 
-export interface QueueInfo {
+interface QueueInfo {
   steering: string[];
   followUp: string[];
 }
-
-export const IDLE_QUEUE = emptyPendingQueues;
 
 export interface Notice {
   id: number;
@@ -161,7 +157,7 @@ export function emptyEventSlice(): EventSlice {
     runState: "idle",
     tools: {},
     retry: null,
-    queue: IDLE_QUEUE(),
+    queue: emptyPendingQueues(),
     extensionUiRequests: [],
     extensionUiRespondingId: null,
     extensionDisplays: [],
@@ -173,7 +169,7 @@ export function emptyEventSlice(): EventSlice {
   };
 }
 
-export interface ReduceResult {
+interface ReduceResult {
   slice: EventSlice;
   /** Message keys that became settled with this event and must survive resync dedupe. */
   settle: string[];
@@ -387,7 +383,7 @@ export function reduceEvent(
         slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.queue = IDLE_QUEUE();
+      slice.queue = emptyPendingQueues();
       slice.extensionUiRequests = [];
       changed = true;
       resync = true;

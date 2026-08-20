@@ -7,7 +7,7 @@ import type { RuntimeSlot } from "./runtime-slot.js";
  * owns process-instance identity and guarantees event listeners are attached
  * once even when a fork rebinds the same child to its destination slot.
  */
-export interface RuntimeProcessRegistryHost {
+interface RuntimeProcessRegistryHost {
   recordProcessAttachment(slot: RuntimeSlot, rpc: PiRpcProcess): void;
   dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void;
   handleProcessExit(slot: RuntimeSlot, rpc: PiRpcProcess, error: Error): void;

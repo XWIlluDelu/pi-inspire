@@ -1,15 +1,14 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { clipboardFiles } from "../clipboard-files";
-import { shouldSubmitComposerEnter } from "../composer-keyboard";
-import { sessionDraft, setSessionDraft } from "../session-drafts";
 import {
   isAbortableRunState,
   isBusyRunState,
-  store,
   THINKING_LEVELS,
-  useAppState,
-} from "../store";
+} from "../../shared/contracts";
+import { clipboardFiles } from "../clipboard-files";
+import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { sessionDraft, setSessionDraft } from "../session-drafts";
+import { store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { Dropdown } from "./Dropdown";

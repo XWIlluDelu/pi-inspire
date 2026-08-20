@@ -1,6 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-export interface RpcEntryChain {
+interface RpcEntryChain {
   entries: SessionEntry[];
   leafId: string | null;
 }

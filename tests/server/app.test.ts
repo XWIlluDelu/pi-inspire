@@ -503,7 +503,7 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ id: "mock-active" })
       .expect(200);
-    expect(opened.body.active.messages).toHaveLength(5);
+    expect(opened.body.active.transcriptPage.messages).toHaveLength(5);
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
@@ -1466,6 +1466,7 @@ describe("local host API", () => {
         return {
           sessionId,
           viewId: "embedded-view",
+          revision: 1,
           cwd: temporary,
           messages: [
             {

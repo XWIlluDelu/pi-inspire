@@ -12,7 +12,7 @@ import {
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Express, Request } from "express";
+import type { Request } from "express";
 import type { StorageEngine } from "multer";
 import {
   MAX_ATTACHMENTS,

@@ -8,10 +8,8 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  findLiteralMatches,
-  Transcript,
-} from "../../src/components/Transcript";
+import { Transcript } from "../../src/components/Transcript";
+import { findLiteralMatches } from "../../src/components/transcript-search";
 import { store } from "../../src/store";
 
 beforeEach(() => {

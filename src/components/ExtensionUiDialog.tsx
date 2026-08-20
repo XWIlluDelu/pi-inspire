@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { store, useAppState, type ExtensionUiRequest } from "../store";
+import type { ExtensionUiRequest } from "../../shared/contracts";
+import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 function cancel(request: ExtensionUiRequest): void {

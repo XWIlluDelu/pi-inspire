@@ -1,4 +1,4 @@
-export interface InspireCommandDescriptor {
+interface InspireCommandDescriptor {
   name: string;
   description: string;
   source: "inspire";

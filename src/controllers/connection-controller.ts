@@ -17,7 +17,7 @@ export type ManagedConnectionProblem =
   | null;
 export type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
 
-export interface ConnectionControllerHost {
+interface ConnectionControllerHost {
   state(): { bootstrapped: boolean };
   patch(patch: {
     connection?: ManagedConnectionState;

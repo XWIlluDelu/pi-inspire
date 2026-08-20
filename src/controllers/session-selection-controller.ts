@@ -11,7 +11,7 @@ export interface SessionSelectionState {
   openingSessionId: string | null;
 }
 
-export interface SessionSelectionControllerHost {
+interface SessionSelectionControllerHost {
   state(): SessionSelectionState;
   api(): Api | null;
   transportGeneration(): number;

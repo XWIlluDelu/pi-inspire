@@ -87,7 +87,7 @@ function sameRenamedFileVersion(
 
 /** The payload has already left the public session pathname. `originalPath`
  * exists only to populate the desktop Trash restore metadata. */
-export type TrashSessionPath = (
+type TrashSessionPath = (
   payloadPath: string,
   originalPath: string,
 ) => Promise<void>;

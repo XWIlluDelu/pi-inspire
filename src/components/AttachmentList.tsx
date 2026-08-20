@@ -1,5 +1,5 @@
 import { AlertTriangle, FileText, Loader2, X } from "lucide-react";
-import type { PendingAttachment } from "../store";
+import type { PendingAttachment } from "../controllers/composer-controller";
 import { formatBytes } from "../format";
 import { ImagePreview } from "./ImagePreview";
 
