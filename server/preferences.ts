@@ -204,14 +204,16 @@ export class PreferencesStore {
     });
   }
 
-  /** Remove navigation identities after their authoritative session files have
-   * gone. The read/transform/write stays in the same serialized preference
-   * operation, so a concurrent pin or hide patch cannot be overwritten. */
-  async removeSessions(
-    sessionIds: readonly string[],
-    deletedProjectCwd?: string,
+  /** The read/transform/write stays in one serialized preference operation,
+   * so concurrent curation patches cannot be overwritten by deletion cleanup. */
+  private removeNavigationIdentities(
+    deletedSessionIds: readonly string[],
+    clearedHiddenSessionIds: readonly string[],
+    clearedProjectCwds: readonly string[],
   ): Promise<InspirePreferences> {
-    const deleted = new Set(sessionIds);
+    const deleted = new Set(deletedSessionIds);
+    const clearedHidden = new Set(clearedHiddenSessionIds);
+    const clearedProjects = new Set(clearedProjectCwds);
     return this.enqueue(async () => {
       const current = await this.readDisk();
       const invalid = this.invalidSourceError(current);
@@ -222,28 +224,42 @@ export class PreferencesStore {
           (id) => !deleted.has(id),
         ),
         hiddenSessionIds: current.preferences.hiddenSessionIds.filter(
-          (id) => !deleted.has(id),
+          (id) => !clearedHidden.has(id),
         ),
-        ...(deletedProjectCwd
-          ? {
-              pinnedProjectCwds: current.preferences.pinnedProjectCwds.filter(
-                (cwd) => cwd !== deletedProjectCwd,
-              ),
-              hiddenProjectCwds: current.preferences.hiddenProjectCwds.filter(
-                (cwd) => cwd !== deletedProjectCwd,
-              ),
-              navCollapsedGroups: current.preferences.navCollapsedGroups.filter(
-                (cwd) => cwd !== deletedProjectCwd,
-              ),
-            }
-          : {}),
+        pinnedProjectCwds: current.preferences.pinnedProjectCwds.filter(
+          (cwd) => !clearedProjects.has(cwd),
+        ),
+        hiddenProjectCwds: current.preferences.hiddenProjectCwds.filter(
+          (cwd) => !clearedProjects.has(cwd),
+        ),
+        navCollapsedGroups: current.preferences.navCollapsedGroups.filter(
+          (cwd) => !clearedProjects.has(cwd),
+        ),
       });
       await this.persist(preferences);
       return preferences;
     });
   }
 
+  /** Remove the committed subset of a Hidden clear. Only a complete clear
+   * removes the reviewed curation snapshot; a partial filesystem result keeps
+   * folder ownership for the sessions that remain. */
+  removeClearedHidden(
+    deletedSessionIds: readonly string[],
+    reviewedHiddenSessionIds: readonly string[],
+    reviewedHiddenProjectCwds: readonly string[],
+    complete: boolean,
+  ): Promise<InspirePreferences> {
+    return this.removeNavigationIdentities(
+      deletedSessionIds,
+      complete
+        ? [...deletedSessionIds, ...reviewedHiddenSessionIds]
+        : deletedSessionIds,
+      complete ? reviewedHiddenProjectCwds : [],
+    );
+  }
+
   removeSession(sessionId: string): Promise<InspirePreferences> {
-    return this.removeSessions([sessionId]);
+    return this.removeNavigationIdentities([sessionId], [sessionId], []);
   }
 }

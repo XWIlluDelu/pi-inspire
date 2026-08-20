@@ -562,13 +562,19 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return { sessionId, disposition: "trashed" };
   }
 
-  async deleteHiddenFolderSessions(
-    cwd: string,
+  async clearHiddenSessions(
     expectedSessionIds: readonly string[],
+    hiddenSessionIds: readonly string[],
+    hiddenProjectCwds: readonly string[],
   ) {
-    const targets = summaries.filter((session) => session.cwd === cwd);
+    const individualIds = new Set(hiddenSessionIds);
+    const projectCwds = new Set(hiddenProjectCwds);
+    const targets = summaries.filter(
+      (session) =>
+        individualIds.has(session.id) || projectCwds.has(session.cwd),
+    );
     if (targets.length === 0)
-      throw Object.assign(new Error("No sessions remain in this folder"), {
+      throw Object.assign(new Error("No sessions remain in Hidden"), {
         status: 404,
       });
     const expected = new Set(expectedSessionIds);
@@ -578,13 +584,13 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       targets.some((session) => !expected.has(session.id))
     ) {
       throw Object.assign(
-        new Error("The folder's sessions changed; review it before deleting"),
+        new Error("Hidden changed; review it before clearing"),
         { status: 409 },
       );
     }
     if (targets.some((session) => session.id === this.activeSessionId)) {
       throw Object.assign(
-        new Error("Switch to another session before deleting this folder"),
+        new Error("Switch to another session before clearing Hidden"),
         { status: 409 },
       );
     }
@@ -598,7 +604,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         deleted.push(result);
       } catch (error) {
         return {
-          cwd,
           deleted,
           failure: {
             sessionId: target.id,
@@ -610,7 +615,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         };
       }
     }
-    return { cwd, deleted };
+    return { deleted };
   }
 
   private emitSession(id: string, event: Record<string, unknown>): void {

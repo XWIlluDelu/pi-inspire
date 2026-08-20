@@ -1379,7 +1379,9 @@ a {
 }
 
 .nav__group-title--folder:hover .nav__group-actions,
-.nav__group-title--folder:focus-within .nav__group-actions {
+.nav__group-title--folder:focus-within .nav__group-actions,
+.nav__group-title--hidden:hover .nav__group-actions,
+.nav__group-title--hidden:focus-within .nav__group-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1399,7 +1401,9 @@ a {
 }
 
 .nav__group-title--folder:hover .nav__group-count,
-.nav__group-title--folder:focus-within .nav__group-count {
+.nav__group-title--folder:focus-within .nav__group-count,
+.nav__group-title--hidden:hover .nav__group-count,
+.nav__group-title--hidden:focus-within .nav__group-count {
   opacity: 0;
 }
 
@@ -1408,12 +1412,14 @@ a {
     height: 36px;
   }
 
-  .nav__group-title--folder .nav__group-actions {
+  .nav__group-title--folder .nav__group-actions,
+  .nav__group-title--hidden .nav__group-actions {
     opacity: 1;
     pointer-events: auto;
   }
 
-  .nav__group-title--folder .nav__group-count {
+  .nav__group-title--folder .nav__group-count,
+  .nav__group-title--hidden .nav__group-count {
     opacity: 0;
   }
 }

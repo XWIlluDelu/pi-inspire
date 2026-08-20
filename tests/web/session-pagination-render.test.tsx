@@ -21,6 +21,14 @@ let releaseFirstOlder!: () => void;
 const firstOlderGate = new Promise<void>((resolve) => {
   releaseFirstOlder = resolve;
 });
+let releaseCuration!: () => void;
+let curationStarted!: () => void;
+const curationGate = new Promise<void>((resolve) => {
+  releaseCuration = resolve;
+});
+const curationRequest = new Promise<void>((resolve) => {
+  curationStarted = resolve;
+});
 
 beforeAll(async () => {
   Object.defineProperty(window, "innerWidth", {
@@ -35,6 +43,22 @@ beforeAll(async () => {
           snapshot: { active: null, runState: "idle", sessionStatuses: {} },
         }),
       };
+    if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+      return {
+        body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
+      };
+    }
+    if (url.startsWith("/api/sessions/by-cwd")) {
+      curationStarted();
+      await curationGate;
+      return {
+        body: {
+          sessions: [
+            sessionSummary({ id: "curated-old", cwd: "/work/curated" }),
+          ],
+        },
+      };
+    }
     if (url.startsWith("/api/sessions/by-id")) {
       const ids = (jsonBody(init).ids as string[]) ?? [];
       if (failVisibleHydration && ids.includes("ui-live")) {
@@ -189,6 +213,25 @@ describe("session pagination control", () => {
     // Runtime state stays on the canonical row rather than duplicating it in
     // a second navigation group.
     expect(within(nav).queryByRole("status")).not.toBeInTheDocument();
+
+    store.toggleProjectHidden("/work/curated");
+    await curationRequest;
+    expect(store.getState()).toMatchObject({
+      sessionListHydrating: true,
+      sessionListOperation: "curation",
+    });
+    // Curation keeps the confirmed catalog usable in place; it does not
+    // resurrect the completed-list loading row while fetching off-page rows.
+    expect(within(nav).queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      within(nav).queryByRole("button", {
+        name: "Loading curated sessions…",
+      }),
+    ).not.toBeInTheDocument();
+    releaseCuration();
+    await waitFor(() =>
+      expect(store.getState().sessionListHydrating).toBe(false),
+    );
 
     const results = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },

@@ -43,9 +43,8 @@ const openSchema = z.object({ id: z.string().min(1).max(128) });
 const deleteSessionParamsSchema = z.object({
   sessionId: z.string().min(1).max(128),
 });
-const deleteHiddenFolderSchema = z
+const clearHiddenSchema = z
   .object({
-    cwd: z.string().min(1).max(4_096),
     sessionIds: z.array(z.string().min(1).max(128)).min(1).max(10_000),
   })
   .strict();
@@ -585,33 +584,40 @@ export function createInspireServer(deps: AppDependencies): {
       response.json({ ...result, preferenceCleanupFailed: true });
     }
   });
-  app.post("/api/sessions/delete-hidden-folder", async (request, response) => {
-    const { cwd, sessionIds } = deleteHiddenFolderSchema.parse(request.body);
+  app.post("/api/sessions/clear-hidden", async (request, response) => {
+    const { sessionIds } = clearHiddenSchema.parse(request.body);
     const current = await deps.preferences.inspect();
-    if (!current.preferences.hiddenProjectCwds.includes(cwd)) {
+    const reviewedHiddenSessionIds = current.preferences.hiddenSessionIds;
+    const reviewedHiddenProjectCwds = current.preferences.hiddenProjectCwds;
+    if (
+      reviewedHiddenSessionIds.length === 0 &&
+      reviewedHiddenProjectCwds.length === 0
+    ) {
       return response.status(409).json({
-        error:
-          "The folder must remain in Hidden before its sessions can be deleted",
+        error: "Hidden must remain non-empty before it can be cleared",
       });
     }
-    const result = await deps.runtime.deleteHiddenFolderSessions(
-      cwd,
+    const result = await deps.runtime.clearHiddenSessions(
       sessionIds,
+      reviewedHiddenSessionIds,
+      reviewedHiddenProjectCwds,
     );
     for (const session of result.deleted)
       deps.resources.forgetSession(session.sessionId);
     if (result.deleted.length === 0) return response.json(result);
     try {
-      const preferences = await deps.preferences.removeSessions(
+      const preferences = await deps.preferences.removeClearedHidden(
         result.deleted.map((session) => session.sessionId),
-        result.failure ? undefined : cwd,
+        reviewedHiddenSessionIds,
+        reviewedHiddenProjectCwds,
+        !result.failure,
       );
       response.json({ ...result, preferences });
     } catch (error) {
       // Earlier files are already in Trash (or permanently removed). Return
       // that committed subset and never turn it into a retryable batch.
       console.error(
-        `[folder ${cwd}] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
+        `[Hidden] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
         error,
       );
       response.json({ ...result, preferenceCleanupFailed: true });
