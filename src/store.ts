@@ -42,7 +42,10 @@ import {
   ComposerController,
   type PendingAttachment,
 } from "./controllers/composer-controller";
-import { ConnectionController } from "./controllers/connection-controller";
+import {
+  ConnectionController,
+  type ConnectionRecoveryTrigger,
+} from "./controllers/connection-controller";
 import { GitController, type GitDiffView } from "./controllers/git-controller";
 import { ResourceController } from "./controllers/resource-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
@@ -1425,6 +1428,9 @@ export class AppStore {
   // --- Connection lifecycle ---
 
   retryConnection = (): void => this.connectionController.retry(this.authToken);
+
+  recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
+    this.connectionController.recover(trigger);
 
   // --- Sessions ---
 

@@ -58,6 +58,8 @@ ssh -N -R 127.0.0.1:14587:127.0.0.1:4587 relay-user@relay-host
 
 The connection commands manage only the verified SSH tunnel. They do not stop, replace, or otherwise own the local INSΠRE host. A tunnel start requires that the configured local loopback port is already listening.
 
+`status` verifies the local host listener and this module's managed SSH control connection. It does not prove public DNS, TLS, HTTPS proxying, or browser WebSocket delivery. If those are operational requirements, monitor the public endpoint independently with a paired test client that requires both an authenticated health response and the WebSocket's initial snapshot.
+
 `./inspire --ssh-reverse` is a shorthand for `./inspire connection ssh-reverse start`.
 
 ## Automatic recovery
