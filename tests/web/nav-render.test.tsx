@@ -33,6 +33,13 @@ const beta = sessionSummary({
   project: "beta",
   modified: "2026-07-24T10:00:00Z",
 });
+const gamma = sessionSummary({
+  id: "gamma",
+  title: "Gamma session",
+  cwd: "/work/gamma",
+  project: "gamma",
+  modified: "2026-07-22T10:00:00Z",
+});
 
 const groupNames = () =>
   [...document.querySelectorAll(".nav__group-name")].map(
@@ -43,10 +50,12 @@ const groupNames = () =>
 const list = () => within(document.querySelector(".nav__list") as HTMLElement);
 
 let deletedSessions: Set<string>;
+let extraSessions: (typeof alpha)[];
 
 describe("session navigation controls", () => {
   beforeEach(async () => {
     deletedSessions = new Set();
+    extraSessions = [];
     installFakeWebSocket();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -103,18 +112,21 @@ describe("session navigation controls", () => {
       if (url.startsWith("/api/sessions/by-id"))
         return { body: { sessions: [] } };
       if (
-        url.startsWith("/api/sessions/delete-hidden-folder") &&
+        url.startsWith("/api/sessions/clear-hidden") &&
         init.method === "POST"
       ) {
-        const cwd = String(jsonBody(init).cwd ?? "");
-        const targets = [alpha, beta].filter(
-          (session) => session.cwd === cwd && !deletedSessions.has(session.id),
+        const sessionIds = new Set(
+          (jsonBody(init).sessionIds as string[] | undefined) ?? [],
+        );
+        const targets = [alpha, beta, ...extraSessions].filter(
+          (session) =>
+            sessionIds.has(session.id) && !deletedSessions.has(session.id),
         );
         for (const session of targets) deletedSessions.add(session.id);
         const prefs = store.getState().prefs;
+        const hiddenProjectCwds = new Set(prefs.hiddenProjectCwds);
         return {
           body: {
-            cwd,
             deleted: targets.map((session) => ({
               sessionId: session.id,
               disposition: "trashed",
@@ -122,19 +134,15 @@ describe("session navigation controls", () => {
             preferences: {
               ...prefs,
               pinnedSessionIds: prefs.pinnedSessionIds.filter(
-                (id) => !targets.some((session) => session.id === id),
+                (id) => !sessionIds.has(id),
               ),
-              hiddenSessionIds: prefs.hiddenSessionIds.filter(
-                (id) => !targets.some((session) => session.id === id),
-              ),
+              hiddenSessionIds: [],
               pinnedProjectCwds: prefs.pinnedProjectCwds.filter(
-                (candidate) => candidate !== cwd,
+                (cwd) => !hiddenProjectCwds.has(cwd),
               ),
-              hiddenProjectCwds: prefs.hiddenProjectCwds.filter(
-                (candidate) => candidate !== cwd,
-              ),
+              hiddenProjectCwds: [],
               navCollapsedGroups: prefs.navCollapsedGroups.filter(
-                (candidate) => candidate !== cwd,
+                (cwd) => !hiddenProjectCwds.has(cwd),
               ),
             },
           },
@@ -164,7 +172,7 @@ describe("session navigation controls", () => {
         const query =
           new URL(url, "http://local").searchParams.get("q")?.toLowerCase() ??
           "";
-        const sessions = [alpha, beta].filter(
+        const sessions = [alpha, beta, ...extraSessions].filter(
           (session) =>
             !deletedSessions.has(session.id) &&
             session.title.toLowerCase().includes(query),
@@ -374,7 +382,7 @@ describe("session navigation controls", () => {
     ).toBeInTheDocument();
   });
 
-  it("deletes every session in a Hidden folder after an explicit confirmation", async () => {
+  it("clears every session in Hidden from its top-level action", async () => {
     render(
       <Nav
         collapsed={false}
@@ -383,35 +391,43 @@ describe("session navigation controls", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide folder beta" }));
+    extraSessions = [gamma];
+    await store.refreshSessions();
+    await screen.findByText("Gamma session");
+    fireEvent.click(
+      screen.getByRole("button", { name: 'Hide "Beta session"' }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder gamma" }));
     await screen.findByRole("heading", { name: "Hidden" });
     fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Delete all sessions in folder beta",
+    expect(
+      screen.queryByRole("button", {
+        name: "Delete all sessions in folder gamma",
       }),
-    );
+    ).not.toBeInTheDocument();
+
+    const clearHidden = screen.getByRole("button", { name: "Clear Hidden" });
+    await waitFor(() => expect(clearHidden).toBeEnabled());
+    fireEvent.click(clearHidden);
     const dialog = screen.getByRole("alertdialog", {
-      name: "Delete all sessions?",
+      name: "Clear Hidden?",
     });
-    expect(within(dialog).getByText("beta · 1 session")).toBeInTheDocument();
+    expect(within(dialog).getByText("Hidden · 2 sessions")).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Project files and the folder itself are unchanged.",
+        "Project files and project folders are unchanged.",
       ),
     ).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Delete all sessions in folder beta",
-      }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Delete 1 session" }));
-    await waitFor(() =>
-      expect(screen.queryByText("Beta session")).not.toBeInTheDocument(),
-    );
-    expect(deletedSessions).toEqual(new Set(["beta"]));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Hidden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete 2 sessions" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Beta session")).not.toBeInTheDocument();
+      expect(screen.queryByText("Gamma session")).not.toBeInTheDocument();
+    });
+    expect(deletedSessions).toEqual(new Set(["beta", "gamma"]));
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
     expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
   });
 

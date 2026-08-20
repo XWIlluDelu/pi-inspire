@@ -10,9 +10,9 @@ import {
   type GitDiffSide,
   type GitFileChange,
   type GitStatusResponse,
+  type HiddenClearResponse,
   type HostDirListing,
   type HostRootsResponse,
-  type HiddenFolderDeleteResponse,
   type InspirePreferences,
   type LaunchPreference,
   type ModelIdentity,
@@ -156,6 +156,7 @@ interface AppState extends EventSlice {
     | "refresh"
     | "preserve"
     | "hydrate"
+    | "curation"
     | null;
   sessionListError: string | null;
   /** Selection failures stay with the session navigation/start surface rather
@@ -174,8 +175,8 @@ interface AppState extends EventSlice {
   sessionSelectionPending: boolean;
   /** The Hidden-row destructive action currently awaiting its host result. */
   deletingSessionId: string | null;
-  /** The Hidden-folder destructive action currently awaiting its host result. */
-  deletingHiddenFolderCwd: string | null;
+  /** Whether the complete Hidden selection is awaiting its host result. */
+  clearingHidden: boolean;
   /** The visible session's composer slice. Authoritative copies live in
    * per-session partitions inside the store; a session switch swaps the
    * slice, so staged work never leaks across sessions. */
@@ -259,7 +260,7 @@ const initialState: AppState = {
   openingSessionId: null,
   sessionSelectionPending: false,
   deletingSessionId: null,
-  deletingHiddenFolderCwd: null,
+  clearingHidden: false,
   attachments: [],
   projectFiles: [],
   sending: false,
@@ -1477,7 +1478,7 @@ export class AppStore {
     if (
       !this.api ||
       this.state.deletingSessionId ||
-      this.state.deletingHiddenFolderCwd ||
+      this.state.clearingHidden ||
       sessionId === this.state.sessionId ||
       !hidden
     )
@@ -1544,55 +1545,75 @@ export class AppStore {
     }
   };
 
-  deleteHiddenFolderSessions = async (
-    cwd: string,
+  clearHiddenSessions = async (
     sessionIds: string[],
-  ): Promise<HiddenFolderDeleteResponse | null> => {
+  ): Promise<HiddenClearResponse | null> => {
     if (
       !this.api ||
+      sessionIds.length === 0 ||
       this.state.deletingSessionId ||
-      this.state.deletingHiddenFolderCwd ||
-      !this.state.prefs.hiddenProjectCwds.includes(cwd)
+      this.state.clearingHidden ||
+      this.state.sessionQuery.trim() ||
+      this.state.sessionListLoading ||
+      this.state.sessionListLoadingOlder ||
+      this.state.sessionListHydrating ||
+      this.state.sessionListError
     )
       return null;
     const preserveQuery = this.state.sessionQuery;
     const preserveOffset = this.state.sessionListNextOffset;
     const preserveTotal = this.state.sessionListTotal;
-    this.set({ deletingHiddenFolderCwd: cwd, sessionDeleteError: null });
+    this.set({ clearingHidden: true, sessionDeleteError: null });
     try {
-      // Like individual deletion, wait for an optimistic hide write before
-      // admitting a destructive request. The host also enforces this curation
-      // boundary, so a late restore cannot target an ordinary folder.
+      // Hiding is optimistic. Fence every outstanding curation write before
+      // confirming that the reviewed ids still represent the complete Hidden
+      // selection sent to the host.
       await this.prefsWrites;
-      if (!this.state.prefs.hiddenProjectCwds.includes(cwd)) {
+      const hiddenSessionIds = [...this.state.prefs.hiddenSessionIds];
+      const hiddenProjectCwds = [...this.state.prefs.hiddenProjectCwds];
+      const individualIds = new Set(hiddenSessionIds);
+      const projectCwds = new Set(hiddenProjectCwds);
+      const currentIds = this.state.sessions
+        .filter(
+          (session) =>
+            individualIds.has(session.id) || projectCwds.has(session.cwd),
+        )
+        .map((session) => session.id);
+      const reviewed = new Set(sessionIds);
+      if (
+        reviewed.size !== sessionIds.length ||
+        currentIds.length !== reviewed.size ||
+        currentIds.some((sessionId) => !reviewed.has(sessionId))
+      ) {
         this.set({
-          sessionDeleteError:
-            "The folder must remain in Hidden before its sessions can be deleted",
+          sessionDeleteError: "Hidden changed; review it before clearing",
         });
         return null;
       }
-      const result = await this.api.deleteHiddenFolderSessions(cwd, sessionIds);
+
+      const result = await this.api.clearHiddenSessions(sessionIds);
       const deleted = new Set(
         result.deleted.map((session) => session.sessionId),
       );
       const sessionStatuses = this.forgetDeletedSessions(deleted);
-
-      const fallbackPrefs = {
-        ...this.preferencesWithoutSessions(deleted),
-        ...(result.failure
-          ? {}
-          : {
-              pinnedProjectCwds: this.state.prefs.pinnedProjectCwds.filter(
-                (candidate) => candidate !== cwd,
-              ),
-              hiddenProjectCwds: this.state.prefs.hiddenProjectCwds.filter(
-                (candidate) => candidate !== cwd,
-              ),
-              navCollapsedGroups: this.state.prefs.navCollapsedGroups.filter(
-                (candidate) => candidate !== cwd,
-              ),
-            }),
-      };
+      const remainingPrefs = this.preferencesWithoutSessions(deleted);
+      const fallbackPrefs = result.failure
+        ? remainingPrefs
+        : {
+            ...remainingPrefs,
+            hiddenSessionIds: remainingPrefs.hiddenSessionIds.filter(
+              (sessionId) => !individualIds.has(sessionId),
+            ),
+            pinnedProjectCwds: remainingPrefs.pinnedProjectCwds.filter(
+              (cwd) => !projectCwds.has(cwd),
+            ),
+            hiddenProjectCwds: remainingPrefs.hiddenProjectCwds.filter(
+              (cwd) => !projectCwds.has(cwd),
+            ),
+            navCollapsedGroups: remainingPrefs.navCollapsedGroups.filter(
+              (cwd) => !projectCwds.has(cwd),
+            ),
+          };
       const prefs = result.preferences ?? fallbackPrefs;
       if (result.preferences) this.confirmedPrefs = result.preferences;
       this.set({ prefs, sessionStatuses });
@@ -1629,14 +1650,11 @@ export class AppStore {
     } catch (error) {
       this.set({
         sessionDeleteError:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete the folder's sessions",
+          error instanceof Error ? error.message : "Failed to clear Hidden",
       });
       return null;
     } finally {
-      if (this.state.deletingHiddenFolderCwd === cwd)
-        this.set({ deletingHiddenFolderCwd: null });
+      this.set({ clearingHidden: false });
     }
   };
 
@@ -1844,23 +1862,81 @@ export class AppStore {
     );
   }
 
-  private curationChanged(): void {
-    if (!this.api) return;
-    // Relevant preference changes own a new reset generation. Until it lands,
-    // the previous rendered union (including confirmed curated rows) remains.
-    void this.loadSessions(this.state.sessionQuery);
+  private curationIds(prefs: InspirePreferences): Set<string> {
+    return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
+  }
+
+  private curationProjectCwds(prefs: InspirePreferences): Set<string> {
+    return new Set([...prefs.pinnedProjectCwds, ...prefs.hiddenProjectCwds]);
+  }
+
+  private curationNeedsHydration(
+    previous: InspirePreferences,
+    previousConfirmed: InspirePreferences,
+    next: InspirePreferences,
+    nextConfirmed: InspirePreferences,
+  ): boolean {
+    const previousIds = new Set([
+      ...this.curationIds(previous),
+      ...this.curationIds(previousConfirmed),
+    ]);
+    const nextIds = new Set([
+      ...this.curationIds(next),
+      ...this.curationIds(nextConfirmed),
+    ]);
+    const loadedIds = new Set(this.state.sessions.map((session) => session.id));
+    for (const id of nextIds) {
+      if (!previousIds.has(id) && !loadedIds.has(id)) return true;
+    }
+    const previousCwds = new Set([
+      ...this.curationProjectCwds(previous),
+      ...this.curationProjectCwds(previousConfirmed),
+    ]);
+    const nextCwds = new Set([
+      ...this.curationProjectCwds(next),
+      ...this.curationProjectCwds(nextConfirmed),
+    ]);
+    for (const cwd of nextCwds) {
+      if (!previousCwds.has(cwd)) return true;
+    }
+    return false;
+  }
+
+  private curationChanged(hydrate: boolean): void {
+    this.catalog.reconcileCuration();
+    if (hydrate) void this.catalog.hydrateCuration();
   }
 
   private savePrefs(patch: Partial<InspirePreferences>): void {
     const curationPatch = this.isCurationPatch(patch);
-    this.set({ prefs: { ...this.state.prefs, ...patch } });
-    if (curationPatch) this.curationChanged();
+    const previousPrefs = this.state.prefs;
+    const nextPrefs = { ...previousPrefs, ...patch };
+    const hydrateCuration =
+      curationPatch &&
+      this.curationNeedsHydration(
+        previousPrefs,
+        this.confirmedPrefs,
+        nextPrefs,
+        this.confirmedPrefs,
+      );
+    this.set({ prefs: nextPrefs });
+    if (curationPatch) this.curationChanged(hydrateCuration);
     this.prefsWrites = this.prefsWrites
       .then(async () => {
         if (!this.api) return;
         await this.api.savePreferences(patch);
-        this.confirmedPrefs = { ...this.confirmedPrefs, ...patch };
-        if (curationPatch) this.curationChanged();
+        const previousConfirmed = this.confirmedPrefs;
+        const nextConfirmed = { ...previousConfirmed, ...patch };
+        const hydrateConfirmedCuration =
+          curationPatch &&
+          this.curationNeedsHydration(
+            this.state.prefs,
+            previousConfirmed,
+            this.state.prefs,
+            nextConfirmed,
+          );
+        this.confirmedPrefs = nextConfirmed;
+        if (curationPatch) this.curationChanged(hydrateConfirmedCuration);
       })
       .catch((error: unknown) => {
         // Truthful control: a refused write cannot leave a control claiming
@@ -1870,13 +1946,22 @@ export class AppStore {
         const stale = (
           Object.keys(patch) as Array<keyof InspirePreferences>
         ).filter((field) => this.state.prefs[field] === patch[field]);
+        const previousPrefs = this.state.prefs;
         if (stale.length > 0) {
           const restored = Object.fromEntries(
             stale.map((field) => [field, this.confirmedPrefs[field]]),
           ) as Partial<InspirePreferences>;
           this.set({ prefs: { ...this.state.prefs, ...restored } });
         }
-        if (curationPatch) this.curationChanged();
+        if (curationPatch) {
+          const hydrateRestoredCuration = this.curationNeedsHydration(
+            previousPrefs,
+            this.confirmedPrefs,
+            this.state.prefs,
+            this.confirmedPrefs,
+          );
+          this.curationChanged(hydrateRestoredCuration);
+        }
         this.notify(
           "warning",
           error instanceof Error

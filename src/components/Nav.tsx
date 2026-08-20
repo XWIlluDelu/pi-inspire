@@ -29,7 +29,7 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
-import { HiddenFolderDeleteDialog } from "./HiddenFolderDeleteDialog";
+import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
@@ -367,7 +367,7 @@ function SessionRow({
     busy ||
     conflicted ||
     state.deletingSessionId !== null ||
-    state.deletingHiddenFolderCwd !== null;
+    state.clearingHidden;
   const deleteTitle = active
     ? "Switch to another session before deleting"
     : conflicted
@@ -443,6 +443,7 @@ function SessionRow({
                 className="nav__row-action"
                 aria-label={`Restore "${title}"`}
                 title="Move back out of Hidden"
+                disabled={state.clearingHidden}
                 onClick={() => store.toggleSessionHidden(session.id)}
               >
                 <Eye size={12} aria-hidden />
@@ -502,7 +503,6 @@ function ProjectGroup({
   hidden = false,
   onSelectSession,
   onDeleteSession,
-  onDeleteFolder,
 }: {
   group: SessionGroup;
   headingId: string;
@@ -512,7 +512,6 @@ function ProjectGroup({
   hidden?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (session: SessionSummary) => void;
-  onDeleteFolder?: (group: SessionGroup) => void;
 }) {
   const state = useAppState();
   // Active search must never hide results inside a collapsed folder.
@@ -524,30 +523,6 @@ function ProjectGroup({
   const activeInside = group.sessions.some(
     (session) => session.id === selectedSessionId,
   );
-  const folderDeleting = state.deletingHiddenFolderCwd === group.cwd;
-  const folderHasBusySession = group.sessions.some((session) => {
-    const status = state.sessionStatuses[session.id];
-    return status
-      ? isBusyRunState(status.runState) || status.runState === "conflict"
-      : false;
-  });
-  const folderOpening = group.sessions.some(
-    (session) => state.openingSessionId === session.id,
-  );
-  const deleteFolderDisabled =
-    folderDeleting ||
-    activeInside ||
-    folderOpening ||
-    folderHasBusySession ||
-    state.deletingSessionId !== null ||
-    state.deletingHiddenFolderCwd !== null;
-  const deleteFolderTitle = activeInside
-    ? "Switch to another session before deleting this folder"
-    : folderOpening
-      ? "Wait for every session in this folder to finish opening"
-      : folderHasBusySession
-        ? "Wait for every session in this folder to finish working"
-        : "Delete all sessions in folder";
   return (
     <section
       className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
@@ -589,24 +564,12 @@ function ProjectGroup({
                 className="nav__row-action"
                 aria-label={`Restore folder ${group.name}`}
                 title="Move folder back out of Hidden"
+                disabled={state.clearingHidden}
                 onClick={() => store.toggleProjectHidden(group.cwd)}
               >
                 <Eye size={12} aria-hidden />
               </button>
-              <button
-                type="button"
-                className="nav__row-action nav__row-action--danger"
-                aria-label={`Delete all sessions in folder ${group.name}`}
-                title={deleteFolderTitle}
-                disabled={deleteFolderDisabled}
-                onClick={() => onDeleteFolder?.(group)}
-              >
-                {folderDeleting ? (
-                  <Loader2 size={12} className="spin" aria-hidden />
-                ) : (
-                  <Trash2 size={12} aria-hidden />
-                )}
-              </button>
+              <span className="nav__row-action-spacer" aria-hidden />
             </>
           ) : (
             <>
@@ -685,8 +648,9 @@ export function Nav({
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
     null,
   );
-  const [deleteFolderCandidate, setDeleteFolderCandidate] =
-    useState<SessionGroup | null>(null);
+  const [hiddenClearCandidate, setHiddenClearCandidate] = useState<
+    string[] | null
+  >(null);
 
   if (collapsed) {
     return (
@@ -721,33 +685,82 @@ export function Nav({
     state.sessionListLoading ||
     state.sessionListLoadingOlder ||
     state.sessionListHydrating;
+  const foregroundSessionListBusy =
+    sessionListBusy && state.sessionListOperation !== "curation";
+  const showSessionListActivity =
+    hasOlderSessions ||
+    state.sessionListError !== null ||
+    (foregroundSessionListBusy && state.sessionListOperation !== "preserve");
   const retrySessionLabel =
     state.sessionListOperation === "hydrate"
       ? "Retry loading active sessions"
-      : state.sessionListOperation === "preserve"
-        ? "Retry refreshing the list"
-        : state.sessionListOperation === "refresh"
-          ? "Retry refreshing sessions"
-          : state.sessionListOperation === "older"
-            ? "Retry loading older sessions"
-            : "Retry loading sessions";
+      : state.sessionListOperation === "curation"
+        ? "Retry loading curated sessions"
+        : state.sessionListOperation === "preserve"
+          ? "Retry refreshing the list"
+          : state.sessionListOperation === "refresh"
+            ? "Retry refreshing sessions"
+            : state.sessionListOperation === "older"
+              ? "Retry loading older sessions"
+              : "Retry loading sessions";
   const loadingSessionLabel =
     state.sessionListOperation === "hydrate"
       ? "Loading active sessions…"
-      : state.sessionListOperation === "preserve"
-        ? "Refreshing loaded sessions…"
-        : state.sessionListOperation === "refresh"
-          ? "Refreshing sessions…"
-          : state.sessionListOperation === "older"
-            ? "Loading older sessions…"
-            : "Loading sessions…";
+      : state.sessionListOperation === "curation"
+        ? "Loading curated sessions…"
+        : state.sessionListOperation === "preserve"
+          ? "Refreshing loaded sessions…"
+          : state.sessionListOperation === "refresh"
+            ? "Refreshing sessions…"
+            : state.sessionListOperation === "older"
+              ? "Loading older sessions…"
+              : "Loading sessions…";
   // Hidden is a curation drawer, not a browsing group: it opens on demand and
   // starts closed again next time. Search reveals matches inside it without
   // reclassifying them out of Hidden.
   const hiddenExpanded = searching || hiddenOpen;
-  const hiddenCount =
-    hidden.length +
-    hiddenGroups.reduce((total, group) => total + group.sessions.length, 0);
+  const hiddenSessions = [
+    ...hiddenGroups.flatMap((group) => group.sessions),
+    ...hidden,
+  ];
+  const hiddenSessionIds = hiddenSessions.map((session) => session.id);
+  const hiddenCount = hiddenSessions.length;
+  const hiddenHasSelectedSession = hiddenSessions.some(
+    (session) => session.id === state.sessionId,
+  );
+  const hiddenHasOpeningSession = hiddenSessions.some(
+    (session) => session.id === state.openingSessionId,
+  );
+  const hiddenHasBlockedSession = hiddenSessions.some((session) => {
+    const status = state.sessionStatuses[session.id];
+    return status
+      ? isBusyRunState(status.runState) || status.runState === "conflict"
+      : false;
+  });
+  const hiddenClearDisabled =
+    state.clearingHidden ||
+    state.deletingSessionId !== null ||
+    searching ||
+    sessionListBusy ||
+    state.sessionListError !== null ||
+    hiddenHasSelectedSession ||
+    hiddenHasOpeningSession ||
+    hiddenHasBlockedSession;
+  const hiddenClearTitle = state.clearingHidden
+    ? "Clearing Hidden…"
+    : hiddenHasSelectedSession
+      ? "Switch to another session before clearing Hidden"
+      : hiddenHasOpeningSession
+        ? "Wait for every session in Hidden to finish opening"
+        : hiddenHasBlockedSession
+          ? "Wait for every session in Hidden to finish working or resolve conflicts"
+          : searching
+            ? "Clear Hidden is unavailable while searching"
+            : sessionListBusy || state.sessionListError !== null
+              ? "Wait for Hidden sessions to finish loading"
+              : state.deletingSessionId !== null
+                ? "Wait for the current session deletion to finish"
+                : "Clear Hidden";
 
   const contents = (
     <>
@@ -823,7 +836,7 @@ export function Nav({
             />
           );
         })}
-        {hasOlderSessions || sessionListBusy || state.sessionListError ? (
+        {showSessionListActivity ? (
           <div className="nav__pagination">
             <span
               className="nav__pagination-status"
@@ -841,7 +854,7 @@ export function Nav({
               >
                 {retrySessionLabel}
               </button>
-            ) : sessionListBusy ? (
+            ) : foregroundSessionListBusy ? (
               <button
                 type="button"
                 className="nav__pagination-button"
@@ -855,6 +868,7 @@ export function Nav({
               <button
                 type="button"
                 className="nav__pagination-button"
+                disabled={sessionListBusy}
                 onClick={() => void store.loadOlderSessions()}
               >
                 Load older sessions
@@ -867,7 +881,11 @@ export function Nav({
             className="nav__group nav__group--hidden"
             aria-labelledby="nav-hidden-title"
           >
-            <h2 className="nav__group-title" id="nav-hidden-title">
+            <h2
+              className="nav__group-title nav__group-title--hidden"
+              id="nav-hidden-title"
+              aria-label="Hidden"
+            >
               <button
                 type="button"
                 className="nav__group-toggle"
@@ -886,6 +904,22 @@ export function Nav({
                   {hiddenCount}
                 </span>
               </button>
+              <span className="nav__group-actions">
+                <button
+                  type="button"
+                  className="nav__row-action nav__row-action--danger"
+                  aria-label="Clear Hidden"
+                  title={hiddenClearTitle}
+                  disabled={hiddenClearDisabled}
+                  onClick={() => setHiddenClearCandidate(hiddenSessionIds)}
+                >
+                  {state.clearingHidden ? (
+                    <Loader2 size={12} className="spin" aria-hidden />
+                  ) : (
+                    <Trash2 size={12} aria-hidden />
+                  )}
+                </button>
+              </span>
             </h2>
             {hiddenExpanded ? (
               <>
@@ -900,7 +934,6 @@ export function Nav({
                     hidden
                     onSelectSession={onSelectSession}
                     onDeleteSession={setDeleteCandidate}
-                    onDeleteFolder={setDeleteFolderCandidate}
                   />
                 ))}
                 {hidden.map((session) => (
@@ -947,16 +980,12 @@ export function Nav({
           }}
         />
       ) : null}
-      {deleteFolderCandidate ? (
-        <HiddenFolderDeleteDialog
-          cwd={deleteFolderCandidate.cwd}
-          name={deleteFolderCandidate.name}
-          sessionIds={deleteFolderCandidate.sessions.map(
-            (session) => session.id,
-          )}
+      {hiddenClearCandidate ? (
+        <HiddenClearDialog
+          sessionIds={hiddenClearCandidate}
           onClose={() => {
             store.clearSessionDeleteError();
-            setDeleteFolderCandidate(null);
+            setHiddenClearCandidate(null);
           }}
         />
       ) : null}

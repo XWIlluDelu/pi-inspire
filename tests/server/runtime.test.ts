@@ -2075,10 +2075,15 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("deletes the complete hidden-folder snapshot after reserving every identity", async () => {
+  it("clears individually hidden sessions and every session in hidden folders after reserving all identities", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
-    const source = catalog([record("a", "/tmp"), record("b", "/tmp")]);
+    const source = catalog([
+      record("a", "/loose"),
+      record("b", "/folder"),
+      record("c", "/folder"),
+      record("ordinary", "/ordinary"),
+    ]);
     source.refresh = vi.fn(source.refresh);
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -2092,25 +2097,28 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.deleteHiddenFolderSessions("/tmp", ["a", "b"]),
+      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], ["/folder"]),
     ).resolves.toEqual({
-      cwd: "/tmp",
       deleted: [
         { sessionId: "a", disposition: "trashed" },
         { sessionId: "b", disposition: "trashed" },
+        { sessionId: "c", disposition: "trashed" },
       ],
     });
     expect(source.refresh).toHaveBeenCalledOnce();
-    expect(remove).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(3);
+    expect(remove).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ordinary" }),
+    );
     await runtime.close();
   });
 
-  it("rejects a Hidden-folder batch if its reviewed session snapshot changed", async () => {
+  it("rejects a Hidden clear if its reviewed session snapshot changed", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      catalog([record("a", "/loose"), record("b", "/folder")]),
       store,
       undefined,
       preview,
@@ -2120,21 +2128,21 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.deleteHiddenFolderSessions("/tmp", ["a"]),
+      runtime.clearHiddenSessions(["a"], ["a"], ["/folder"]),
     ).rejects.toMatchObject({
       status: 409,
-      message: "The folder's sessions changed; review it before deleting",
+      message: "Hidden changed; review it before clearing",
     });
     expect(remove).not.toHaveBeenCalled();
     await runtime.close();
   });
 
-  it("rejects a Hidden-folder batch before moving any session when one is selected", async () => {
+  it("rejects a Hidden clear before moving any session when one is selected", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      catalog([record("a", "/loose"), record("b", "/folder")]),
       store,
       (options) => new FakeRpc(options) as unknown as PiRpcProcess,
       preview,
@@ -2145,10 +2153,10 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
 
     await expect(
-      runtime.deleteHiddenFolderSessions("/tmp", ["a", "b"]),
+      runtime.clearHiddenSessions(["a", "b"], ["a"], ["/folder"]),
     ).rejects.toMatchObject({
       status: 409,
-      message: "Switch to another session before deleting this folder",
+      message: "Switch to another session before clearing Hidden",
     });
     expect(remove).not.toHaveBeenCalled();
     await runtime.close();

@@ -16,6 +16,7 @@ type SessionListOperation =
   | "refresh"
   | "preserve"
   | "hydrate"
+  | "curation"
   | null;
 
 export interface SessionCatalogState {
@@ -51,7 +52,8 @@ type SessionListRetry =
   | { kind: "older"; query: string; offset: number }
   | { kind: "refresh"; query: string }
   | { kind: "preserve"; query: string; offset: number; total: number }
-  | { kind: "hydrate"; owner: HydrationOwner };
+  | { kind: "hydrate"; owner: HydrationOwner }
+  | { kind: "curation"; ownerKey: string };
 
 interface SessionCatalogControllerHost {
   state(): SessionCatalogState;
@@ -71,6 +73,9 @@ export class SessionCatalogController {
   private basePages: SessionSummary[] = [];
   private hydration = new Map<string, SessionSummary>();
   private loadTicket = 0;
+  private curationTicket = 0;
+  private curationRequestKey: string | null = null;
+  private curationPending = false;
   private olderPromise: Promise<void> | null = null;
   private retry: SessionListRetry | null = null;
   private hydrationInFlight = new Set<string>();
@@ -83,6 +88,8 @@ export class SessionCatalogController {
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
     this.loadTicket += 1;
+    this.cancelCurationRequest();
+    this.curationPending = false;
     this.olderPromise = null;
     this.retry = null;
     const state = this.host.state();
@@ -106,6 +113,8 @@ export class SessionCatalogController {
 
   load(query: string): Promise<void> {
     if (!this.host.api()) return Promise.resolve();
+    this.cancelCurationRequest();
+    this.curationPending = false;
     const state = this.host.state();
     const queryChanged = query !== state.sessionQuery;
     const ticket = ++this.loadTicket;
@@ -136,6 +145,8 @@ export class SessionCatalogController {
    * reset. Old-query pages cannot remain rendered or win while typing. */
   search(query: string): void {
     ++this.loadTicket;
+    this.cancelCurationRequest();
+    this.curationPending = false;
     this.olderPromise = null;
     this.retry = null;
     this.basePages = [];
@@ -172,6 +183,8 @@ export class SessionCatalogController {
   ): Promise<void> {
     if (!this.host.api() || query !== this.host.state().sessionQuery)
       return Promise.resolve();
+    this.cancelCurationRequest();
+    this.curationPending = false;
     const ticket = ++this.loadTicket;
     this.olderPromise = null;
     this.retry = null;
@@ -211,6 +224,8 @@ export class SessionCatalogController {
     const offset = retry?.offset ?? state.sessionListNextOffset;
     if (offset >= state.sessionListTotal && !retry) return Promise.resolve();
     const query = retry?.query ?? state.sessionQuery;
+    this.cancelCurationRequest();
+    this.curationPending = false;
     const ticket = ++this.loadTicket;
     this.retry = null;
     this.host.patch({
@@ -266,6 +281,7 @@ export class SessionCatalogController {
     })();
     const tracked = request.finally(() => {
       if (this.olderPromise === tracked) this.olderPromise = null;
+      if (this.owns(ticket, query, api)) this.runPendingCuration();
     });
     this.olderPromise = tracked;
     return tracked;
@@ -282,6 +298,8 @@ export class SessionCatalogController {
       return;
     }
     const query = retryQuery;
+    this.cancelCurationRequest();
+    this.curationPending = false;
     const ticket = ++this.loadTicket;
     this.olderPromise = null;
     this.retry = null;
@@ -315,6 +333,8 @@ export class SessionCatalogController {
               : "Failed to refresh sessions",
         });
       }
+    } finally {
+      if (this.owns(ticket, query, api)) this.runPendingCuration();
     }
   }
 
@@ -341,6 +361,18 @@ export class SessionCatalogController {
           return Promise.resolve();
         }
         return this.hydrateVisible(retry.owner, true);
+      case "curation":
+        if (retry.ownerKey !== this.curationOwnerKey()) {
+          this.retry = null;
+          this.host.patch({
+            sessionListHydrating: false,
+            sessionListOperation: null,
+            sessionListError: null,
+          });
+          this.reconcileCuration();
+          return Promise.resolve();
+        }
+        return this.hydrateCuration();
     }
   }
 
@@ -354,6 +386,15 @@ export class SessionCatalogController {
   }
 
   remove(id: string): void {
+    this.cancelCurationRequest();
+    this.curationPending = false;
+    if (this.host.state().sessionListOperation === "curation") {
+      this.host.patch({
+        sessionListHydrating: false,
+        sessionListOperation: null,
+        sessionListError: null,
+      });
+    }
     this.basePages = this.basePages.filter((session) => session.id !== id);
     this.hydration.delete(id);
     this.hydrationInFlight.delete(id);
@@ -427,6 +468,7 @@ export class SessionCatalogController {
       }
       this.basePages = deduped;
       this.hydration = hydration;
+      this.pruneHydration();
       this.retry = null;
       this.host.patch({
         sessionListTotal: total,
@@ -465,6 +507,8 @@ export class SessionCatalogController {
         sessionListError:
           error instanceof Error ? error.message : "Failed to list sessions",
       });
+    } finally {
+      if (this.owns(ticket, query, api)) this.runPendingCuration();
     }
   }
 
@@ -489,6 +533,179 @@ export class SessionCatalogController {
 
   private curationIds(prefs: InspirePreferences): Set<string> {
     return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
+  }
+
+  private curationProjectCwds(prefs: InspirePreferences): Set<string> {
+    return new Set([...prefs.pinnedProjectCwds, ...prefs.hiddenProjectCwds]);
+  }
+
+  private curationOwnerKey(): string {
+    const state = this.host.state();
+    const confirmed = this.host.confirmedPreferences();
+    const ids = new Set([
+      ...this.curationIds(state.prefs),
+      ...this.curationIds(confirmed),
+    ]);
+    const cwds = new Set([
+      ...this.curationProjectCwds(state.prefs),
+      ...this.curationProjectCwds(confirmed),
+    ]);
+    return JSON.stringify([[...ids].sort(), [...cwds].sort()]);
+  }
+
+  private hydrationOwners(prefs: InspirePreferences): {
+    ids: Set<string>;
+    cwds: Set<string>;
+  } {
+    const confirmed = this.host.confirmedPreferences();
+    const ids = new Set([
+      ...this.curationIds(prefs),
+      ...this.curationIds(confirmed),
+    ]);
+    const state = this.host.state();
+    if (state.sessionId) ids.add(state.sessionId);
+    for (const id of Object.keys(state.sessionStatuses)) ids.add(id);
+    return {
+      ids,
+      cwds: new Set([
+        ...this.curationProjectCwds(prefs),
+        ...this.curationProjectCwds(confirmed),
+      ]),
+    };
+  }
+
+  private cancelCurationRequest(): void {
+    this.curationTicket += 1;
+    this.curationRequestKey = null;
+    if (this.retry?.kind === "curation") this.retry = null;
+  }
+
+  private runPendingCuration(): void {
+    if (!this.curationPending) return;
+    this.curationPending = false;
+    void this.hydrateCuration();
+  }
+
+  private pruneHydration(): boolean {
+    const { ids, cwds } = this.hydrationOwners(this.host.state().prefs);
+    let changed = false;
+    for (const [id, session] of this.hydration) {
+      if (ids.has(id) || cwds.has(session.cwd)) continue;
+      this.hydration.delete(id);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /** Reclassify already-known rows synchronously. Optimistic removals retain
+   * the host-confirmed owners until the preference write settles, so an
+   * off-page row cannot disappear before a rejected write rolls back. */
+  reconcileCuration(): void {
+    const ownerKey = this.curationOwnerKey();
+    const staleRequest =
+      this.curationRequestKey !== null && this.curationRequestKey !== ownerKey;
+    const staleRetry =
+      this.retry?.kind === "curation" && this.retry.ownerKey !== ownerKey;
+    if (staleRequest || staleRetry) {
+      this.cancelCurationRequest();
+      if (this.host.state().sessionListOperation === "curation") {
+        this.host.patch({
+          sessionListHydrating: false,
+          sessionListOperation: null,
+          sessionListError: null,
+        });
+      }
+    }
+
+    if (this.pruneHydration()) this.publishUnion();
+  }
+
+  /** Hydrate only newly curated off-page identities/folders. Chronological
+   * pages, totals, and cursors stay untouched, and the operation remains a
+   * quiet background reconciliation unless it fails and needs a retry. */
+  async hydrateCuration(): Promise<void> {
+    this.reconcileCuration();
+    const api = this.host.api();
+    const state = this.host.state();
+    if (!api || state.sessionQuery.trim()) return;
+    if (state.sessionListLoading) {
+      this.curationPending = true;
+      return;
+    }
+    if (state.sessionListLoadingOlder) {
+      // A newly curated off-page owner must become reachable immediately. The
+      // already confirmed base extent remains valid while the old append is
+      // invalidated and discarded when it eventually leaves the wire.
+      this.loadTicket += 1;
+      this.olderPromise = null;
+      this.host.patch({
+        sessionListLoadingOlder: false,
+        sessionListOperation: null,
+        sessionListError: null,
+      });
+    }
+
+    const ticket = ++this.curationTicket;
+    const ownerKey = this.curationOwnerKey();
+    const query = state.sessionQuery;
+    const base = this.basePages;
+    this.curationPending = false;
+    this.curationRequestKey = ownerKey;
+    this.retry = null;
+    this.host.patch({
+      sessionListHydrating: true,
+      sessionListOperation: "curation",
+      sessionListError: null,
+    });
+    const ownsRequest = () =>
+      ticket === this.curationTicket &&
+      ownerKey === this.curationOwnerKey() &&
+      query === this.host.state().sessionQuery &&
+      api === this.host.api();
+
+    try {
+      const hydration = await this.hydrateUnion(
+        base,
+        this.host.state().prefs,
+        ownsRequest,
+      );
+      if (!hydration || !ownsRequest()) return;
+      if (this.basePages !== base) {
+        this.curationRequestKey = null;
+        return this.hydrateCuration();
+      }
+      this.hydration = hydration;
+      this.curationRequestKey = null;
+      this.retry = null;
+      this.host.patch({
+        sessionListHydrating: false,
+        sessionListOperation: null,
+        sessionListError: null,
+      });
+      this.publishUnion();
+    } catch (error) {
+      if (!ownsRequest()) return;
+      this.curationRequestKey = null;
+      if (error instanceof ApiError && error.status === 401) {
+        this.retry = null;
+        this.host.patch({
+          sessionListHydrating: false,
+          sessionListOperation: null,
+          sessionListError: null,
+        });
+        this.host.handleAuthFailure();
+        return;
+      }
+      this.retry = { kind: "curation", ownerKey };
+      this.host.patch({
+        sessionListHydrating: false,
+        sessionListOperation: "curation",
+        sessionListError:
+          error instanceof Error
+            ? error.message
+            : "Failed to load curated sessions",
+      });
+    }
   }
 
   private hydrationFailure(
@@ -520,20 +737,7 @@ export class SessionCatalogController {
     const api = this.host.api();
     if (!api) return new Map();
     if (!isCurrent()) return null;
-    const ids = this.curationIds(prefs);
-    for (const id of this.curationIds(this.host.confirmedPreferences())) {
-      ids.add(id);
-    }
-    const state = this.host.state();
-    if (state.sessionId) ids.add(state.sessionId);
-    for (const id of Object.keys(state.sessionStatuses)) ids.add(id);
-    const confirmed = this.host.confirmedPreferences();
-    const cwds = new Set([
-      ...prefs.pinnedProjectCwds,
-      ...prefs.hiddenProjectCwds,
-      ...confirmed.pinnedProjectCwds,
-      ...confirmed.hiddenProjectCwds,
-    ]);
+    const { ids, cwds } = this.hydrationOwners(prefs);
     const baseIds = new Set(base.map((session) => session.id));
     const hydration = new Map<string, SessionSummary>();
     for (const session of this.hydration.values()) {
