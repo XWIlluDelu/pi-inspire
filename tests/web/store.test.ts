@@ -1826,10 +1826,18 @@ describe("navigation curation", () => {
     };
   };
 
-  it("patches only the fields a curation action changes, and keeps pin and hidden exclusive", async () => {
+  it("patches only changed curation fields without resetting chronology", async () => {
     const patches: Array<Record<string, unknown>> = [];
-    installFetch(curationRoutes("ok", (patch) => patches.push(patch)));
+    let listRequests = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/sessions?")) listRequests += 1;
+      return curationRoutes("ok", (patch) => patches.push(patch))(url, init);
+    });
     const { store } = await initStore();
+    await vi.waitFor(() =>
+      expect(store.getState().sessionListLoading).toBe(false),
+    );
+    expect(listRequests).toBe(1);
 
     store.toggleSessionHidden("s7");
     expect(store.getState().prefs.hiddenSessionIds).toEqual(["s7"]);
@@ -1850,7 +1858,309 @@ describe("navigation curation", () => {
       { pinnedSessionIds: ["s7"], hiddenSessionIds: [] },
       { pinnedProjectCwds: ["/demo"] },
     ]);
+    await vi.waitFor(() =>
+      expect(store.getState().sessionListHydrating).toBe(false),
+    );
+    expect(listRequests).toBe(1);
     expect(store.getState().error).toBeNull();
+  });
+
+  it("retains an off-page curated row until restore is confirmed, then prunes it without a list reload", async () => {
+    let listRequests = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            preferences: {
+              ...bootstrapPayload().preferences,
+              hiddenSessionIds: ["off-page"],
+            },
+            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+          }),
+        };
+      }
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        return {
+          body: {
+            ...bootstrapPayload().preferences,
+            ...jsonBody(init),
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions/by-id")) {
+        return {
+          body: {
+            sessions: [
+              sessionSummary({ id: "off-page", cwd: "/work/archived" }),
+            ],
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions?")) {
+        listRequests += 1;
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "recent" })],
+            total: 2,
+            offset: 0,
+            limit: 40,
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+        "off-page",
+      ]),
+    );
+
+    store.toggleSessionHidden("off-page");
+    expect(store.getState().sessions.map((session) => session.id)).toContain(
+      "off-page",
+    );
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+      ]),
+    );
+    expect(listRequests).toBe(1);
+    expect(store.getState()).toMatchObject({
+      sessionListLoading: false,
+      sessionListHydrating: false,
+      sessionListNextOffset: 1,
+      sessionListTotal: 2,
+    });
+  });
+
+  it("does not revive rows from a catalog refresh that captured older curation", async () => {
+    let folderRequests = 0;
+    let releaseRefreshHydration!: () => void;
+    let refreshHydrationStarted!: () => void;
+    const refreshHydrationGate = new Promise<void>((resolve) => {
+      releaseRefreshHydration = resolve;
+    });
+    const refreshHydrationRequest = new Promise<void>((resolve) => {
+      refreshHydrationStarted = resolve;
+    });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            preferences: {
+              ...bootstrapPayload().preferences,
+              hiddenProjectCwds: ["/work/demo"],
+            },
+            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+          }),
+        };
+      }
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        return {
+          body: {
+            ...bootstrapPayload().preferences,
+            ...jsonBody(init),
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions/refresh")) {
+        return { body: { ok: true } };
+      }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        folderRequests += 1;
+        if (folderRequests === 2) {
+          refreshHydrationStarted();
+          await refreshHydrationGate;
+        }
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "off-page", cwd: "/work/demo" })],
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions?")) {
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "recent" })],
+            total: 2,
+            offset: 0,
+            limit: 40,
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+        "off-page",
+      ]),
+    );
+
+    const refresh = store.refreshSessions();
+    await refreshHydrationRequest;
+    store.toggleProjectHidden("/work/demo");
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+      ]),
+    );
+
+    releaseRefreshHydration();
+    await refresh;
+    expect(store.getState().sessions.map((session) => session.id)).toEqual([
+      "recent",
+    ]);
+  });
+
+  it("hydrates a newly curated folder without resetting or foregrounding the chronological list", async () => {
+    let listRequests = 0;
+    let releaseFolder!: () => void;
+    let folderStarted!: () => void;
+    const folderGate = new Promise<void>((resolve) => {
+      releaseFolder = resolve;
+    });
+    const folderRequest = new Promise<void>((resolve) => {
+      folderStarted = resolve;
+    });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+          }),
+        };
+      }
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        return {
+          body: {
+            ...bootstrapPayload().preferences,
+            ...jsonBody(init),
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        folderStarted();
+        await folderGate;
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "folder-old", cwd: "/work/demo" })],
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions?")) {
+        listRequests += 1;
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "recent", cwd: "/work/other" })],
+            total: 8,
+            offset: 0,
+            limit: 40,
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() =>
+      expect(store.getState().sessionListLoading).toBe(false),
+    );
+
+    store.toggleProjectHidden("/work/demo");
+    await folderRequest;
+    expect(store.getState()).toMatchObject({
+      sessionListLoading: false,
+      sessionListHydrating: true,
+      sessionListOperation: "curation",
+      sessionListNextOffset: 1,
+      sessionListTotal: 8,
+    });
+    expect(listRequests).toBe(1);
+
+    releaseFolder();
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+        "folder-old",
+      ]),
+    );
+    expect(store.getState()).toMatchObject({
+      sessionListHydrating: false,
+      sessionListOperation: null,
+      sessionListNextOffset: 1,
+      sessionListTotal: 8,
+    });
+    expect(listRequests).toBe(1);
+  });
+
+  it("hydrates confirmed curation restored after a newer queued removal is refused", async () => {
+    let listRequests = 0;
+    let folderRequests = 0;
+    let preferenceWrites = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+          }),
+        };
+      }
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        preferenceWrites += 1;
+        if (preferenceWrites === 2) {
+          return { status: 500, body: { error: "removal rejected" } };
+        }
+        return {
+          body: {
+            ...bootstrapPayload().preferences,
+            ...jsonBody(init),
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        folderRequests += 1;
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "folder-old", cwd: "/work/demo" })],
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions?")) {
+        listRequests += 1;
+        return {
+          body: {
+            sessions: [sessionSummary({ id: "recent" })],
+            total: 2,
+            offset: 0,
+            limit: 40,
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() =>
+      expect(store.getState().sessionListLoading).toBe(false),
+    );
+
+    store.toggleProjectHidden("/work/demo");
+    store.toggleProjectHidden("/work/demo");
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+
+    await vi.waitFor(() =>
+      expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/demo"]),
+    );
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+        "folder-old",
+      ]),
+    );
+    expect(folderRequests).toBeGreaterThanOrEqual(1);
+    expect(listRequests).toBe(1);
   });
 
   it("rolls a refused curation write back and reports it", async () => {

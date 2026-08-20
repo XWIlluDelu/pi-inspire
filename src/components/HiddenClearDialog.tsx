@@ -2,27 +2,23 @@ import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
-export function HiddenFolderDeleteDialog({
-  cwd,
-  name,
+export function HiddenClearDialog({
   sessionIds,
   onClose,
 }: {
-  cwd: string;
-  name: string;
   sessionIds: string[];
   onClose: () => void;
 }) {
   const state = useAppState();
-  const deleting = state.deletingHiddenFolderCwd === cwd;
-  const dialogRef = useModalFocus<HTMLDivElement>(true, cwd, () => {
+  const deleting = state.clearingHidden;
+  const dialogRef = useModalFocus<HTMLDivElement>(true, "clear-hidden", () => {
     if (!deleting) onClose();
   });
   const sessionCount = sessionIds.length;
   const sessionsLabel = `${sessionCount} ${sessionCount === 1 ? "session" : "sessions"}`;
 
   const confirm = async () => {
-    const result = await store.deleteHiddenFolderSessions(cwd, sessionIds);
+    const result = await store.clearHiddenSessions(sessionIds);
     if (result && !result.failure) onClose();
   };
 
@@ -37,8 +33,8 @@ export function HiddenFolderDeleteDialog({
         className="dialog session-delete"
         role="alertdialog"
         aria-modal="true"
-        aria-labelledby="hidden-folder-delete-title"
-        aria-describedby="hidden-folder-delete-description hidden-folder-delete-warning"
+        aria-labelledby="hidden-clear-title"
+        aria-describedby="hidden-clear-description hidden-clear-warning"
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
@@ -46,40 +42,37 @@ export function HiddenFolderDeleteDialog({
           <span className="session-delete__icon" aria-hidden>
             <Trash2 size={17} />
           </span>
-          <h2 className="dialog__title" id="hidden-folder-delete-title">
-            Delete all sessions?
+          <h2 className="dialog__title" id="hidden-clear-title">
+            Clear Hidden?
           </h2>
           <button
             type="button"
             className="icon-button"
             onClick={onClose}
             disabled={deleting}
-            aria-label="Close delete confirmation"
+            aria-label="Close clear confirmation"
             title="Close"
           >
             <X size={15} aria-hidden />
           </button>
         </header>
 
-        <div className="session-delete__session" title={cwd}>
-          {name} · {sessionsLabel}
-        </div>
+        <div className="session-delete__session">Hidden · {sessionsLabel}</div>
         <p
           className="dialog__message session-delete__description"
-          id="hidden-folder-delete-description"
+          id="hidden-clear-description"
         >
           <span>
-            All {sessionsLabel} in this Hidden folder will be moved to Trash.
+            Every session currently in Hidden will be moved to Trash, including
+            individually hidden sessions and every session inside hidden
+            folders.
           </span>
           <span>
             If Trash is unavailable, they will be permanently deleted.
           </span>
-          <span>Project files and the folder itself are unchanged.</span>
+          <span>Project files and project folders are unchanged.</span>
         </p>
-        <p
-          className="session-delete__warning"
-          id="hidden-folder-delete-warning"
-        >
+        <p className="session-delete__warning" id="hidden-clear-warning">
           <AlertTriangle size={14} aria-hidden />
           Make sure none of these sessions is open in another Pi process.
         </p>
@@ -110,7 +103,7 @@ export function HiddenFolderDeleteDialog({
             ) : (
               <Trash2 size={14} aria-hidden />
             )}
-            {deleting ? "Deleting…" : `Delete ${sessionsLabel}`}
+            {deleting ? "Clearing…" : `Delete ${sessionsLabel}`}
           </button>
         </footer>
       </div>

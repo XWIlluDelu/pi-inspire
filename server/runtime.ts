@@ -30,7 +30,7 @@ import {
   type BranchTreeResponse,
   type ExtensionUiRequest,
   type GenericExtensionDisplay,
-  type HiddenFolderDeleteResponse,
+  type HiddenClearResponse,
   type NewSessionOptions,
   type ProjectionConflict,
   type PromptRequest,
@@ -156,10 +156,11 @@ export interface RuntimeLike {
     options?: NewSessionOptions,
   ): Promise<ActiveSnapshot>;
   deleteSession(sessionId: string): Promise<SessionDeleteResponse>;
-  deleteHiddenFolderSessions(
-    cwd: string,
+  clearHiddenSessions(
     expectedSessionIds: readonly string[],
-  ): Promise<HiddenFolderDeleteResponse>;
+    hiddenSessionIds: readonly string[],
+    hiddenProjectCwds: readonly string[],
+  ): Promise<HiddenClearResponse>;
   prompt(request: PromptRequest): Promise<void>;
   abort(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
@@ -418,13 +419,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
    * identity from the moment the request is accepted until the file outcome
    * is known. Concurrent duplicate DELETEs share the same result. */
   private readonly deleting = new Map<string, Promise<SessionDeleteResponse>>();
-  /** Folder deletion reserves every target identity after one full catalog
+  /** Clearing Hidden reserves every target identity after one full catalog
    * snapshot, so a later browser operation cannot open or mutate a subset. */
-  private readonly deletingFolders = new Map<
-    string,
-    Promise<HiddenFolderDeleteResponse>
-  >();
-  private readonly folderDeletionIds = new Set<string>();
+  private clearingHidden: Promise<HiddenClearResponse> | null = null;
+  private readonly hiddenDeletionIds = new Set<string>();
   /** Public operations retain this count from admission through every await,
    * closing gaps before they obtain a slot or enter a slot FIFO. */
   private maintenanceOperations = 0;
@@ -592,7 +590,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.forkReservationsByPath.size > 0 ||
       this.provisionalSlots.size > 0 ||
       this.deleting.size > 0 ||
-      this.deletingFolders.size > 0
+      this.clearingHidden !== null
     )
       return true;
     return [...this.slots.values()].some(
@@ -1602,7 +1600,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private isDeletingSession(sessionId: string): boolean {
     return (
-      this.deleting.has(sessionId) || this.folderDeletionIds.has(sessionId)
+      this.deleting.has(sessionId) || this.hiddenDeletionIds.has(sessionId)
     );
   }
 
@@ -2654,7 +2652,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.assertNotClosing();
     const pending = this.deleting.get(sessionId);
     if (pending) return pending;
-    if (this.folderDeletionIds.has(sessionId)) {
+    if (this.hiddenDeletionIds.has(sessionId)) {
       return Promise.reject(
         Object.assign(new Error("That session is being deleted"), {
           status: 409,
@@ -2671,47 +2669,55 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return deletion;
   }
 
-  /** Deletes precisely the complete catalog snapshot for one hidden cwd. The
-   * caller owns the visibility policy; this boundary only preserves session
-   * identity, active-work checks, and an explicit partial-result outcome. */
-  async deleteHiddenFolderSessions(
-    cwd: string,
+  /** Deletes precisely the reviewed catalog selection derived from Hidden's
+   * individual ids and complete project folders. */
+  async clearHiddenSessions(
     expectedSessionIds: readonly string[],
-  ): Promise<HiddenFolderDeleteResponse> {
+    hiddenSessionIds: readonly string[],
+    hiddenProjectCwds: readonly string[],
+  ): Promise<HiddenClearResponse> {
     return this.withMaintenanceOperation(() =>
-      this.deleteHiddenFolderSessionsRequest(cwd, expectedSessionIds),
+      this.clearHiddenSessionsRequest(
+        expectedSessionIds,
+        hiddenSessionIds,
+        hiddenProjectCwds,
+      ),
     );
   }
 
-  private deleteHiddenFolderSessionsRequest(
-    cwd: string,
+  private clearHiddenSessionsRequest(
     expectedSessionIds: readonly string[],
-  ): Promise<HiddenFolderDeleteResponse> {
+    hiddenSessionIds: readonly string[],
+    hiddenProjectCwds: readonly string[],
+  ): Promise<HiddenClearResponse> {
     this.assertNotClosing();
-    const pending = this.deletingFolders.get(cwd);
-    if (pending) return pending;
-    const deletion = this.deleteHiddenFolderSessionsInside(
-      cwd,
+    if (this.clearingHidden) {
+      return Promise.reject(
+        Object.assign(new Error("Hidden is already being cleared"), {
+          status: 409,
+        }),
+      );
+    }
+    const deletion = this.clearHiddenSessionsInside(
       expectedSessionIds,
+      hiddenSessionIds,
+      hiddenProjectCwds,
     );
-    this.deletingFolders.set(cwd, deletion);
+    this.clearingHidden = deletion;
     const clear = () => {
-      if (this.deletingFolders.get(cwd) === deletion)
-        this.deletingFolders.delete(cwd);
+      if (this.clearingHidden === deletion) this.clearingHidden = null;
     };
     void deletion.then(clear, clear);
     return deletion;
   }
 
-  private assertHiddenFolderDeletionReady(
-    records: readonly SessionRecord[],
-  ): void {
+  private assertHiddenClearReady(records: readonly SessionRecord[]): void {
     for (const session of records) {
       const sessionId = session.id;
       const path = resolve(session.path);
       if (this.selectedSessionId === sessionId) {
         throw Object.assign(
-          new Error("Switch to another session before deleting this folder"),
+          new Error("Switch to another session before clearing Hidden"),
           { status: 409 },
         );
       }
@@ -2725,7 +2731,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ) {
         throw Object.assign(
           new Error(
-            "Wait for every session in this folder to finish opening or changing before deleting it",
+            "Wait for every session in Hidden to finish opening or changing before clearing it",
           ),
           { status: 409 },
         );
@@ -2750,7 +2756,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ) {
         throw Object.assign(
           new Error(
-            "Wait for every session in this folder to finish active work or interaction before deleting it",
+            "Wait for every session in Hidden to finish active work or interaction before clearing it",
           ),
           { status: 409 },
         );
@@ -2758,15 +2764,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private async deleteHiddenFolderSessionsInside(
-    cwd: string,
+  private async clearHiddenSessionsInside(
     expectedSessionIds: readonly string[],
-  ): Promise<HiddenFolderDeleteResponse> {
-    const records = (await this.catalog.refresh(true)).filter(
-      (session) => session.cwd === cwd,
+    hiddenSessionIds: readonly string[],
+    hiddenProjectCwds: readonly string[],
+  ): Promise<HiddenClearResponse> {
+    const catalog = await this.catalog.refresh(true);
+    const individualIds = new Set(hiddenSessionIds);
+    const projectCwds = new Set(hiddenProjectCwds);
+    const records = catalog.filter(
+      (session) =>
+        individualIds.has(session.id) || projectCwds.has(session.cwd),
     );
     if (records.length === 0)
-      throw Object.assign(new Error("No sessions remain in this folder"), {
+      throw Object.assign(new Error("No sessions remain in Hidden"), {
         status: 404,
       });
     const ids = new Set(records.map((session) => session.id));
@@ -2777,31 +2788,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       [...ids].some((sessionId) => !expected.has(sessionId))
     ) {
       throw Object.assign(
-        new Error("The folder's sessions changed; review it before deleting"),
+        new Error("Hidden changed; review it before clearing"),
         { status: 409 },
       );
     }
-    if (ids.size !== records.length) {
+    if (
+      ids.size !== records.length ||
+      catalog.filter((session) => ids.has(session.id)).length !== ids.size
+    ) {
       throw Object.assign(
-        new Error("The folder contains ambiguous Pi session identities"),
+        new Error("Hidden contains ambiguous Pi session identities"),
         { status: 409 },
       );
     }
     if (records.some((session) => this.isDeletingSession(session.id))) {
-      throw Object.assign(
-        new Error("A session in this folder is being deleted"),
-        {
-          status: 409,
-        },
-      );
+      throw Object.assign(new Error("A session in Hidden is being deleted"), {
+        status: 409,
+      });
     }
-    for (const session of records) this.folderDeletionIds.add(session.id);
-    const deleted: HiddenFolderDeleteResponse["deleted"] = [];
+    for (const session of records) this.hiddenDeletionIds.add(session.id);
+    const deleted: HiddenClearResponse["deleted"] = [];
     try {
       // Admission is all-or-nothing. Once every identity is reserved, a
       // pre-existing active/open/mutation operation rejects the whole batch
-      // before any sibling session can be moved to Trash.
-      this.assertHiddenFolderDeletionReady(records);
+      // before any session can be moved to Trash.
+      this.assertHiddenClearReady(records);
       for (const session of records) {
         try {
           const result = await this.deleteSessionInside(session.id, session);
@@ -2811,7 +2822,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           });
         } catch (error) {
           return {
-            cwd,
             deleted,
             failure: {
               sessionId: session.id,
@@ -2823,9 +2833,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           };
         }
       }
-      return { cwd, deleted };
+      return { deleted };
     } finally {
-      for (const session of records) this.folderDeletionIds.delete(session.id);
+      for (const session of records) this.hiddenDeletionIds.delete(session.id);
     }
   }
 
