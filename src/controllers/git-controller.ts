@@ -42,7 +42,7 @@ export interface GitControllerPatch {
   gitDiff?: GitDiffView | null;
 }
 
-export interface GitControllerHost {
+interface GitControllerHost {
   state(): GitControllerState;
   patch(patch: GitControllerPatch): void;
   api(): Api | null;

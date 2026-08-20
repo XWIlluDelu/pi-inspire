@@ -10,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import {
@@ -127,9 +126,6 @@ async function preview(session: SessionRecord): Promise<ActiveSessionSnapshot> {
     thinkingLevel: "medium",
     isStreaming: false,
     isCompacting: false,
-    messages: [
-      { role: "user", content: `preview:${session.id}`, timestamp: 1 },
-    ],
     transcriptPage: {
       sessionId: session.id,
       revision: 1,
@@ -292,7 +288,7 @@ describe("RuntimeController concurrent sessions", () => {
         setTimeout(() => reject(new Error("open waited for worker")), 100),
       ),
     ]);
-    expect(opened.active?.messages).toEqual([
+    expect(opened.active?.transcriptPage.messages).toEqual([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
     await vi.waitFor(() => expect(worker.starts).toBe(1));
@@ -1502,7 +1498,7 @@ describe("RuntimeController concurrent sessions", () => {
     worker.emit("exit", new Error("worker crashed"));
 
     const recovered = await runtime.snapshot();
-    expect(recovered.active?.messages).toEqual([
+    expect(recovered.active?.transcriptPage.messages).toEqual([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
     expect(recovered.runState).toBe("failed");

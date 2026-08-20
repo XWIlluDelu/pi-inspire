@@ -12,9 +12,9 @@ import {
   type ChatMessage,
   contentItems,
   messageText,
-  store,
   type ToolCallContent,
-} from "../store";
+} from "../events";
+import { store } from "../store";
 import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { RichText } from "./RichText";

@@ -1,11 +1,12 @@
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { modelIdentityKey, type ModelIdentity } from "../../shared/contracts";
-import type { ModelOption } from "../store";
+import {
+  modelIdentityKey,
+  type ModelIdentity,
+  type ModelOption,
+} from "../../shared/contracts";
 
-export { modelIdentityKey } from "../../shared/contracts";
-
-export interface ModelGroupingMetrics {
+interface ModelGroupingMetrics {
   comparisons: number;
   visits: number;
 }
@@ -30,7 +31,7 @@ function fuzzyCategory(
   return 2;
 }
 
-export interface ModelGroup {
+interface ModelGroup {
   provider: string;
   models: ModelOption[];
 }

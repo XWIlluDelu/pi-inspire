@@ -72,7 +72,7 @@ describe("Files pane", () => {
           return Response.json(
             bootstrapPayload({
               snapshot: activeSnapshot({
-                messages: bootstrapMessages,
+                pageMessages: bootstrapMessages,
                 transcriptPage: {
                   sessionId: "s1",
                   revision: transcriptRevision,
@@ -543,7 +543,7 @@ describe("Files pane", () => {
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",
         data: activeSnapshot({
-          messages: bootstrapMessages,
+          pageMessages: bootstrapMessages,
           transcriptPage: {
             sessionId: "s1",
             revision: transcriptRevision,

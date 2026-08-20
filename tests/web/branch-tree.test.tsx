@@ -150,7 +150,7 @@ describe("History contextual mode", () => {
             snapshot: activeSnapshot({
               durableLeafId: "a2",
               effectiveLeafId,
-              messages,
+              pageMessages: messages,
               transcriptPage: {
                 sessionId: "s1",
                 revision: 2,
@@ -172,7 +172,7 @@ describe("History contextual mode", () => {
             snapshot: activeSnapshot({
               sessionId: "forked",
               sessionName: "Forked",
-              messages: [],
+              pageMessages: [],
             }),
             editorText: "revise",
           });

@@ -75,7 +75,7 @@ export type InitialMaterializationAttestation =
   | "complete"
   | "mismatch";
 
-export type ProjectionMessageChange = "none" | "append" | "replace";
+type ProjectionMessageChange = "none" | "append" | "replace";
 
 export interface ProjectionReconcileResult {
   changed: boolean;

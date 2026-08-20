@@ -42,7 +42,7 @@ export class PreviewProjection
   }
 
   get messages(): readonly unknown[] {
-    return this.preview.messages;
+    return this.preview.transcriptPage.messages;
   }
 
   get model(): unknown {
@@ -73,8 +73,8 @@ export class PreviewProjection
     _effectiveLeafId?: string | null,
     viewId = "preview",
   ): TranscriptPage {
-    const messages = [...this.preview.messages, ...overlay].map((value) =>
-      boundedTranscriptValue(value),
+    const messages = [...this.preview.transcriptPage.messages, ...overlay].map(
+      (value) => boundedTranscriptValue(value),
     );
     return {
       sessionId: this.sessionId,
@@ -115,7 +115,7 @@ export class PreviewProjection
   }
 
   viewMessages(): readonly unknown[] {
-    return this.preview.messages;
+    return this.preview.transcriptPage.messages;
   }
 
   async reconcile(_force = false): Promise<ProjectionReconcileResult> {

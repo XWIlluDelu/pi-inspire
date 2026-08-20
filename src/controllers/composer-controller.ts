@@ -21,7 +21,7 @@ export interface ComposerPartition {
   sending: boolean;
 }
 
-export interface ComposerControllerState {
+interface ComposerControllerState {
   sessionId: string | null;
 }
 
@@ -30,7 +30,7 @@ export type ComposerSlice = Pick<
   "attachments" | "projectFiles" | "sending"
 >;
 
-export interface ComposerControllerHost {
+interface ComposerControllerHost {
   state(): ComposerControllerState;
   api(): Api | null;
   patch(slice: ComposerSlice): void;

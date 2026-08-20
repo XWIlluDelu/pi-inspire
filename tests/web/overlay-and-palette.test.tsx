@@ -31,7 +31,9 @@ beforeEach(async () => {
       return {
         body: bootstrapPayload({
           snapshot: activeSnapshot({
-            messages: [{ role: "user", content: "First prompt", timestamp: 1 }],
+            pageMessages: [
+              { role: "user", content: "First prompt", timestamp: 1 },
+            ],
           }),
         }),
       };

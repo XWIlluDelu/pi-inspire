@@ -13,7 +13,7 @@ import {
   unknownResourceAvailability,
 } from "../resource-preview";
 
-export interface ResourceControllerState {
+interface ResourceControllerState {
   sessionId: string | null;
   transcriptViewId: string | null;
   transcriptRevision: number;
@@ -28,7 +28,7 @@ export interface ResourceControllerState {
 /** Resource-owned state only. AppStore retains cross-domain transactions; a
  * resource opening asks its host to prepare the Git surface without knowing
  * its fields or request implementation. */
-export interface ResourceControllerPatch {
+interface ResourceControllerPatch {
   resourcesOpen?: boolean;
   contextMode?: "files" | "changes" | "branches";
   detailMode?: "file" | "diff";
@@ -37,7 +37,7 @@ export interface ResourceControllerPatch {
   resourceAvailability?: Record<string, ResourceProbeResult>;
 }
 
-export interface ResourceControllerHost {
+interface ResourceControllerHost {
   state(): ResourceControllerState;
   patch(patch: ResourceControllerPatch): void;
   api(): Api | null;
@@ -307,10 +307,7 @@ export class ResourceController {
         signal,
       );
       if (stale()) throw staleError();
-      if (
-        descriptor.kind !== "image" ||
-        (descriptor.viewId !== undefined && descriptor.viewId !== viewId)
-      ) {
+      if (descriptor.kind !== "image" || descriptor.viewId !== viewId) {
         throw new Error(
           "The embedded image is unavailable in this conversation view",
         );

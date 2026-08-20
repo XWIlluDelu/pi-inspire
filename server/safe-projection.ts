@@ -1,15 +1,15 @@
-export const REDACTED_VALUE = "[redacted]";
+const REDACTED_VALUE = "[redacted]";
 const SENSITIVE_KEY =
   /(api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)$/i;
 
-export interface ProjectionLimits {
+interface ProjectionLimits {
   depth: number;
   stringChars: number;
   arrayItems: number;
   objectEntries?: number;
 }
 
-export function isSensitiveProjectionKey(key: string): boolean {
+function isSensitiveProjectionKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
 }
 

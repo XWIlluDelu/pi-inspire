@@ -20,7 +20,7 @@ import type { Plugin } from "unified";
 import { isLocalResourceReference } from "../../shared/resource-references";
 import { useCopied } from "../use-copied";
 
-export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
+type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 
 // Shared sanitize schema for every variant. Raw HTML from model content is
 // never parsed (react-markdown drops it without rehype-raw), and the remaining
@@ -53,7 +53,7 @@ function sourceSlice(
   return start == null || end == null ? null : source.slice(start, end);
 }
 
-export interface BackslashMathScan {
+interface BackslashMathScan {
   firstUnclosed: number;
   hasOpeningDisplayClose: boolean;
   operations: number;

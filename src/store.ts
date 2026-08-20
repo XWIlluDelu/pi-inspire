@@ -3,7 +3,6 @@ import {
   defaultPreferences,
   modelIdentityKey,
   projectNameFromCwd,
-  THINKING_LEVELS,
   type ActiveSnapshot,
   type AssistantRoundDisplayPreference,
   type BranchTreeResponse,
@@ -38,6 +37,7 @@ import {
 import { messageFallbackCorrelation } from "../shared/message-identity";
 import { ApiError, createApi, type Api, type ProjectFileResult } from "./api";
 import { BranchController } from "./controllers/branch-controller";
+import type { PiCommand } from "./composer-completion";
 import {
   ComposerController,
   type PendingAttachment,
@@ -45,6 +45,8 @@ import {
 import {
   ConnectionController,
   type ConnectionRecoveryTrigger,
+  type ManagedConnectionProblem,
+  type ManagedConnectionState,
 } from "./controllers/connection-controller";
 import { GitController, type GitDiffView } from "./controllers/git-controller";
 import { ResourceController } from "./controllers/resource-controller";
@@ -62,73 +64,21 @@ import {
   type WireEvent,
 } from "./events";
 
-// Re-export the message model so existing component imports keep working.
-export {
-  asMessage,
-  contentItems,
-  isAbortableRunState,
-  isBusyRunState,
-  messageKey,
-  messageText,
-  toolResultText,
-  type AssistantContent,
-  type ChatMessage,
-  type TextContent,
-  type ThinkingContent,
-  type ToolCallContent,
-} from "./events";
-export { THINKING_LEVELS };
-export type {
-  ActivityTool,
-  ExtensionUiRequest,
-  Notice,
-  QueueInfo,
-  RetryInfo,
-  WireEvent,
-} from "./events";
-
 // --- Store state ---
 
-export type ConnectionState =
-  | "connecting"
-  | "open"
-  | "reconnecting"
-  | "offline";
-export type ConnectionProblem =
-  | { kind: "host-unreachable" }
-  | { kind: "host-error"; message: string }
-  | { kind: "stream-interrupted" }
-  | null;
-
-export {
-  injectHtmlPreviewCsp,
-  MAX_MEDIA_PREVIEW_BYTES,
-  TEXT_PREVIEW_BYTES,
-} from "./resource-preview";
-export type { ResourcePreview } from "./resource-preview";
-
-export type { GitDiffView } from "./controllers/git-controller";
-
-export type { ModelOption } from "../shared/contracts";
-
-export interface PiCommand {
-  name: string;
-  description?: string;
-  /** Pi currently reports extension/prompt/skill. Keep unknown future sources
-   * attributable instead of collapsing or rejecting them. */
-  source?: string;
-}
+type ConnectionState = ManagedConnectionState;
+type ConnectionProblem = ManagedConnectionProblem;
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
  * fresh usage; the whole value is null when Pi provides no usable stats. */
-export interface ContextUsage {
+interface ContextUsage {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
 }
 
-export function contextUsage(stats: unknown): ContextUsage | null {
+function contextUsage(stats: unknown): ContextUsage | null {
   if (!stats || typeof stats !== "object") return null;
   const raw = (stats as { contextUsage?: unknown }).contextUsage;
   if (!raw || typeof raw !== "object") return null;
@@ -153,9 +103,7 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-export type { PendingAttachment } from "./controllers/composer-controller";
-
-export interface AppState extends EventSlice {
+interface AppState extends EventSlice {
   needsToken: boolean;
   connection: ConnectionState;
   connectionProblem: ConnectionProblem;
@@ -820,21 +768,14 @@ export class AppStore {
     const nextTranscriptRevision = page?.revision ?? 0;
     const revisionChanged =
       nextTranscriptRevision !== this.state.transcriptRevision;
-    const pageHasAuthoritativeView =
-      typeof page?.viewId === "string" && page.viewId.length > 0;
-    const nextViewId = page
-      ? (page.viewId ??
-        `legacy-view:${page.incarnation ?? nextSessionId ?? "none"}`)
-      : null;
+    const nextViewId = page?.viewId ?? null;
     const nextDurableLeafId = active?.durableLeafId ?? null;
     const nextEffectiveLeafId =
       page?.effectiveLeafId ?? active?.effectiveLeafId ?? null;
     const viewChanged = Boolean(
       !sessionChanged &&
         nextSessionId &&
-        ((nextViewId && nextViewId !== this.state.transcriptViewId) ||
-          (!pageHasAuthoritativeView &&
-            nextEffectiveLeafId !== this.state.transcriptEffectiveLeafId)),
+        nextViewId !== this.state.transcriptViewId,
     );
     if (sessionChanged || viewChanged) {
       this.selectionGeneration += 1;
@@ -850,9 +791,7 @@ export class AppStore {
       // generation; do not expose its old standing during the next render.
       this.resources.cancelProbes();
     }
-    const newestMessages = (page?.messages ?? active?.messages ?? []).map(
-      asMessage,
-    );
+    const newestMessages = (page?.messages ?? []).map(asMessage);
     const historyCompatible = Boolean(
       mode === "preserve" &&
         !sessionChanged &&
@@ -1496,6 +1435,35 @@ export class AppStore {
 
   clearSessionDeleteError = (): void => this.set({ sessionDeleteError: null });
 
+  private forgetDeletedSessions(
+    sessionIds: ReadonlySet<string>,
+  ): AppState["sessionStatuses"] {
+    const sessionStatuses = { ...this.state.sessionStatuses };
+    for (const sessionId of sessionIds) {
+      this.catalog.remove(sessionId);
+      this.attentionArms.delete(sessionId);
+      this.titleAttention.delete(sessionId);
+      delete sessionStatuses[sessionId];
+      this.discardSessionComposer(sessionId);
+    }
+    this.publishTitleAttention();
+    return sessionStatuses;
+  }
+
+  private preferencesWithoutSessions(
+    sessionIds: ReadonlySet<string>,
+  ): InspirePreferences {
+    return {
+      ...this.state.prefs,
+      pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
+        (id) => !sessionIds.has(id),
+      ),
+      hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
+        (id) => !sessionIds.has(id),
+      ),
+    };
+  }
+
   deleteSession = async (
     sessionId: string,
   ): Promise<SessionDeleteDisposition | null> => {
@@ -1537,25 +1505,11 @@ export class AppStore {
         return null;
       }
       const result = await this.api.deleteSession(sessionId);
-      this.catalog.remove(sessionId);
-      this.attentionArms.delete(sessionId);
-      this.titleAttention.delete(sessionId);
-      this.publishTitleAttention();
-      const sessionStatuses = { ...this.state.sessionStatuses };
-      delete sessionStatuses[sessionId];
-
-      const fallbackPrefs = {
-        ...this.state.prefs,
-        pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
-          (id) => id !== sessionId,
-        ),
-        hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
-          (id) => id !== sessionId,
-        ),
-      };
-      const prefs = result.preferences ?? fallbackPrefs;
+      const deleted = new Set([sessionId]);
+      const sessionStatuses = this.forgetDeletedSessions(deleted);
+      const prefs =
+        result.preferences ?? this.preferencesWithoutSessions(deleted);
       if (result.preferences) this.confirmedPrefs = result.preferences;
-      this.discardSessionComposer(sessionId);
       this.set({ prefs, sessionStatuses });
       this.notify(
         "info",
@@ -1621,24 +1575,10 @@ export class AppStore {
       const deleted = new Set(
         result.deleted.map((session) => session.sessionId),
       );
-      const sessionStatuses = { ...this.state.sessionStatuses };
-      for (const sessionId of deleted) {
-        this.catalog.remove(sessionId);
-        this.attentionArms.delete(sessionId);
-        this.titleAttention.delete(sessionId);
-        delete sessionStatuses[sessionId];
-        this.discardSessionComposer(sessionId);
-      }
-      this.publishTitleAttention();
+      const sessionStatuses = this.forgetDeletedSessions(deleted);
 
       const fallbackPrefs = {
-        ...this.state.prefs,
-        pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
-          (id) => !deleted.has(id),
-        ),
-        hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
-          (id) => !deleted.has(id),
-        ),
+        ...this.preferencesWithoutSessions(deleted),
         ...(result.failure
           ? {}
           : {

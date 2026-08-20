@@ -12,7 +12,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
@@ -389,7 +388,7 @@ describe("RuntimeController new-session materialization", () => {
       expect(created.active).toMatchObject({
         sessionId: "new-session",
         sessionFile: fixture.path,
-        messages: [],
+        transcriptPage: { messages: [] },
         projectionHealth: { status: "ok" },
       });
       await expect(access(fixture.path)).rejects.toMatchObject({
@@ -408,7 +407,7 @@ describe("RuntimeController new-session materialization", () => {
         projectFiles: [],
       });
       const snapshot = await fixture.runtime.snapshot();
-      expect(snapshot.active?.messages).toEqual([
+      expect(snapshot.active?.transcriptPage.messages).toEqual([
         expect.objectContaining({ role: "user", content: "first prompt" }),
         expect.objectContaining({ role: "assistant" }),
       ]);
@@ -434,7 +433,7 @@ describe("RuntimeController new-session materialization", () => {
         const snapshot = await runtime.snapshot();
         observations.push({
           lineCount,
-          messages: snapshot.active?.messages.length ?? -1,
+          messages: snapshot.active?.transcriptPage.messages.length ?? -1,
           conflict: snapshot.active?.projectionConflict,
         });
       };
@@ -454,7 +453,7 @@ describe("RuntimeController new-session materialization", () => {
       ]);
       fixture.worker.emitPromptEvents();
       const snapshot = await runtime.snapshot();
-      expect(snapshot.active?.messages).toHaveLength(2);
+      expect(snapshot.active?.transcriptPage.messages).toHaveLength(2);
       expect(snapshot.active?.projectionConflict).toBeNull();
       expect(fixture.worker.stops).toBe(0);
     } finally {
@@ -489,7 +488,7 @@ describe("RuntimeController new-session materialization", () => {
       });
       const snapshot = await fixture.runtime.snapshot();
       expect(snapshot.active?.projectionConflict).toBeNull();
-      expect(snapshot.active?.messages).toHaveLength(4);
+      expect(snapshot.active?.transcriptPage.messages).toHaveLength(4);
     } finally {
       await fixture.runtime.close();
     }
@@ -1563,7 +1562,7 @@ describe("RuntimeController projection ownership gate", () => {
       expect(ids[3]).not.toBe(ids[0]);
       const snapshot = await runtime.snapshot();
       expect(
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (value) =>
             (value as { role?: string; timestamp?: number }).role ===
               "assistant" && (value as { timestamp?: number }).timestamp === 2,
@@ -1640,7 +1639,7 @@ describe("RuntimeController projection ownership gate", () => {
         { type: "text", text: "live answer" },
         { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
       ]);
-      expect(snapshot.active?.messages.at(-1)).toMatchObject({
+      expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject({
         role: "assistant",
         content: [
           { type: "thinking", thinking: "live thought" },
@@ -1677,7 +1676,7 @@ describe("RuntimeController projection ownership gate", () => {
       }
       let snapshot = await runtime.snapshot();
       expect(
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (value) => (value as { role?: string }).role === "toolResult",
         ),
       ).toHaveLength(2);
@@ -1691,7 +1690,7 @@ describe("RuntimeController projection ownership gate", () => {
         expect(snapshot.runState).toBe("idle");
       });
       expect(
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (value) => (value as { role?: string }).role === "toolResult",
         ),
       ).toHaveLength(2);
@@ -1774,7 +1773,7 @@ describe("RuntimeController projection ownership gate", () => {
       );
       await vi.waitFor(async () =>
         expect(
-          (await runtime.snapshot()).active?.messages.at(-1),
+          (await runtime.snapshot()).active?.transcriptPage.messages.at(-1),
         ).toMatchObject({ content: "ordinary" }),
       );
       expect(worker.stops).toBe(0);
@@ -1902,7 +1901,7 @@ describe("RuntimeController projection ownership gate", () => {
       await appendFile(path, `${entry.slice(-8)}\n`);
       await vi.waitFor(async () => {
         expect(
-          (await runtime.snapshot()).active?.messages.at(-1),
+          (await runtime.snapshot()).active?.transcriptPage.messages.at(-1),
         ).toMatchObject({ content: "owned" });
       });
       expect(worker.stops).toBe(0);
@@ -2096,7 +2095,7 @@ describe("RuntimeController projection ownership gate", () => {
           /outcome is unknown/,
         );
         expect(
-          snapshot.active?.messages.some((message) =>
+          snapshot.active?.transcriptPage.messages.some((message) =>
             JSON.stringify(message).includes("late prompt"),
           ) || command !== "prompt",
         ).toBe(true);
@@ -2168,7 +2167,7 @@ describe("RuntimeController projection ownership gate", () => {
       });
       const liveSnapshot = await runtime.snapshot();
       const liveCustom =
-        liveSnapshot.active?.messages.filter(
+        liveSnapshot.active?.transcriptPage.messages.filter(
           (message) => (message as { role?: string }).role === "custom",
         ) ?? [];
       expect(liveCustom).toHaveLength(1);
@@ -2183,7 +2182,7 @@ describe("RuntimeController projection ownership gate", () => {
         snapshot = await runtime.snapshot();
         expect(snapshot.runState).toBe("idle");
         expect(
-          snapshot.active?.messages.some(
+          snapshot.active?.transcriptPage.messages.some(
             (message) =>
               (message as Record<string, unknown>).__inspireMessageId ===
               "custom-1:0",
@@ -2191,7 +2190,7 @@ describe("RuntimeController projection ownership gate", () => {
         ).toBe(true);
       });
       const custom =
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (message) => (message as { role?: string }).role === "custom",
         ) ?? [];
       expect(custom).toHaveLength(1);
@@ -2258,13 +2257,13 @@ describe("RuntimeController projection ownership gate", () => {
         snapshot = await runtime.snapshot();
         expect(snapshot.runState).toBe("idle");
         expect(
-          snapshot.active?.messages.filter(
+          snapshot.active?.transcriptPage.messages.filter(
             (message) => (message as { role?: string }).role === "custom",
           ),
         ).toHaveLength(2);
       });
       expect(
-        snapshot.active?.messages
+        snapshot.active?.transcriptPage.messages
           .filter((message) => (message as { role?: string }).role === "custom")
           .map(
             (message) =>
@@ -2303,7 +2302,7 @@ describe("RuntimeController projection ownership gate", () => {
       await appendFile(path, `${JSON.stringify(entry)}\n`);
       await vi.waitFor(async () => {
         expect(
-          (await runtime.snapshot()).active?.messages.some(
+          (await runtime.snapshot()).active?.transcriptPage.messages.some(
             (message) =>
               (message as Record<string, unknown>).__inspireMessageId ===
               "custom-entry-first:0",
@@ -2327,7 +2326,7 @@ describe("RuntimeController projection ownership gate", () => {
       });
       const snapshot = await runtime.snapshot();
       const custom =
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (message) => (message as { role?: string }).role === "custom",
         ) ?? [];
       expect(custom).toHaveLength(1);
@@ -2379,7 +2378,7 @@ describe("RuntimeController projection ownership gate", () => {
         const settled = await runtime.snapshot();
         expect(settled.active?.projectionConflict).toBeNull();
         expect(
-          settled.active?.messages.some(
+          settled.active?.transcriptPage.messages.some(
             (message) =>
               (message as Record<string, unknown>).__inspireMessageId ===
               "after-entry-first:0",
@@ -2403,7 +2402,7 @@ describe("RuntimeController projection ownership gate", () => {
       workers[0]!.emit("event", { type: "message_start", message: live });
       let snapshot = await runtime.snapshot();
       expect(
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (message) => (message as { timestamp?: number }).timestamp === 2,
         ),
       ).toHaveLength(1);
@@ -2411,7 +2410,9 @@ describe("RuntimeController projection ownership gate", () => {
         Buffer.byteLength(JSON.stringify(snapshot.active?.transcriptPage)),
       ).toBeLessThanOrEqual(TRANSCRIPT_PAGE_MAX_BYTES);
       expect(
-        Buffer.byteLength(JSON.stringify(snapshot.active?.messages)),
+        Buffer.byteLength(
+          JSON.stringify(snapshot.active?.transcriptPage.messages),
+        ),
       ).toBeLessThanOrEqual(TRANSIENT_OVERLAY_MAX_BYTES);
 
       await appendFile(
@@ -2437,7 +2438,7 @@ describe("RuntimeController projection ownership gate", () => {
         expect(snapshot.runState).toBe("idle");
       });
       expect(
-        snapshot.active?.messages.filter(
+        snapshot.active?.transcriptPage.messages.filter(
           (message) => (message as { timestamp?: number }).timestamp === 2,
         ),
       ).toHaveLength(1);

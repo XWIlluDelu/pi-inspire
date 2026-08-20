@@ -10,7 +10,7 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
 interface PiPackageManifest {
   name?: unknown;
@@ -19,7 +19,7 @@ interface PiPackageManifest {
   exports?: unknown;
 }
 
-export interface PiInstallationIdentity {
+interface PiInstallationIdentity {
   commandPath: string;
   packageRoot: string;
   cliPath: string;
@@ -27,11 +27,11 @@ export interface PiInstallationIdentity {
   version: string;
 }
 
-export interface PiInstallation extends PiInstallationIdentity {
+interface PiInstallation extends PiInstallationIdentity {
   sdk: typeof import("@earendil-works/pi-coding-agent");
 }
 
-export interface PiInstallationOptions {
+interface PiInstallationOptions {
   command?: string;
   path?: string;
   installationRoot?: string;

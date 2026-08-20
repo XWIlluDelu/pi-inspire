@@ -35,7 +35,7 @@ import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
 import { useModalFocus } from "../use-modal-focus";
 
-export interface SessionGroup {
+interface SessionGroup {
   cwd: string;
   /** Concise folder name (basename of cwd). */
   name: string;
@@ -78,7 +78,7 @@ export type NavCuration = Pick<
   | "hiddenSessionIds"
 >;
 
-export interface NavSections {
+interface NavSections {
   /** Individually pinned sessions across projects, newest activity first. */
   pinned: SessionSummary[];
   /** Groups whose folder is pinned, ordered like ordinary groups. */

@@ -23,17 +23,21 @@ import {
   isIndexedProjectFile,
 } from "./project-files.js";
 
-export interface ResourceContext {
+interface ResourceContextIdentity {
   sessionId: string;
-  viewId?: string;
-  revision?: number;
+  viewId: string;
+  revision: number;
   cwd: string;
-  /** Tests and static runtimes may provide messages directly; the real
-   * runtime supplies a lazy loader so indexed workspace previews avoid a
-   * complete transcript RPC read. */
-  messages?: unknown[];
-  loadMessages?: () => Promise<unknown[]>;
 }
+
+/** Resource authority is always bound to one transcript view and exactly one
+ * message source. The live runtime loads lazily so indexed workspace previews
+ * do not require a complete transcript RPC read. */
+export type ResourceContext = ResourceContextIdentity &
+  (
+    | { messages: unknown[]; loadMessages?: never }
+    | { messages?: never; loadMessages: () => Promise<unknown[]> }
+  );
 
 interface FileIdentity {
   dev: bigint;
@@ -55,7 +59,7 @@ function changedResourceError(): Error & { status: number } {
   );
 }
 
-export interface ResolvedResource {
+interface ResolvedResource {
   descriptor: ResourceDescriptor;
   path?: string;
   /** Filesystem object captured at resolve time. The retained anchor keeps
@@ -208,13 +212,10 @@ function kindFor(mimeType: string): ResourceKind {
   return "binary";
 }
 
-async function contextMessages(context: ResourceContext): Promise<unknown[]> {
-  if (context.messages) return context.messages;
-  return context.loadMessages ? context.loadMessages() : [];
-}
-
-function resourceViewId(context: ResourceContext): string {
-  return context.viewId ?? `legacy-view:${context.sessionId}`;
+function contextMessages(context: ResourceContext): Promise<unknown[]> {
+  return context.loadMessages
+    ? context.loadMessages()
+    : Promise.resolve(context.messages);
 }
 
 function classifiedProbeFailure(
@@ -278,17 +279,8 @@ interface ResourceListOptions {
   limit?: number;
 }
 
-function contextRevision(context: ResourceContext): number {
-  return typeof context.revision === "number" &&
-    Number.isSafeInteger(context.revision)
-    ? context.revision
-    : 0;
-}
-
-function citationIndexKey(context: ResourceContext): string | null {
-  return context.viewId && Number.isSafeInteger(context.revision)
-    ? JSON.stringify([context.sessionId, context.viewId, context.revision])
-    : null;
+function citationIndexKey(context: ResourceContext): string {
+  return JSON.stringify([context.sessionId, context.viewId, context.revision]);
 }
 
 function encodeResourceCursor(
@@ -389,8 +381,8 @@ function buildCitationIndex(
 
   return {
     sessionId: context.sessionId,
-    viewId: resourceViewId(context),
-    revision: contextRevision(context),
+    viewId: context.viewId,
+    revision: context.revision,
     resources,
     citedPaths,
     embedded,
@@ -425,10 +417,6 @@ export class ResourceStore {
     context: ResourceContext,
   ): Promise<ResourceCitationIndex> {
     const key = citationIndexKey(context);
-    if (!key)
-      return contextMessages(context).then((messages) =>
-        buildCitationIndex(context, messages),
-      );
     const cached = this.citationIndexes.get(key);
     if (cached) {
       this.citationIndexes.delete(key);
@@ -555,7 +543,7 @@ export class ResourceStore {
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
-        viewId: resourceViewId(context),
+        viewId: context.viewId,
         reference,
         name: `embedded-image-${Number(embeddedReference[1]) + 1}`,
         mimeType: embedded.mimeType,
@@ -675,7 +663,7 @@ export class ResourceStore {
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
-        viewId: resourceViewId(context),
+        viewId: context.viewId,
         // A recovery answers with the location it actually opened, so the
         // preview never claims the bare shorthand was a real path.
         reference: recovered ?? reference,
@@ -800,12 +788,12 @@ export class ResourceStore {
     }
   }
 
-  get(id: string, sessionId: string, viewId?: string): ResolvedResource {
+  get(id: string, sessionId: string, viewId: string): ResolvedResource {
     const resource = this.handles.get(id);
     if (
       !resource ||
       resource.descriptor.sessionId !== sessionId ||
-      (viewId !== undefined && resource.descriptor.viewId !== viewId)
+      resource.descriptor.viewId !== viewId
     ) {
       throw Object.assign(
         new Error("The resource preview is no longer available"),
@@ -821,7 +809,7 @@ export class ResourceStore {
   ): Promise<void> {
     if (
       resource.descriptor.sessionId !== context.sessionId ||
-      resource.descriptor.viewId !== resourceViewId(context)
+      resource.descriptor.viewId !== context.viewId
     ) {
       throw Object.assign(
         new Error("The resource preview belongs to another branch view"),

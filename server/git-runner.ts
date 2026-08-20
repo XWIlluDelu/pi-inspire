@@ -51,7 +51,7 @@ export class GitInspectionError extends Error {
   }
 }
 
-export function gitEnvironment(): NodeJS.ProcessEnv {
+function gitEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of [
     "PATH",

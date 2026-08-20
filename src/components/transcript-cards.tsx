@@ -31,10 +31,10 @@ import {
   type ChatMessage,
   contentItems,
   messageKey,
-  store,
   type ToolCallContent,
   toolResultText,
-} from "../store";
+} from "../events";
+import { store } from "../store";
 import { CopyAction } from "./CopyAction";
 import { RichText } from "./RichText";
 import {
@@ -297,7 +297,7 @@ function toolSummary(call: ToolCallContent): string {
 }
 
 /** String tool arguments that carry a local file reference, in argument order. */
-export function toolFileArguments(
+function toolFileArguments(
   call: ToolCallContent,
 ): Array<{ key: string; value: string }> {
   const args = call.arguments;
@@ -598,10 +598,7 @@ function CustomMessageDetails({ message }: { message: ChatMessage }) {
   );
 }
 
-export function compactActivityPresentation(
-  activity: CompactActivity,
-  live: boolean,
-) {
+function compactActivityPresentation(activity: CompactActivity, live: boolean) {
   if (activity.kind === "custom") {
     return {
       custom: true,

@@ -17,6 +17,10 @@ async function workspace() {
   return { root, project };
 }
 
+function resourceIdentity(viewId = "view-s1", revision = 1) {
+  return { sessionId: "s1", viewId, revision };
+}
+
 afterEach(async () => {
   await resources.close();
   const { rm } = await import("node:fs/promises");
@@ -142,7 +146,7 @@ describe("ResourceStore", () => {
       },
     ];
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity(), cwd: project, messages },
       "report.md#L1",
     );
 
@@ -152,10 +156,10 @@ describe("ResourceStore", () => {
       mimeType: "text/markdown",
       kind: "markdown",
     });
-    expect(resources.get(descriptor.id, "s1").path).toBe(
+    expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
       join(project, "report.md"),
     );
-    expect(() => resources.get(descriptor.id, "s2")).toThrow(
+    expect(() => resources.get(descriptor.id, "s2", descriptor.viewId)).toThrow(
       "no longer available",
     );
   });
@@ -174,8 +178,7 @@ describe("ResourceStore", () => {
       ],
     };
     const contextA = {
-      sessionId: "s1",
-      viewId: "view-a",
+      ...resourceIdentity("view-a"),
       cwd: project,
       messages: [citation],
     };
@@ -196,8 +199,7 @@ describe("ResourceStore", () => {
     );
     await expect(
       resources.revalidate(resource, {
-        sessionId: "s1",
-        viewId: "view-b",
+        ...resourceIdentity("view-b"),
         cwd: project,
         messages: [],
       }),
@@ -211,8 +213,7 @@ describe("ResourceStore", () => {
     await writeFile(join(project, "node_modules", "hidden.md"), "hidden\n");
     let messageLoads = 0;
     const context = {
-      sessionId: "s1",
-      viewId: "view-s1",
+      ...resourceIdentity(),
       cwd: project,
       loadMessages: async () => {
         messageLoads += 1;
@@ -261,7 +262,7 @@ describe("ResourceStore", () => {
 
     const descriptor = await resources.resolve(
       {
-        sessionId: "s1",
+        ...resourceIdentity(),
         cwd: project,
         loadMessages: async () => {
           messageLoads += 1;
@@ -286,10 +287,10 @@ describe("ResourceStore", () => {
       },
     ];
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity(), cwd: project, messages },
       "report.md",
     );
-    const resource = resources.get(descriptor.id, "s1");
+    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
     const opened = await resources.openForServing(resource);
     expect(opened.size).toBe("# Result\n".length);
     const original = await opened.handle.readFile("utf8");
@@ -332,7 +333,7 @@ describe("ResourceStore", () => {
 
     await expect(
       resources.resolve(
-        { sessionId: "s1", cwd: project, messages: [] },
+        { ...resourceIdentity(), cwd: project, messages: [] },
         artifact,
       ),
     ).rejects.toMatchObject({ status: 403 });
@@ -351,7 +352,7 @@ describe("ResourceStore", () => {
       },
     ];
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity("view-s1", 2), cwd: project, messages },
       artifact,
     );
     expect(descriptor).toMatchObject({
@@ -374,7 +375,7 @@ describe("ResourceStore", () => {
     ];
 
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity(), cwd: project, messages },
       href,
     );
     expect(descriptor).toMatchObject({ name: "chart one.png", kind: "image" });
@@ -392,10 +393,10 @@ describe("ResourceStore", () => {
       },
     ];
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity(), cwd: project, messages },
       "pi-embedded://0/0",
     );
-    const resolved = resources.get(descriptor.id, "s1");
+    const resolved = resources.get(descriptor.id, "s1", descriptor.viewId);
     expect(descriptor).toMatchObject({
       kind: "image",
       mimeType: "image/png",
@@ -404,7 +405,7 @@ describe("ResourceStore", () => {
     expect(
       (
         await resources.embeddedData(resolved, {
-          sessionId: "s1",
+          ...resourceIdentity(),
           cwd: project,
           messages,
         })
@@ -420,7 +421,7 @@ describe("ResourceStore", () => {
 
     await expect(
       resources.resolve(
-        { sessionId: "s1", cwd: project, messages: [] },
+        { ...resourceIdentity(), cwd: project, messages: [] },
         "linked.txt",
       ),
     ).rejects.toMatchObject({ status: 403 });
@@ -439,7 +440,7 @@ describe("ResourceStore", () => {
 
     await expect(
       resources.resolve(
-        { sessionId: "s1", cwd: project, messages: [] },
+        { ...resourceIdentity(), cwd: project, messages: [] },
         "linked.txt",
       ),
     ).rejects.toMatchObject({ status: 403 });
@@ -457,7 +458,7 @@ describe("ResourceStore", () => {
     ];
 
     const descriptor = await resources.resolve(
-      { sessionId: "s1", cwd: project, messages },
+      { ...resourceIdentity(), cwd: project, messages },
       "kernel.py",
     );
     // The descriptor reports where it actually resolved, never the shorthand.
@@ -465,7 +466,7 @@ describe("ResourceStore", () => {
       name: "kernel.py",
       reference: join("src", "kernel.py"),
     });
-    expect(resources.get(descriptor.id, "s1").path).toBe(
+    expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
       join(project, "src", "kernel.py"),
     );
   });
@@ -485,7 +486,7 @@ describe("ResourceStore", () => {
 
     await expect(
       resources.resolve(
-        { sessionId: "s1", cwd: project, messages },
+        { ...resourceIdentity(), cwd: project, messages },
         "notes.md",
       ),
     ).rejects.toMatchObject({
@@ -509,7 +510,7 @@ describe("ResourceStore", () => {
         ],
       },
     ];
-    const context = { sessionId: "s1", cwd: project, messages };
+    const context = { ...resourceIdentity(), cwd: project, messages };
 
     // A located path names one file and no other; a bare name with no match
     // stays unavailable rather than being resolved to something nearby.
@@ -546,7 +547,7 @@ describe("ResourceStore", () => {
     ];
     await expect(
       resources.resolve(
-        { sessionId: "s1", cwd: project, messages },
+        { ...resourceIdentity(), cwd: project, messages },
         "gone.txt",
       ),
     ).rejects.toMatchObject({ status: 404 });

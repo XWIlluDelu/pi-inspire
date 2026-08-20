@@ -1,6 +1,6 @@
 import type { GitFileChange, GitStatusResponse } from "../shared/contracts";
 
-export interface GitFacetPresentation {
+interface GitFacetPresentation {
   mark: string;
   label: string;
 }
@@ -43,7 +43,7 @@ export function presentGitFacet(
  * facet mark so the two channels stay independent: the letter says which
  * state, the hue only says how severe. `ignored` never decorates — an
  * ignored file is intentionally invisible, not a state to act on. */
-export type GitDecoration = "conflict" | "modified" | "untracked";
+type GitDecoration = "conflict" | "modified" | "untracked";
 
 export function gitDecorationForChange(
   change: GitFileChange | undefined,

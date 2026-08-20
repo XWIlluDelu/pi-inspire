@@ -317,12 +317,12 @@ describe("stock RPC branch bridge", () => {
       });
       expect(response.snapshot.active?.effectiveLeafId).toBe("a1");
       expect(response.snapshot.active?.navigationLeased).toBe(true);
-      expect(JSON.stringify(response.snapshot.active?.messages)).toContain(
-        "first answer",
-      );
-      expect(JSON.stringify(response.snapshot.active?.messages)).not.toContain(
-        "second question",
-      );
+      expect(
+        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
+      ).toContain("first answer");
+      expect(
+        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
+      ).not.toContain("second question");
       expect(
         worker.commands.find((command) => command.type === "get_entries"),
       ).toMatchObject({ since: "a2" });
@@ -342,9 +342,9 @@ describe("stock RPC branch bridge", () => {
       const committed = await runtime.snapshot();
       expect(committed.active?.effectiveLeafId).toBe("next-user");
       expect(committed.active?.navigationLeased).toBe(false);
-      expect(JSON.stringify(committed.active?.messages)).toContain(
-        "continued branch",
-      );
+      expect(
+        JSON.stringify(committed.active?.transcriptPage.messages),
+      ).toContain("continued branch");
     } finally {
       await runtime.close();
     }
@@ -732,7 +732,9 @@ describe("stock RPC branch bridge", () => {
         runtime.prompt({ sessionId: SESSION_ID, message: "recover source" }),
       ).resolves.toBeUndefined();
       expect(
-        JSON.stringify((await runtime.snapshot()).active?.messages),
+        JSON.stringify(
+          (await runtime.snapshot()).active?.transcriptPage.messages,
+        ),
       ).toContain("recover source");
     } finally {
       await runtime.close();

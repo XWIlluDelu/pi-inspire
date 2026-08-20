@@ -134,6 +134,8 @@ npm run check
 npm run build
 ```
 
+`npm run check` combines TypeScript's unused-symbol checks, Biome lint, architectural import boundaries, and Knip's unused entry/export/dependency analysis.
+
 ## Privacy
 
 The default deployment is local-only. A deliberately configured personal relay keeps the loopback host as the privileged boundary: provider credentials and unrestricted filesystem access stay in the trusted host process and are never sent to browser storage or the relay's application layer.

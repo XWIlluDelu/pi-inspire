@@ -46,7 +46,6 @@ export type AssistantRoundDisplayPreference =
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type PalettePreference = "amber" | "teal";
-export const PALETTE_PREFERENCES = ["amber", "teal"] as const;
 export type LaunchPreference = "welcome" | "continue";
 export type ProjectDisplayPreference = "folder" | "path";
 export type CompletionAttentionPreference = "off" | "title" | "desktop";
@@ -93,7 +92,7 @@ export type RunState =
   | "conflict";
 /** Run states in which Pi owns an active or queued mutation. Browser controls
  * and host lifecycle/reclamation rules must use this one authority. */
-export const BUSY_RUN_STATES = [
+const BUSY_RUN_STATES = [
   "running",
   "retrying",
   "compacting",
@@ -112,7 +111,7 @@ export function isAbortableRunState(runState: RunState): boolean {
 
 export type SessionIndicator = "running" | "completed" | "failed" | "attention";
 
-export type ProjectionConflictKind =
+type ProjectionConflictKind =
   | "external-change"
   | "incomplete-persistence"
   | "projection-failure"
@@ -280,7 +279,7 @@ export interface GitFileChange {
   submodule?: GitSubmoduleState;
 }
 
-export interface GitChangeGroups {
+interface GitChangeGroups {
   conflicted: string[];
   staged: string[];
   unstaged: string[];
@@ -370,7 +369,7 @@ export interface ResourceDescriptor {
   kind: ResourceKind;
 }
 
-export type ResourceAvailability =
+type ResourceAvailability =
   | "available"
   | "missing"
   | "unavailable"
@@ -407,7 +406,7 @@ export const EXTENSION_ONE_WAY_METHODS = new Set([
   "setTitle",
   "set_editor_text",
 ]);
-export const MAX_EXTENSION_UI_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const MAX_EXTENSION_UI_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 
 interface ExtensionUiRequestBase {
   sessionId: string;
@@ -428,7 +427,7 @@ export interface SupportedExtensionUiRequest extends ExtensionUiRequestBase {
   prefill?: string;
 }
 
-export interface UnsupportedExtensionUiRequest extends ExtensionUiRequestBase {
+interface UnsupportedExtensionUiRequest extends ExtensionUiRequestBase {
   method: string;
   unsupported: true;
   payload: unknown;
@@ -655,8 +654,6 @@ export interface ActiveSnapshot {
      * after agent settlement. */
     activeAssistantMessageKey?: string | null;
     isCompacting: boolean;
-    /** Compatibility view of transcriptPage.messages; never a full history. */
-    messages: unknown[];
     transcriptPage: TranscriptPage;
     projectionHealth: ProjectionHealth;
     projectionConflict?: ProjectionConflict | null;

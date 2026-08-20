@@ -13,7 +13,7 @@ import type {
 const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
 const STARTUP_DELTA_MAX_ENTRIES = 16;
 
-export interface StartupProjectionBaseline {
+interface StartupProjectionBaseline {
   revision: number;
   fingerprint: string;
   sourceIdentity: string | null;
@@ -32,7 +32,7 @@ export interface StartupProjectionBaseline {
  * It does not claim causal authorship; the one-writer operating rule remains
  * the authority outside this fail-closed attestation.
  */
-export interface RuntimeStartupAttestorHost {
+interface RuntimeStartupAttestorHost {
   reconcile(
     slot: RuntimeSlot,
     force?: boolean,

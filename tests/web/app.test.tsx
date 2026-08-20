@@ -99,7 +99,7 @@ beforeAll(async () => {
               source: "extension",
             },
           ],
-          messages: [
+          pageMessages: [
             { role: "user", content: "hello world", timestamp: 1 },
             {
               role: "assistant",
@@ -457,7 +457,7 @@ describe("welcome flow", () => {
           sessionId: "s1",
           sessionName: "Previous work",
           cwd: "/demo",
-          messages: [
+          pageMessages: [
             { role: "user", content: "hello world", timestamp: 1 },
             {
               role: "assistant",
@@ -484,7 +484,7 @@ describe("welcome flow", () => {
           sessionId: store.getState().sessionId ?? "s1",
           sessionName: store.getState().sessionName,
           cwd: store.getState().cwd ?? "/demo",
-          messages: store.getState().messages,
+          pageMessages: store.getState().messages,
           model: {
             provider: "anthropic",
             id: "claude-sonnet",

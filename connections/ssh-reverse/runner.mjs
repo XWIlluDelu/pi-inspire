@@ -29,7 +29,7 @@ function userDirectory(environment, variable, fallback) {
   return environment[variable] || join(environment.HOME || homedir(), fallback);
 }
 
-export function connectionPaths(root, environment = process.env) {
+function connectionPaths(root, environment = process.env) {
   const configured = environment.INSPIRE_SSH_REVERSE_CONFIG;
   const sourceConfig = join(
     resolve(root),

@@ -1,4 +1,4 @@
-export const FILE_ARGUMENT_KEYS = new Set([
+const FILE_ARGUMENT_KEYS = new Set([
   "archivePath",
   "file",
   "fileName",
@@ -83,7 +83,7 @@ const EXPLICIT_PATH =
   /(?:^|[\s([])((?:file:\/\/)?\/(?:[^\s`<>()[\]{}"']+\/)*[^\s`<>()[\]{}"']+|(?:\.\.?\/|~\/)[^\s`<>()[\]{}"']+)/gmu;
 const AT_PATH = /(?:^|\s)@((?:\.\.?\/)?[^\s`<>()[\]{}"']+)/gmu;
 
-export type ResourceReferenceSource =
+type ResourceReferenceSource =
   | "tool"
   | "link"
   | "attachment"

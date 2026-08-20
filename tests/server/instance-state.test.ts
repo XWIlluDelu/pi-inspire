@@ -40,7 +40,7 @@ async function temporaryStatePath(): Promise<string> {
   return join(directory, "instance.json");
 }
 
-function state(path: string, port = 4587): InstanceState {
+function state(port = 4587): InstanceState {
   return {
     schemaVersion: INSTANCE_STATE_VERSION,
     pid: process.pid,
@@ -57,7 +57,7 @@ function state(path: string, port = 4587): InstanceState {
 describe("Inspire instance state", () => {
   it("writes private atomic state and removes only the owning pid", async () => {
     const path = await temporaryStatePath();
-    const value = state(path);
+    const value = state();
     await writeInstanceState(path, value);
 
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
@@ -100,7 +100,7 @@ describe("Inspire instance state", () => {
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("Expected a TCP test server");
-    const value = state(path, address.port);
+    const value = state(address.port);
     value.processStartTime = await processStartIdentity(process.pid);
     await writeInstanceState(path, value);
     const processMarker = process.argv[0] as string;

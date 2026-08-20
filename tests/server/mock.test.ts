@@ -76,7 +76,9 @@ describe("MockRuntime concurrent sessions", () => {
     expect(reopened.sessionStatuses["mock-active"]).toEqual({
       runState: "idle",
     });
-    expect(JSON.stringify(reopened.active?.messages)).toContain("first task");
+    expect(JSON.stringify(reopened.active?.transcriptPage.messages)).toContain(
+      "first task",
+    );
     await runtime.close();
   });
 });

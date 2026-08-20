@@ -25,7 +25,7 @@ export interface DiagnosticLogger {
   close(): Promise<void>;
 }
 
-export interface FileDiagnosticLoggerOptions {
+interface FileDiagnosticLoggerOptions {
   path: string;
   base?: Record<string, unknown>;
   hostId?: string;
@@ -159,7 +159,7 @@ async function openPrivateAppend(path: string): Promise<FileHandle> {
   }
 }
 
-export class FileDiagnosticLogger implements DiagnosticLogger {
+class FileDiagnosticLogger implements DiagnosticLogger {
   readonly hostId: string;
   private readonly base: Record<string, unknown>;
   private readonly maxBytes: number;
