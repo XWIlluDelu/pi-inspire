@@ -1,4 +1,4 @@
-import { Loader2, X } from "lucide-react";
+import { AlertTriangle, Info, Loader2, X, XCircle } from "lucide-react";
 import { Profiler, useCallback, useEffect, useState } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
@@ -158,32 +158,75 @@ function HostUnavailable({
   );
 }
 
+function parseNoticeText(text: string): { tag: string | null; body: string } {
+  const match = /^\(([^)]+)\):\s*(.+)$/s.exec(text);
+  if (match) {
+    return { tag: match[1]!, body: match[2]! };
+  }
+  return { tag: null, body: text };
+}
+
+function NoticeIcon({ kind }: { kind: Notice["kind"] }) {
+  switch (kind) {
+    case "warning":
+      return <AlertTriangle size={13} aria-hidden />;
+    case "error":
+      return <XCircle size={13} aria-hidden />;
+    default:
+      return <Info size={13} aria-hidden />;
+  }
+}
+
+function noticeDefaultTitle(kind: Notice["kind"]): string {
+  switch (kind) {
+    case "warning":
+      return "Warning";
+    case "error":
+      return "Error";
+    default:
+      return "Notice";
+  }
+}
+
 function NoticeItem({ notice }: { notice: Notice }) {
+  const { tag, body } = parseNoticeText(notice.text);
   const copyLabel =
     notice.kind === "warning"
       ? "Warning"
       : notice.kind === "error"
         ? "Error"
         : null;
+  const title = tag
+    ? `${noticeDefaultTitle(notice.kind)} · ${tag}`
+    : noticeDefaultTitle(notice.kind);
 
   return (
     <div className={`notice notice--${notice.kind}`} role="status">
-      <span className="notice__text">{notice.text}</span>
-      {copyLabel ? (
-        <CopyAction
-          text={notice.text}
-          label={copyLabel}
-          className="notice__copy"
-        />
-      ) : null}
-      <button
-        type="button"
-        className="notice__dismiss"
-        onClick={() => store.dismissNotice(notice.id)}
-        aria-label="Dismiss notification"
-      >
-        <X size={12} aria-hidden />
-      </button>
+      <div className="notice__head">
+        <span className="notice__title">
+          <NoticeIcon kind={notice.kind} />
+          <span>{title}</span>
+        </span>
+        <div className="notice__actions">
+          {copyLabel ? (
+            <CopyAction
+              text={notice.text}
+              label={copyLabel}
+              className="notice__copy"
+            />
+          ) : null}
+          <button
+            type="button"
+            className="notice__dismiss"
+            onClick={() => store.dismissNotice(notice.id)}
+            aria-label="Dismiss notification"
+            title="Dismiss"
+          >
+            <X size={13} aria-hidden />
+          </button>
+        </div>
+      </div>
+      <div className="notice__text">{body}</div>
     </div>
   );
 }

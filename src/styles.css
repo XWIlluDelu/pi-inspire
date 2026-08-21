@@ -1412,6 +1412,14 @@ a {
     height: 36px;
   }
 
+  .nav__group-title--folder .nav__group-toggle {
+    padding-right: 78px;
+  }
+
+  .nav__group-title--hidden .nav__group-toggle {
+    padding-right: 42px;
+  }
+
   .nav__group-title--folder .nav__group-actions,
   .nav__group-title--hidden .nav__group-actions {
     opacity: 1;
@@ -1805,6 +1813,7 @@ a {
   flex: 1;
   min-height: 0;
   display: flex;
+  outline: none;
 }
 
 .transcript-wrap--earlier-branch .transcript {
@@ -4122,7 +4131,9 @@ body.pane-resizing--vertical .nav {
   color: var(--ink);
 }
 
-.ctx__modes button[aria-pressed="true"] {
+.ctx__modes button[aria-pressed="true"],
+.ctx__modes button[aria-selected="true"],
+.ctx__modes button.segmented__item--active {
   color: var(--ink);
   background: transparent;
   border-bottom-color: var(--accent);
@@ -4154,9 +4165,13 @@ body.pane-resizing--vertical .nav {
   cursor: pointer;
 }
 
-.segmented button[aria-pressed="true"] {
+.segmented button[aria-pressed="true"],
+.segmented button[aria-selected="true"],
+.segmented .segmented__item--active {
   color: var(--accent-deep);
   background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  font-weight: 500;
 }
 
 .segmented button:disabled {
@@ -5069,8 +5084,10 @@ kbd {
 }
 
 .segmented__item--active {
-  background: var(--accent-tint);
-  color: var(--ink);
+  background: var(--bg-surface);
+  color: var(--accent-deep);
+  box-shadow: var(--shadow-1);
+  font-weight: 500;
 }
 
 /* --- Overlays (palette + dialogs) --- */
@@ -5305,6 +5322,12 @@ kbd {
   white-space: nowrap;
 }
 
+.session-delete__description {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 .session-delete__description span {
   display: block;
 }
@@ -5488,13 +5511,13 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  width: min(380px, calc(100vw - 2 * var(--space-4)));
 }
 
 .notice {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   background: var(--bg-raised);
   border: 1px solid var(--hairline);
   border-left: 3px solid var(--info);
@@ -5505,18 +5528,55 @@ kbd {
   animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
+.notice--info {
+  background: color-mix(in srgb, var(--info) 4%, var(--bg-raised));
+  border-left-color: var(--info);
+}
+
 .notice--warning {
+  background: color-mix(in srgb, var(--warning) 5%, var(--bg-raised));
   border-left-color: var(--warning);
 }
 
 .notice--error {
+  background: color-mix(in srgb, var(--error) 5%, var(--bg-raised));
   border-left-color: var(--error);
 }
 
-.notice__text {
-  flex: 1;
-  min-width: 0;
-  word-break: break-word;
+.notice__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 20px;
+}
+
+.notice__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.notice--info .notice__title {
+  color: var(--info);
+}
+
+.notice--warning .notice__title {
+  color: var(--warning);
+}
+
+.notice--error .notice__title {
+  color: var(--error);
+}
+
+.notice__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .notice__copy.icon-button {
@@ -5526,15 +5586,31 @@ kbd {
 }
 
 .notice__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   border: 0;
   background: transparent;
   color: var(--faint);
-  padding: 2px;
+  padding: 0;
   border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .notice__dismiss:hover {
   color: var(--ink);
+  background: var(--bg-inset);
+}
+
+.notice__text {
+  color: var(--body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  word-break: break-word;
 }
 
 /* --- Boundary scroll rails --- */
@@ -5734,6 +5810,11 @@ body.srail-dragging {
   .transcript-wrap:has(.transcript-search:focus-within) .transcript,
   .transcript-wrap:has(.transcript-search--active) .transcript {
     padding-top: var(--space-16);
+  }
+
+  .transcript-wrap--earlier-branch:has(.transcript-search:focus-within) .transcript,
+  .transcript-wrap--earlier-branch:has(.transcript-search--active) .transcript {
+    padding-top: calc(var(--space-16) + 130px);
   }
 
   .transcript-search {
