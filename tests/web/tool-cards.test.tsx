@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { ToolCard } from "../../src/components/transcript-cards";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
+import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -16,14 +18,20 @@ function result(
   return { role: "toolResult", content, details, isError };
 }
 
-function card(toolCall: ToolCallContent, toolResult?: ChatMessage) {
+afterEach(() => configureToolPresentationRegistry());
+
+function card(
+  toolCall: ToolCallContent,
+  toolResult?: ChatMessage,
+  visibility: "expanded" | "collapsed" = "expanded",
+) {
   return (
     <ToolCard
       call={toolCall}
       result={toolResult}
       activity={undefined}
       live={false}
-      visibility="expanded"
+      visibility={visibility}
     />
   );
 }
@@ -121,6 +129,117 @@ describe("native Pi tool cards", () => {
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
+  it("marks grammar and resource summary segments for stable truncation", () => {
+    const { container } = render(
+      card(
+        call("grep", { pattern: "needle", path: "/a/very/long/path" }),
+        result("No matches found"),
+        "collapsed",
+      ),
+    );
+
+    const summaryParts = container.querySelectorAll(".tool-summary__part");
+    expect(summaryParts[1]).toHaveClass("tool-summary__part--subdued");
+    expect(summaryParts[2]).toHaveClass("tool-summary__part--resource");
+  });
+
+  it("keeps complete resource actions behind path-aware narrow labels", () => {
+    const readPath =
+      "docdoki/stages/archive/challenge-response-fold-pagination-2026-08-22.md";
+    const editPath =
+      "/home/wangzixiong/.pi/custom-extensions/pickup/test/workstream-announcement-records-2026-08-22.ts";
+    const patch = [
+      `--- ${editPath}`,
+      `+++ ${editPath}`,
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      "",
+    ].join("\n");
+    const { container } = render(
+      <>
+        {card(
+          call("read", { path: readPath }),
+          result("contents"),
+          "collapsed",
+        )}
+        {card(
+          call("edit", {
+            path: editPath,
+            edits: [{ oldText: "before", newText: "after" }],
+          }),
+          result("Successfully replaced 1 block.", { patch }),
+        )}
+      </>,
+    );
+
+    const expectations = [
+      {
+        path: readPath,
+        compact: "docdoki/…/challenge-response-fold-pagination-2026-08-22.md",
+      },
+      {
+        path: editPath,
+        compact: "/…/pickup/test/workstream-announcement-records-2026-08-22.ts",
+      },
+    ];
+    for (const { path, compact } of expectations) {
+      const resource = screen.getByRole("button", { name: path });
+      expect(resource).toHaveAttribute("data-file-path", path);
+      expect(resource).toHaveAttribute("title", `Preview ${path}`);
+      expect(resource.querySelector(".resource-path__full")).toHaveTextContent(
+        path,
+      );
+      expect(
+        resource.querySelector(".resource-path__full-end"),
+      ).toHaveTextContent(Array.from(path).slice(-14).join(""));
+      expect(
+        resource.querySelector(".resource-path__compact"),
+      ).toHaveTextContent(compact);
+    }
+    expect(container.querySelector(".tool-block__heading")).toContainElement(
+      container.querySelector(".tool-block__path"),
+    );
+  });
+
+  it("renders a configured custom rule through sanitized Markdown blocks", () => {
+    configureToolPresentationRegistry(
+      toolPresentationConfigurationSchema.parse({
+        version: 1,
+        rules: {
+          "user.example.markdown": {
+            summary: [{ value: { path: "args.query" } }],
+            blocks: [
+              {
+                type: "markdown",
+                label: "Result",
+                source: { path: "result.text" },
+              },
+            ],
+          },
+        },
+        mappings: { custom_tool: "user.example.markdown" },
+      }),
+    );
+    const { container } = render(
+      card(
+        call("custom_tool", { query: "Inspect evidence" }),
+        result("## Finding\n\n**Supported** [unsafe](javascript:alert(1))"),
+      ),
+    );
+
+    expect(container.querySelector(".tool-presentation")).toHaveAttribute(
+      "data-tool-rule",
+      "user.example.markdown",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Finding" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Supported")).toBeInTheDocument();
+    expect(screen.getByText("unsafe").closest("a")).not.toHaveAttribute("href");
+    expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
+  });
+
   it("returns an incompatible selected native rule to the generic raw card", () => {
     render(
       card(
@@ -135,5 +254,10 @@ describe("native Pi tool cards", () => {
     expect(screen.getByText("Arguments")).toBeInTheDocument();
     expect(screen.getByText("Result")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("button", { name: "src/app.ts" })
+        .querySelector(".resource-path__compact"),
+    ).toHaveTextContent("src/app.ts");
   });
 });

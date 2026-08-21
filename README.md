@@ -81,6 +81,10 @@ After that, the same `./inspire`, `./inspire status`, `./inspire restart`, and `
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
+## Custom tool presentations
+
+Pi's native tools use shared rich presentation rules. Custom tools can add local data-only rules and exact tool-name mapping overrides in an ignored user configuration file; incompatible rules fall directly back to the generic raw card. See [Custom tool presentations](docs/tool-presentations.md) for locations, resolution, and the declarative block format.
+
 ## SSH reverse connection
 
 The optional `ssh-reverse` connection module opens a loopback-only reverse SSH tunnel from the local host to a user-controlled HTTPS edge. It is separate from the core host lifecycle and may be started, inspected, stopped, or installed as a user service independently:

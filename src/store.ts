@@ -65,6 +65,7 @@ import {
   type WireEvent,
 } from "./events";
 import type { ResourcePreview } from "./resource-preview";
+import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 
 // --- Store state ---
 
@@ -724,6 +725,7 @@ export class AppStore {
       const boot = await api.bootstrap();
       if (!ownsBootstrap()) return;
       this.confirmedPrefs = boot.preferences;
+      configureToolPresentationRegistry(boot.toolPresentations);
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
@@ -741,6 +743,8 @@ export class AppStore {
       this.applySnapshot(boot.snapshot);
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
+      if (boot.toolPresentationsWarning)
+        this.notify("warning", boot.toolPresentationsWarning);
       this.updates.start();
       this.connectionController.connect(token);
       void this.loadSessions(this.state.sessionQuery).then(() => {

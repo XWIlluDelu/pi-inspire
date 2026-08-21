@@ -73,6 +73,46 @@ describe("design token contract", () => {
     expect(css).toMatch(/--activity-think\s*:/);
   });
 
+  it("keeps card controls separate while summaries use the remaining header width", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    expect(css).toMatch(
+      /\.card__disclosure:has\(\+ \.card__summary\)\s*{[^}]*flex:\s*0 0 auto[^}]*max-width:\s*min\(50%, 32ch\)/s,
+    );
+    expect(css).toMatch(
+      /\.card__label\s*{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s,
+    );
+    expect(css).toMatch(/\.card__summary--tool\s*{[^}]*max-width:\s*none/s);
+    expect(css).toMatch(
+      /\.tool-summary__separator\s*{[^}]*white-space:\s*pre/s,
+    );
+  });
+
+  it("preserves both ends of narrow resource paths and gives block paths the remaining row", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    expect(css).toMatch(
+      /\.resource-path__full\s*{[^}]*display:\s*inline-flex[^}]*overflow:\s*hidden/s,
+    );
+    expect(css).toMatch(
+      /\.resource-path__full-start\s*{[^}]*flex:\s*1 1 auto[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
+    );
+    expect(css).toMatch(
+      /\.resource-path__name-start\s*{[^}]*flex:\s*1 1 0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
+    );
+    expect(css).toMatch(
+      /\.resource-path__name-end\s*{[^}]*flex:\s*0 0 auto[^}]*min-width:\s*3ch[^}]*max-width:\s*100%[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/s,
+    );
+    expect(css).toMatch(
+      /\.card--tool\s*{[^}]*container-name:\s*tool-card[^}]*container-type:\s*inline-size[^}]*}[\s\S]*?@container\s+tool-card\s*\(max-width:\s*600px\)[\s\S]*?\.resource-path__full\s*{[^}]*display:\s*none[^}]*}[\s\S]*?\.resource-path__compact\s*{[^}]*display:\s*inline-flex/s,
+    );
+    expect(css).toMatch(
+      /\.tool-block__heading\s*{[^}]*justify-content:\s*flex-start[^}]*gap:\s*var\(--space-2\)/s,
+    );
+    expect(css).toMatch(
+      /\.tool-block__heading\s*>\s*span\s*{[^}]*flex:\s*0 0 auto[^}]*white-space:\s*nowrap/s,
+    );
+    expect(css).toMatch(/\.tool-block__path\s*{[^}]*flex:\s*1 1 0/s);
+  });
+
   it("preserves user prompt line breaks, bounds token-gate controls, and keeps composer spacers elastic", async () => {
     const css = await readFile(stylesheet, "utf8");
     expect(css).toMatch(

@@ -23,6 +23,7 @@ import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
+import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
 
 const token = "test-local-token";
@@ -61,6 +62,9 @@ describe("local host API", () => {
       catalog: new MockCatalog(),
       attachments,
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
+      toolPresentations: new ToolPresentationConfigStore(
+        join(temporary, "tool-presentations.json"),
+      ),
       resources,
       git,
       mock: true,
@@ -113,6 +117,28 @@ describe("local host API", () => {
     request(application.server)
       .get("/api/bootstrap")
       .set("Authorization", `Bearer ${token}`);
+
+  it("loads private tool presentation declarations into authenticated bootstrap", async () => {
+    await writeFile(
+      join(temporary, "tool-presentations.json"),
+      JSON.stringify({
+        version: 1,
+        rules: {
+          "user.example.tool": {
+            summary: [{ value: { path: "args.query" } }],
+            blocks: [],
+          },
+        },
+        mappings: { example: "user.example.tool" },
+      }),
+    );
+
+    const response = await api().expect(200);
+    expect(response.body.toolPresentations.mappings).toEqual({
+      example: "user.example.tool",
+    });
+    expect(response.body.toolPresentationsWarning).toBeUndefined();
+  });
 
   it("keeps maintenance restart coordination behind local authentication", async () => {
     await request(application.server)
