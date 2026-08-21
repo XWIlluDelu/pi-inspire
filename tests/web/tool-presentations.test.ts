@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
+import { compileToolPresentationRules } from "../../src/tool-presentations/declarative";
+import {
+  type ToolPresentationRule,
+  toolPresentationSummaryText,
+} from "../../src/tool-presentations/model";
 import {
   createToolPresentationRegistry,
   toolPresentationRegistry,
 } from "../../src/tool-presentations/registry";
-import {
-  toolPresentationSummaryText,
-  type ToolPresentationRule,
-} from "../../src/tool-presentations/model";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -80,6 +82,201 @@ describe("tool presentation registry", () => {
         userMappings: { grep: incompatible.id },
       }).resolve(input),
     ).toBeNull();
+  });
+});
+
+describe("declarative tool presentation rules", () => {
+  const configuration = toolPresentationConfigurationSchema.parse({
+    version: 1,
+    rules: {
+      "user.fff.grep": {
+        summary: [
+          {
+            value: { path: "args.pattern", prefix: "/", suffix: "/" },
+          },
+          {
+            value: { literal: "in" },
+            subdued: true,
+          },
+          {
+            kind: "resource",
+            value: { path: "args.path", fallback: "." },
+          },
+        ],
+        blocks: [
+          {
+            type: "search",
+            label: "Matches",
+            source: { path: "result.text" },
+            format: "grouped-lines",
+            emptyValues: ["No matches found"],
+            emptyText: "No matches found",
+          },
+        ],
+      },
+    },
+    mappings: { grep: "user.fff.grep" },
+  });
+
+  it("compiles an explicit override and parses grouped custom search output", () => {
+    const registry = createToolPresentationRegistry({
+      userRules: compileToolPresentationRules(configuration),
+      userMappings: configuration.mappings,
+    });
+    const presentation = registry.resolve({
+      call: call("grep", { pattern: "needle", path: "src" }),
+      result: result(
+        [
+          "[0 exact matches. Maybe you meant this?]",
+          "src/a.ts  [often touched file]",
+          " 4- before",
+          " 5: needle",
+          "",
+          '[Continue with cursor="next"]',
+        ].join("\n"),
+      ),
+    });
+
+    expect(presentation?.ruleId).toBe("user.fff.grep");
+    expect(
+      presentation && toolPresentationSummaryText(presentation.summary),
+    ).toBe("/needle/ in src");
+    expect(presentation?.blocks()).toEqual([
+      {
+        type: "search",
+        label: "Matches",
+        groups: [
+          {
+            path: "src/a.ts",
+            matches: [
+              { line: 4, text: "before", match: false },
+              { line: 5, text: "needle", match: true },
+            ],
+          },
+        ],
+      },
+      {
+        type: "notice",
+        text: '0 exact matches. Maybe you meant this? · Continue with cursor="next"',
+        tone: "muted",
+      },
+    ]);
+  });
+
+  it("bounds declarative structured output without discarding the selected rule", () => {
+    const registry = createToolPresentationRegistry({
+      userRules: compileToolPresentationRules(configuration),
+      userMappings: configuration.mappings,
+    });
+    const output = [
+      "src/large.ts",
+      ...Array.from(
+        { length: 1_001 },
+        (_, index) => ` ${index + 1}: needle ${index + 1}`,
+      ),
+    ].join("\n");
+    const blocks = registry
+      .resolve({
+        call: call("grep", { pattern: "needle" }),
+        result: result(output),
+      })
+      ?.blocks();
+
+    const search = blocks?.find((block) => block.type === "search");
+    expect(search).toMatchObject({
+      groups: [{ path: "src/large.ts" }],
+    });
+    expect(search?.type === "search" && search.groups[0]?.matches).toHaveLength(
+      1_000,
+    );
+    expect(blocks?.at(-1)).toEqual({
+      type: "notice",
+      text: "Preview limited to 1000 matching lines",
+      tone: "muted",
+    });
+  });
+
+  it("bounds summary, property, and replacement previews", () => {
+    const boundedConfiguration = toolPresentationConfigurationSchema.parse({
+      version: 1,
+      rules: {
+        "user.example.bounded": {
+          summary: [{ value: { path: "args.payload" } }],
+          blocks: [
+            {
+              type: "properties",
+              items: [{ label: "Output", value: { path: "result.text" } }],
+            },
+            {
+              type: "replacement",
+              label: "Requested change",
+              oldText: { path: "result.details.old" },
+              newText: { path: "result.details.new" },
+            },
+          ],
+        },
+      },
+      mappings: { custom: "user.example.bounded" },
+    });
+    const registry = createToolPresentationRegistry({
+      userRules: compileToolPresentationRules(boundedConfiguration),
+      userMappings: boundedConfiguration.mappings,
+    });
+    const presentation = registry.resolve({
+      call: call("custom", { payload: "x".repeat(200_000) }),
+      result: result("y".repeat(200_000), {
+        old: "a".repeat(200_000),
+        new: "b".repeat(200_000),
+      }),
+    });
+    const blocks = presentation?.blocks();
+    const properties = blocks?.find((block) => block.type === "properties");
+    const replacement = blocks?.find((block) => block.type === "replacement");
+
+    expect(
+      presentation && toolPresentationSummaryText(presentation.summary),
+    ).toHaveLength(240);
+    expect(
+      properties?.type === "properties" && properties.items[0]?.value,
+    ).toHaveLength(4_096);
+    expect(
+      replacement?.type === "replacement" && replacement.oldText,
+    ).toHaveLength(100_002);
+    expect(blocks?.filter((block) => block.type === "notice")).toHaveLength(2);
+  });
+
+  it("returns raw fallback when selected data does not match the declaration", () => {
+    const registry = createToolPresentationRegistry({
+      userRules: compileToolPresentationRules(configuration),
+      userMappings: configuration.mappings,
+    });
+    expect(
+      registry.resolve({ call: call("grep", { path: "src" }) }),
+    ).toBeNull();
+    expect(
+      registry
+        .resolve({
+          call: call("grep", { pattern: "needle" }),
+          result: result("not grouped search output"),
+        })
+        ?.blocks(),
+    ).toBeNull();
+  });
+
+  it("rejects executable or expensive summary shapes at validation", () => {
+    const unsafe = {
+      version: 1,
+      rules: {
+        "user.custom.rule": {
+          summary: [{ value: { path: "result.text" } }],
+          blocks: [{ type: "html", source: { path: "result.text" } }],
+        },
+      },
+      mappings: { custom: "user.custom.rule" },
+    };
+    expect(toolPresentationConfigurationSchema.safeParse(unsafe).success).toBe(
+      false,
+    );
   });
 });
 
