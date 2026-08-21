@@ -44,6 +44,7 @@ import type {
 import { toolPresentationSummaryText } from "../tool-presentations/model";
 import { toolPresentationRegistry } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 import { RichText } from "./RichText";
 import {
   CARD_TRANSITION_MS,
@@ -327,15 +328,17 @@ function toolFileArguments(
   return found;
 }
 
-/** A file reference rendered as a real button (used in card bodies, where no
- * interactive ancestor exists). */
+/** A file reference retains its complete action and accessible name while its
+ * visual label may use a responsive path projection. */
 function FileRefButton({
   reference,
   className,
+  accessibleLabel,
   children,
 }: {
   reference: string;
   className: string;
+  accessibleLabel: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -343,6 +346,7 @@ function FileRefButton({
       type="button"
       className={className}
       data-file-path={reference}
+      aria-label={accessibleLabel}
       title={`Preview ${reference}`}
       onClick={(event) => {
         event.stopPropagation();
@@ -364,8 +368,9 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
     <FileRefButton
       reference={summary}
       className="card__summary card__summary--file"
+      accessibleLabel={summary}
     >
-      {summary}
+      <ResourcePathLabel path={summary} />
     </FileRefButton>
   );
 }
@@ -379,7 +384,10 @@ function PresentedToolSummary({
   return (
     <span className="card__summary card__summary--tool">
       {summary.parts.map((part, index) => (
-        <span className="tool-summary__part" key={`${part.kind}:${index}`}>
+        <span
+          className={`tool-summary__part${part.kind === "resource" ? " tool-summary__part--resource" : part.subdued ? " tool-summary__part--subdued" : ""}`}
+          key={`${part.kind}:${index}`}
+        >
           {index > 0 ? (
             <span className="tool-summary__separator" aria-hidden>
               {part.separator === "space" ? " " : " · "}
@@ -389,8 +397,9 @@ function PresentedToolSummary({
             <FileRefButton
               reference={part.reference}
               className="tool-summary__resource"
+              accessibleLabel={part.reference}
             >
-              {part.text}
+              <ResourcePathLabel path={part.text} />
             </FileRefButton>
           ) : (
             <span
@@ -495,9 +504,10 @@ function RawToolDetails({
           key={`${arg.key}:${arg.value}`}
           reference={arg.value}
           className="card__file-arg"
+          accessibleLabel={arg.value}
         >
           <span className="card__file-arg-key">{arg.key}</span>
-          {arg.value}
+          <ResourcePathLabel path={arg.value} />
         </FileRefButton>
       ))}
       <pre className="card__mono">
@@ -538,8 +548,12 @@ function ToolBlockHeading({ label, path }: { label?: string; path?: string }) {
     <div className="card__section-label tool-block__heading">
       {label ? <span>{label}</span> : null}
       {path ? (
-        <FileRefButton reference={path} className="tool-block__path">
-          {path}
+        <FileRefButton
+          reference={path}
+          className="tool-block__path"
+          accessibleLabel={path}
+        >
+          <ResourcePathLabel path={path} />
         </FileRefButton>
       ) : null}
     </div>
@@ -655,8 +669,9 @@ function ToolPresentationBlockView({
                     <FileRefButton
                       reference={item.resourceRef}
                       className="tool-properties__resource"
+                      accessibleLabel={item.resourceRef}
                     >
-                      {item.value}
+                      <ResourcePathLabel path={item.value} />
                     </FileRefButton>
                   ) : (
                     <code>{item.value}</code>
@@ -712,8 +727,9 @@ function ToolPresentationBlockView({
                     <FileRefButton
                       reference={item.resourceRef}
                       className="tool-list__resource"
+                      accessibleLabel={item.resourceRef}
                     >
-                      {item.label}
+                      <ResourcePathLabel path={item.label} />
                     </FileRefButton>
                   ) : (
                     <code>{item.label}</code>
@@ -782,6 +798,17 @@ function ToolPresentationBlockView({
       return (
         <div className={`tool-notice tool-notice--${block.tone ?? "muted"}`}>
           {block.text}
+        </div>
+      );
+    case "markdown":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} />
+          <div
+            className={`tool-markdown ${block.error ? "tool-markdown--error" : ""}`}
+          >
+            <RichText text={block.text} variant="extension" />
+          </div>
         </div>
       );
     case "text":
@@ -886,7 +913,7 @@ export function ToolCard({
   );
   const presentation = useMemo(
     () => toolPresentationRegistry.resolve({ call, result }),
-    [call, result],
+    [call, result, toolPresentationRegistry],
   );
   return (
     <CollapsibleCard

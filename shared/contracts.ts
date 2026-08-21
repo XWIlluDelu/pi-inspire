@@ -1,3 +1,5 @@
+import type { ToolPresentationConfiguration } from "./tool-presentation-config.js";
+
 export const VISIBILITY_PREFERENCES = [
   "dynamic",
   "expanded",
@@ -682,6 +684,9 @@ export interface BootstrapResponse {
   /** Present when an invalid saved preference projection is usable for this
    * bootstrap but the original file was left unchanged and writes are blocked. */
   preferencesWarning?: string;
+  toolPresentations: ToolPresentationConfiguration;
+  /** Invalid user declarations never replace shipped rules or block startup. */
+  toolPresentationsWarning?: string;
   /** Configured models are available before any session owns a Pi worker. */
   availableModels: ModelOption[];
   snapshot: ActiveSnapshot;

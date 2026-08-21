@@ -2432,6 +2432,11 @@ a {
   border-left-color: var(--activity-tool);
 }
 
+.card--tool {
+  container-name: tool-card;
+  container-type: inline-size;
+}
+
 .card--tool .card__icon,
 .card--custom .card__icon {
   color: var(--activity-tool);
@@ -2494,6 +2499,14 @@ a {
   background: var(--bg-inset);
 }
 
+/* A collapsed summary may consume only the space after the disclosure's
+   fixed affordances. Long labels truncate inside a bounded disclosure rather
+   than letting its icon or status overflow into the summary. */
+.card__disclosure:has(+ .card__summary) {
+  flex: 0 0 auto;
+  max-width: min(50%, 32ch);
+}
+
 .card__header-spacer {
   flex: 1 1 auto;
   min-width: 0;
@@ -2525,10 +2538,14 @@ a {
 }
 
 .card__label {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card__tool-name {
@@ -2887,6 +2904,10 @@ a {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 0;
   background: transparent;
   padding: var(--space-1) 0;
@@ -2895,33 +2916,68 @@ a {
   color: var(--accent-deep);
   text-align: left;
   cursor: pointer;
-  word-break: break-all;
+}
+
+.card__file-arg .resource-path {
+  flex: 1 1 auto;
+}
+
+.card__file-arg-key {
+  flex: 0 0 auto;
+  color: var(--faint);
 }
 
 .card__file-arg:hover {
   text-decoration: underline;
 }
 
-.card__file-arg-key {
-  color: var(--faint);
-}
-
 /* Tool presenters keep the established card shell and replace only its raw
    payload body with bounded, typed primitives. */
 .card__summary--tool {
   display: inline-flex;
+  max-width: none;
   align-items: baseline;
 }
 
 .tool-summary__part {
   display: inline-flex;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: 24ch;
   align-items: baseline;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-summary__part:first-child {
+  flex: 0 1 auto;
+  max-width: none;
+}
+
+/* Preserve short grammar/metadata while long resource paths absorb most of
+   the shrink. Every part clips its own contents so no child can paint across
+   the next summary segment. */
+.tool-summary__part--resource {
+  flex: 0 100 auto;
+  max-width: none;
+}
+
+.tool-summary__part--subdued {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.tool-summary__part > :not(.tool-summary__separator) {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-summary__separator {
+  flex: 0 0 auto;
+  white-space: pre;
 }
 
 .tool-summary__separator,
@@ -2944,9 +3000,88 @@ a {
 }
 
 .tool-summary__resource {
+  display: inline-flex;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Resource actions retain the complete path while the narrow projection keeps
+   both contextual and terminal identity instead of clipping the basename. */
+.resource-path {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.resource-path__full {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.resource-path__full-start {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-path__compact {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.resource-path__context {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-path__name-start {
+  /* A zero basis gives directory context and the filename tail first claim on
+     the row; this middle segment consumes only the genuinely remaining width. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The component already bounds this terminal segment to 14 characters. Let it
+   claim that intrinsic width before the leading segment shrinks; a percentage
+   cap clips ordinary filenames and turns the reclaimed width into a blank gap. */
+.resource-path__full-end,
+.resource-path__name-end {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  max-width: 100%;
+  overflow: hidden;
+  direction: rtl;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-path__full-end > span,
+.resource-path__name-end > span {
+  display: inline-block;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .tool-summary__resource:hover,
@@ -2970,17 +3105,35 @@ a {
 .tool-block__heading {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  justify-content: flex-start;
+  gap: var(--space-2);
   margin: 0 0 var(--space-1);
 }
 
+.tool-block__heading > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .tool-block__path {
+  display: inline-flex;
+  flex: 1 1 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--accent-deep);
   font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@container tool-card (max-width: 600px) {
+  .resource-path__full {
+    display: none;
+  }
+
+  .resource-path__compact {
+    display: inline-flex;
+  }
 }
 
 .tool-properties dl {
@@ -3088,6 +3241,21 @@ a {
   color: var(--error);
 }
 
+.tool-markdown {
+  max-width: 100%;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xs);
+  background: var(--bg-inset);
+  font-size: var(--text-sm);
+}
+
+.tool-markdown--error {
+  border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
+  color: var(--error);
+}
+
 .tool-presentation .diff {
   max-width: 100%;
   border: 1px solid var(--hairline);
@@ -3127,6 +3295,12 @@ a {
   font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-properties__resource,
+.tool-list__resource {
+  display: inline-flex;
+  max-width: 100%;
 }
 
 .tool-list__detail {

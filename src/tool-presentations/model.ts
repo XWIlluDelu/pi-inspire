@@ -114,6 +114,12 @@ export type ToolPresentationBlock =
       tone?: "muted" | "warning" | "error";
     }
   | {
+      type: "markdown";
+      label?: string;
+      text: string;
+      error?: boolean;
+    }
+  | {
       type: "text";
       label?: string;
       text: string;

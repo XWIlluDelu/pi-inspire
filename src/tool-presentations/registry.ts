@@ -1,3 +1,5 @@
+import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
+import { compileToolPresentationRules } from "./declarative";
 import type {
   ResolvedToolPresentation,
   ToolPresentationInput,
@@ -58,4 +60,17 @@ export function createToolPresentationRegistry({
   };
 }
 
-export const toolPresentationRegistry = createToolPresentationRegistry();
+export let toolPresentationRegistry = createToolPresentationRegistry();
+
+/** Replace the user-owned generation atomically after an authoritative host
+ * bootstrap. Existing shipped definitions stay immutable; only exact tool-name
+ * mappings are overlaid. */
+export function configureToolPresentationRegistry(
+  configuration?: ToolPresentationConfiguration,
+): void {
+  const resolved = configuration ?? { version: 1, rules: {}, mappings: {} };
+  toolPresentationRegistry = createToolPresentationRegistry({
+    userRules: compileToolPresentationRules(resolved),
+    userMappings: resolved.mappings,
+  });
+}

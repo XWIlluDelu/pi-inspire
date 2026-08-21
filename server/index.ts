@@ -38,6 +38,10 @@ import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
+import {
+  defaultToolPresentationConfigPath,
+  ToolPresentationConfigStore,
+} from "./tool-presentation-config.js";
 import { GitHubReleaseUpdateChecker } from "./update-checker.js";
 
 const moduleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,6 +145,10 @@ if (mock) {
 const preferences = new PreferencesStore(
   process.env.INSPIRE_PREFERENCES_PATH || undefined,
 );
+const toolPresentations = new ToolPresentationConfigStore(
+  process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
+    defaultToolPresentationConfigPath(root),
+);
 const resources = new ResourceStore();
 const git = mock ? new MockGitInspection() : new GitInspectionService();
 const modelRuntime = mock
@@ -195,6 +203,7 @@ const application = createInspireServer({
   catalog,
   attachments,
   preferences,
+  toolPresentations,
   resources,
   git,
   mock,

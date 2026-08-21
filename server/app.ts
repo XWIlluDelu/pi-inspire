@@ -28,6 +28,7 @@ import {
   MAX_RESOURCE_PROBE_REFERENCES,
   RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
+import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
@@ -37,6 +38,10 @@ import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
+import type {
+  ToolPresentationConfigLike,
+  ToolPresentationConfigurationState,
+} from "./tool-presentation-config.js";
 import type { UpdateCheckerLike } from "./update-checker.js";
 
 const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
@@ -222,6 +227,7 @@ interface AppDependencies {
   catalog: SessionCatalogLike;
   attachments: AttachmentStore;
   preferences: PreferencesStore;
+  toolPresentations?: ToolPresentationConfigLike;
   resources: ResourceStore;
   git: GitInspectionLike;
   mock: boolean;
@@ -503,11 +509,17 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/bootstrap", async (_request, response) => {
-    const [preferenceState, availableModels, snapshot] = await Promise.all([
-      deps.preferences.inspect(),
-      deps.availableModels ? deps.availableModels() : Promise.resolve([]),
-      deps.runtime.snapshot(),
-    ]);
+    const [preferenceState, toolPresentationState, availableModels, snapshot] =
+      await Promise.all([
+        deps.preferences.inspect(),
+        deps.toolPresentations
+          ? deps.toolPresentations.inspect()
+          : Promise.resolve<ToolPresentationConfigurationState>({
+              configuration: emptyToolPresentationConfiguration(),
+            }),
+        deps.availableModels ? deps.availableModels() : Promise.resolve([]),
+        deps.runtime.snapshot(),
+      ]);
     const body: BootstrapResponse = {
       appName: "inspire",
       version: deps.version,
@@ -516,6 +528,10 @@ export function createInspireServer(deps: AppDependencies): {
       preferences: preferenceState.preferences,
       ...(preferenceState.warning
         ? { preferencesWarning: preferenceState.warning }
+        : {}),
+      toolPresentations: toolPresentationState.configuration,
+      ...(toolPresentationState.warning
+        ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
       availableModels,
       snapshot,
