@@ -1,24 +1,24 @@
 import {
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { AttachmentStore } from "../../server/attachments.js";
 import {
   ACCESS_COOKIE,
   createInspireServer,
   MAX_JOINING_EVENT_BYTES,
 } from "../../server/app.js";
+import { AttachmentStore } from "../../server/attachments.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -66,6 +66,17 @@ describe("local host API", () => {
       mock: true,
       version: "0.1.0-test",
       piVersion: "0.80.10",
+      updateChecker: {
+        check: async () => ({
+          kind: "available",
+          update: {
+            currentVersion: "0.1.0-test",
+            latestVersion: "0.2.0",
+            releaseUrl:
+              "https://github.com/example/inspire/releases/tag/v0.2.0",
+          },
+        }),
+      },
       availableModels: async () => [
         {
           provider: "anthropic",
@@ -111,6 +122,21 @@ describe("local host API", () => {
       .post("/api/maintenance/restart")
       .set("Authorization", `Bearer ${token}`)
       .expect(200, { kind: "skipped", reason: "runtime-unsupported" });
+  });
+
+  it("keeps release update status behind local authentication", async () => {
+    await request(application.server).get("/api/update").expect(401);
+    await request(application.server)
+      .get("/api/update")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200, {
+        kind: "available",
+        update: {
+          currentVersion: "0.1.0-test",
+          latestVersion: "0.2.0",
+          releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
+        },
+      });
   });
 
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {

@@ -5613,6 +5613,12 @@ kbd {
   word-break: break-word;
 }
 
+.notice__link {
+  color: var(--accent-deep);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* --- Boundary scroll rails --- */
 
 /* Overlay scrollbars riding the pane boundaries (docdoki-derived): the

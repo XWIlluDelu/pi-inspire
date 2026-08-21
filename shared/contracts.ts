@@ -687,6 +687,20 @@ export interface BootstrapResponse {
   snapshot: ActiveSnapshot;
 }
 
+export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+export const UPDATE_SNOOZE_MS = 24 * 60 * 60 * 1_000;
+
+export interface AvailableUpdate {
+  currentVersion: string;
+  latestVersion: string;
+  releaseUrl: string;
+}
+
+export type UpdateCheckResponse =
+  | { kind: "available"; update: AvailableUpdate }
+  | { kind: "current" }
+  | { kind: "unavailable" };
+
 export interface UploadedAttachment {
   id: string;
   fileName: string;

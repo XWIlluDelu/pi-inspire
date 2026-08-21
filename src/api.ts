@@ -1,11 +1,11 @@
 import type {
   ActiveSnapshot,
+  BootstrapResponse,
   BranchForkRequest,
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeResponse,
-  BootstrapResponse,
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
@@ -22,6 +22,7 @@ import type {
   SessionDeleteResponse,
   SessionListResponse,
   TranscriptPage,
+  UpdateCheckResponse,
   UploadedAttachment,
 } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
@@ -182,6 +183,7 @@ function post<T>(
 export function createApi(token: string | null = null) {
   return {
     bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
+    update: () => request<UpdateCheckResponse>(token, "/api/update"),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
     olderTranscript: (
       sessionId: string,
