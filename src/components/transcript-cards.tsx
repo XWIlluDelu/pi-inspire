@@ -110,10 +110,10 @@ function CardHeader({
         </span>
         <span className="card__icon">{icon}</span>
         <span className="card__label">{label}</span>
+        <span className="card__status">{status}</span>
       </button>
       {summary}
       <span className="card__header-spacer" aria-hidden />
-      <span className="card__status">{status}</span>
       {copyText ? (
         <CopyAction text={copyText} label={copyLabel} className="card__copy" />
       ) : null}
