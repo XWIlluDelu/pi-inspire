@@ -75,6 +75,41 @@ process.stdin.on("data", chunk => {
     });
   });
 
+  it("flips a response fence before dispatching a following event frame", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-fence-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    const response = JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}});
+    const event = JSON.stringify({type:"after_response"});
+    process.stdout.write(response + "\\n" + event + "\\n");
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const fence = { received: false };
+    const observed = new Promise<boolean>((resolveEvent) =>
+      rpc.once("event", () => resolveEvent(fence.received)),
+    );
+    await rpc.request({ type: "fenced" }, 30_000, fence);
+    expect(fence.received).toBe(true);
+    expect(await observed).toBe(true);
+  });
+
   it("accepts a bounded Pi message echo above the former image-line ceiling", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-image-echo-"));
     directories.push(directory);

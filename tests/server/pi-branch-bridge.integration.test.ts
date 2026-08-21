@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -166,7 +168,14 @@ export default function (pi) {
     const entries = [
       message("u1", null, "user", "question one", 1),
       message("a1", "u1", "assistant", "answer one", 2),
-      message("u2", "a1", "user", "question two", 3),
+      {
+        type: "session_info",
+        id: "name-1",
+        parentId: "a1",
+        timestamp: "2026-08-01T00:00:02.500Z",
+        name: "Named source",
+      },
+      message("u2", "name-1", "user", "question two", 3),
       message("a2", "u2", "assistant", "answer two", 4),
     ];
     await writeFile(
@@ -286,6 +295,7 @@ export default function (pi) {
       } finally {
         internals.snapshotSlot = originalSnapshotSlot;
       }
+      expect(forked.snapshot.active?.sessionName).toBe("Named source");
       const destinationTree = await runtime.branchTree(forked.sessionId);
       await runtime.navigateBranch({
         sessionId: forked.sessionId,
@@ -305,6 +315,205 @@ export default function (pi) {
     } finally {
       await runtime.close();
       await attachments.close();
+    }
+  }, 30_000);
+
+  it("forks an active stock Pi run while keeping aborted source output out of the destination", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-real-active-fork-"),
+    );
+    directories.push(directory);
+    const sessionFile = join(directory, "source.jsonl");
+    const sessionDir = join(directory, "sessions");
+    const configDir = join(directory, "config");
+    await mkdir(configDir, { recursive: true });
+
+    let markModelStarted!: () => void;
+    const modelStarted = new Promise<void>((resolveStarted) => {
+      markModelStarted = resolveStarted;
+    });
+    const modelServer = createServer(async (request, response) => {
+      for await (const _chunk of request) {
+        // Consume the request before beginning the intentionally unfinished
+        // streaming response.
+      }
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        connection: "keep-alive",
+        "cache-control": "no-cache",
+      });
+      const chunk = (delta: Record<string, string>) =>
+        `data: ${JSON.stringify({
+          id: "chatcmpl-active-fork",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "offline-model",
+          choices: [{ index: 0, delta, finish_reason: null }],
+        })}\n\n`;
+      response.write(chunk({ role: "assistant" }));
+      response.write(chunk({ content: "partial active answer" }));
+      markModelStarted();
+    });
+    await new Promise<void>((resolveListen, reject) => {
+      modelServer.once("error", reject);
+      modelServer.listen(0, "127.0.0.1", () => {
+        modelServer.off("error", reject);
+        resolveListen();
+      });
+    });
+    const modelAddress = modelServer.address() as AddressInfo;
+    await writeFile(
+      join(configDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          "offline-active": {
+            baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
+            api: "openai-completions",
+            apiKey: "non-secret-test-placeholder",
+            models: [
+              {
+                id: "offline-model",
+                name: "Offline active-fork model",
+                reasoning: false,
+                input: ["text"],
+                contextWindow: 32_768,
+                maxTokens: 1_024,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const entries = [
+      message("u1", null, "user", "question one", 1),
+      message("a1", "u1", "assistant", "answer one", 2),
+      message("u2", "a1", "user", "question two", 3),
+      message("a2", "u2", "assistant", "answer two", 4),
+    ];
+    await writeFile(
+      sessionFile,
+      `${[
+        {
+          type: "session",
+          version: 3,
+          id: SESSION_ID,
+          timestamp: "2026-08-01T00:00:00.000Z",
+          cwd: directory,
+        },
+        ...entries,
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n")}\n`,
+    );
+    const catalogRecord: SessionRecord = {
+      id: SESSION_ID,
+      cwd: directory,
+      path: sessionFile,
+      created: new Date(),
+      modified: new Date(),
+      messageCount: entries.length,
+      firstMessage: "question one",
+      searchText: "question one",
+    };
+    const catalog: SessionCatalogLike = {
+      refresh: async () => [catalogRecord],
+      get: async (id) => (id === SESSION_ID ? catalogRecord : undefined),
+      list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
+      listByIds: async () => [],
+      listByCwds: async () => [],
+      invalidate() {},
+    };
+    const attachments = new AttachmentStore(join(directory, "uploads"));
+    const workers: PiRpcProcess[] = [];
+    const runtime = new RuntimeController(catalog, attachments, (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--session-dir",
+          sessionDir,
+          ...(options.args ?? []),
+          "--model",
+          "offline-active/offline-model",
+        ],
+        env: {
+          ...options.env,
+          PI_CODING_AGENT_DIR: configDir,
+          PI_CODING_AGENT_SESSION_DIR: sessionDir,
+        },
+      });
+      workers.push(worker);
+      return worker;
+    });
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) =>
+      events.push(event as Record<string, unknown>),
+    );
+    try {
+      await runtime.openSession(SESSION_ID);
+      await vi.waitFor(
+        async () =>
+          expect((await runtime.snapshot()).active?.commands).toBeDefined(),
+        { timeout: 10_000 },
+      );
+      await runtime.prompt({
+        sessionId: SESSION_ID,
+        message: "active question",
+      });
+      await modelStarted;
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).runState).toBe("running"),
+      );
+      const tree = await runtime.branchTree(SESSION_ID);
+      const forked = await runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      });
+      const sourceText = await readFile(sessionFile, "utf8");
+      const destinationText = await readFile(
+        forked.snapshot.active!.sessionFile!,
+        "utf8",
+      );
+
+      expect(forked.snapshot.runState).toBe("idle");
+      expect(forked.snapshot.sessionStatuses[SESSION_ID]?.runState).toBe(
+        "aborted",
+      );
+      expect(forked.snapshot.pendingQueues).toEqual({
+        steering: [],
+        followUp: [],
+      });
+      expect(sourceText).toContain("active question");
+      expect(sourceText).toContain("partial active answer");
+      expect(destinationText).not.toContain("active question");
+      expect(destinationText).not.toContain("partial active answer");
+      expect(
+        events.find(
+          (event) =>
+            event.type === "message_end" &&
+            (event.message as { stopReason?: unknown } | undefined)
+              ?.stopReason === "aborted",
+        ),
+      ).toMatchObject({ sessionId: SESSION_ID });
+      expect(
+        events.some(
+          (event) =>
+            event.sessionId === forked.sessionId &&
+            event.type === "message_end" &&
+            (event.message as { stopReason?: unknown } | undefined)
+              ?.stopReason === "aborted",
+        ),
+      ).toBe(false);
+      expect(workers).toHaveLength(1);
+    } finally {
+      await runtime.close();
+      await attachments.close();
+      modelServer.closeAllConnections();
+      await new Promise<void>((resolveClose, reject) =>
+        modelServer.close((error) => (error ? reject(error) : resolveClose())),
+      );
     }
   }, 30_000);
 

@@ -7,12 +7,17 @@ import { piInstallation } from "./pi-runtime.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
+export interface PiRpcResponseFence {
+  received: boolean;
+}
+
 interface PendingRequest {
   resolve: (response: RpcResponse) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
   command: string;
   written: boolean;
+  responseFence?: PiRpcResponseFence;
 }
 
 export class PiRpcOutcomeUnknownError extends Error {
@@ -238,6 +243,10 @@ export class PiRpcProcess extends EventEmitter {
               success: record.success !== false,
             },
           );
+          // Flip the fence while consuming the response line, before another
+          // frame from the same stdout chunk can be dispatched. Session
+          // replacement uses this exact wire boundary to attribute events.
+          if (pending.responseFence) pending.responseFence.received = true;
           pending.resolve(record as unknown as RpcResponse);
         }
       }
@@ -288,6 +297,7 @@ export class PiRpcProcess extends EventEmitter {
   async request<T = unknown>(
     command: Record<string, unknown>,
     timeoutMs = 30_000,
+    responseFence?: PiRpcResponseFence,
   ): Promise<T> {
     const child = this.child;
     if (!child || child.exitCode !== null || !child.stdin.writable) {
@@ -307,6 +317,7 @@ export class PiRpcProcess extends EventEmitter {
         reject,
         command: commandName,
         written: false,
+        responseFence,
         timer: undefined as unknown as NodeJS.Timeout,
       };
       pending.timer = setTimeout(() => {

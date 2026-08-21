@@ -185,10 +185,14 @@ export interface RuntimeLike {
   close(): Promise<void>;
 }
 
-function knownExpectation(matcher: PersistenceMatcher): PersistenceExpectation {
+function knownExpectation(
+  matcher: PersistenceMatcher,
+  exactEntry: SessionEntry | null = null,
+): PersistenceExpectation {
   return {
     token: Symbol("persistence-expectation"),
     matcher,
+    exactEntry,
     ready: Promise.resolve(),
     settle: () => undefined,
   };
@@ -200,6 +204,7 @@ function deferredExpectation(): PersistenceExpectation {
   const expectation: PersistenceExpectation = {
     token: Symbol("persistence-expectation"),
     matcher: null,
+    exactEntry: null,
     ready: new Promise<void>((resolveReady) => {
       settleReady = resolveReady;
     }),
@@ -242,8 +247,9 @@ function entryDescriptor(entry: SessionEntry): Record<string, unknown> {
 
 function exactEntryExpectation(entry: SessionEntry): PersistenceExpectation {
   const expected = structuredClone(entry);
-  return knownExpectation((candidate) =>
-    samePersistedJson(candidate, expected),
+  return knownExpectation(
+    (candidate) => samePersistedJson(candidate, expected),
+    expected,
   );
 }
 
@@ -1694,6 +1700,66 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
+  private absorbForkDestinationClaims(
+    source: RuntimeSlot,
+    destination: SessionProjectionView,
+  ): void {
+    const absorbedEntryIds = new Set<string>();
+    source.persistenceExpectations = source.persistenceExpectations.filter(
+      (expectation) => {
+        const entry = expectation.exactEntry;
+        if (!entry || source.projection?.entry(entry.id)) return true;
+        const destinationEntry = destination.entry(entry.id);
+        if (
+          !destinationEntry ||
+          destinationEntry.parentId !== entry.parentId ||
+          destinationEntry.type !== entry.type
+        )
+          return true;
+        expectation.settle(null);
+        absorbedEntryIds.add(entry.id);
+        return false;
+      },
+    );
+    if (absorbedEntryIds.size === 0) return;
+
+    source.customActivities.pendingEntries =
+      source.customActivities.pendingEntries.filter(
+        (entry) => !absorbedEntryIds.has(entry.id),
+      );
+    const absorbedActivityIds = new Set<string>();
+    for (const entryId of absorbedEntryIds) {
+      const activityId =
+        source.customActivities.activityIdByEntryId.get(entryId);
+      source.customActivities.activityIdByEntryId.delete(entryId);
+      if (!activityId) continue;
+      absorbedActivityIds.add(activityId);
+      source.customActivities.entryIdByActivityId.delete(activityId);
+    }
+    source.customActivities.pendingMessageActivityIds =
+      source.customActivities.pendingMessageActivityIds.filter(
+        (activityId) => !absorbedActivityIds.has(activityId),
+      );
+    source.overlay = source.overlay.filter((message) => {
+      if (!message || typeof message !== "object" || Array.isArray(message))
+        return true;
+      const record = message as Record<string, unknown>;
+      return (
+        !absorbedEntryIds.has(String(record.__inspireEntryId ?? "")) &&
+        !absorbedActivityIds.has(String(record.__inspireLiveId ?? ""))
+      );
+    });
+    source.overlayBytes = Buffer.byteLength(JSON.stringify(source.overlay));
+    this.diagnostics.record("debug", "fork_destination_claims_absorbed", {
+      sessionId: source.id,
+      slotIncarnation: source.incarnationId,
+      workerId: source.bridge?.workerId,
+      childPid: source.process?.pid,
+      count: absorbedEntryIds.size,
+      entryIds: [...absorbedEntryIds],
+    });
+  }
+
   private recordPersistenceEvent(
     slot: RuntimeSlot,
     event: Record<string, unknown>,
@@ -2020,6 +2086,37 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
+  private dispatchOwnedProcessEvent(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    event: unknown,
+    record: Record<string, unknown>,
+  ): void {
+    this.recordPersistenceEvent(slot, record);
+    // `entry_appended` is host provenance, not transcript content. Its raw
+    // extension payload must never cross the browser boundary.
+    if (record.type === "entry_appended") return;
+    if (record.type === "agent_settled" || record.type === "compaction_end") {
+      slot.eventTail = slot.eventTail
+        .then(async () => {
+          if (slot.process !== rpc) return;
+          await this.reconcileSlot(slot, true);
+          this.handleEvent(slot, event, rpc);
+          // A terminal lifecycle event may settle the agent, but it cannot
+          // repair a reconciliation conflict. Keep the worker stopped and leave
+          // the explicit abort/recovery boundary as the sole conflict clearer.
+          if (record.type === "agent_settled" && slot.conflict)
+            await this.stopWriter(slot);
+        })
+        .catch((error) => {
+          this.logRuntimeError(slot.id, error, "event_reconciliation_failed");
+          this.handleEvent(slot, event, rpc);
+        });
+    } else {
+      this.handleEvent(slot, event, rpc);
+    }
+  }
+
   private dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void {
     const slot = this.processRegistry.ownerOf(rpc);
     if (!slot || slot.process !== rpc) return;
@@ -2031,6 +2128,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     if (slot.rebinding) {
       if (slot.forkBufferOverflow) return;
+      // Pi tears the source AgentSession down before returning from fork, and
+      // does not subscribe the RPC event channel to the replacement until its
+      // session_start handlers have completed. Therefore every session event
+      // before the correlated response line still belongs to the source.
+      // Extension UI/error frames use a separate direct channel and retain the
+      // existing handoff treatment because either runtime may emit them.
+      if (
+        slot.forkResponseFence?.received === false &&
+        record.type !== "extension_ui_request" &&
+        record.type !== "extension_error"
+      ) {
+        this.dispatchOwnedProcessEvent(slot, rpc, event, record);
+        return;
+      }
       // Fork hooks may block Pi's replacement command on a dialog. Such
       // requests keep their source address and bypass the general event
       // buffer so the browser can answer while the mutation FIFO is occupied.
@@ -2058,29 +2169,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.bufferedEventBytes += eventBytes;
       return;
     }
-    this.recordPersistenceEvent(slot, record);
-    // `entry_appended` is host provenance, not transcript content. Its raw
-    // extension payload must never cross the browser boundary.
-    if (record.type === "entry_appended") return;
-    if (record.type === "agent_settled" || record.type === "compaction_end") {
-      slot.eventTail = slot.eventTail
-        .then(async () => {
-          if (slot.process !== rpc) return;
-          await this.reconcileSlot(slot, true);
-          this.handleEvent(slot, event, rpc);
-          // A terminal lifecycle event may settle the agent, but it cannot
-          // repair a reconciliation conflict. Keep the worker stopped and leave
-          // the explicit abort/recovery boundary as the sole conflict clearer.
-          if (record.type === "agent_settled" && slot.conflict)
-            await this.stopWriter(slot);
-        })
-        .catch((error) => {
-          this.logRuntimeError(slot.id, error, "event_reconciliation_failed");
-          this.handleEvent(slot, event, rpc);
-        });
-    } else {
-      this.handleEvent(slot, event, rpc);
-    }
+    this.dispatchOwnedProcessEvent(slot, rpc, event, record);
   }
 
   private attachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void {
@@ -2099,6 +2188,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.bridge = null;
     this.renewView(slot);
     slot.rebinding = false;
+    slot.forkResponseFence = null;
     slot.bufferedEvents = [];
     slot.bufferedEventBytes = 0;
     if (slot.navigationLease) slot.branchRevision += 1;
@@ -3219,13 +3309,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private requireIdleBranchSlot(slot: RuntimeSlot, revision: number): void {
+  private requireFreshBranchRevision(
+    slot: RuntimeSlot,
+    revision: number,
+  ): void {
     if (slot.branchRevision !== revision) {
       throw Object.assign(
         new Error("Branch view is stale; refresh before changing history"),
         { status: 409 },
       );
     }
+  }
+
+  private requireIdleBranchSlot(slot: RuntimeSlot, revision: number): void {
+    this.requireFreshBranchRevision(slot, revision);
     if (
       slot.runState !== "idle" ||
       slot.pendingExtensionUiRequests.size > 0 ||
@@ -3234,8 +3331,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     ) {
       throw Object.assign(
         new Error(
-          "Branch operations require an idle session with no pending dialog or queue",
+          "Branch navigation requires an idle session with no pending dialog or queue",
         ),
+        { status: 409 },
+      );
+    }
+  }
+
+  private requireForkBranchSlot(slot: RuntimeSlot, revision: number): void {
+    this.requireFreshBranchRevision(slot, revision);
+    if (
+      slot.pendingQueues.steering.length > 0 ||
+      slot.pendingQueues.followUp.length > 0
+    ) {
+      // Pi's native fork aborts the current response, but an accepted queue is
+      // drained as another run before AgentSession becomes idle. Letting fork
+      // proceed would submit that input instead of replacing the session.
+      throw Object.assign(new Error("Remove queued messages before forking"), {
+        status: 409,
+      });
+    }
+    // A pre-existing response-bearing dialog must likewise be resolved before
+    // another session-replacement command can own that interaction.
+    if (slot.pendingExtensionUiRequests.size > 0) {
+      throw Object.assign(
+        new Error("Fork requires the pending dialog to be resolved first"),
         { status: 409 },
       );
     }
@@ -3501,6 +3621,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     events: readonly unknown[],
   ): void {
     slot.rebinding = false;
+    slot.forkResponseFence = null;
     slot.bufferedEvents = [];
     slot.bufferedEventBytes = 0;
     for (const event of events) this.dispatchProcessEvent(rpc, event);
@@ -3521,9 +3642,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           { status: 409 },
         );
       }
-      this.requireIdleBranchSlot(source, request.revision);
+      this.requireForkBranchSlot(source, request.revision);
       const ready = await this.ensureFreshWriterInsideGate(source);
-      this.requireIdleBranchSlot(source, request.revision);
+      this.requireForkBranchSlot(source, request.revision);
       const projection = ready.projection;
       const rpc = ready.process;
       const bridge = ready.bridge;
@@ -3548,18 +3669,29 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       source.rebinding = true;
       source.bufferedEvents = [];
       source.bufferedEventBytes = 0;
+      const responseFence = { received: false };
+      source.forkResponseFence = responseFence;
       let forkResult: { text?: unknown; cancelled?: unknown };
       try {
-        forkResult = await rpc.request({
-          type: "fork",
-          entryId: request.targetId,
-        });
+        forkResult = await rpc.request(
+          {
+            type: "fork",
+            entryId: request.targetId,
+          },
+          30_000,
+          responseFence,
+        );
+        // Test doubles may not implement PiRpcProcess's response fence. The
+        // awaited response is still an authoritative lower-boundary witness.
+        responseFence.received = true;
+        await source.eventTail;
         await this.assertForkBufferHealthy(source);
       } catch (error) {
         if (source.forkBufferOverflow)
           return this.failForkBufferOverflow(source);
         const buffered = source.bufferedEvents.slice();
         source.rebinding = false;
+        source.forkResponseFence = null;
         source.bufferedEvents = [];
         source.bufferedEventBytes = 0;
         if (isPiRpcOutcomeUnknown(error)) {
@@ -3664,6 +3796,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           firstMessage: "",
           searchText: "",
         });
+        // Extensions may append destination state during session_start before
+        // Pi emits the correlated fork response. Those exact claims were
+        // temporarily observed under the source owner; the two durable
+        // projections now provide the authoritative attribution boundary.
+        this.absorbForkDestinationClaims(source, destinationProjection);
         const extras = await this.readRuntimeExtras(source, rpc);
         // Recheck and attach without yielding afterward. JavaScript's
         // run-to-completion semantics make this the atomic
@@ -3710,6 +3847,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           preview: {
             sessionId: destinationId,
             sessionFile: destinationPath,
+            ...(typeof state.sessionName === "string"
+              ? { sessionName: state.sessionName }
+              : {}),
             cwd: source.cwd,
             model: destinationProjection.model ?? state.model,
             thinkingLevel:
@@ -3732,7 +3872,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         destination.startupPhase = "complete";
         destination.ready = true;
         destination.pendingExtensionUiRequests = reboundRequests;
-        destination.pendingQueues = source.pendingQueues;
+        // The queue precondition and Pi's replacement runtime both establish
+        // an empty destination queue; never transfer source-local queue state.
+        destination.pendingQueues = emptyPendingQueues();
         destination.extensionDisplays = source.extensionDisplays;
         destination.availableModels = extras.models;
         destination.commands = extras.commands;
@@ -3775,6 +3917,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         source.commands = null;
         this.clearWriterProjectionBaseline(source);
         source.rebinding = false;
+        source.forkResponseFence = null;
         source.bufferedEvents = [];
         source.bufferedEventBytes = 0;
         this.slots.set(destinationId, destination);
@@ -4123,18 +4266,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot> {
     return this.useSlot(slot, async () => {
+      // A native Pi fork changes the child identity before its correlated
+      // response lets the host atomically rebind ownership. A read during that
+      // interval must remain a source preview, never adopt destination state.
+      if (slot.rebinding) return this.previewSnapshot(slot);
       await this.reconcileSlot(slot, true);
+      if (slot.rebinding) return this.previewSnapshot(slot);
       const rpc = slot.process;
       if (!rpc || !slot.ready) return this.previewSnapshot(slot);
       const [state, extras] = await Promise.all([
         rpc.request<Record<string, unknown>>({ type: "get_state" }),
         this.readRuntimeExtras(slot, rpc),
       ]);
-      const { stats, models, commands } = extras;
-      slot.sessionPath =
+      const runtimeSessionId =
+        typeof state.sessionId === "string" ? state.sessionId : null;
+      const runtimeSessionPath =
         typeof state.sessionFile === "string"
           ? resolve(state.sessionFile)
-          : slot.sessionPath;
+          : null;
+      if (
+        slot.rebinding ||
+        slot.process !== rpc ||
+        !slot.ready ||
+        this.processRegistry.ownerOf(rpc) !== slot ||
+        (runtimeSessionId !== null && runtimeSessionId !== slot.id) ||
+        (runtimeSessionPath !== null &&
+          slot.sessionPath !== null &&
+          runtimeSessionPath !== resolve(slot.sessionPath))
+      )
+        return this.previewSnapshot(slot);
+      const { stats, models, commands } = extras;
+      if (slot.sessionPath === null && runtimeSessionPath !== null)
+        slot.sessionPath = runtimeSessionPath;
       if (!slot.projection)
         throw new Error("Session projection is not available");
       const effectiveLeafId = this.effectiveLeaf(slot);
