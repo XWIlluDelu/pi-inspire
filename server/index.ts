@@ -1,43 +1,44 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ModelRuntime, piInstallation } from "./pi-runtime.js";
-import {
-  inspectInspireSource,
-  MaintenanceRestartController,
-} from "./maintenance-restart.js";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
-import { AttachmentStore } from "./attachments.js";
 import { createInspireServer } from "./app.js";
+import { AttachmentStore } from "./attachments.js";
 import {
   defaultDiagnosticLogPath,
   nullDiagnosticLogger,
   openDiagnosticLogger,
 } from "./diagnostics.js";
+import { GitInspectionService } from "./git-inspection.js";
 import {
-  INSTANCE_STATE_VERSION,
   consumeStopRequest,
+  INSTANCE_STATE_VERSION,
+  type InstanceState,
   instanceUrl,
   processStartIdentity,
   removeInstanceState,
   writeInstanceState,
-  type InstanceState,
 } from "./instance-state.mjs";
-import { GitInspectionService } from "./git-inspection.js";
 import {
-  availableModelOptions,
-  resolveNewSessionDefaults,
-} from "./model-catalog.js";
+  inspectInspireSource,
+  MaintenanceRestartController,
+} from "./maintenance-restart.js";
 import {
   MOCK_AVAILABLE_MODELS,
   MockCatalog,
   MockGitInspection,
   MockRuntime,
 } from "./mock.js";
+import {
+  availableModelOptions,
+  resolveNewSessionDefaults,
+} from "./model-catalog.js";
+import { ModelRuntime, piInstallation } from "./pi-runtime.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
+import { GitHubReleaseUpdateChecker } from "./update-checker.js";
 
 const moduleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const inferredRoot = await readFile(
@@ -50,7 +51,10 @@ const inferredRoot = await readFile(
 const root = resolve(process.env.INSPIRE_INSTALLATION_ROOT || inferredRoot);
 const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
-) as { version: string };
+) as {
+  version: string;
+  repository?: string | { url?: string };
+};
 
 const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
 if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
@@ -63,6 +67,16 @@ const tokenPath =
   process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
 const mock = process.env.INSPIRE_MOCK === "1";
+const repositoryUrl =
+  typeof packageJson.repository === "string"
+    ? packageJson.repository
+    : packageJson.repository?.url;
+const updateChecker = mock
+  ? undefined
+  : new GitHubReleaseUpdateChecker({
+      currentVersion: packageJson.version,
+      repositoryUrl,
+    });
 const runningSource = mock
   ? { kind: "package" as const, version: packageJson.version }
   : await inspectInspireSource(root);
@@ -187,6 +201,7 @@ const application = createInspireServer({
   version: packageJson.version,
   piVersion: piInstallation.version,
   maintenanceRestart,
+  updateChecker,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),

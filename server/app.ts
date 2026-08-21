@@ -10,18 +10,18 @@ import express, {
 } from "express";
 import multer from "multer";
 import { WebSocket, WebSocketServer } from "ws";
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 import {
-  MAX_ATTACHMENTS,
+  type BootstrapResponse,
+  type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
+  MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
-  THINKING_LEVELS,
-  type BootstrapResponse,
-  type GitDiffSide,
   type NewSessionDefaults,
+  THINKING_LEVELS,
 } from "../shared/contracts.js";
 import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
@@ -29,14 +29,15 @@ import {
   RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
 import type { AttachmentStore } from "./attachments.js";
-import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { GitInspectionLike } from "./git-inspection.js";
+import { listHostDirectories, listHostRoots } from "./host-dirs.js";
+import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
-import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
+import type { UpdateCheckerLike } from "./update-checker.js";
 
 const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
 const openSchema = z.object({ id: z.string().min(1).max(128) });
@@ -231,6 +232,8 @@ interface AppDependencies {
   maintenanceRestart?: MaintenanceRestartLike;
   /** Browser-safe configured model metadata, available without a live worker. */
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
+  /** Cached public-release observation; failures never block local work. */
+  updateChecker?: UpdateCheckerLike;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
@@ -479,6 +482,14 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  app.get("/api/update", async (_request, response) => {
+    response.json(
+      deps.updateChecker
+        ? await deps.updateChecker.check()
+        : { kind: "unavailable" },
+    );
   });
 
   /** A successful response is a short exclusive lease. The local user timer

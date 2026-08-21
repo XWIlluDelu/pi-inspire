@@ -1,12 +1,11 @@
 import { useSyncExternalStore } from "react";
 import {
-  defaultPreferences,
-  modelIdentityKey,
-  projectNameFromCwd,
   type ActiveSnapshot,
   type AssistantRoundDisplayPreference,
+  type AvailableUpdate,
   type BranchTreeResponse,
   type CompletionAttentionPreference,
+  defaultPreferences,
   type GitDiffSide,
   type GitFileChange,
   type GitStatusResponse,
@@ -17,14 +16,16 @@ import {
   type LaunchPreference,
   type ModelIdentity,
   type ModelOption,
+  modelIdentityKey,
   type NewSessionDefaults,
   type NewSessionOptions,
+  type PalettePreference,
   type ProjectDirEntry,
   type ProjectDisplayPreference,
-  projectionConflictSeverity,
-  type PalettePreference,
   type ProjectionConflict,
   type ProjectionHealth,
+  projectionConflictSeverity,
+  projectNameFromCwd,
   type ResourceProbeResult,
   type RunState,
   type SessionDeleteDisposition,
@@ -35,9 +36,9 @@ import {
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
-import { ApiError, createApi, type Api, type ProjectFileResult } from "./api";
-import { BranchController } from "./controllers/branch-controller";
+import { type Api, ApiError, createApi, type ProjectFileResult } from "./api";
 import type { PiCommand } from "./composer-completion";
+import { BranchController } from "./controllers/branch-controller";
 import {
   ComposerController,
   type PendingAttachment,
@@ -52,17 +53,18 @@ import { GitController, type GitDiffView } from "./controllers/git-controller";
 import { ResourceController } from "./controllers/resource-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
-import type { ResourcePreview } from "./resource-preview";
+import { UpdateController } from "./controllers/update-controller";
 import {
   asMessage,
-  emptyEventSlice,
-  messageKey,
-  reduceEvent,
   type ChatMessage,
   type EventSlice,
+  emptyEventSlice,
+  messageKey,
   type Notice,
+  reduceEvent,
   type WireEvent,
 } from "./events";
+import type { ResourcePreview } from "./resource-preview";
 
 // --- Store state ---
 
@@ -111,6 +113,8 @@ interface AppState extends EventSlice {
   mock: boolean;
   /** Host-reported Inspire version, shown on the settings page. */
   version: string;
+  availableUpdate: AvailableUpdate | null;
+  updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
   sessionId: string | null;
   sessionName: string;
@@ -221,6 +225,8 @@ const initialState: AppState = {
   bootstrapped: false,
   mock: false,
   version: "",
+  availableUpdate: null,
+  updateSnoozedUntil: null,
   prefs: defaultPreferences,
   sessionId: null,
   sessionName: "",
@@ -415,6 +421,12 @@ export class AppStore {
   private authToken: string | null = null;
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
+  private readonly updates = new UpdateController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+  });
   private readonly connectionController = new ConnectionController({
     state: () => ({ bootstrapped: this.state.bootstrapped }),
     patch: (patch) => this.set(patch),
@@ -699,6 +711,7 @@ export class AppStore {
   async init(token: string | null = this.authToken): Promise<void> {
     const api = createApi(token);
     const generation = ++this.transportGeneration;
+    this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
@@ -715,6 +728,9 @@ export class AppStore {
         prefs: boot.preferences,
         mock: boot.mock,
         version: boot.version,
+        ...(this.state.availableUpdate?.currentVersion !== boot.version
+          ? { availableUpdate: null, updateSnoozedUntil: null }
+          : {}),
         availableModels: Array.isArray(boot.availableModels)
           ? boot.availableModels
           : [],
@@ -725,6 +741,7 @@ export class AppStore {
       this.applySnapshot(boot.snapshot);
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
+      this.updates.start();
       this.connectionController.connect(token);
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
@@ -1828,6 +1845,8 @@ export class AppStore {
         this.set({ extensionUiRespondingId: null });
     }
   };
+
+  snoozeUpdate = (): void => this.updates.snooze();
 
   dismissNotice = (id: number): void => {
     const timer = this.noticeTimers.get(id);

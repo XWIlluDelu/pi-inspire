@@ -1,14 +1,24 @@
-import { AlertTriangle, Info, Loader2, X, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  Info,
+  Loader2,
+  X,
+  XCircle,
+} from "lucide-react";
 import { Profiler, useCallback, useEffect, useState } from "react";
-import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
+import {
+  type AvailableUpdate,
+  isAbortableRunState,
+  type ThemePreference,
+} from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
-import type { Notice } from "./events";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandPalette } from "./components/CommandPalette";
-import { CopyAction } from "./components/CopyAction";
 import { Composer } from "./components/Composer";
+import { CopyAction } from "./components/CopyAction";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
@@ -17,6 +27,7 @@ import { Settings } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
+import type { Notice } from "./events";
 import { store, useAppState } from "./store";
 import { hasActiveModal } from "./use-modal-focus";
 import { cacheVisualPreferences } from "./visual-preferences";
@@ -195,7 +206,7 @@ function NoticeItem({ notice }: { notice: Notice }) {
       ? "Warning"
       : notice.kind === "error"
         ? "Error"
-        : null;
+        : "Notice";
   const title = tag
     ? `${noticeDefaultTitle(notice.kind)} · ${tag}`
     : noticeDefaultTitle(notice.kind);
@@ -208,13 +219,11 @@ function NoticeItem({ notice }: { notice: Notice }) {
           <span>{title}</span>
         </span>
         <div className="notice__actions">
-          {copyLabel ? (
-            <CopyAction
-              text={notice.text}
-              label={copyLabel}
-              className="notice__copy"
-            />
-          ) : null}
+          <CopyAction
+            text={notice.text}
+            label={copyLabel}
+            className="notice__copy"
+          />
           <button
             type="button"
             className="notice__dismiss"
@@ -231,14 +240,62 @@ function NoticeItem({ notice }: { notice: Notice }) {
   );
 }
 
+function UpdateNotice({ update }: { update: AvailableUpdate }) {
+  const message = `INSΠRE ${update.latestVersion} is available. You’re using ${update.currentVersion}.`;
+  return (
+    <div className="notice notice--info" role="status">
+      <div className="notice__head">
+        <span className="notice__title">
+          <Download size={13} aria-hidden />
+          <span>Update available</span>
+        </span>
+        <div className="notice__actions">
+          <CopyAction
+            text={`${message}\n${update.releaseUrl}`}
+            label="Update details"
+            className="notice__copy"
+          />
+          <button
+            type="button"
+            className="notice__dismiss"
+            onClick={store.snoozeUpdate}
+            aria-label="Close update for 24 hours"
+            title="Close for 24 hours"
+          >
+            <X size={13} aria-hidden />
+          </button>
+        </div>
+      </div>
+      <div className="notice__text">
+        <span>{message}</span>{" "}
+        <a
+          className="notice__link"
+          href={update.releaseUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`View INSΠRE ${update.latestVersion} release`}
+        >
+          View release
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function Notices() {
   const state = useAppState();
-  if (state.notices.length === 0) return null;
+  const update =
+    state.availableUpdate &&
+    (!state.updateSnoozedUntil || state.updateSnoozedUntil <= Date.now())
+      ? state.availableUpdate
+      : null;
+  if (state.notices.length === 0 && !update) return null;
   return (
     <div className="notices" aria-live="polite">
       {state.notices.map((notice) => (
         <NoticeItem key={notice.id} notice={notice} />
       ))}
+      {update ? <UpdateNotice update={update} /> : null}
     </div>
   );
 }
