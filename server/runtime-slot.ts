@@ -8,7 +8,7 @@ import {
   type ProjectionConflict,
   type RunState,
 } from "../shared/contracts.js";
-import type { PiRpcProcess } from "./pi-rpc.js";
+import type { PiRpcProcess, PiRpcResponseFence } from "./pi-rpc.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import type { SessionProjectionView } from "./session-projection.js";
 
@@ -19,6 +19,7 @@ export type PersistenceMatcher = (entry: SessionEntry) => boolean;
 export interface PersistenceExpectation {
   readonly token: symbol;
   matcher: PersistenceMatcher | null;
+  readonly exactEntry: SessionEntry | null;
   readonly ready: Promise<void>;
   settle(matcher: PersistenceMatcher | null): void;
 }
@@ -158,6 +159,9 @@ export interface RuntimeSlot {
   pendingBranchBridge: PendingBranchBridge | null;
   navigationLease: NavigationLease | null;
   rebinding: boolean;
+  /** Exact RPC wire boundary between events from the replaced source runtime
+   * and events emitted after the fork response. */
+  forkResponseFence: PiRpcResponseFence | null;
   bufferedEvents: unknown[];
   bufferedEventBytes: number;
   forkBufferOverflow: boolean;
@@ -231,6 +235,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     pendingBranchBridge: null,
     navigationLease: null,
     rebinding: false,
+    forkResponseFence: null,
     bufferedEvents: [],
     bufferedEventBytes: 0,
     forkBufferOverflow: false,

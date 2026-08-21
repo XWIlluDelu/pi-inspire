@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
-import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
+import type {
+  PiRpcOptions,
+  PiRpcProcess,
+  PiRpcResponseFence,
+} from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import type {
@@ -52,6 +56,11 @@ class BranchRpc extends EventEmitter {
   forkSessionId = "22222222-2222-4222-8222-222222222222";
   forkGate: Promise<void> | null = null;
   forkStarted: (() => void) | null = null;
+  forkResponseGate: Promise<void> | null = null;
+  forkReplaced: (() => void) | null = null;
+  forkDestinationEntry: Record<string, unknown> | null = null;
+  nextStateGate: Promise<void> | null = null;
+  stateRequestStarted: (() => void) | null = null;
   forkEventCount = 0;
   lateForkEventCount = 0;
   treeDialog = false;
@@ -141,10 +150,20 @@ class BranchRpc extends EventEmitter {
       this.emit("event", { ...event, id: "duplicate" });
   }
 
-  async request<T>(command: Record<string, unknown>): Promise<T> {
+  async request<T>(
+    command: Record<string, unknown>,
+    _timeoutMs?: number,
+    responseFence?: PiRpcResponseFence,
+  ): Promise<T> {
     this.commands.push(command);
     let value: unknown = {};
     if (command.type === "get_state") {
+      const gate = this.nextStateGate;
+      if (gate) {
+        this.nextStateGate = null;
+        this.stateRequestStarted?.();
+        await gate;
+      }
       value = {
         sessionId: this.sessionId,
         sessionFile: this.path,
@@ -168,9 +187,6 @@ class BranchRpc extends EventEmitter {
       this.forkStarted?.();
       if (this.forkDialog) await this.waitForDialog("fork-hook", "input");
       if (this.forkGate) await this.forkGate;
-      for (let index = 0; index < this.forkEventCount; index += 1) {
-        this.emit("event", { type: "message_update", index });
-      }
       const destination = [
         {
           type: "session",
@@ -182,6 +198,7 @@ class BranchRpc extends EventEmitter {
         entry("u1", null, "user", "root", 1),
         entry("a1", "u1", "assistant", "first answer", 2),
         entry("alt", "u1", "assistant", "fork sibling", 5),
+        ...(this.forkDestinationEntry ? [this.forkDestinationEntry] : []),
       ];
       await writeFile(
         this.forkPath,
@@ -189,7 +206,21 @@ class BranchRpc extends EventEmitter {
       );
       this.path = this.forkPath;
       this.sessionId = this.forkSessionId;
-      this.leafId = "alt";
+      this.leafId =
+        typeof this.forkDestinationEntry?.id === "string"
+          ? this.forkDestinationEntry.id
+          : "alt";
+      if (this.forkDestinationEntry)
+        this.emit("event", {
+          type: "entry_appended",
+          entry: this.forkDestinationEntry,
+        });
+      this.forkReplaced?.();
+      if (this.forkResponseGate) await this.forkResponseGate;
+      if (responseFence) responseFence.received = true;
+      for (let index = 0; index < this.forkEventCount; index += 1) {
+        this.emit("event", { type: "message_update", index });
+      }
       this.emit("event", { type: "session_start", reason: "fork" });
       value = { text: "second question", cancelled: false };
     } else if (command.type === "prompt") {
@@ -521,6 +552,116 @@ describe("stock RPC branch bridge", () => {
       const reopened = await runtime.openSession(SESSION_ID);
       expect(reopened.active?.sessionId).toBe(SESSION_ID);
       await vi.waitFor(() => expect(slots.has(SESSION_ID)).toBe(true));
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps source snapshot identity stable while a concurrent read straddles fork replacement", async () => {
+    const { runtime, worker, workers, directory, path } = await setup();
+    worker.forkPath = join(directory, "forked-concurrent-snapshot.jsonl");
+    worker.forkDestinationEntry = {
+      type: "custom",
+      id: "destination-state",
+      parentId: "alt",
+      timestamp: "2026-08-01T00:00:00.006Z",
+      customType: "fork-state",
+      data: { active: true },
+    };
+    let releaseState!: () => void;
+    let releaseFork!: () => void;
+    const stateRequested = new Promise<void>((resolveState) => {
+      worker.stateRequestStarted = resolveState;
+    });
+    worker.nextStateGate = new Promise<void>((resolveState) => {
+      releaseState = resolveState;
+    });
+    const forkReplaced = new Promise<void>((resolveFork) => {
+      worker.forkReplaced = resolveFork;
+    });
+    worker.forkResponseGate = new Promise<void>((resolveFork) => {
+      releaseFork = resolveFork;
+    });
+    try {
+      const sourceTree = await runtime.branchTree(SESSION_ID);
+      const straddlingSnapshot = runtime.snapshot();
+      await stateRequested;
+      const forking = runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: sourceTree.revision,
+        targetId: "u2",
+      });
+      await forkReplaced;
+
+      const replacementSnapshot = await runtime.openSession(SESSION_ID);
+      expect(replacementSnapshot.active).toMatchObject({
+        sessionId: SESSION_ID,
+        sessionFile: path,
+      });
+
+      releaseState();
+      const completedSnapshot = await straddlingSnapshot;
+      expect(completedSnapshot.active).toMatchObject({
+        sessionId: SESSION_ID,
+        sessionFile: path,
+      });
+
+      releaseFork();
+      await expect(forking).resolves.toMatchObject({
+        sessionId: worker.forkSessionId,
+      });
+      const sourceSlot = (
+        runtime as unknown as {
+          slots: Map<
+            string,
+            {
+              sessionPath: string | null;
+              persistenceExpectations: unknown[];
+            }
+          >;
+        }
+      ).slots.get(SESSION_ID);
+      expect(sourceSlot?.sessionPath).toBe(path);
+      expect(sourceSlot?.persistenceExpectations).toEqual([]);
+      const reopened = await runtime.openSession(SESSION_ID);
+      expect(reopened.active?.sessionFile).toBe(path);
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      expect(workers[1]?.path).toBe(path);
+    } finally {
+      releaseState?.();
+      releaseFork?.();
+      await runtime.close();
+    }
+  });
+
+  it("does not let native fork drain accepted queued input before replacement", async () => {
+    const { runtime, worker } = await setup();
+    try {
+      worker.emit("event", {
+        type: "queue_update",
+        steering: [],
+        followUp: ["queued follow-up"],
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.followUp).toEqual([
+          "queued follow-up",
+        ]),
+      );
+      const tree = await runtime.branchTree(SESSION_ID);
+
+      await expect(
+        runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "u2",
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: "Remove queued messages before forking",
+      });
+      expect(worker.commands.some((command) => command.type === "fork")).toBe(
+        false,
+      );
     } finally {
       await runtime.close();
     }
