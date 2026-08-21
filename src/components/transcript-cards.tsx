@@ -7,6 +7,7 @@ import {
   FilePlus2,
   FileSearch,
   FileText,
+  Folder,
   List,
   Loader2,
   Package,
@@ -15,7 +16,7 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   ToolVisibilityPreference,
   VisibilityPreference,
@@ -35,6 +36,13 @@ import {
   toolResultText,
 } from "../events";
 import { store } from "../store";
+import type {
+  ResolvedToolPresentation,
+  ToolPresentationBlock,
+  ToolPresentationSummary,
+} from "../tool-presentations/model";
+import { toolPresentationSummaryText } from "../tool-presentations/model";
+import { toolPresentationRegistry } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
 import { RichText } from "./RichText";
 import {
@@ -362,6 +370,41 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
   );
 }
 
+function PresentedToolSummary({
+  summary,
+}: {
+  summary: ToolPresentationSummary;
+}) {
+  if (summary.parts.length === 0) return null;
+  return (
+    <span className="card__summary card__summary--tool">
+      {summary.parts.map((part, index) => (
+        <span className="tool-summary__part" key={`${part.kind}:${index}`}>
+          {index > 0 ? (
+            <span className="tool-summary__separator" aria-hidden>
+              {part.separator === "space" ? " " : " · "}
+            </span>
+          ) : null}
+          {part.kind === "resource" ? (
+            <FileRefButton
+              reference={part.reference}
+              className="tool-summary__resource"
+            >
+              {part.text}
+            </FileRefButton>
+          ) : (
+            <span
+              className={part.subdued ? "tool-summary__subdued" : undefined}
+            >
+              {part.text}
+            </span>
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function toolComplete(
   result: ChatMessage | undefined,
   activity: ActivityTool | undefined,
@@ -419,7 +462,19 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
   );
 }
 
-function ToolDetails({
+function PendingToolResult({ status }: { status: ToolStatus }) {
+  return (
+    <div className="card__pending">
+      {status === "running"
+        ? "Running…"
+        : status === "success" || status === "failure"
+          ? "Finalizing result…"
+          : "No result recorded"}
+    </div>
+  );
+}
+
+function RawToolDetails({
   call,
   result,
   status,
@@ -471,15 +526,316 @@ function ToolDetails({
           ) : null}
         </>
       ) : (
-        <div className="card__pending">
-          {status === "running"
-            ? "Running…"
-            : status === "success" || status === "failure"
-              ? "Finalizing result…"
-              : "No result recorded"}
-        </div>
+        <PendingToolResult status={status} />
       )}
     </>
+  );
+}
+
+function ToolBlockHeading({ label, path }: { label?: string; path?: string }) {
+  if (!label && !path) return null;
+  return (
+    <div className="card__section-label tool-block__heading">
+      {label ? <span>{label}</span> : null}
+      {path ? (
+        <FileRefButton reference={path} className="tool-block__path">
+          {path}
+        </FileRefButton>
+      ) : null}
+    </div>
+  );
+}
+
+const STRUCTURED_CODE_PREVIEW_LINES = 400;
+
+function StructuredCode({
+  text,
+  startLine = 1,
+}: {
+  text: string;
+  startLine?: number;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const lines = text.split("\n");
+  const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
+  const visible =
+    clipped && !showAll ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES) : lines;
+  return (
+    <>
+      <pre className="tool-code">
+        {visible.map((line, index) => (
+          <span className="tool-code__line" key={index}>
+            <span className="tool-code__number" aria-hidden>
+              {startLine + index}
+            </span>
+            <code>{line || " "}</code>
+          </span>
+        ))}
+      </pre>
+      {clipped ? (
+        <button
+          type="button"
+          className="card__show-all"
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll
+            ? "Show fewer lines"
+            : `Show all ${lines.length.toLocaleString()} lines`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function ReplacementDiff({
+  block,
+}: {
+  block: Extract<ToolPresentationBlock, { type: "replacement" }>;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const lines: DiffLine[] = [
+    ...block.oldText
+      .split("\n")
+      .map((text) => ({ type: "del" as const, text: `-${text}` })),
+    ...block.newText
+      .split("\n")
+      .map((text) => ({ type: "add" as const, text: `+${text}` })),
+  ];
+  const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
+  return (
+    <div className="tool-block">
+      <ToolBlockHeading label={block.label} path={block.path} />
+      <DiffView
+        lines={
+          clipped && !showAll
+            ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES)
+            : lines
+        }
+      />
+      {clipped ? (
+        <button
+          type="button"
+          className="card__show-all"
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll
+            ? "Show fewer lines"
+            : `Show all ${lines.length.toLocaleString()} lines`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolPresentationBlockView({
+  block,
+}: {
+  block: ToolPresentationBlock;
+}) {
+  switch (block.type) {
+    case "properties":
+      return (
+        <div
+          className="tool-properties"
+          role="group"
+          aria-label={block.label ?? "Tool parameters"}
+        >
+          {block.label ? (
+            <div className="card__section-label">{block.label}</div>
+          ) : null}
+          <dl>
+            {block.items.map((item, index) => (
+              <div
+                className="tool-properties__item"
+                key={`${item.label}:${index}`}
+              >
+                <dt>{item.label}</dt>
+                <dd>
+                  {item.resourceRef ? (
+                    <FileRefButton
+                      reference={item.resourceRef}
+                      className="tool-properties__resource"
+                    >
+                      {item.value}
+                    </FileRefButton>
+                  ) : (
+                    <code>{item.value}</code>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      );
+    case "code":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} path={block.path} />
+          <StructuredCode text={block.text} startLine={block.startLine} />
+        </div>
+      );
+    case "diff": {
+      const lines = parseUnifiedDiff(block.text);
+      if (!lines) return null;
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} path={block.path} />
+          <DiffView lines={lines} />
+        </div>
+      );
+    }
+    case "terminal":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} />
+          <pre
+            className={`tool-terminal ${block.error ? "tool-terminal--error" : ""}`}
+          >
+            {block.text}
+          </pre>
+        </div>
+      );
+    case "list":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} path={block.path} />
+          {block.items.length > 0 ? (
+            <ul className="tool-list">
+              {block.items.map((item, index) => (
+                <li key={`${item.label}:${index}`}>
+                  {item.kind === "directory" ? (
+                    <Folder size={14} aria-hidden />
+                  ) : (
+                    <FileText size={14} aria-hidden />
+                  )}
+                  {item.resourceRef ? (
+                    <FileRefButton
+                      reference={item.resourceRef}
+                      className="tool-list__resource"
+                    >
+                      {item.label}
+                    </FileRefButton>
+                  ) : (
+                    <code>{item.label}</code>
+                  )}
+                  {item.detail ? (
+                    <span className="tool-list__detail">{item.detail}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="tool-empty">{block.emptyText ?? "No results"}</div>
+          )}
+        </div>
+      );
+    case "search":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} />
+          {block.groups.length > 0 ? (
+            <div className="tool-search-results">
+              {block.groups.map((group) => (
+                <section className="tool-search-group" key={group.path}>
+                  <header>
+                    <FileSearch size={14} aria-hidden />
+                    <code>{group.path}</code>
+                    <span>{formatCount(group.matches.length, "line")}</span>
+                  </header>
+                  <div className="tool-search-group__lines">
+                    {group.matches.map((match, index) => (
+                      <div
+                        className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
+                        key={`${match.line}:${index}`}
+                      >
+                        <span className="tool-search-line__number">
+                          {match.line}
+                        </span>
+                        <code>{match.text || " "}</code>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="tool-empty">{block.emptyText ?? "No matches"}</div>
+          )}
+        </div>
+      );
+    case "replacement":
+      return <ReplacementDiff block={block} />;
+    case "image":
+      return (
+        <figure className="tool-image-block">
+          <ToolBlockHeading label={block.label} />
+          <img
+            className="tool-image-block__image"
+            src={`data:${block.mimeType};base64,${block.data}`}
+            alt={block.alt}
+            loading="lazy"
+            decoding="async"
+          />
+        </figure>
+      );
+    case "notice":
+      return (
+        <div className={`tool-notice tool-notice--${block.tone ?? "muted"}`}>
+          {block.text}
+        </div>
+      );
+    case "text":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label={block.label} />
+          <pre className={`tool-text ${block.error ? "tool-text--error" : ""}`}>
+            {block.text}
+          </pre>
+        </div>
+      );
+  }
+}
+
+function formatCount(value: number, noun: string): string {
+  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
+}
+
+function ToolDetails({
+  call,
+  result,
+  status,
+  presentation,
+}: {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+  status: ToolStatus;
+  presentation: ResolvedToolPresentation | null;
+}) {
+  if (!presentation)
+    return <RawToolDetails call={call} result={result} status={status} />;
+  let blocks: ToolPresentationBlock[] | null;
+  try {
+    blocks = presentation.blocks();
+  } catch {
+    blocks = null;
+  }
+  if (
+    !blocks ||
+    blocks.some(
+      (block) => block.type === "diff" && !parseUnifiedDiff(block.text),
+    )
+  )
+    return <RawToolDetails call={call} result={result} status={status} />;
+  return (
+    <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
+      {blocks.map((block, index) => (
+        <ToolPresentationBlockView
+          block={block}
+          key={`${block.type}:${index}`}
+        />
+      ))}
+      {!result ? <PendingToolResult status={status} /> : null}
+    </div>
   );
 }
 
@@ -528,6 +884,10 @@ export function ToolCard({
     DYNAMIC_TOOL_EXPANDED_MIN_MS,
     onDynamicClosed,
   );
+  const presentation = useMemo(
+    () => toolPresentationRegistry.resolve({ call, result }),
+    [call, result],
+  );
   return (
     <CollapsibleCard
       defaultVisibility={
@@ -539,12 +899,23 @@ export function ToolCard({
       icon={toolIcon(call.name)}
       label={<code className="card__tool-name">{call.name}</code>}
       toggleLabel={`${call.name} tool`}
-      summary={<ToolSummary call={call} />}
+      summary={
+        presentation ? (
+          <PresentedToolSummary summary={presentation.summary} />
+        ) : (
+          <ToolSummary call={call} />
+        )
+      }
       status={statusIcon(status)}
       copyText={toolClipboardText(call, result)}
       copyLabel={`${call.name} tool block`}
     >
-      <ToolDetails call={call} result={result} status={status} />
+      <ToolDetails
+        call={call}
+        result={result}
+        status={status}
+        presentation={presentation}
+      />
     </CollapsibleCard>
   );
 }
@@ -615,7 +986,13 @@ function compactActivityPresentation(activity: CompactActivity, live: boolean) {
   }
 
   const status = toolStatus(activity.result, activity.activity, live);
-  const summary = toolSummary(activity.call);
+  const resolved = toolPresentationRegistry.resolve({
+    call: activity.call,
+    result: activity.result,
+  });
+  const summary = resolved
+    ? toolPresentationSummaryText(resolved.summary)
+    : toolSummary(activity.call);
   return {
     custom: false,
     failed: status === "failure",
@@ -647,6 +1024,21 @@ export function CompactActivityStrip({
   const itemsRef = useRef<HTMLDivElement>(null);
   const rendered =
     renderedIndex == null ? null : (activities[renderedIndex] ?? null);
+  const activityPresentations = useMemo(
+    () =>
+      activities.map((activity) => compactActivityPresentation(activity, live)),
+    [activities, live],
+  );
+  const renderedPresentation = useMemo(
+    () =>
+      rendered?.kind === "tool"
+        ? toolPresentationRegistry.resolve({
+            call: rendered.call,
+            result: rendered.result,
+          })
+        : null,
+    [rendered],
+  );
 
   // Keep the last detail mounted for the brief grid-collapse transition; it is
   // inert throughout closing and is removed once no pixels remain visible.
@@ -674,7 +1066,7 @@ export function CompactActivityStrip({
       >
         {activities.map((activity, index) => {
           const active = selectedIndex === index;
-          const presentation = compactActivityPresentation(activity, live);
+          const presentation = activityPresentations[index];
           return (
             <button
               key={activity.key}
@@ -724,7 +1116,15 @@ export function CompactActivityStrip({
                 }
                 toggleLabel={`${rendered.call.name} tool details`}
                 onToggle={() => setSelectedIndex(null)}
-                summary={<ToolSummary call={rendered.call} />}
+                summary={
+                  renderedPresentation ? (
+                    <PresentedToolSummary
+                      summary={renderedPresentation.summary}
+                    />
+                  ) : (
+                    <ToolSummary call={rendered.call} />
+                  )
+                }
                 status={statusIcon(
                   toolStatus(rendered.result, rendered.activity, live),
                 )}
@@ -736,6 +1136,7 @@ export function CompactActivityStrip({
                   call={rendered.call}
                   result={rendered.result}
                   status={toolStatus(rendered.result, rendered.activity, live)}
+                  presentation={renderedPresentation}
                 />
               </div>
             </section>
