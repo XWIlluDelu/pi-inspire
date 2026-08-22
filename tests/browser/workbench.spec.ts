@@ -389,7 +389,11 @@ test("running composer exposes steer, queue, and abort controls", async ({
           root.setAttribute("data-theme", theme);
           root.setAttribute("data-palette", palette);
           const style = getComputedStyle(composer);
-          return { animation: style.animationName, shadow: style.boxShadow };
+          return {
+            animation: style.animationName,
+            duration: style.animationDuration,
+            shadow: style.boxShadow,
+          };
         }),
       );
       if (initialTheme === null) root.removeAttribute("data-theme");
@@ -400,9 +404,30 @@ test("running composer exposes steer, queue, and abort controls", async ({
     });
   expect(
     liveAppearance.every(
-      ({ animation, shadow }) => animation === "none" && shadow !== "none",
+      ({ animation, duration, shadow }) =>
+        animation === "composer-running-breathe" &&
+        duration === "2.8s" &&
+        shadow !== "none",
     ),
   ).toBe(true);
+  const firstBreath = await page
+    .locator(".composer")
+    .evaluate((composer) => getComputedStyle(composer).boxShadow);
+  await page.waitForTimeout(700);
+  expect(
+    await page
+      .locator(".composer")
+      .evaluate((composer) => getComputedStyle(composer).boxShadow),
+  ).not.toBe(firstBreath);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reducedMotionAppearance = await page
+    .locator(".composer")
+    .evaluate((composer) => {
+      const style = getComputedStyle(composer);
+      return { animation: style.animationName, shadow: style.boxShadow };
+    });
+  expect(reducedMotionAppearance.animation).toBe("none");
+  expect(reducedMotionAppearance.shadow).not.toBe("none");
 
   const queue = page.getByRole("button", {
     name: "Queue",
@@ -451,7 +476,29 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
   const message = page.getByRole("textbox", { name: "Message" });
   await message.fill("keep the status visible");
   await page.getByRole("button", { name: "Send message" }).click();
-  await expect(page.locator(".composer")).toHaveClass(/composer--running/);
+  const composer = page.locator(".composer");
+  await expect(composer).toHaveClass(/composer--running/);
+  await page.getByRole("button", { name: "Abort running task" }).focus();
+  const runningVisual = await composer.evaluate((element) => {
+    const focused = element.matches(":focus-within");
+    const focusedStyle = getComputedStyle(element);
+    const focusedAnimation = focusedStyle.animationName;
+    const focusedShadow = focusedStyle.boxShadow;
+    (document.activeElement as HTMLElement | null)?.blur();
+    const unfocusedStyle = getComputedStyle(element);
+    return {
+      focused,
+      focusedAnimation,
+      focusedShadow,
+      unfocusedAnimation: unfocusedStyle.animationName,
+      unfocusedShadow: unfocusedStyle.boxShadow,
+    };
+  });
+  expect(runningVisual.focused).toBe(true);
+  expect(runningVisual.focusedAnimation).toBe("composer-running-breathe");
+  expect(runningVisual.unfocusedAnimation).toBe("composer-running-breathe");
+  expect(runningVisual.focusedShadow).not.toBe("none");
+  expect(runningVisual.unfocusedShadow).not.toBe("none");
 
   const results = await new AxeBuilder({ page })
     .include(".topbar")

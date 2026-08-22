@@ -4315,7 +4315,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 /* Focus lights the surface being typed into with clean accent border */
-.composer:focus-within:not(:has(.welcome__directory:focus-within)) {
+.composer:focus-within:not(:where(:has(.welcome__directory:focus-within))) {
   border-color: var(--accent);
   box-shadow: var(--shadow-1);
 }
@@ -4326,14 +4326,26 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   background: var(--accent-tint);
 }
 
-/* Live work gets a quiet, static semantic halo. Terminal outcomes stay in
-   the named status surfaces rather than animating the composer across session
-   changes. */
+/* Running work breathes through the whole composer surface. Focus may change
+   controls inside it, but never takes ownership of this run-level signal. */
 .composer--running,
 .composer--running:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--running-glow) 42%, transparent),
     0 0 10px color-mix(in srgb, var(--running-glow) 18%, transparent);
+  animation: composer-running-breathe 2.8s ease-in-out infinite;
+}
+
+@keyframes composer-running-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--running-glow) 42%, transparent),
+      0 0 10px color-mix(in srgb, var(--running-glow) 18%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--running-glow) 60%, transparent),
+      0 0 18px color-mix(in srgb, var(--running-glow) 32%, transparent),
+      0 0 30px color-mix(in srgb, var(--running-glow) 10%, transparent);
+  }
 }
 
 .composer--retrying,
