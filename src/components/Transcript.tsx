@@ -10,6 +10,7 @@ import {
 import {
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
+  emptyPendingQueues,
   type GenericExtensionDisplay,
   isBusyRunState,
   type PendingQueues,
@@ -19,6 +20,7 @@ import {
   type VisibilityPreference,
 } from "../../shared/contracts";
 import { messageFallbackCorrelation } from "../../shared/message-identity";
+import type { PendingManagementIntent } from "../api";
 import {
   type ActivityTool,
   asMessage,
@@ -29,8 +31,8 @@ import {
   type ToolCallContent,
 } from "../events";
 import {
-  store,
   type ActivityMaterializationMode,
+  store,
   type TranscriptActivityRangeState,
 } from "../store";
 import { Dropdown } from "./Dropdown";
@@ -38,13 +40,13 @@ import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
+import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
 import {
   assistantEndsWithToolRun,
   CustomActivityBatch,
   customActivityItems,
   genericContentTitle,
 } from "./transcript-cards";
-import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
 import {
   type ActivityFoldPresentation,
   type ActivityTelemetryItem,
@@ -149,7 +151,10 @@ export function Transcript({
   sessionId = "",
   viewId = "",
   projectionIncarnation = "",
-  queue = { steering: [], followUp: [] },
+  queue = emptyPendingQueues(),
+  pendingAction = null,
+  onManagePending = store.managePending,
+  onPendingMessageTexts = store.pendingMessageTexts,
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
@@ -184,6 +189,11 @@ export function Transcript({
   viewId?: string;
   projectionIncarnation?: string;
   queue?: PendingQueues;
+  pendingAction?: PendingManagementIntent["action"] | null;
+  onManagePending?: (action: PendingManagementIntent) => Promise<boolean>;
+  onPendingMessageTexts?: (
+    messageIds: readonly string[],
+  ) => Promise<string[] | null>;
   extensionDisplays?: GenericExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
@@ -1421,11 +1431,17 @@ export function Transcript({
               ))}
             </div>
           )}
-          {queue.steering.length > 0 ||
+          {queue.paused ||
+          queue.steering.length > 0 ||
           queue.followUp.length > 0 ||
           extensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
-              <PendingQueueGroups queue={queue} />
+              <PendingQueueGroups
+                queue={queue}
+                pendingAction={pendingAction}
+                onManage={onManagePending}
+                onReadTexts={onPendingMessageTexts}
+              />
               <ExtensionDisplaySurface displays={extensionDisplays} />
             </div>
           ) : null}

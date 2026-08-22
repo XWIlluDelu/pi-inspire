@@ -13,6 +13,7 @@ import type {
   GitStatusResponse,
   ModelOption,
   NewSessionOptions,
+  PendingQueues,
   PromptRequest,
   SessionDeleteResponse,
   SessionListResponse,
@@ -22,9 +23,10 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
+import { emptyPendingQueues } from "../shared/contracts.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import type { ResourceContext } from "./resources.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { PendingManagementRequest, RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
@@ -458,7 +460,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     NonNullable<ActiveSnapshot["active"]>
   >();
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly pendingBySession = new Map<string, PendingQueues>();
+  private readonly pendingText = new Map<string, string>();
   private nextSession = 0;
+  private nextPending = 0;
 
   constructor({ streamIntervalMs = 18 }: { streamIntervalMs?: number } = {}) {
     super();
@@ -471,6 +476,47 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
 
   sessionCwd(sessionId: string): string | null {
     return this.sessions.get(sessionId)?.cwd ?? null;
+  }
+
+  private pendingFor(sessionId: string): PendingQueues {
+    let pending = this.pendingBySession.get(sessionId);
+    if (!pending) {
+      pending = { ...emptyPendingQueues(), managementAvailable: true };
+      this.pendingBySession.set(sessionId, pending);
+    }
+    return pending;
+  }
+
+  private publishPending(sessionId: string): PendingQueues {
+    const pending = this.pendingFor(sessionId);
+    if (this.state.active?.sessionId === sessionId) {
+      this.state.pendingQueues = structuredClone(pending);
+    }
+    this.emitSession(sessionId, {
+      type: "queue_update",
+      steering: pending.steering.map((entry) => entry.textPreview),
+      followUp: pending.followUp.map((entry) => entry.textPreview),
+      pendingQueues: structuredClone(pending),
+    });
+    return structuredClone(pending);
+  }
+
+  private queuePrompt(request: PromptRequest, kind: "steer" | "followUp") {
+    const pending = this.pendingFor(request.sessionId);
+    const id = `mock-pending-${++this.nextPending}`;
+    const text = request.message;
+    this.pendingText.set(id, text);
+    const entry = {
+      id,
+      textPreview: text.slice(0, 512),
+      textLength: text.length,
+      textTruncated: text.length > 512,
+      imageCount: 0,
+      nonTextContentCount: 0,
+    };
+    (kind === "steer" ? pending.steering : pending.followUp).push(entry);
+    pending.revision += 1;
+    this.publishPending(request.sessionId);
   }
 
   private requireSession(
@@ -555,6 +601,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         ? currentStatus
         : { runState: currentStatus.runState };
     this.state.active = active;
+    this.state.pendingQueues = structuredClone(this.pendingFor(id));
     this.state.runState = viewedStatus.runState;
     this.state.sessionStatuses[id] = viewedStatus;
     return this.state;
@@ -591,6 +638,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
 
   async deselectSession(): Promise<ActiveSnapshot> {
     this.state.active = null;
+    this.state.pendingQueues = emptyPendingQueues();
     this.state.runState = "idle";
     return this.state;
   }
@@ -621,6 +669,13 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       throw Object.assign(new Error("Session not found"), { status: 404 });
     summaries.splice(index, 1);
     this.sessions.delete(sessionId);
+    const pending = this.pendingBySession.get(sessionId);
+    if (pending) {
+      for (const entry of [...pending.steering, ...pending.followUp]) {
+        this.pendingText.delete(entry.id);
+      }
+      this.pendingBySession.delete(sessionId);
+    }
     delete this.state.sessionStatuses[sessionId];
     return { sessionId, disposition: "trashed" };
   }
@@ -700,8 +755,17 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       await this.compact(request.sessionId);
       return;
     }
-    if (active.isStreaming)
-      throw new Error("Mock session is already streaming");
+    const pending = this.pendingFor(request.sessionId);
+    if (active.isStreaming || pending.paused) {
+      if (active.isStreaming && !request.behavior) {
+        throw new Error("Mock session is already streaming");
+      }
+      this.queuePrompt(
+        request,
+        request.behavior === "steer" ? "steer" : "followUp",
+      );
+      return;
+    }
     const sessionId = active.sessionId;
     const timestamp = Date.now();
     const user = { role: "user", content: request.message, timestamp };
@@ -757,9 +821,151 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         type: "message_end",
         message: structuredClone(assistant),
       });
+      const pending = this.pendingFor(sessionId);
+      if (
+        !pending.paused &&
+        (pending.steering.length > 0 || pending.followUp.length > 0)
+      ) {
+        for (const entry of [...pending.steering, ...pending.followUp]) {
+          this.pendingText.delete(entry.id);
+        }
+        pending.steering = [];
+        pending.followUp = [];
+        pending.revision += 1;
+        this.publishPending(sessionId);
+      }
       this.emitSession(sessionId, { type: "agent_settled" });
     }, this.streamIntervalMs);
     this.timers.set(sessionId, timer);
+  }
+
+  async managePending(
+    sessionId: string,
+    request: PendingManagementRequest,
+  ): Promise<PendingQueues> {
+    const active = this.requireSession(sessionId);
+    const pending = this.pendingFor(sessionId);
+    if (request.expectedRevision !== pending.revision) {
+      throw Object.assign(new Error("Pending messages changed; retry"), {
+        status: 409,
+      });
+    }
+    const requirePaused = () => {
+      if (!pending.paused) {
+        throw Object.assign(
+          new Error("Pause Pending input before modifying it"),
+          { status: 409 },
+        );
+      }
+    };
+    const remove = (id: string) => {
+      const steeringIndex = pending.steering.findIndex(
+        (item) => item.id === id,
+      );
+      if (steeringIndex >= 0)
+        return pending.steering.splice(steeringIndex, 1)[0];
+      const followUpIndex = pending.followUp.findIndex(
+        (item) => item.id === id,
+      );
+      if (followUpIndex >= 0)
+        return pending.followUp.splice(followUpIndex, 1)[0];
+      return undefined;
+    };
+
+    switch (request.action) {
+      case "pause":
+        if (!pending.paused) {
+          pending.paused = true;
+          pending.revision += 1;
+        }
+        break;
+      case "resume":
+        if (pending.paused) {
+          pending.paused = false;
+          pending.revision += 1;
+        }
+        break;
+      case "delete": {
+        requirePaused();
+        const removed = remove(request.messageId);
+        if (!removed) {
+          throw Object.assign(new Error("Pending message not found"), {
+            status: 409,
+          });
+        }
+        this.pendingText.delete(removed.id);
+        pending.revision += 1;
+        break;
+      }
+      case "clear": {
+        requirePaused();
+        const entries = [...pending.steering, ...pending.followUp];
+        if (entries.length > 0) {
+          for (const entry of entries) this.pendingText.delete(entry.id);
+          pending.steering = [];
+          pending.followUp = [];
+          pending.revision += 1;
+        }
+        break;
+      }
+      case "convert": {
+        requirePaused();
+        const target =
+          request.target === "steer" ? pending.steering : pending.followUp;
+        if (!target.some((item) => item.id === request.messageId)) {
+          const moved = remove(request.messageId);
+          if (!moved) {
+            throw Object.assign(new Error("Pending message not found"), {
+              status: 409,
+            });
+          }
+          target.push(moved);
+          pending.revision += 1;
+        }
+        break;
+      }
+    }
+
+    this.publishPending(sessionId);
+    if (
+      request.action === "resume" &&
+      !active.isStreaming &&
+      (pending.steering.length > 0 || pending.followUp.length > 0)
+    ) {
+      for (const entry of [...pending.steering, ...pending.followUp]) {
+        this.pendingText.delete(entry.id);
+      }
+      pending.steering = [];
+      pending.followUp = [];
+      pending.revision += 1;
+      this.publishPending(sessionId);
+    }
+    return structuredClone(pending);
+  }
+
+  async pendingMessageTexts(
+    sessionId: string,
+    messageIds: readonly string[],
+  ): Promise<Array<{ id: string; text: string }>> {
+    this.requireSession(sessionId);
+    const pending = this.pendingFor(sessionId);
+    const currentIds = new Set(
+      [...pending.steering, ...pending.followUp].map((item) => item.id),
+    );
+    if (new Set(messageIds).size !== messageIds.length) {
+      throw Object.assign(new Error("Pending message ids must be unique"), {
+        status: 400,
+      });
+    }
+    return messageIds.map((id) => {
+      const text = currentIds.has(id) ? this.pendingText.get(id) : undefined;
+      if (text === undefined) {
+        throw Object.assign(new Error("Pending message not found"), {
+          status: 409,
+        });
+      }
+      return { id, text };
+    });
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -771,6 +977,19 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     this.state.sessionStatuses[active.sessionId] = { runState: "aborted" };
     if (this.state.active?.sessionId === active.sessionId)
       this.state.runState = "aborted";
+    const pending = this.pendingFor(active.sessionId);
+    if (
+      !pending.paused &&
+      (pending.steering.length > 0 || pending.followUp.length > 0)
+    ) {
+      for (const entry of [...pending.steering, ...pending.followUp]) {
+        this.pendingText.delete(entry.id);
+      }
+      pending.steering = [];
+      pending.followUp = [];
+      pending.revision += 1;
+      this.publishPending(active.sessionId);
+    }
     this.emitSession(active.sessionId, { type: "agent_settled" });
   }
 

@@ -143,6 +143,62 @@ test("activity folds move through the manual density ladder", async ({
   );
 });
 
+test("paused Pending remains a lightweight editable queue across settlement", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const input = composer.getByRole("textbox", { name: "Message" });
+  await input.fill(`long running prompt ${"x".repeat(260)}`);
+  await composer.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    composer.getByRole("button", { name: "Abort running task" }),
+  ).toBeVisible();
+
+  await input.fill("first pending instruction");
+  await composer.getByRole("button", { name: "Send as steer" }).click();
+  const pending = page.getByRole("region", { name: "Pending input" });
+  await expect(pending).toContainText("first pending instruction");
+  await pending.getByRole("button", { name: "Pause Pending input" }).click();
+
+  const paused = page.getByRole("region", { name: "Pending input paused" });
+  await expect(paused).toBeVisible();
+  await composer.getByRole("button", { name: "Queue" }).click();
+  await input.fill("second pending instruction");
+  await composer
+    .getByRole("button", { name: "Queue after current task" })
+    .click();
+  await expect(paused).toContainText("second pending instruction");
+
+  await expect(
+    composer.getByRole("button", { name: "Abort running task" }),
+  ).toHaveCount(0, { timeout: 10_000 });
+  await expect(paused).toContainText("first pending instruction");
+  await paused
+    .getByRole("button", { name: "Move Steer item 1 to Queue" })
+    .click();
+  await expect(
+    paused.getByRole("region", { name: "Pending queue" }),
+  ).toContainText("first pending instruction");
+  await paused.getByRole("button", { name: "Delete Queue item 1" }).click();
+  await expect(paused).not.toContainText("second pending instruction");
+
+  await paused.getByRole("button", { name: "Clear all Pending input" }).click();
+  await paused.getByRole("button", { name: "Clear all" }).click();
+  await expect(paused).toContainText("Pending paused");
+  await expect(paused.getByRole("listitem")).toHaveCount(0);
+
+  await input.fill("queued while idle and paused");
+  await composer.getByRole("button", { name: "Send message" }).click();
+  await expect(paused).toContainText("queued while idle and paused");
+  await paused.getByRole("button", { name: "Resume Pending input" }).click();
+  await expect(
+    page.getByRole("region", { name: "Pending input paused" }),
+  ).toHaveCount(0);
+});
+
 test("narrow pairing controls contain a long access token", async ({
   page,
 }) => {

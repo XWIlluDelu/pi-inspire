@@ -13,7 +13,7 @@ Order the work needed to establish the first complete local daily-use baseline a
 
 - Completed: session continuity, Git and conversation inspection, daily-use accelerators, branching, bounded history, evidence-gated maintenance, release packaging, and correctness boundaries form the `v0.1.0` local baseline.
 - Completed: the detachable `ssh-reverse` sample and generic forwarded-HTTPS hardening preserve the loopback host as Pi and data authority.
-- Closed: no product expansion is selected through this roadmap; independently grounded work now uses a focused stage, including [[follow-pending-input-takeback-2026-08-19]].
+- Closed: no product expansion is selected through this roadmap; independently grounded work now uses a focused stage, including [[follow-pending-input-management-2026-08-19]].
 
 ## Decisions
 

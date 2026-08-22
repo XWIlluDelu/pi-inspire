@@ -15,6 +15,7 @@ import type {
   InspirePreferences,
   NewSessionDefaults,
   NewSessionOptions,
+  PendingQueues,
   ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
@@ -23,12 +24,30 @@ import type {
   SessionListResponse,
   TranscriptActivityPage,
   TranscriptPage,
-  UserTurnIndexPage,
-  UserTurnTranscriptPage,
   UpdateCheckResponse,
   UploadedAttachment,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
 } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
+
+export type PendingManagementAction =
+  | { action: "pause"; expectedRevision: number }
+  | { action: "resume"; expectedRevision: number }
+  | { action: "delete"; expectedRevision: number; messageId: string }
+  | { action: "clear"; expectedRevision: number }
+  | {
+      action: "convert";
+      expectedRevision: number;
+      messageId: string;
+      target: "steer" | "followUp";
+    };
+
+export type PendingManagementIntent = PendingManagementAction extends infer T
+  ? T extends PendingManagementAction
+    ? Omit<T, "expectedRevision">
+    : never
+  : never;
 
 export interface ProjectFileResult {
   path: string;
@@ -289,6 +308,17 @@ export function createApi(token: string | null = null) {
       post<{ accepted: boolean }>(token, "/api/prompt", body),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
+    managePending: (sessionId: string, action: PendingManagementAction) =>
+      post<{ pendingQueues: PendingQueues }>(token, "/api/pending", {
+        sessionId,
+        ...action,
+      }),
+    pendingMessageTexts: (sessionId: string, messageIds: string[]) =>
+      post<{ messages: Array<{ id: string; text: string }> }>(
+        token,
+        "/api/pending/text",
+        { sessionId, messageIds },
+      ),
     setModel: (sessionId: string, provider: string, modelId: string) =>
       post<unknown>(token, "/api/control/model", {
         sessionId,

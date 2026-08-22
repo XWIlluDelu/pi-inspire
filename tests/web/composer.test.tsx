@@ -21,6 +21,7 @@ import {
   installFetch,
   jsonBody,
 } from "./helpers";
+import { pendingQueues } from "./pending-fixtures";
 
 let promptBodies: Record<string, unknown>[];
 let abortBodies: Record<string, unknown>[];
@@ -258,14 +259,14 @@ describe("queued composer controls", () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;
     const queued = activeSnapshot();
-    queued.pendingQueues = {
-      steering: ["clarify the constraints"],
-      followUp: ["then summarize"],
-    };
+    queued.pendingQueues = pendingQueues(
+      ["clarify the constraints"],
+      ["then summarize"],
+    );
     act(() => socket.emit({ type: "snapshot", data: queued }));
 
     render(<ActivityBar />);
-    expect(screen.getByText("2 pending")).toBeInTheDocument();
+    expect(screen.getByText("2 Pending")).toBeInTheDocument();
     expect(screen.queryByLabelText("Pending input")).not.toBeInTheDocument();
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));

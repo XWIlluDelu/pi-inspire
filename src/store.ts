@@ -7,6 +7,7 @@ import {
   type BranchTreeResponse,
   type CompletionAttentionPreference,
   defaultPreferences,
+  emptyPendingQueues,
   type GitDiffSide,
   type GitFileChange,
   type GitStatusResponse,
@@ -40,7 +41,14 @@ import {
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
-import { type Api, ApiError, createApi, type ProjectFileResult } from "./api";
+import {
+  type Api,
+  ApiError,
+  createApi,
+  type PendingManagementAction,
+  type PendingManagementIntent,
+  type ProjectFileResult,
+} from "./api";
 import type { PiCommand } from "./composer-completion";
 import { BranchController } from "./controllers/branch-controller";
 import {
@@ -212,6 +220,8 @@ interface AppState extends EventSlice {
    * refused and attachment withdrawals freeze, so a DELETE cannot race the
    * host resolving those same files into the outgoing message. */
   sending: boolean;
+  /** Pending queue mutation currently awaiting the Host. */
+  pendingAction: PendingManagementAction["action"] | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
@@ -301,6 +311,7 @@ const initialState: AppState = {
   attachments: [],
   projectFiles: [],
   sending: false,
+  pendingAction: null,
   resourcesOpen: false,
   contextMode: "files",
   detailMode: "file",
@@ -488,6 +499,7 @@ export class AppStore {
    * never clear a newer owner. */
   private openingOwner: number | null = null;
   private resyncRequest = 0;
+  private pendingActionRequest = 0;
   private readyWhileOpening = new Map<string, number>();
   private olderTranscriptRequest: AbortController | null = null;
   private activityTranscriptRequests = new Map<string, AbortController>();
@@ -870,6 +882,7 @@ export class AppStore {
     );
     if (sessionChanged || viewChanged || projectionReplaced) {
       this.selectionGeneration += 1;
+      if (sessionChanged) this.pendingActionRequest += 1;
       this.branches.invalidateForViewChange();
       // Conversation-derived previews and transcript requests are authorized
       // against one branch lineage, not merely a session id. A same-view
@@ -1047,18 +1060,7 @@ export class AppStore {
       // session is viewed.
       tools: {},
       retry: null,
-      queue: {
-        steering: Array.isArray(snapshot.pendingQueues?.steering)
-          ? snapshot.pendingQueues.steering.filter(
-              (item): item is string => typeof item === "string",
-            )
-          : [],
-        followUp: Array.isArray(snapshot.pendingQueues?.followUp)
-          ? snapshot.pendingQueues.followUp.filter(
-              (item): item is string => typeof item === "string",
-            )
-          : [],
-      },
+      queue: snapshot.pendingQueues ?? emptyPendingQueues(),
       extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
         ? snapshot.pendingExtensionUiRequests
         : [],
@@ -1073,6 +1075,7 @@ export class AppStore {
         ? {
             statuses: {},
             editorText: null,
+            pendingAction: null,
             windowTitle: null,
             contextMode: "files",
             detailMode: "file",
@@ -2340,6 +2343,82 @@ export class AppStore {
       await this.api.abort(sessionId);
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "Failed to abort");
+    }
+  };
+
+  managePending = async (action: PendingManagementIntent): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    const pending = this.state.queue;
+    if (
+      !this.api ||
+      !sessionId ||
+      this.state.pendingAction ||
+      !pending.managementAvailable
+    ) {
+      return false;
+    }
+    const request = ++this.pendingActionRequest;
+    const projectionIncarnation = this.state.transcriptIncarnation;
+    const expectedRevision = pending.revision;
+    this.set({ pendingAction: action.action });
+    try {
+      const response = await this.api.managePending(sessionId, {
+        ...action,
+        expectedRevision,
+      } as PendingManagementAction);
+      if (
+        this.state.sessionId === sessionId &&
+        this.state.transcriptIncarnation === projectionIncarnation &&
+        response.pendingQueues.revision >= this.state.queue.revision
+      ) {
+        this.set({ queue: response.pendingQueues });
+      }
+      return true;
+    } catch (error) {
+      this.fail(
+        error instanceof Error
+          ? error.message
+          : "Failed to update Pending messages",
+      );
+      return false;
+    } finally {
+      if (request === this.pendingActionRequest)
+        this.set({ pendingAction: null });
+    }
+  };
+
+  pendingMessageTexts = async (
+    messageIds: readonly string[],
+  ): Promise<string[] | null> => {
+    const sessionId = this.state.sessionId;
+    const projectionIncarnation = this.state.transcriptIncarnation;
+    if (!this.api || !sessionId || messageIds.length === 0) return null;
+    try {
+      const response = await this.api.pendingMessageTexts(sessionId, [
+        ...messageIds,
+      ]);
+      if (
+        this.state.sessionId !== sessionId ||
+        this.state.transcriptIncarnation !== projectionIncarnation
+      ) {
+        throw new Error("The active Pending list changed before it was copied");
+      }
+      if (
+        response.messages.length !== messageIds.length ||
+        response.messages.some(
+          (message, index) => message.id !== messageIds[index],
+        )
+      ) {
+        throw new Error("The Host returned the wrong Pending messages");
+      }
+      return response.messages.map((message) => message.text);
+    } catch (error) {
+      this.fail(
+        error instanceof Error
+          ? error.message
+          : "Failed to copy the Pending messages",
+      );
+      return null;
     }
   };
 

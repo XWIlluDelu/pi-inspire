@@ -1,13 +1,15 @@
+import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import {
   EXTENSION_ONE_WAY_METHODS,
+  type ExtensionUiRequest,
   emptyPendingQueues,
+  type GenericExtensionDisplay,
+  type PendingMessageSummary,
+  type PendingQueues,
   parseExtensionUiRequest,
   parsePendingExtensionUiRequest,
-  type ExtensionUiRequest,
-  type GenericExtensionDisplay,
   type RunState,
 } from "../shared/contracts";
-import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import { structuralMessageIdentity } from "../shared/message-identity";
 
 // --- Chat message model (structural typing over Pi session messages) ---
@@ -122,9 +124,69 @@ interface RetryInfo {
   message: string;
 }
 
-interface QueueInfo {
-  steering: string[];
-  followUp: string[];
+function pendingSummary(value: unknown): PendingMessageSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    record.id.length === 0 ||
+    record.id.length > 128 ||
+    typeof record.textPreview !== "string" ||
+    record.textPreview.length > 512 ||
+    typeof record.textLength !== "number" ||
+    !Number.isSafeInteger(record.textLength) ||
+    record.textLength < record.textPreview.length ||
+    typeof record.textTruncated !== "boolean" ||
+    record.textTruncated !== record.textLength > record.textPreview.length ||
+    typeof record.imageCount !== "number" ||
+    !Number.isInteger(record.imageCount) ||
+    record.imageCount < 0 ||
+    typeof record.nonTextContentCount !== "number" ||
+    !Number.isInteger(record.nonTextContentCount) ||
+    record.nonTextContentCount < record.imageCount
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    textPreview: record.textPreview,
+    textLength: record.textLength,
+    textTruncated: record.textTruncated === true,
+    imageCount: record.imageCount,
+    nonTextContentCount: record.nonTextContentCount,
+  };
+}
+
+function pendingQueues(value: unknown): PendingQueues | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(record.revision) ||
+    (record.revision as number) < 0 ||
+    typeof record.paused !== "boolean" ||
+    typeof record.managementAvailable !== "boolean" ||
+    !Array.isArray(record.steering) ||
+    !Array.isArray(record.followUp) ||
+    record.steering.length + record.followUp.length > 1_000
+  ) {
+    return null;
+  }
+  const steering = record.steering.map(pendingSummary);
+  const followUp = record.followUp.map(pendingSummary);
+  if (
+    steering.some((item) => item === null) ||
+    followUp.some((item) => item === null) ||
+    new Set([...steering, ...followUp].map((item) => item?.id)).size !==
+      steering.length + followUp.length
+  )
+    return null;
+  return {
+    revision: record.revision as number,
+    paused: record.paused,
+    managementAvailable: record.managementAvailable,
+    steering: steering as PendingMessageSummary[],
+    followUp: followUp as PendingMessageSummary[],
+  };
 }
 
 export interface Notice {
@@ -144,7 +206,7 @@ export interface EventSlice {
   runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
-  queue: QueueInfo;
+  queue: PendingQueues;
   extensionUiRequests: ExtensionUiRequest[];
   extensionUiRespondingId: string | null;
   extensionDisplays: GenericExtensionDisplay[];
@@ -253,12 +315,6 @@ function pushNotice(
 ): void {
   slice.notices = [...slice.notices, { id: slice.nextNoticeId, kind, text }];
   slice.nextNoticeId += 1;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 function upsertExtensionUiRequest(
@@ -389,8 +445,8 @@ export function reduceEvent(
         slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.queue = emptyPendingQueues();
       slice.extensionUiRequests = [];
+      if (!slice.queue.managementAvailable) slice.queue = emptyPendingQueues();
       changed = true;
       resync = true;
       break;
@@ -472,10 +528,9 @@ export function reduceEvent(
       break;
     }
     case "queue_update": {
-      slice.queue = {
-        steering: asStringArray(event.steering),
-        followUp: asStringArray(event.followUp),
-      };
+      const next = pendingQueues(event.pendingQueues);
+      if (!next) break;
+      slice.queue = next;
       changed = true;
       break;
     }
@@ -501,6 +556,7 @@ export function reduceEvent(
       slice.activeAssistantMessageKey = null;
       slice.tools = {};
       slice.retry = null;
+      slice.queue = emptyPendingQueues();
       slice.extensionUiRequests = [];
       pushNotice(
         slice,
