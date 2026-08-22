@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
 import { store } from "../../src/store";
+import { pendingQueues } from "./pending-fixtures";
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -1427,10 +1428,10 @@ describe("transient conversation projections", () => {
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
-        queue={{
-          steering: ["steer first", "steer second"],
-          followUp: ["follow first", "follow second\ncontinued"],
-        }}
+        queue={pendingQueues(
+          ["steer first", "steer second"],
+          ["follow first", "follow second\ncontinued"],
+        )}
       />,
     );
     const pending = screen.getByRole("region", { name: "Pending input" });
@@ -1466,6 +1467,128 @@ describe("transient conversation projections", () => {
     );
     expect(
       screen.queryByRole("button", { name: /cancel/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("pauses active Pending and exposes lightweight management only while paused", async () => {
+    const onManage = vi.fn(async () => true);
+    const onReadTexts = vi.fn(async () => ["full steer", "full queue"]);
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const queue = pendingQueues(["steer preview"], ["queue preview"], {
+      managementAvailable: true,
+      paused: true,
+      revision: 7,
+    });
+    queue.steering[0]!.imageCount = 1;
+    queue.steering[0]!.nonTextContentCount = 1;
+
+    render(
+      <Transcript
+        messages={[]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        queue={queue}
+        onManagePending={onManage}
+        onPendingMessageTexts={onReadTexts}
+      />,
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Pending input paused" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pending paused")).toBeInTheDocument();
+    expect(
+      screen.getByText("1", { selector: ".pending-group__content-kind" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Move Steer item 1 to Queue" }),
+    );
+    expect(onManage).toHaveBeenLastCalledWith({
+      action: "convert",
+      messageId: queue.steering[0]!.id,
+      target: "followUp",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Queue item 1" }),
+    );
+    expect(onManage).toHaveBeenLastCalledWith({
+      action: "delete",
+      messageId: queue.followUp[0]!.id,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear all Pending input" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(onManage).toHaveBeenLastCalledWith({ action: "clear" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy all pending input" }),
+    );
+    await waitFor(() =>
+      expect(onReadTexts).toHaveBeenLastCalledWith([
+        queue.steering[0]!.id,
+        queue.followUp[0]!.id,
+      ]),
+    );
+    expect(writeText).toHaveBeenLastCalledWith("1. full steer\n2. full queue");
+  });
+
+  it("keeps an empty paused Pending panel until explicit resume", () => {
+    const onManage = vi.fn(async () => true);
+    render(
+      <Transcript
+        messages={[]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        queue={pendingQueues([], [], {
+          managementAvailable: true,
+          paused: true,
+          revision: 3,
+        })}
+        onManagePending={onManage}
+      />,
+    );
+
+    expect(screen.getByText("Pending paused")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Resume Pending input" }),
+    );
+    expect(onManage).toHaveBeenCalledWith({ action: "resume" });
+    expect(
+      screen.queryByRole("button", { name: "Clear all Pending input" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers an independent pause action for active managed Pending", () => {
+    const onManage = vi.fn(async () => true);
+    render(
+      <Transcript
+        messages={[]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        queue={pendingQueues(["active"], [], {
+          managementAvailable: true,
+          revision: 1,
+        })}
+        onManagePending={onManage}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pause Pending input" }),
+    );
+    expect(onManage).toHaveBeenCalledWith({ action: "pause" });
+    expect(
+      screen.queryByRole("button", { name: /Delete Steer/ }),
     ).not.toBeInTheDocument();
   });
 

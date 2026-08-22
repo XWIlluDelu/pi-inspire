@@ -644,7 +644,7 @@ describe("stock RPC branch bridge", () => {
       });
       await vi.waitFor(async () =>
         expect((await runtime.snapshot()).pendingQueues?.followUp).toEqual([
-          "queued follow-up",
+          expect.objectContaining({ textPreview: "queued follow-up" }),
         ]),
       );
       const tree = await runtime.branchTree(SESSION_ID);
@@ -657,7 +657,7 @@ describe("stock RPC branch bridge", () => {
         }),
       ).rejects.toMatchObject({
         status: 409,
-        message: "Remove queued messages before forking",
+        message: "Resume Pending and remove queued messages before forking",
       });
       expect(worker.commands.some((command) => command.type === "fork")).toBe(
         false,

@@ -5,9 +5,9 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
 import { PreviewProjection } from "./preview-projection.js";
-import type { ProjectionReconcileResult } from "./session-projection.js";
 import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
+import type { ProjectionReconcileResult } from "./session-projection.js";
 
 /**
  * RuntimeController retains mutation-gate ownership and the slot registry.
@@ -214,6 +214,15 @@ export class RuntimeWorkerLifecycle {
       slot.startupPhase = "starting";
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
+      try {
+        await rpc.request({
+          type: "set_pending_event_mode",
+          mode: "managed",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/unknown command/i.test(message)) throw error;
+      }
       await this.startupAttestor.attest(slot, rpc, baseline);
       slot.ready = true;
       slot.startupPhase = "complete";

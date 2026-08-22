@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, Loader2, Pause, XCircle } from "lucide-react";
 import { useAppState } from "../store";
 
 /**
@@ -57,7 +57,12 @@ export function ActivityBar() {
         </div>
       ) : null}
       {pending > 0 ? (
-        <span className="chip chip--info">{pending} pending</span>
+        <span
+          className={`chip ${state.queue.paused ? "chip--warning" : "chip--info"}`}
+        >
+          {state.queue.paused ? <Pause size={12} aria-hidden /> : null}
+          {pending} {state.queue.paused ? "Paused" : "Pending"}
+        </span>
       ) : null}
     </div>
   );

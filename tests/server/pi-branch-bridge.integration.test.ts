@@ -484,6 +484,9 @@ export default function (pi) {
       expect(forked.snapshot.pendingQueues).toEqual({
         steering: [],
         followUp: [],
+        paused: false,
+        revision: 0,
+        managementAvailable: false,
       });
       expect(sourceText).toContain("active question");
       expect(sourceText).toContain("partial active answer");

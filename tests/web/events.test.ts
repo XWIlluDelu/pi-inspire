@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  type EventSlice,
   emptyEventSlice,
   reduceEvent,
-  type EventSlice,
   type WireEvent,
 } from "../../src/events";
+import { pendingMessage, pendingQueues } from "./pending-fixtures";
 
 function reduce(
   slice: EventSlice,
@@ -324,12 +325,17 @@ describe("message reconciliation", () => {
     ]);
   });
 
-  it("requests an authoritative resync on settle and clears transient activity", () => {
+  it("requests an authoritative resync on settle while preserving managed paused input", () => {
     const slice = emptyEventSlice();
     slice.activeAssistantMessageKey = "live:active-assistant";
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
     slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
-    slice.queue = { steering: ["steer"], followUp: ["later one", "later two"] };
+    slice.queue = pendingQueues(["steer"], ["later one", "later two"], {
+      managementAvailable: true,
+      paused: true,
+      revision: 4,
+    });
+    const pending = slice.queue;
     const { slice: next, resync } = reduce(slice, new Set(), {
       type: "agent_settled",
     });
@@ -338,7 +344,17 @@ describe("message reconciliation", () => {
     expect(next.activeAssistantMessageKey).toBeNull();
     expect(next.tools).toEqual({});
     expect(next.retry).toBeNull();
-    expect(next.queue).toEqual({ steering: [], followUp: [] });
+    expect(next.queue).toEqual(pending);
+  });
+
+  it("clears the lossy legacy queue projection on settlement", () => {
+    const slice = emptyEventSlice();
+    slice.queue = pendingQueues(["legacy"], []);
+    const { slice: next } = reduce(slice, new Set(), {
+      type: "agent_settled",
+    });
+    expect(next.queue.steering).toEqual([]);
+    expect(next.queue.managementAvailable).toBe(false);
   });
 });
 
@@ -420,12 +436,15 @@ describe("transient tool/retry/queue activity", () => {
   });
 
   it("preserves queued steering and follow-up input in separate source order", () => {
+    const pending = pendingQueues(["a"], ["b", "c"], {
+      managementAvailable: true,
+      revision: 3,
+    });
     const { slice } = reduce(emptyEventSlice(), new Set(), {
       type: "queue_update",
-      steering: ["a"],
-      followUp: ["b", "c"],
+      pendingQueues: pending,
     });
-    expect(slice.queue).toEqual({ steering: ["a"], followUp: ["b", "c"] });
+    expect(slice.queue).toEqual(pending);
   });
 
   it("surfaces extension errors as error notices without touching messages", () => {
@@ -600,8 +619,14 @@ describe("truthful change reporting", () => {
   it("creates fresh pending queue arrays for every slice", () => {
     const first = emptyEventSlice();
     const second = emptyEventSlice();
-    first.queue.steering.push("one");
-    expect(second.queue).toEqual({ steering: [], followUp: [] });
+    first.queue.steering.push(pendingMessage("one"));
+    expect(second.queue).toEqual({
+      managementAvailable: false,
+      paused: false,
+      revision: 0,
+      steering: [],
+      followUp: [],
+    });
   });
 
   it("returns the same slice reference and changed=false for unknown events", () => {

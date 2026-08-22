@@ -3,25 +3,19 @@ import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
-import { parseCompactCommand } from "../shared/commands.js";
-import {
-  messageFallbackCorrelation,
-  structuralMessageIdentity,
-} from "../shared/message-identity.js";
 import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
   type BranchBridgeRequest,
   type BranchBridgeResult,
+  decodeBranchBridgeJson,
+  encodeBranchBridgeJson,
 } from "../shared/branch-bridge-protocol.js";
+import { parseCompactCommand } from "../shared/commands.js";
 import {
-  emptyPendingQueues,
-  isBusyRunState,
-  parsePendingExtensionUiRequest,
   type ActiveSnapshot,
   type BranchForkRequest,
   type BranchForkResponse,
@@ -29,41 +23,42 @@ import {
   type BranchNavigateResponse,
   type BranchTreeResponse,
   type ExtensionUiRequest,
+  emptyPendingQueues,
   type GenericExtensionDisplay,
   type HiddenClearResponse,
+  isBusyRunState,
+  MAX_PENDING_MESSAGES,
+  MAX_PENDING_PREVIEW_CHARS,
   type NewSessionOptions,
+  type PendingMessageSummary,
+  type PendingQueues,
   type ProjectionConflict,
   type PromptRequest,
+  parsePendingExtensionUiRequest,
+  type SessionDeleteResponse,
+  type SessionRuntimeStatus,
   type TranscriptActivityPage,
   type TranscriptPage,
   type UserTurnIndexPage,
   type UserTurnTranscriptPage,
-  type SessionDeleteResponse,
-  type SessionRuntimeStatus,
 } from "../shared/contracts.js";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
-  addAttachmentContext,
+  messageFallbackCorrelation,
+  structuralMessageIdentity,
+} from "../shared/message-identity.js";
+import {
   AttachmentStore,
+  addAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
-import { nullDiagnosticLogger, type DiagnosticLogger } from "./diagnostics.js";
+import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import {
   isPiRpcOutcomeUnknown,
   MAX_RPC_LINE_BYTES,
+  type PiRpcOptions,
   PiRpcOutcomeUnknownError,
   PiRpcProcess,
-  type PiRpcOptions,
 } from "./pi-rpc.js";
-import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
-import {
-  deleteSessionFile,
-  type DeleteSessionRecord,
-} from "./session-delete.js";
-import {
-  loadSessionPreview,
-  type ActiveSessionSnapshot,
-} from "./session-preview.js";
 import { PreviewProjection } from "./preview-projection.js";
 import {
   isCanonicalIsoTimestamp,
@@ -71,31 +66,44 @@ import {
 } from "./runtime-entry-chain.js";
 import { RuntimeProcessRegistry } from "./runtime-process-registry.js";
 import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
+import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
+import {
+  type DeleteSessionRecord,
+  deleteSessionFile,
+} from "./session-delete.js";
+import {
+  type ActiveSessionSnapshot,
+  loadSessionPreview,
+} from "./session-preview.js";
+
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
+
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
 import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
+
 export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
-import {
-  boundedTranscriptValue,
-  SessionProjection,
-  TRANSIENT_OVERLAY_MAX_BYTES,
-  type ProjectionReconcileResult,
-  type SessionProjectionView,
-} from "./session-projection.js";
-import type { ResourceContext } from "./resources.js";
+
 import { samePersistedJson } from "./persisted-json.js";
-import { projectSafeValue } from "./safe-projection.js";
+import type { ResourceContext } from "./resources.js";
 import {
+  type BranchBridgeIdentity,
   createRuntimeSlot,
   emptyCustomActivityOwnership,
-  type BranchBridgeIdentity,
   type OwnershipDecision,
   type PendingBranchBridge,
   type PersistenceExpectation,
   type PersistenceMatcher,
   type RuntimeSlot,
 } from "./runtime-slot.js";
+import { projectSafeValue } from "./safe-projection.js";
+import {
+  boundedTranscriptValue,
+  type ProjectionReconcileResult,
+  SessionProjection,
+  type SessionProjectionView,
+  TRANSIENT_OVERLAY_MAX_BYTES,
+} from "./session-projection.js";
 
 const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -143,6 +151,18 @@ export type MaintenanceRestartDecision =
   | { kind: "ready"; expiresAt: number }
   | { kind: "busy"; reason: MaintenanceRestartBusyReason };
 
+export type PendingManagementRequest =
+  | { action: "pause"; expectedRevision: number }
+  | { action: "resume"; expectedRevision: number }
+  | { action: "delete"; expectedRevision: number; messageId: string }
+  | { action: "clear"; expectedRevision: number }
+  | {
+      action: "convert";
+      expectedRevision: number;
+      messageId: string;
+      target: "steer" | "followUp";
+    };
+
 export interface RuntimeLike {
   /** Id of the currently visible session; session-bound routes compare
    * against this so stale handles cannot outlive a selection change. */
@@ -166,6 +186,14 @@ export interface RuntimeLike {
   ): Promise<HiddenClearResponse>;
   prompt(request: PromptRequest): Promise<void>;
   abort(sessionId: string): Promise<void>;
+  managePending(
+    sessionId: string,
+    request: PendingManagementRequest,
+  ): Promise<PendingQueues>;
+  pendingMessageTexts(
+    sessionId: string,
+    messageIds: readonly string[],
+  ): Promise<Array<{ id: string; text: string }>>;
   rename(sessionId: string, name: string): Promise<void>;
   setModel(
     sessionId: string,
@@ -355,6 +383,126 @@ function compactionMatcher(result: unknown): PersistenceMatcher | null {
 
 function bridgeToken(prefix: string): string {
   return `${prefix}_${randomBytes(24).toString("base64url")}`;
+}
+
+const MAX_PENDING_TEXT_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+function pendingMessageSummary(value: unknown): PendingMessageSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    record.id.length === 0 ||
+    record.id.length > 128 ||
+    typeof record.textPreview !== "string" ||
+    record.textPreview.length > MAX_PENDING_PREVIEW_CHARS ||
+    typeof record.textLength !== "number" ||
+    !Number.isSafeInteger(record.textLength) ||
+    record.textLength < record.textPreview.length ||
+    typeof record.textTruncated !== "boolean" ||
+    record.textTruncated !== record.textLength > record.textPreview.length ||
+    typeof record.imageCount !== "number" ||
+    !Number.isSafeInteger(record.imageCount) ||
+    record.imageCount < 0 ||
+    typeof record.nonTextContentCount !== "number" ||
+    !Number.isSafeInteger(record.nonTextContentCount) ||
+    record.nonTextContentCount < record.imageCount
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    textPreview: record.textPreview,
+    textLength: record.textLength,
+    textTruncated: record.textTruncated,
+    imageCount: record.imageCount,
+    nonTextContentCount: record.nonTextContentCount,
+  };
+}
+
+function pendingQueuesFromRecord(
+  value: unknown,
+  legacySteering: unknown,
+  legacyFollowUp: unknown,
+  previousRevision: number,
+): PendingQueues {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const steering = Array.isArray(record.steering)
+      ? record.steering.map(pendingMessageSummary)
+      : [];
+    const followUp = Array.isArray(record.followUp)
+      ? record.followUp.map(pendingMessageSummary)
+      : [];
+    if (
+      typeof record.paused === "boolean" &&
+      typeof record.revision === "number" &&
+      Number.isSafeInteger(record.revision) &&
+      record.revision >= 0 &&
+      steering.length + followUp.length <= MAX_PENDING_MESSAGES &&
+      steering.every((item): item is PendingMessageSummary => item !== null) &&
+      followUp.every((item): item is PendingMessageSummary => item !== null) &&
+      new Set([...steering, ...followUp].map((item) => item?.id)).size ===
+        steering.length + followUp.length
+    ) {
+      return {
+        managementAvailable: true,
+        paused: record.paused,
+        revision: record.revision,
+        steering,
+        followUp,
+      };
+    }
+  }
+
+  const legacy = (
+    values: unknown,
+    kind: "steer" | "followUp",
+    limit: number,
+  ) => {
+    const summaries: PendingMessageSummary[] = [];
+    if (!Array.isArray(values) || limit <= 0) return summaries;
+    for (const text of values) {
+      if (typeof text !== "string") continue;
+      const index = summaries.length;
+      summaries.push({
+        id: `legacy-${kind}-${index}`,
+        textPreview: text.slice(0, MAX_PENDING_PREVIEW_CHARS),
+        textLength: text.length,
+        textTruncated: text.length > MAX_PENDING_PREVIEW_CHARS,
+        imageCount: 0,
+        nonTextContentCount: 0,
+      });
+      if (summaries.length === limit) break;
+    }
+    return summaries;
+  };
+  const steering = legacy(legacySteering, "steer", MAX_PENDING_MESSAGES);
+  return {
+    managementAvailable: false,
+    paused: false,
+    revision: previousRevision + 1,
+    steering,
+    followUp: legacy(
+      legacyFollowUp,
+      "followUp",
+      MAX_PENDING_MESSAGES - steering.length,
+    ),
+  };
+}
+
+function newestPendingQueues(
+  current: PendingQueues,
+  candidate: PendingQueues,
+): PendingQueues {
+  if (
+    current.managementAvailable &&
+    candidate.managementAvailable &&
+    candidate.revision < current.revision
+  ) {
+    return current;
+  }
+  return candidate;
 }
 
 function newBridgeIdentity(): BranchBridgeIdentity {
@@ -601,6 +749,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         isBusyRunState(slot.runState) ||
         slot.runState === "conflict" ||
         slot.pendingExtensionUiRequests.size > 0 ||
+        slot.pendingQueues.paused ||
         slot.pendingQueues.steering.length > 0 ||
         slot.pendingQueues.followUp.length > 0,
     );
@@ -1969,17 +2118,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         break;
       }
       case "queue_update":
-        slot.pendingQueues = {
-          steering: Array.isArray(record.steering)
-            ? record.steering.filter(
-                (value): value is string => typeof value === "string",
-              )
-            : [],
-          followUp: Array.isArray(record.followUp)
-            ? record.followUp.filter(
-                (value): value is string => typeof value === "string",
-              )
-            : [],
+        slot.pendingQueues = newestPendingQueues(
+          slot.pendingQueues,
+          pendingQueuesFromRecord(
+            record.pending,
+            record.steering,
+            record.followUp,
+            slot.pendingQueues.revision,
+          ),
+        );
+        // Pi retains its legacy full-text arrays for RPC compatibility. The
+        // browser receives only the bounded Host projection.
+        forwardedEvent = {
+          type: "queue_update",
+          pendingQueues: slot.pendingQueues,
         };
         break;
       case "agent_start":
@@ -2023,7 +2175,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               : "idle";
         slot.activeAssistantCorrelation = null;
         slot.attention = this.selectedSessionId === slot.id ? null : outcome;
-        slot.pendingQueues = emptyPendingQueues();
         this.clearPendingExtensionUi(slot, "settled");
         for (const expectation of slot.persistenceExpectations)
           expectation.settle(null);
@@ -2031,6 +2182,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
+        // Legacy Pi exposes only a lossy text projection and historically
+        // leaves image-only rows stale until settlement. Managed Pi publishes
+        // every authoritative drain and may intentionally remain paused.
+        if (!slot.pendingQueues.managementAvailable) {
+          slot.pendingQueues = emptyPendingQueues();
+        }
         this.catalog.invalidate();
         this.scheduleIdleWorkerEviction();
         break;
@@ -3258,10 +3415,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (!fullMessage && resolved.images.length === 0)
           throw new Error("Message or attachment is required");
         const previousRunState = slot.runState;
-        // Pi acknowledges prompt acceptance before agent_start can cross the
-        // event channel. Mark the handoff queued so idle reclamation cannot
-        // stop the worker in that gap.
-        slot.runState = "queued";
+        // Pi acknowledges ordinary prompt acceptance before agent_start can
+        // cross the event channel. A paused Pending list is different: the
+        // accepted content stays parked in memory and does not own a run.
+        slot.runState = slot.pendingQueues.paused ? previousRunState : "queued";
         try {
           await this.requestPersistence(readySlot, readySlot.process, {
             type: "prompt",
@@ -3346,6 +3503,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (
       slot.runState !== "idle" ||
       slot.pendingExtensionUiRequests.size > 0 ||
+      slot.pendingQueues.paused ||
       slot.pendingQueues.steering.length > 0 ||
       slot.pendingQueues.followUp.length > 0
     ) {
@@ -3361,15 +3519,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private requireForkBranchSlot(slot: RuntimeSlot, revision: number): void {
     this.requireFreshBranchRevision(slot, revision);
     if (
+      slot.pendingQueues.paused ||
       slot.pendingQueues.steering.length > 0 ||
       slot.pendingQueues.followUp.length > 0
     ) {
       // Pi's native fork aborts the current response, but an accepted queue is
       // drained as another run before AgentSession becomes idle. Letting fork
       // proceed would submit that input instead of replacing the session.
-      throw Object.assign(new Error("Remove queued messages before forking"), {
-        status: 409,
-      });
+      throw Object.assign(
+        new Error("Resume Pending and remove queued messages before forking"),
+        { status: 409 },
+      );
     }
     // A pre-existing response-bearing dialog must likewise be resolved before
     // another session-replacement command can own that interaction.
@@ -4051,7 +4211,171 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       await rpc.request({ type: "abort" });
       this.clearPendingExtensionUi(slot, "aborted");
-      slot.pendingQueues = emptyPendingQueues();
+    });
+  }
+
+  async managePending(
+    sessionId: string,
+    request: PendingManagementRequest,
+  ): Promise<PendingQueues> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      return this.mutateSlot(slot, async () => {
+        if (!slot.pendingQueues.managementAvailable) {
+          throw Object.assign(
+            new Error(
+              "The active Pi runtime does not support Pending management",
+            ),
+            { status: 409 },
+          );
+        }
+        if (slot.pendingQueues.revision !== request.expectedRevision) {
+          throw Object.assign(
+            new Error("Pending changed; refresh before trying again"),
+            { status: 409 },
+          );
+        }
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        const command: Record<string, unknown> = (() => {
+          switch (request.action) {
+            case "pause":
+              return {
+                type: "pause_pending",
+                expectedRevision: request.expectedRevision,
+              };
+            case "resume":
+              return {
+                type: "resume_pending",
+                expectedRevision: request.expectedRevision,
+              };
+            case "delete":
+              return {
+                type: "delete_pending_message",
+                messageId: request.messageId,
+                expectedRevision: request.expectedRevision,
+              };
+            case "clear":
+              return {
+                type: "clear_pending_messages",
+                expectedRevision: request.expectedRevision,
+              };
+            case "convert":
+              return {
+                type: "convert_pending_message",
+                messageId: request.messageId,
+                target: request.target,
+                expectedRevision: request.expectedRevision,
+              };
+          }
+        })();
+        let result: unknown;
+        try {
+          result = await ready.process.request(command);
+        } catch (error) {
+          if (isPiRpcOutcomeUnknown(error))
+            return this.failUnknownRpcOutcome(slot, error);
+          const message =
+            error instanceof Error ? error.message : String(error);
+          throw Object.assign(new Error(message), {
+            status: /pending|queue|unknown command|not found/i.test(message)
+              ? 409
+              : 500,
+          });
+        }
+        const pending = pendingQueuesFromRecord(
+          result,
+          undefined,
+          undefined,
+          slot.pendingQueues.revision,
+        );
+        if (!pending.managementAvailable) {
+          throw Object.assign(
+            new Error("Pi returned an invalid Pending state"),
+            { status: 502 },
+          );
+        }
+        slot.pendingQueues = newestPendingQueues(slot.pendingQueues, pending);
+        return structuredClone(slot.pendingQueues);
+      });
+    });
+  }
+
+  async pendingMessageTexts(
+    sessionId: string,
+    messageIds: readonly string[],
+  ): Promise<Array<{ id: string; text: string }>> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      return this.useSlot(slot, async () => {
+        const rpc = slot.process;
+        if (!rpc || !slot.ready || !slot.pendingQueues.managementAvailable) {
+          throw Object.assign(
+            new Error("The Pending messages are no longer available"),
+            { status: 409 },
+          );
+        }
+        try {
+          const expectedRevision = slot.pendingQueues.revision;
+          const messages: Array<{ id: string; text: string }> = [];
+          let textBytes = 0;
+          // One message per RPC response keeps arbitrarily many accepted
+          // entries below Pi's bounded stdout frame while the shared revision
+          // prevents a copy assembled from different queue incarnations.
+          for (const messageId of messageIds) {
+            const result = await rpc.request<{ messages?: unknown }>({
+              type: "get_pending_message_texts",
+              messageIds: [messageId],
+              expectedRevision,
+            });
+            if (
+              !Array.isArray(result.messages) ||
+              result.messages.length !== 1
+            ) {
+              throw Object.assign(
+                new Error("Pi returned invalid Pending messages"),
+                { status: 502 },
+              );
+            }
+            const value = result.messages[0];
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw Object.assign(
+                new Error("Pi returned invalid Pending messages"),
+                { status: 502 },
+              );
+            }
+            const record = value as Record<string, unknown>;
+            if (record.id !== messageId || typeof record.text !== "string") {
+              throw Object.assign(
+                new Error("Pi returned the wrong Pending messages"),
+                { status: 502 },
+              );
+            }
+            textBytes += Buffer.byteLength(record.text, "utf8");
+            if (textBytes > MAX_PENDING_TEXT_RESPONSE_BYTES) {
+              throw Object.assign(
+                new Error("Pending text exceeds the 4 MiB copy limit"),
+                { status: 413 },
+              );
+            }
+            messages.push({ id: messageId, text: record.text });
+          }
+          return messages;
+        } catch (error) {
+          if (isPiRpcOutcomeUnknown(error))
+            return this.failUnknownRpcOutcome(slot, error);
+          if (error && typeof error === "object" && "status" in error)
+            throw error;
+          const message =
+            error instanceof Error ? error.message : String(error);
+          throw Object.assign(new Error(message), {
+            status: /exceeds.*limit/i.test(message)
+              ? 413
+              : /pending|not found|unknown command/i.test(message)
+                ? 409
+                : 500,
+          });
+        }
+      });
     });
   }
 
