@@ -520,11 +520,20 @@ export function App() {
   const transcriptContent = state.sessionId ? (
     <Transcript
       messages={state.messages}
+      activityRanges={state.transcriptActivityRanges}
+      promptMapTurns={state.promptMapTurns}
+      promptMapTotal={state.promptMapTotal}
+      promptMapLoadedStarts={state.promptMapLoadedStarts}
+      promptMapLoadingStarts={state.promptMapLoadingStarts}
+      promptMapError={state.promptMapError}
+      promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}
       streaming={state.streaming}
+      runState={state.runState}
       activeAssistantMessageKey={state.activeAssistantMessageKey}
       toolActivity={state.tools}
       sessionId={state.sessionId}
       viewId={state.transcriptViewId ?? ""}
+      projectionIncarnation={state.transcriptIncarnation ?? ""}
       viewingEarlierBranch={Boolean(
         state.transcriptDurableLeafId &&
           state.transcriptEffectiveLeafId &&
@@ -534,6 +543,7 @@ export function App() {
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.prefs.thinkingVisibility}
       toolVisibility={state.prefs.toolVisibility}
+      activityFoldVisibility={state.prefs.activityFoldVisibility ?? "dynamic"}
       assistantRoundDisplay={state.prefs.assistantRoundDisplay}
       hasOlder={state.hasOlderMessages}
       loadingOlder={state.loadingOlderMessages}

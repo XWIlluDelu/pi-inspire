@@ -17,7 +17,10 @@ import type {
   SessionDeleteResponse,
   SessionListResponse,
   SessionSummary,
+  TranscriptActivityPage,
   TranscriptPage,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import type { ResourceContext } from "./resources.js";
@@ -34,6 +37,7 @@ const mockHistoryWorkspace = process.env.INSPIRE_MOCK_WORKSPACE
   ? mockWorkspace
   : "/home/demo/pi-extension";
 const RESOURCE_FIXTURE_SESSION_ID = "mock-resources";
+const PROMPT_MAP_FIXTURE_SESSION_ID = "mock-prompt-map";
 const BRANCH_FIXTURE_SESSION_ID = "mock-branch";
 const BRANCH_EARLIER_LEAF_ID = "mock-branch-earlier";
 const BRANCH_LATEST_LEAF_ID = "mock-branch-latest";
@@ -60,6 +64,15 @@ const baseSummaries: SessionSummary[] = [
 ];
 
 const browserFixtureSummaries: SessionSummary[] = [
+  {
+    id: PROMPT_MAP_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Prompt map long-session fixture",
+    created: new Date(now - 10_800_000).toISOString(),
+    modified: new Date(now - 20_000).toISOString(),
+    messageCount: 26,
+  },
   {
     id: RESOURCE_FIXTURE_SESSION_ID,
     cwd: mockWorkspace,
@@ -244,6 +257,25 @@ const initialMessages = [
   },
 ];
 
+const promptMapFixtureMessages = Array.from({ length: 13 }, (_, index) => {
+  const timestamp = now - (13 - index) * 2_000;
+  return [
+    {
+      role: "user",
+      content: `Prompt map fixture turn ${index + 1}`,
+      timestamp,
+    },
+    {
+      role: "assistant",
+      content: `Prompt map fixture response ${index + 1}.`,
+      provider: "kimi-coding",
+      model: "kimi-k3",
+      stopReason: "stop",
+      timestamp: timestamp + 1,
+    },
+  ];
+}).flat();
+
 const resourceFixtureReferences = [
   ...Array.from(
     { length: 72 },
@@ -273,9 +305,9 @@ const resourceFixtureMessages = [
 ];
 
 function messagesForFixture(id: string): unknown[] {
-  return id === RESOURCE_FIXTURE_SESSION_ID
-    ? resourceFixtureMessages
-    : initialMessages;
+  if (id === RESOURCE_FIXTURE_SESSION_ID) return resourceFixtureMessages;
+  if (id === PROMPT_MAP_FIXTURE_SESSION_ID) return promptMapFixtureMessages;
+  return initialMessages;
 }
 
 const mockGitPath = {
@@ -785,6 +817,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async transcriptPage(
     sessionId: string,
     _cursor: string,
+    _deferActivity = false,
   ): Promise<TranscriptPage> {
     const active = this.requireSession(sessionId);
     return {
@@ -794,6 +827,91 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       messages: [],
       hasOlder: false,
       olderCursor: null,
+    };
+  }
+  async transcriptActivityPage(
+    sessionId: string,
+    _cursor: string,
+  ): Promise<TranscriptActivityPage> {
+    const active = this.requireSession(sessionId);
+    return {
+      sessionId,
+      revision: active.transcriptPage.revision,
+      viewId: active.transcriptPage.viewId,
+      messages: [],
+      hasMore: false,
+      cursor: null,
+    };
+  }
+  async transcriptUserTurns(
+    sessionId: string,
+    start?: number,
+  ): Promise<UserTurnIndexPage> {
+    const active = this.requireSession(sessionId);
+    const turns = active.transcriptPage.messages.flatMap((value, index) => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return [];
+      const record = value as Record<string, unknown>;
+      if (record.role !== "user") return [];
+      const ordinal = Number(record.__inspireUserTurnIndex);
+      const content =
+        typeof record.content === "string"
+          ? record.content
+          : Array.isArray(record.content)
+            ? record.content
+                .flatMap((part) =>
+                  part &&
+                  typeof part === "object" &&
+                  !Array.isArray(part) &&
+                  (part as Record<string, unknown>).type === "text" &&
+                  typeof (part as Record<string, unknown>).text === "string"
+                    ? [(part as Record<string, unknown>).text as string]
+                    : [],
+                )
+                .join(" ")
+            : "";
+      return [
+        {
+          id:
+            typeof record.__inspireMessageId === "string"
+              ? record.__inspireMessageId
+              : `mock-user:${index}`,
+          ordinal: Number.isSafeInteger(ordinal) ? ordinal : 0,
+          snippet:
+            content.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
+          attachmentCount: 0,
+        },
+      ];
+    });
+    turns.forEach((turn, ordinal) => {
+      turn.ordinal = ordinal;
+    });
+    const pageStart =
+      start === undefined
+        ? Math.max(0, turns.length - 100)
+        : Math.min(start, turns.length);
+    return {
+      sessionId,
+      revision: active.transcriptPage.revision,
+      viewId: active.transcriptPage.viewId,
+      total: turns.length,
+      start: pageStart,
+      turns: turns.slice(pageStart, pageStart + 100),
+    };
+  }
+  async transcriptUserTurn(
+    sessionId: string,
+    targetMessageId: string,
+    _cursor?: string,
+  ): Promise<UserTurnTranscriptPage> {
+    const active = this.requireSession(sessionId);
+    return {
+      ...active.transcriptPage,
+      targetMessageId,
+      rangeStart: 0,
+      rangeEnd: active.transcriptPage.messages.length,
+      hasMoreInTurn: false,
+      continuationCursor: null,
     };
   }
   async branchTree(sessionId: string): Promise<BranchTreeResponse> {

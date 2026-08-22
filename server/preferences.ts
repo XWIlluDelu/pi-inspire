@@ -19,9 +19,15 @@ const preferenceFields = {
   toolVisibility: z.enum([
     "dynamic",
     "expanded",
-    "collapsed",
     "compact",
+    "collapsed",
     "hidden",
+  ]),
+  activityFoldVisibility: z.enum([
+    "dynamic",
+    "expanded",
+    "compact",
+    "collapsed",
   ]),
   assistantRoundDisplay: z.enum(["details", "divider"]),
   projectDisplay: z.enum(["folder", "path"]),

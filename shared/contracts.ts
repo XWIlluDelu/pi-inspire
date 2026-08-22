@@ -9,11 +9,17 @@ export const VISIBILITY_PREFERENCES = [
 export const TOOL_VISIBILITY_PREFERENCES = [
   "dynamic",
   "expanded",
-  "collapsed",
   "compact",
+  "collapsed",
   "hidden",
 ] as const;
 export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
+export const ACTIVITY_FOLD_VISIBILITIES = [
+  "dynamic",
+  "expanded",
+  "compact",
+  "collapsed",
+] as const;
 export const THINKING_LEVELS = [
   "off",
   "minimal",
@@ -45,6 +51,8 @@ export type ToolVisibilityPreference =
   (typeof TOOL_VISIBILITY_PREFERENCES)[number];
 export type AssistantRoundDisplayPreference =
   (typeof ASSISTANT_ROUND_DISPLAYS)[number];
+export type ActivityFoldVisibilityPreference =
+  (typeof ACTIVITY_FOLD_VISIBILITIES)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type PalettePreference = "amber" | "teal";
@@ -140,6 +148,9 @@ export interface InspirePreferences {
   launch: LaunchPreference;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
+  /** Presentation of complete non-response activity runs between visible
+   * assistant response passages. The cards inside keep their own preferences. */
+  activityFoldVisibility: ActivityFoldVisibilityPreference;
   /** Detailed preserves Pi's current per-message attribution verbatim; divider
    * replaces that whole row with one quiet visual boundary. */
   assistantRoundDisplay: AssistantRoundDisplayPreference;
@@ -168,6 +179,7 @@ export const defaultPreferences: InspirePreferences = {
   launch: "welcome",
   thinkingVisibility: "dynamic",
   toolVisibility: "dynamic",
+  activityFoldVisibility: "dynamic",
   assistantRoundDisplay: "divider",
   projectDisplay: "folder",
   completionAttention: "off",
@@ -556,6 +568,18 @@ export interface ProjectionHealth {
   message?: string;
 }
 
+export type TranscriptActivityKind = "thinking" | "tool";
+
+/** Opaque, revision-bound history omitted from an earlier transcript page.
+ * `afterMessageId` anchors the range after its nearest older visible message;
+ * null means the range starts the selected branch. */
+export interface TranscriptActivityRange {
+  cursor: string;
+  afterMessageId: string | null;
+  messageCount: number;
+  kinds: TranscriptActivityKind[];
+}
+
 export interface TranscriptPage {
   sessionId: string;
   revision: number;
@@ -568,8 +592,51 @@ export interface TranscriptPage {
   /** Branch view represented by this page; null is an empty session. */
   effectiveLeafId?: string | null;
   messages: unknown[];
+  /** Activity-only persisted messages skipped by response-oriented paging. */
+  activityRanges?: TranscriptActivityRange[];
   hasOlder: boolean;
   olderCursor: string | null;
+}
+
+export interface TranscriptActivityPage {
+  sessionId: string;
+  revision: number;
+  viewId: string;
+  incarnation?: string;
+  effectiveLeafId?: string | null;
+  messages: unknown[];
+  hasMore: boolean;
+  cursor: string | null;
+}
+
+export interface UserTurnAnchor {
+  id: string;
+  ordinal: number;
+  snippet: string;
+  timestamp?: string;
+  attachmentCount: number;
+}
+
+/** A bounded slice of the complete user-turn outline for the current branch. */
+export interface UserTurnIndexPage {
+  sessionId: string;
+  revision: number;
+  viewId: string;
+  incarnation?: string;
+  appendFromRevision?: number;
+  effectiveLeafId?: string | null;
+  total: number;
+  start: number;
+  turns: UserTurnAnchor[];
+}
+
+/** Response-oriented transcript material beginning at one selected user turn. */
+export interface UserTurnTranscriptPage extends TranscriptPage {
+  targetMessageId: string;
+  rangeStart: number;
+  rangeEnd: number;
+  hasMoreInTurn: boolean;
+  continuationCursor: string | null;
 }
 
 export type BranchNodeRole =

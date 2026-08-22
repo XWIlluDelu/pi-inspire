@@ -1,9 +1,11 @@
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import {
+  ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
   TOOL_VISIBILITY_PREFERENCES,
   VISIBILITY_PREFERENCES,
+  type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
   type CompletionAttentionPreference,
   type LaunchPreference,
@@ -54,6 +56,14 @@ const TOOL_VISIBILITIES: Array<{
   value: ToolVisibilityPreference;
   label: string;
 }> = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
+  value,
+  label: preferenceLabel(value),
+}));
+
+const ACTIVITY_FOLDS: Array<{
+  value: ActivityFoldVisibilityPreference;
+  label: string;
+}> = ACTIVITY_FOLD_VISIBILITIES.map((value) => ({
   value,
   label: preferenceLabel(value),
 }));
@@ -198,6 +208,20 @@ export function Settings({ onClose }: { onClose: () => void }) {
               options={TOOL_VISIBILITIES}
               onChange={(value) =>
                 store.setToolVisibility(value as ToolVisibilityPreference)
+              }
+            />
+          </div>
+          <div className="settings__field">
+            <span className="settings__field-label">Activity folds</span>
+            <Dropdown
+              label="Activity folds"
+              className="dropdown--field"
+              value={state.prefs.activityFoldVisibility ?? "dynamic"}
+              options={ACTIVITY_FOLDS}
+              onChange={(value) =>
+                store.setActivityFoldVisibility(
+                  value as ActivityFoldVisibilityPreference,
+                )
               }
             />
           </div>

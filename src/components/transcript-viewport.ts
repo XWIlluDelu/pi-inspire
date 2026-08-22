@@ -22,6 +22,7 @@ interface TranscriptScrollAnchor {
 interface TranscriptViewportOptions<Row extends TranscriptViewportRow> {
   rows: readonly Row[];
   sessionId: string;
+  viewId: string;
   hasOlder: boolean;
   olderError: string | null;
   onLoadOlder: () => Promise<boolean>;
@@ -68,6 +69,7 @@ function restoreScrollAnchor(
 export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   rows,
   sessionId,
+  viewId,
   hasOlder,
   olderError,
   onLoadOlder,
@@ -81,14 +83,17 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | null>(null);
   const geometricFollowFrameRef = useRef<number | null>(null);
+  const anchoredLayoutFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
   const olderLoadInFlightRef = useRef(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const onLoadOlderRef = useRef(onLoadOlder);
-  const sessionIdRef = useRef(sessionId);
+  const projectionIdentity = `${sessionId}\u0000${viewId}`;
+  const projectionIdentityRef = useRef(projectionIdentity);
   const hasOlderRef = useRef(hasOlder);
   const olderErrorRef = useRef(olderError);
   onLoadOlderRef.current = onLoadOlder;
-  sessionIdRef.current = sessionId;
+  projectionIdentityRef.current = projectionIdentity;
   hasOlderRef.current = hasOlder;
   olderErrorRef.current = olderError;
 
@@ -153,21 +158,27 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     });
   }, [followLatest]);
 
-  const requestOlderRef = useRef<() => void>(() => {});
+  const requestOlderRef = useRef<() => boolean>(() => false);
   const loadOlder = useCallback(async () => {
     const element = scrollRef.current;
     if (!element || olderLoadInFlightRef.current) return;
     olderLoadInFlightRef.current = true;
-    const loadingSessionId = sessionIdRef.current;
+    setLoadingEarlier(true);
+    const loadingProjectionIdentity = projectionIdentityRef.current;
     const oldHeight = element.scrollHeight;
     const oldTop = element.scrollTop;
     const anchor = captureScrollAnchor(element);
     pinnedRef.current = false;
     setPinned(false);
     const prepended = await onLoadOlderRef.current();
-    if (sessionIdRef.current !== loadingSessionId) return;
+    if (projectionIdentityRef.current !== loadingProjectionIdentity) {
+      olderLoadInFlightRef.current = false;
+      setLoadingEarlier(false);
+      return;
+    }
     if (!prepended) {
       olderLoadInFlightRef.current = false;
+      setLoadingEarlier(false);
       return;
     }
 
@@ -178,10 +189,15 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
           oldTop + Math.max(0, current.scrollHeight - oldHeight);
       }
       olderLoadInFlightRef.current = false;
-      // If one short page still leaves the viewport inside the preload zone,
-      // continue filling it. Otherwise the next upward scroll owns the trigger.
+      // A short visible page can legitimately require several bounded host
+      // pages. Keep one continuous loading cycle while the viewport remains in
+      // the preload zone instead of flashing between each request.
       if (current && current.scrollTop <= OLDER_PRELOAD_PX) {
-        requestAnimationFrame(requestOlderRef.current);
+        requestAnimationFrame(() => {
+          if (!requestOlderRef.current()) setLoadingEarlier(false);
+        });
+      } else {
+        setLoadingEarlier(false);
       }
     };
     requestAnimationFrame(() =>
@@ -199,8 +215,16 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     );
   }, []);
 
-  const requestOlder = useCallback(() => {
-    if (hasOlderRef.current && !olderErrorRef.current) void loadOlder();
+  const requestOlder = useCallback((): boolean => {
+    if (
+      !scrollRef.current ||
+      olderLoadInFlightRef.current ||
+      !hasOlderRef.current ||
+      olderErrorRef.current
+    )
+      return false;
+    void loadOlder();
+    return true;
   }, [loadOlder]);
   requestOlderRef.current = requestOlder;
 
@@ -252,6 +276,74 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     setPinned(false);
   }, []);
 
+  const preserveAnchorThroughLayout = useCallback(
+    (anchorElement: HTMLElement, alignment: "start" | "center" | "end") => {
+      const root = scrollRef.current;
+      if (!root?.contains(anchorElement)) return;
+      const rootBounds = root.getBoundingClientRect();
+      const anchorBounds = anchorElement.getBoundingClientRect();
+      // An async disclosure load must not reclaim the viewport after the user
+      // has moved away from the fold that initiated it.
+      if (
+        anchorBounds.bottom < rootBounds.top ||
+        anchorBounds.top > rootBounds.bottom
+      )
+        return;
+
+      const coordinate = (bounds: DOMRect) => {
+        if (alignment === "start") return bounds.top;
+        if (alignment === "end") return bounds.bottom;
+        return (bounds.top + bounds.bottom) / 2;
+      };
+      const offset = coordinate(anchorBounds) - rootBounds.top;
+
+      // A disclosure gesture owns the viewport before its synchronous layout
+      // change. Otherwise ResizeObserver latest-follow can pull a historical
+      // fold to the end of the session as its height changes.
+      const restoreLatestAtBoundary =
+        pinnedRef.current && !searchOwnsViewportRef.current;
+      userScrollIntentRef.current = false;
+      if (userScrollIntentTimerRef.current !== null) {
+        window.clearTimeout(userScrollIntentTimerRef.current);
+        userScrollIntentTimerRef.current = null;
+      }
+      pinnedRef.current = false;
+      setPinned(false);
+
+      if (anchoredLayoutFrameRef.current !== null)
+        cancelAnimationFrame(anchoredLayoutFrameRef.current);
+      anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
+        anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
+          anchoredLayoutFrameRef.current = null;
+          const currentRoot = scrollRef.current;
+          if (
+            !anchorElement.isConnected ||
+            !currentRoot?.contains(anchorElement)
+          )
+            return;
+          const delta =
+            coordinate(anchorElement.getBoundingClientRect()) -
+            currentRoot.getBoundingClientRect().top -
+            offset;
+          if (Number.isFinite(delta) && Math.abs(delta) > 0.5)
+            currentRoot.scrollTop += delta;
+          lastScrollTopRef.current = currentRoot.scrollTop;
+          if (
+            restoreLatestAtBoundary &&
+            currentRoot.scrollHeight -
+              currentRoot.scrollTop -
+              currentRoot.clientHeight <=
+              1
+          ) {
+            pinnedRef.current = true;
+            setPinned(true);
+          }
+        });
+      });
+    },
+    [searchOwnsViewportRef],
+  );
+
   const jumpToLatest = useCallback(() => {
     userScrollIntentRef.current = false;
     pinnedRef.current = true;
@@ -260,17 +352,29 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   }, [followLatest]);
 
   useEffect(() => {
+    if (anchoredLayoutFrameRef.current !== null) {
+      cancelAnimationFrame(anchoredLayoutFrameRef.current);
+      anchoredLayoutFrameRef.current = null;
+    }
+    if (geometricFollowFrameRef.current !== null) {
+      cancelAnimationFrame(geometricFollowFrameRef.current);
+      geometricFollowFrameRef.current = null;
+    }
     pinnedRef.current = true;
     userScrollIntentRef.current = false;
     lastScrollTopRef.current = 0;
     olderLoadInFlightRef.current = false;
+    setLoadingEarlier(false);
     setPinned(true);
-  }, [sessionId]);
+    followLatest();
+  }, [followLatest, projectionIdentity]);
 
   useEffect(
     () => () => {
       if (userScrollIntentTimerRef.current !== null)
         window.clearTimeout(userScrollIntentTimerRef.current);
+      if (anchoredLayoutFrameRef.current !== null)
+        cancelAnimationFrame(anchoredLayoutFrameRef.current);
     },
     [],
   );
@@ -302,7 +406,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
         geometricFollowFrameRef.current = null;
       }
     };
-  }, [scheduleGeometricFollow, sessionId]);
+  }, [scheduleGeometricFollow, projectionIdentity]);
 
   // The existing scroll handler is the single proximity authority. This runs
   // after initial latest-follow so a short transcript can fill its viewport,
@@ -311,7 +415,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     const element = scrollRef.current;
     if (element && element.scrollTop <= OLDER_PRELOAD_PX)
       requestOlderRef.current();
-  }, [hasOlder, olderError, sessionId, rows.length]);
+  }, [hasOlder, olderError, projectionIdentity, rows.length]);
 
   return {
     scrollRef,
@@ -319,10 +423,12 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     virtualize,
     virtualizer,
     pinned,
+    loadingEarlier,
     markUserScrollIntent,
     onScroll,
     loadOlder,
     releaseLatestFollow,
+    preserveAnchorThroughLayout,
     restoreGeometricFollow,
     jumpToLatest,
   };

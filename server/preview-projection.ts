@@ -2,7 +2,10 @@ import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type {
   BranchTreeResponse,
+  TranscriptActivityPage,
   TranscriptPage,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import {
@@ -94,6 +97,101 @@ export class PreviewProjection
     throw Object.assign(new Error("This transcript has no older page"), {
       status: 409,
     });
+  }
+
+  visiblePage(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage {
+    return this.page(cursor, effectiveLeafId, viewId);
+  }
+
+  activityPage(
+    _cursor: string,
+    _effectiveLeafId?: string | null,
+    _viewId?: string,
+  ): TranscriptActivityPage {
+    throw Object.assign(new Error("This transcript has no deferred activity"), {
+      status: 409,
+    });
+  }
+
+  userTurnIndexPage(
+    start?: number,
+    _effectiveLeafId?: string | null,
+    viewId = "preview",
+  ): UserTurnIndexPage {
+    const turns = this.preview.transcriptPage.messages.flatMap(
+      (value, index) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          return [];
+        const record = value as Record<string, unknown>;
+        if (record.role !== "user") return [];
+        const id =
+          typeof record.__inspireMessageId === "string"
+            ? record.__inspireMessageId
+            : `preview-user:${index}`;
+        const text =
+          typeof record.content === "string"
+            ? record.content
+            : Array.isArray(record.content)
+              ? record.content
+                  .flatMap((part) =>
+                    part &&
+                    typeof part === "object" &&
+                    !Array.isArray(part) &&
+                    (part as Record<string, unknown>).type === "text" &&
+                    typeof (part as Record<string, unknown>).text === "string"
+                      ? [(part as Record<string, unknown>).text as string]
+                      : [],
+                  )
+                  .join(" ")
+              : "";
+        return [
+          {
+            id,
+            ordinal: 0,
+            snippet:
+              text.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
+            attachmentCount: 0,
+          },
+        ];
+      },
+    );
+    turns.forEach((turn, ordinal) => {
+      turn.ordinal = ordinal;
+    });
+    const pageStart =
+      start === undefined
+        ? Math.max(0, turns.length - 100)
+        : Math.min(start, turns.length);
+    return {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      effectiveLeafId: null,
+      total: turns.length,
+      start: pageStart,
+      turns: turns.slice(pageStart, pageStart + 100),
+    };
+  }
+
+  userTurnTranscriptPage(
+    targetMessageId: string,
+    effectiveLeafId?: string | null,
+    viewId = "preview",
+    _cursor?: string,
+  ): UserTurnTranscriptPage {
+    const page = this.latestPage([], effectiveLeafId, viewId);
+    return {
+      ...page,
+      targetMessageId,
+      rangeStart: 0,
+      rangeEnd: page.messages.length,
+      hasMoreInTurn: false,
+      continuationCursor: null,
+    };
   }
 
   branchTree(): BranchTreeResponse {

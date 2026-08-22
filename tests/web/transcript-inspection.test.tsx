@@ -475,13 +475,45 @@ describe("transcript density preferences", () => {
     expect(screen.getByText("toolUse")).toBeInTheDocument();
   });
 
-  it("compacts only multi-activity runs and leaves a singleton as a collapsed card", async () => {
+  it("keeps the assistant attribution with a response when leading activity is folded", () => {
+    const { container } = render(
+      <Transcript
+        messages={[
+          {
+            role: "assistant",
+            model: "gpt-test",
+            timestamp: 2,
+            content: [
+              { type: "thinking", thinking: "hidden reasoning" },
+              { type: "text", text: "visible response" },
+            ],
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+        activityFoldVisibility="collapsed"
+        assistantRoundDisplay="details"
+      />,
+    );
+
+    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
+      "data-activity-fold",
+      "closed",
+    );
+    expect(screen.getByText("Pi").closest("[data-activity-fold]")).toBeNull();
+    expect(screen.getByText("gpt-test")).toBeVisible();
+    expect(screen.getByText("visible response")).toBeVisible();
+    expect(screen.queryByText("hidden reasoning")).toBeNull();
+  });
+
+  it("collapses only multi-activity runs and leaves a singleton Compact card", async () => {
     const { container } = render(
       <Transcript
         messages={[assistant, ...results]}
         streaming={false}
         thinkingVisibility="collapsed"
-        toolVisibility="compact"
+        toolVisibility="collapsed"
         assistantRoundDisplay="divider"
       />,
     );
@@ -537,6 +569,27 @@ describe("transcript density preferences", () => {
     await waitFor(() =>
       expect(screen.queryByText("alpha result")).not.toBeInTheDocument(),
     );
+  });
+
+  it("keeps Compact activity as individually visible cards with closed bodies", () => {
+    const { container } = render(
+      <Transcript
+        messages={[assistant, ...results]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="compact"
+        assistantRoundDisplay="divider"
+      />,
+    );
+
+    expect(container.querySelector(".activity-strip")).toBeNull();
+    const cards = container.querySelectorAll(".card--tool");
+    expect(cards).toHaveLength(3);
+    for (const card of cards)
+      expect(card.querySelector(".card__disclosure")).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
   });
 
   it("loads historical Dynamic content directly at its final density", () => {
@@ -652,7 +705,7 @@ describe("transcript density preferences", () => {
     }
   });
 
-  it("holds fast Thinking for 1800 ms and parallel tools for 1600 ms before lifecycle collapse", () => {
+  it("holds fast Thinking for 1800 ms and parallel tools for 1500 ms before lifecycle collapse", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -736,7 +789,7 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(799));
+    act(() => vi.advanceTimersByTime(749));
     for (const name of ["read", "bash", "edit"])
       expect(toolHeader(name)).toHaveAttribute("aria-expanded", "true");
 
@@ -761,7 +814,7 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(800));
+    act(() => vi.advanceTimersByTime(750));
     for (const header of thinkingHeaders)
       expect(header).toHaveAttribute("aria-expanded", "true");
     for (const name of ["read", "bash", "edit"])
@@ -771,7 +824,7 @@ describe("transcript density preferences", () => {
       expect(toolHeader(name)).toHaveAttribute("aria-expanded", "false");
     for (const header of thinkingHeaders)
       expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(199));
+    act(() => vi.advanceTimersByTime(299));
     for (const header of thinkingHeaders)
       expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
@@ -784,17 +837,45 @@ describe("transcript density preferences", () => {
         ?.querySelector(".card__disclosure"),
     ).toHaveAttribute("aria-expanded", "true");
 
-    act(() => vi.advanceTimersByTime(779));
+    act(() => vi.advanceTimersByTime(679));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).toBeNull();
     act(() => vi.advanceTimersByTime(1));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).not.toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     act(() => vi.advanceTimersByTime(180));
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(3);
+  });
+
+  it("keeps completed Thinking visible for its 600 ms close grace after a long call", () => {
+    vi.useFakeTimers();
+    const active = {
+      role: "assistant",
+      timestamp: 29,
+      __inspireLiveId: "long-thinking",
+      content: [{ type: "thinking", thinking: "long reasoning" }],
+    };
+    const props = {
+      messages: [active],
+      streaming: false,
+      thinkingVisibility: "dynamic" as const,
+      toolVisibility: "dynamic" as const,
+      activityFoldVisibility: "expanded" as const,
+    };
+    const { rerender } = render(
+      <Transcript {...props} activeAssistantMessageKey="live:long-thinking" />,
+    );
+    const header = screen.getByRole("button", { name: "Collapse Thinking" });
+    act(() => vi.advanceTimersByTime(1_800));
+
+    rerender(<Transcript {...props} activeAssistantMessageKey={null} />);
+    act(() => vi.advanceTimersByTime(599));
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps a final singleton tool Collapsed after its perceptible Expanded dwell", () => {
@@ -820,11 +901,11 @@ describe("transcript density preferences", () => {
     };
     const { container, rerender } = render(
       <Transcript
-        messages={[active, result]}
+        messages={[active]}
         streaming={false}
         activeAssistantMessageKey="live:last-call"
         toolActivity={{
-          "last-tool": { id: "last-tool", name: "read", phase: "done" },
+          "last-tool": { id: "last-tool", name: "read", phase: "running" },
         }}
         thinkingVisibility="dynamic"
         toolVisibility="dynamic"
@@ -832,6 +913,7 @@ describe("transcript density preferences", () => {
     );
     const header = container.querySelector(".card--tool .card__disclosure");
     expect(header).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1_500));
 
     rerender(
       <Transcript
@@ -842,7 +924,7 @@ describe("transcript density preferences", () => {
         toolVisibility="dynamic"
       />,
     );
-    act(() => vi.advanceTimersByTime(1_599));
+    act(() => vi.advanceTimersByTime(499));
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");
@@ -850,14 +932,14 @@ describe("transcript density preferences", () => {
 
     act(() => vi.advanceTimersByTime(2_000));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     expect(container.querySelectorAll(".card--tool")).toHaveLength(1);
     expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("pauses eligible Dynamic batch compaction while a completed tool is manually inspected", () => {
+  it("pauses eligible Dynamic batch collapse while a completed tool is manually inspected", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -901,7 +983,7 @@ describe("transcript density preferences", () => {
     const header = container.querySelector(
       ".card--tool .card__disclosure",
     ) as HTMLButtonElement;
-    act(() => vi.advanceTimersByTime(1_600));
+    act(() => vi.advanceTimersByTime(1_500));
     expect(header).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(header);
     expect(header).toHaveAttribute("aria-expanded", "true");
@@ -914,7 +996,7 @@ describe("transcript density preferences", () => {
     fireEvent.click(header);
     act(() => vi.advanceTimersByTime(0));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
     expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
@@ -1252,12 +1334,7 @@ describe("message actions", () => {
         />,
       );
 
-      const responseTurn = screen
-        .getByText("first response")
-        .closest(".turn") as HTMLElement;
-      fireEvent.click(
-        within(responseTurn).getByRole("button", { name: "Copy response" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Copy response" }));
       await waitFor(() =>
         expect(writeText).toHaveBeenLastCalledWith(
           "first response\n\nsecond response",
@@ -1509,7 +1586,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
-  it("keeps singleton custom activity as a collapsed card in Compact", () => {
+  it("keeps singleton custom activity as a body-closed card in Compact", () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -1534,7 +1611,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".activity-strip")).toBeNull();
   });
 
-  it("compacts adjacent custom activity into typed tiles without invented result status", async () => {
+  it("collapses adjacent custom activity into typed tiles without invented result status", async () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -1562,7 +1639,7 @@ describe("transient conversation projections", () => {
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
-        toolVisibility="compact"
+        toolVisibility="collapsed"
       />,
     );
     const strip = container.querySelector(".activity-strip") as HTMLElement;
@@ -1647,7 +1724,7 @@ describe("transient conversation projections", () => {
         ]}
         streaming={false}
         thinkingVisibility="collapsed"
-        toolVisibility="compact"
+        toolVisibility="collapsed"
       />,
     );
 
@@ -1659,7 +1736,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
-  it("keeps a trailing live custom message in its tool batch through Dynamic compaction", () => {
+  it("keeps a trailing live custom message in its tool batch through Dynamic collapse", () => {
     vi.useFakeTimers();
     const active = {
       role: "assistant",
@@ -1716,7 +1793,7 @@ describe("transient conversation projections", () => {
         {...preferences}
       />,
     );
-    act(() => vi.advanceTimersByTime(1_600));
+    act(() => vi.advanceTimersByTime(1_500));
     for (const header of headers)
       expect(header).toHaveAttribute("aria-expanded", "false");
 
@@ -1740,7 +1817,7 @@ describe("transient conversation projections", () => {
     );
     act(() => vi.advanceTimersByTime(980));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).not.toBeNull();
     act(() => vi.advanceTimersByTime(180));
     const strips = container.querySelectorAll(".activity-strip");
@@ -1780,7 +1857,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".activity-strip")).toBeNull();
   });
 
-  it("streams a singleton custom activity from Expanded to Collapsed without compacting", () => {
+  it("streams a singleton custom activity from Expanded to Compact without reducing it to a strip", () => {
     vi.useFakeTimers();
     const started = {
       role: "custom",
@@ -1803,10 +1880,11 @@ describe("transient conversation projections", () => {
     expect(header).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/streamed payload/)).toBeInTheDocument();
     expect(container.querySelector(".activity-strip")).toBeNull();
+    act(() => vi.advanceTimersByTime(1_500));
 
     const ended = { ...started, __inspireSettled: true };
     rerender(<Transcript messages={[ended]} streaming {...props} />);
-    act(() => vi.advanceTimersByTime(1_599));
+    act(() => vi.advanceTimersByTime(499));
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");
@@ -1829,7 +1907,7 @@ describe("transient conversation projections", () => {
     );
     act(() => vi.advanceTimersByTime(2_000));
     expect(
-      container.querySelector(".dynamic-activity-batch--compacting"),
+      container.querySelector(".dynamic-activity-batch--collapsing"),
     ).toBeNull();
     expect(container.querySelector(".activity-strip")).toBeNull();
     expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
@@ -1878,7 +1956,7 @@ describe("transient conversation projections", () => {
       header,
     );
     expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1_599));
+    act(() => vi.advanceTimersByTime(1_499));
     expect(header).toHaveAttribute("aria-expanded", "true");
     act(() => vi.advanceTimersByTime(1));
     expect(header).toHaveAttribute("aria-expanded", "false");

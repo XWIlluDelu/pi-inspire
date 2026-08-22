@@ -126,10 +126,12 @@ anatomy that must remain stable rather than duplicating every declaration.
   control remains reachable.
 - Motion explains a transient surface, disclosure, or live work. Shared
   durations are 90ms micro, 150ms standard, and 180ms panel; active work may
-  spin and the composer may retain a quiet static semantic halo, but terminal
-  states do not breathe or flash. Short card/palette entrance and disclosure
-  transforms are permitted. Reduced-motion mode removes nonessential animation
-  and collapses transitions to a negligible duration.
+  spin, and the whole composer carries a quiet 2.8-second theme-colored
+  breathing halo only while its run state is `running`. Retrying, compacting,
+  and terminal states retain static semantic halos rather than breathing or
+  flashing. Short card/palette entrance and disclosure transforms are
+  permitted. Reduced-motion mode keeps the running halo static, removes
+  nonessential animation, and collapses transitions to a negligible duration.
 - Text meets WCAG AA contrast, and graphical focus/status cues meet their UI
   contrast threshold. `:focus-visible` uses the shared 2px accent outline;
   controls retain named roles, native semantic structure, visible keyboard

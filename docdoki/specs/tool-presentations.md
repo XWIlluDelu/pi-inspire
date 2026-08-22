@@ -16,7 +16,7 @@ Make common tool activity immediately legible without coupling the browser to Pi
 
 ## Checks
 
-- The existing tool card remains the only owner of disclosure, Dynamic/Compact lifecycle, status, copy, resource actions, motion, accessibility, and failure styling. A presentation rule replaces only its summary and expanded body.
+- The existing tool card remains the only owner of disclosure, Dynamic Expanded → Compact → Collapsed lifecycle, status, copy, resource actions, motion, accessibility, and failure styling. A presentation rule replaces only its summary and expanded body.
 - Rule definitions have namespaced ids and remain separate from exact tool-name mappings. INSΠRE ships project-wide Pi rules and mappings; a machine-local configuration adds declarative rules and replaces mappings without modifying a shipped rule definition.
 - Resolution applies the user mapping for a tool name when present, otherwise the shipped mapping. After selecting that one mapping, a missing, throwing, or shape-incompatible rule returns directly to generic raw rendering; it never tries a second semantic rule.
 - Rules are pure projections of the persisted/RPC-visible call name, arguments, result content, result details, and lifecycle state. They do not read files, access the network, or infer extension provenance.

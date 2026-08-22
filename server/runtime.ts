@@ -34,7 +34,10 @@ import {
   type NewSessionOptions,
   type ProjectionConflict,
   type PromptRequest,
+  type TranscriptActivityPage,
   type TranscriptPage,
+  type UserTurnIndexPage,
+  type UserTurnTranscriptPage,
   type SessionDeleteResponse,
   type SessionRuntimeStatus,
 } from "../shared/contracts.js";
@@ -172,7 +175,24 @@ export interface RuntimeLike {
   setThinkingLevel(sessionId: string, level: string): Promise<void>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(): Promise<ActiveSnapshot>;
-  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage>;
+  transcriptPage(
+    sessionId: string,
+    cursor: string,
+    deferActivity?: boolean,
+  ): Promise<TranscriptPage>;
+  transcriptActivityPage(
+    sessionId: string,
+    cursor: string,
+  ): Promise<TranscriptActivityPage>;
+  transcriptUserTurns(
+    sessionId: string,
+    start?: number,
+  ): Promise<UserTurnIndexPage>;
+  transcriptUserTurn(
+    sessionId: string,
+    targetMessageId: string,
+    cursor?: string,
+  ): Promise<UserTurnTranscriptPage>;
   branchTree(sessionId: string): Promise<BranchTreeResponse>;
   navigateBranch(
     request: BranchNavigateRequest,
@@ -4370,6 +4390,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async transcriptPage(
     sessionId: string,
     cursor: string,
+    deferActivity = false,
   ): Promise<TranscriptPage> {
     this.assertMaintenanceAvailable();
     const slot = this.requireSlot(sessionId);
@@ -4379,10 +4400,71 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           status: 503,
         });
       await this.reconcileSlot(slot, true);
-      return slot.projection.page(
+      const effectiveLeafId = this.effectiveLeaf(slot);
+      return deferActivity
+        ? slot.projection.visiblePage(cursor, effectiveLeafId, slot.viewId)
+        : slot.projection.page(cursor, effectiveLeafId, slot.viewId);
+    });
+  }
+
+  async transcriptActivityPage(
+    sessionId: string,
+    cursor: string,
+  ): Promise<TranscriptActivityPage> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
+      await this.reconcileSlot(slot, true);
+      return slot.projection.activityPage(
         cursor,
         this.effectiveLeaf(slot),
         slot.viewId,
+      );
+    });
+  }
+
+  async transcriptUserTurns(
+    sessionId: string,
+    start?: number,
+  ): Promise<UserTurnIndexPage> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
+      await this.reconcileSlot(slot, true);
+      return slot.projection.userTurnIndexPage(
+        start,
+        this.effectiveLeaf(slot),
+        slot.viewId,
+      );
+    });
+  }
+
+  async transcriptUserTurn(
+    sessionId: string,
+    targetMessageId: string,
+    cursor?: string,
+  ): Promise<UserTurnTranscriptPage> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
+      await this.reconcileSlot(slot, true);
+      return slot.projection.userTurnTranscriptPage(
+        targetMessageId,
+        this.effectiveLeaf(slot),
+        slot.viewId,
+        cursor,
       );
     });
   }

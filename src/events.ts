@@ -40,9 +40,15 @@ export interface ChatMessage {
   __inspireLiveId?: string;
   __inspireSettled?: boolean;
   __inspireEntryId?: string;
+  /** Opaque lazy-range alias retained while deferred history materializes so
+   * the surrounding activity disclosure keeps its mounted identity. */
+  __inspireActivityRangeCursor?: string;
   /** Position in Pi's authoritative active-path message projection. Embedded
    * image content is addressed by this index plus its content-part index. */
   __inspireMessageIndex?: number;
+  /** Absolute owner in the current branch's user-turn outline. */
+  __inspireUserTurnId?: string;
+  __inspireUserTurnIndex?: number;
   content?: unknown;
   timestamp?: number;
   provider?: string;
@@ -488,6 +494,13 @@ export function reduceEvent(
     }
     case "runtime_error": {
       slice.runState = "failed";
+      // A dead worker cannot produce the missing agent_settled event. Clear
+      // browser-only liveness without fabricating a message or tool outcome;
+      // the runtime notice and next authoritative snapshot retain the cause.
+      slice.streaming = false;
+      slice.activeAssistantMessageKey = null;
+      slice.tools = {};
+      slice.retry = null;
       slice.extensionUiRequests = [];
       pushNotice(
         slice,
