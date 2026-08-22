@@ -16,6 +16,7 @@ import {
   type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
+  MAX_PENDING_MESSAGES,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
@@ -80,6 +81,59 @@ const promptSchema = z.object({
   behavior: z.enum(["steer", "followUp"]).optional(),
 });
 const abortSchema = z.object({ sessionId: sessionIdField });
+const pendingManagementSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      sessionId: sessionIdField,
+      action: z.literal("pause"),
+      expectedRevision: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      sessionId: sessionIdField,
+      action: z.literal("resume"),
+      expectedRevision: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      sessionId: sessionIdField,
+      action: z.literal("delete"),
+      expectedRevision: z.number().int().nonnegative(),
+      messageId: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      sessionId: sessionIdField,
+      action: z.literal("clear"),
+      expectedRevision: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      sessionId: sessionIdField,
+      action: z.literal("convert"),
+      expectedRevision: z.number().int().nonnegative(),
+      messageId: z.string().min(1).max(200),
+      target: z.enum(["steer", "followUp"]),
+    })
+    .strict(),
+]);
+const pendingMessageTextsSchema = z
+  .object({
+    sessionId: sessionIdField,
+    messageIds: z
+      .array(z.string().min(1).max(128))
+      .min(1)
+      .max(MAX_PENDING_MESSAGES),
+  })
+  .strict()
+  .refine(
+    ({ messageIds }) => new Set(messageIds).size === messageIds.length,
+    "messageIds must be unique",
+  );
 const renameSchema = z.object({
   sessionId: sessionIdField,
   name: z.string().max(160),
@@ -703,6 +757,23 @@ export function createInspireServer(deps: AppDependencies): {
     const { sessionId } = abortSchema.parse(request.body);
     await deps.runtime.abort(sessionId);
     response.json({ ok: true });
+  });
+  app.post("/api/pending", async (request, response) => {
+    const { sessionId, ...management } = pendingManagementSchema.parse(
+      request.body,
+    );
+    response.json({
+      pendingQueues: await deps.runtime.managePending(sessionId, management),
+    });
+  });
+  app.post("/api/pending/text", async (request, response) => {
+    const { sessionId, messageIds } = pendingMessageTextsSchema.parse(
+      request.body,
+    );
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      messages: await deps.runtime.pendingMessageTexts(sessionId, messageIds),
+    });
   });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);

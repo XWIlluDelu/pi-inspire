@@ -540,6 +540,9 @@ export function App() {
           state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
       )}
       queue={state.queue}
+      pendingAction={state.pendingAction}
+      onManagePending={store.managePending}
+      onPendingMessageTexts={store.pendingMessageTexts}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.prefs.thinkingVisibility}
       toolVisibility={state.prefs.toolVisibility}

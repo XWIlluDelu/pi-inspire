@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import {
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
 } from "../../src/resource-preview";
+import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
@@ -14,10 +14,11 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
-  sessionSummary,
   type RouteHandler,
   type RouteResponse,
+  sessionSummary,
 } from "./helpers";
+import { pendingQueues } from "./pending-fixtures";
 
 const baseRoutes: RouteHandler = (url) => {
   if (url.startsWith("/api/bootstrap"))
@@ -289,10 +290,11 @@ describe("multi-session event routing", () => {
         title: "Proceed?",
       },
     ];
-    snapshot.pendingQueues = {
-      steering: ["correct the current answer"],
-      followUp: ["then add tests", "then summarize"],
-    };
+    snapshot.pendingQueues = pendingQueues(
+      ["correct the current answer"],
+      ["then add tests", "then summarize"],
+      { managementAvailable: true, revision: 2 },
+    );
     snapshot.extensionDisplays = [
       {
         id: "setWidget:plan",
@@ -314,20 +316,17 @@ describe("multi-session event routing", () => {
         title: "Proceed?",
       },
     ]);
-    expect(store.getState().queue).toEqual({
-      steering: ["correct the current answer"],
-      followUp: ["then add tests", "then summarize"],
-    });
+    expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toHaveLength(1);
     expect(store.getState().activeAssistantMessageKey).toBe("persisted:a1:0");
 
     if (snapshot.active) snapshot.active.activeAssistantMessageKey = null;
     snapshot.pendingExtensionUiRequests = [];
-    snapshot.pendingQueues = { steering: [], followUp: [] };
+    snapshot.pendingQueues = pendingQueues();
     snapshot.extensionDisplays = [];
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().extensionUiRequests).toEqual([]);
-    expect(store.getState().queue).toEqual({ steering: [], followUp: [] });
+    expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toEqual([]);
     expect(store.getState().activeAssistantMessageKey).toBeNull();
   });
@@ -805,6 +804,51 @@ describe("multi-session event routing", () => {
     expect(store.getState().runState).toBe("conflict");
     await store.abort();
     expect(aborts).toBe(1);
+  });
+
+  it("serializes Pending management and resolves exact copy text by current ids", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const updated = pendingQueues(["one"], [], {
+      managementAvailable: true,
+      paused: true,
+      revision: 2,
+    });
+    installFetch((url, init) => {
+      if (url === "/api/pending") {
+        requests.push({ url, body: jsonBody(init) });
+        return { body: { pendingQueues: updated } };
+      }
+      if (url === "/api/pending/text") {
+        requests.push({ url, body: jsonBody(init) });
+        return {
+          body: { messages: [{ id: "pending-steer-1", text: "exact one" }] },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const active = activeSnapshot();
+    active.pendingQueues = pendingQueues(["one"], [], {
+      managementAvailable: true,
+      revision: 1,
+    });
+    socket.emit({ type: "snapshot", data: active });
+
+    await expect(store.managePending({ action: "pause" })).resolves.toBe(true);
+    expect(requests[0]).toEqual({
+      url: "/api/pending",
+      body: { sessionId: "s1", action: "pause", expectedRevision: 1 },
+    });
+    expect(store.getState().queue).toEqual(updated);
+    expect(store.getState().pendingAction).toBeNull();
+
+    await expect(
+      store.pendingMessageTexts(["pending-steer-1"]),
+    ).resolves.toEqual(["exact one"]);
+    expect(requests[1]).toEqual({
+      url: "/api/pending/text",
+      body: { sessionId: "s1", messageIds: ["pending-steer-1"] },
+    });
   });
 
   it("reconciles a selected preview when its runtime becomes ready", async () => {

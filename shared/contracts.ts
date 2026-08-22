@@ -38,6 +38,9 @@ export const MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
   Math.ceil(MAX_PROMPT_IMAGE_BYTES / 3) * 4 + MAX_ATTACHMENTS * 4;
 export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
+/** Pi's bounded process-lifetime Pending projection contract. */
+export const MAX_PENDING_MESSAGES = 1_000;
+export const MAX_PENDING_PREVIEW_CHARS = 512;
 export const MAX_PROJECT_FILES = 20;
 export const MAX_SESSION_LIST_PAGE_SIZE = 100;
 /** Session-list and fallback-heading text is bounded before responsive CSS
@@ -457,13 +460,31 @@ export interface GenericExtensionDisplay {
   payload: unknown;
 }
 
+export interface PendingMessageSummary {
+  id: string;
+  textPreview: string;
+  textLength: number;
+  textTruncated: boolean;
+  imageCount: number;
+  nonTextContentCount: number;
+}
+
 export interface PendingQueues {
-  steering: string[];
-  followUp: string[];
+  managementAvailable: boolean;
+  paused: boolean;
+  revision: number;
+  steering: PendingMessageSummary[];
+  followUp: PendingMessageSummary[];
 }
 
 export function emptyPendingQueues(): PendingQueues {
-  return { steering: [], followUp: [] };
+  return {
+    managementAvailable: false,
+    paused: false,
+    revision: 0,
+    steering: [],
+    followUp: [],
+  };
 }
 
 function extensionUiExpiry(

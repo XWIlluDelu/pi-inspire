@@ -8,13 +8,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import {
-  PiRpcOutcomeUnknownError,
   type PiRpcOptions,
+  PiRpcOutcomeUnknownError,
   type PiRpcProcess,
 } from "../../server/pi-rpc.js";
 import {
@@ -23,11 +23,11 @@ import {
   RuntimeController,
   safeProjection,
 } from "../../server/runtime.js";
-import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
+import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 
 class FakeRpc extends EventEmitter {
   readonly commands: Array<Record<string, unknown>> = [];
@@ -35,6 +35,7 @@ class FakeRpc extends EventEmitter {
   starts = 0;
   stops = 0;
   failPrompts = false;
+  readonly responseOverrides = new Map<string, unknown>();
   startupEvent: Record<string, unknown> | null = null;
   startGate: Promise<void> | null = null;
   sessionPath: string | null;
@@ -65,6 +66,17 @@ class FakeRpc extends EventEmitter {
     this.commands.push(command);
     if (command.type === "prompt" && this.failPrompts)
       throw new Error("prompt rejected");
+    if (
+      typeof command.type === "string" &&
+      this.responseOverrides.has(command.type)
+    ) {
+      const override = this.responseOverrides.get(command.type);
+      const value =
+        typeof override === "function"
+          ? (override as (command: Record<string, unknown>) => unknown)(command)
+          : structuredClone(override);
+      return value as T;
+    }
     let value: unknown;
     switch (command.type) {
       case "get_state":
@@ -101,6 +113,34 @@ class FakeRpc extends EventEmitter {
   sendExtensionUiResponse(response: Record<string, unknown>): void {
     this.uiResponses.push(response);
   }
+}
+
+function pendingEntry(id: string, text: string) {
+  return {
+    id,
+    textPreview: text,
+    textLength: text.length,
+    textTruncated: false,
+    imageCount: 0,
+    nonTextContentCount: 0,
+  };
+}
+
+function pendingState(
+  steering: string[] = [],
+  followUp: string[] = [],
+  options: { paused?: boolean; revision?: number } = {},
+) {
+  return {
+    paused: options.paused ?? false,
+    revision: options.revision ?? 0,
+    steering: steering.map((text, index) =>
+      pendingEntry(`steer-${index + 1}`, text),
+    ),
+    followUp: followUp.map((text, index) =>
+      pendingEntry(`follow-${index + 1}`, text),
+    ),
+  };
 }
 
 function record(id: string, cwd: string): SessionRecord {
@@ -921,7 +961,7 @@ describe("RuntimeController concurrent sessions", () => {
     expect(workers.every((worker) => worker.stops === 1)).toBe(true);
   });
 
-  it("bounds the idle worker cache without stopping busy or extension-blocked sessions", async () => {
+  it("bounds the idle worker cache without stopping busy, paused, or extension-blocked sessions", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     const ids = ["a", "b", "c", "d", "e", "f", "g"];
@@ -949,22 +989,42 @@ describe("RuntimeController concurrent sessions", () => {
       id: "question-b",
       method: "confirm",
     });
-    for (const id of ids.slice(2)) await runtime.openSession(id);
+    await runtime.openSession("c");
+    workers[2]!.emit("event", {
+      type: "queue_update",
+      steering: ["parked"],
+      followUp: [],
+      pending: pendingState(["parked"], [], { paused: true, revision: 2 }),
+    });
+    for (const id of ids.slice(3)) await runtime.openSession(id);
 
     await vi.waitFor(() =>
       expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
-        MAX_IDLE_WORKERS + 3,
+        MAX_IDLE_WORKERS + 4,
       ),
     );
     expect(workers[0]!.stops).toBe(0); // busy
     expect(workers[1]!.stops).toBe(0); // awaiting extension input
-    expect(workers[2]!.stops).toBe(1); // oldest reclaimable idle worker
+    expect(workers[2]!.stops).toBe(0); // paused Pending owns worker memory
 
     workers[0]!.emit("event", { type: "agent_settled" });
     await runtime.extensionUiResponse({
       sessionId: "b",
       id: "question-b",
       confirmed: true,
+    });
+    await vi.waitFor(() =>
+      expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
+        MAX_IDLE_WORKERS + 2,
+      ),
+    );
+    expect(workers[2]!.stops).toBe(0);
+
+    workers[2]!.emit("event", {
+      type: "queue_update",
+      steering: [],
+      followUp: [],
+      pending: pendingState([], [], { revision: 3 }),
     });
     await vi.waitFor(() =>
       expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
@@ -1507,7 +1567,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("snapshots exact pending queues for reconnect and clears them on settle and worker replacement", async () => {
+  it("keeps legacy pending projections for reconnect and clears them on settlement and worker replacement", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     let worker!: FakeRpc;
@@ -1523,19 +1583,45 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
 
+    const longPendingText = "x".repeat(600);
     worker.emit("event", {
       type: "queue_update",
-      steering: ["first", "second"],
+      steering: ["first", longPendingText],
       followUp: ["later"],
     });
     expect((await runtime.snapshot()).pendingQueues).toEqual({
-      steering: ["first", "second"],
-      followUp: ["later"],
+      managementAvailable: false,
+      paused: false,
+      revision: 1,
+      steering: [
+        pendingEntry("legacy-steer-0", "first"),
+        {
+          ...pendingEntry("legacy-steer-1", "x".repeat(512)),
+          textLength: 600,
+          textTruncated: true,
+        },
+      ],
+      followUp: [pendingEntry("legacy-followUp-0", "later")],
+    });
+
+    worker.emit("event", {
+      type: "queue_update",
+      steering: Array.from({ length: 1_001 }, (_, index) => `steer-${index}`),
+      followUp: ["bounded-out"],
+    });
+    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
+      managementAvailable: false,
+      revision: 2,
+      steering: { length: 1_000 },
+      followUp: [],
     });
 
     worker.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () =>
       expect((await runtime.snapshot()).pendingQueues).toEqual({
+        managementAvailable: false,
+        paused: false,
+        revision: 0,
         steering: [],
         followUp: [],
       }),
@@ -1548,9 +1634,118 @@ describe("RuntimeController concurrent sessions", () => {
     });
     worker.emit("exit", new Error("replacement required"));
     expect((await runtime.snapshot()).pendingQueues).toEqual({
+      managementAvailable: false,
+      paused: false,
+      revision: 0,
       steering: [],
       followUp: [],
     });
+    await runtime.close();
+  });
+
+  it("revision-checks Pending management and fetches exact text only on demand", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    const forwarded: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) =>
+      forwarded.push(event as Record<string, unknown>),
+    );
+
+    const active = pendingState(["first"], ["later"], { revision: 4 });
+    worker.emit("event", {
+      type: "queue_update",
+      steering: ["first"],
+      followUp: ["later"],
+      pending: active,
+    });
+    expect(forwarded.at(-1)).toMatchObject({
+      type: "queue_update",
+      pendingQueues: { managementAvailable: true, revision: 4 },
+    });
+    expect(forwarded.at(-1)).not.toHaveProperty("steering");
+    expect(forwarded.at(-1)).not.toHaveProperty("followUp");
+    expect(forwarded.at(-1)).not.toHaveProperty("pending");
+    const paused = pendingState(["first"], ["later"], {
+      paused: true,
+      revision: 5,
+    });
+    worker.responseOverrides.set("pause_pending", paused);
+
+    await expect(
+      runtime.managePending("a", { action: "pause", expectedRevision: 3 }),
+    ).rejects.toMatchObject({ status: 409 });
+    const result = await runtime.managePending("a", {
+      action: "pause",
+      expectedRevision: 4,
+    });
+    expect(result).toEqual({ managementAvailable: true, ...paused });
+    expect(worker.commands.at(-1)).toEqual({
+      type: "pause_pending",
+      expectedRevision: 4,
+    });
+
+    worker.emit("event", {
+      type: "queue_update",
+      pending: pendingState(["stale"], [], { revision: 4 }),
+    });
+    expect((await runtime.snapshot()).pendingQueues).toEqual({
+      managementAvailable: true,
+      ...paused,
+    });
+
+    worker.responseOverrides.set(
+      "get_pending_message_texts",
+      (command: Record<string, unknown>) => ({
+        messages: (command.messageIds as string[]).map((id) => ({
+          id,
+          text: id === "steer-1" ? "first" : "later",
+        })),
+      }),
+    );
+    await expect(
+      runtime.pendingMessageTexts("a", ["steer-1", "follow-1"]),
+    ).resolves.toEqual([
+      { id: "steer-1", text: "first" },
+      { id: "follow-1", text: "later" },
+    ]);
+    expect(worker.commands.slice(-2)).toEqual([
+      {
+        type: "get_pending_message_texts",
+        messageIds: ["steer-1"],
+        expectedRevision: 5,
+      },
+      {
+        type: "get_pending_message_texts",
+        messageIds: ["follow-1"],
+        expectedRevision: 5,
+      },
+    ]);
+
+    const largeText = "x".repeat(3 * 1024 * 1024);
+    worker.responseOverrides.set(
+      "get_pending_message_texts",
+      (command: Record<string, unknown>) => ({
+        messages: (command.messageIds as string[]).map((id) => ({
+          id,
+          text: largeText,
+        })),
+      }),
+    );
+    await expect(
+      runtime.pendingMessageTexts("a", ["steer-1", "follow-1"]),
+    ).rejects.toMatchObject({ status: 413 });
     await runtime.close();
   });
 

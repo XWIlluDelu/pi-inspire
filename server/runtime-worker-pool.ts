@@ -150,6 +150,7 @@ export class RuntimeWorkerPool {
       slot.runState !== "failed" &&
       slot.runState !== "conflict" &&
       slot.pendingExtensionUiRequests.size === 0 &&
+      !slot.pendingQueues.paused &&
       slot.pendingQueues.steering.length === 0 &&
       slot.pendingQueues.followUp.length === 0 &&
       !slot.conflict &&
@@ -194,6 +195,9 @@ export class RuntimeWorkerPool {
         slot.id !== this.host.selectedSessionId() &&
         !isBusyRunState(slot.runState) &&
         slot.pendingExtensionUiRequests.size === 0 &&
+        !slot.pendingQueues.paused &&
+        slot.pendingQueues.steering.length === 0 &&
+        slot.pendingQueues.followUp.length === 0 &&
         !slot.conflict &&
         !slot.navigationLease &&
         !slot.pendingBranchBridge &&
