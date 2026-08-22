@@ -86,6 +86,36 @@ const nodes = [
     canEdit: false,
     canFork: false,
   },
+  {
+    id: "u3",
+    parentId: "branch",
+    depth: 3,
+    type: "message",
+    role: "user",
+    label: "user: alternate prompt",
+    snippet: "alternate prompt",
+    timestamp: "2026-08-01",
+    active: false,
+    leaf: false,
+    canSwitch: false,
+    canEdit: true,
+    canFork: false,
+  },
+  {
+    id: "a3",
+    parentId: "u3",
+    depth: 4,
+    type: "message",
+    role: "assistant",
+    label: "assistant: alternate answer",
+    snippet: "alternate answer",
+    timestamp: "2026-08-01",
+    active: false,
+    leaf: false,
+    canSwitch: true,
+    canEdit: false,
+    canFork: false,
+  },
 ] as const;
 
 function tree(sessionId = "s1", effectiveLeafId = "a2") {
@@ -195,14 +225,19 @@ describe("History contextual mode", () => {
       "Conversation history and branches",
     );
     expect(history).toBeInTheDocument();
+    expect(screen.getByText("3 turns · 1 fork")).toBeInTheDocument();
     expect(
-      screen.getByText(/cannot edit from the root user message/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Current branch: assistant: latest" }),
+      screen.getByRole("button", { name: "Edit from here: user: root" }),
     ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Current point: assistant: latest" }),
+    ).toBeDisabled();
+    const alternateTurn = screen
+      .getByRole("button", { name: "Collapse activity for alternate prompt" })
+      .closest(".branch-turn");
+    expect(alternateTurn).toHaveStyle("--branch-lane: 1");
     const switchButton = screen.getByRole("button", {
-      name: "Switch branch: assistant: sibling",
+      name: "Switch to point: assistant: sibling",
     });
     switchButton.focus();
     fireEvent.keyDown(switchButton, { key: "Enter" });
@@ -267,6 +302,53 @@ describe("History contextual mode", () => {
     ).toBe(true);
   });
 
+  it("folds and searches loaded activity without flattening it into raw rows", async () => {
+    store.setResourcesOpen(true);
+    store.setContextMode("files");
+    render(<App />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    await screen.findByLabelText("Conversation history and branches");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse all activity" }),
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
+    ).not.toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", {
+      name: "Search loaded history",
+    });
+    fireEvent.change(search, { target: { value: "sibling" } });
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+    expect(screen.getByText("1 matching event")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit from here: user: alternate prompt",
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand activity for root" }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).toHaveValue("");
+    expect(
+      screen.getByRole("button", {
+        name: "Edit from here: user: alternate prompt",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("keeps an earlier branch visible with explicit return and fork actions", async () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
@@ -276,7 +358,9 @@ describe("History contextual mode", () => {
     );
     await screen.findByLabelText("Conversation history and branches");
     fireEvent.click(
-      screen.getByRole("button", { name: "Switch branch: assistant: sibling" }),
+      screen.getByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
     );
 
     const banner = await screen.findByText("Viewing an earlier branch");
@@ -308,7 +392,9 @@ describe("History contextual mode", () => {
     );
     await screen.findByLabelText("Conversation history and branches");
     fireEvent.click(
-      screen.getByRole("button", { name: "Switch branch: assistant: sibling" }),
+      screen.getByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
     );
     await screen.findByText("Viewing an earlier branch");
 
@@ -351,7 +437,9 @@ describe("History contextual mode", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("sibling")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Switch branch: assistant: sibling" }),
+      screen.getByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
     ).toBeDisabled();
     const actionRequests = requests.filter(
       ({ url }) =>
@@ -372,7 +460,67 @@ describe("History contextual mode", () => {
     });
     await expect(store.navigateBranch("branch", "switch")).resolves.toBe(false);
     expect(
-      screen.getByRole("button", { name: "Switch branch: assistant: sibling" }),
+      screen.getByRole("button", {
+        name: "Switch to point: assistant: sibling",
+      }),
     ).toBeDisabled();
+
+    (store as unknown as { set(partial: unknown): void }).set({
+      branchTree: { ...tree(), truncated: true },
+      projectionHealth: { status: "ok" },
+    });
+    expect(
+      await screen.findByText("Earlier entries omitted"),
+    ).toBeInTheDocument();
+
+    const longNodes = Array.from({ length: 500 }, (_, index) => ({
+      id: `event-${index}`,
+      parentId: index > 0 ? `event-${index - 1}` : null,
+      childIds: index < 499 ? [`event-${index + 1}`] : [],
+      activeChildId: index < 499 ? `event-${index + 1}` : null,
+      type: "tool_result",
+      role: "tool",
+      label: `event ${index}`,
+      timestamp: "2026-08-22T00:00:00.000Z",
+      createdAtMs: index,
+      depth: index,
+      activePath: true,
+      branchNode: false,
+      leaf: index === 499,
+      subtreeEnd: 500,
+      canSwitch: index !== 499,
+      canEdit: false,
+      canFork: false,
+      metadata: false,
+      durationMs: null,
+      usage: null,
+    }));
+    (store as unknown as { set(partial: unknown): void }).set({
+      branchTree: {
+        ...tree(),
+        durableLeafId: "event-499",
+        effectiveLeafId: "event-499",
+        activePath: longNodes.map(({ id }) => id),
+        nodes: longNodes,
+        truncated: true,
+      },
+    });
+    expect(
+      await screen.findByText("500 entries · bounded"),
+    ).toBeInTheDocument();
+    const expandBoundedActivity = screen.getByRole("button", {
+      name: "Expand activity for Activity before the loaded boundary",
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Switch to point: event 498",
+      }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(expandBoundedActivity);
+    expect(
+      screen.getByRole("button", {
+        name: "Switch to point: event 498",
+      }),
+    ).toBeInTheDocument();
   });
 });
