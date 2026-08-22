@@ -1134,6 +1134,7 @@ describe("folder grouping and settings page", () => {
     ).toBeInTheDocument();
     const thinkingCards = within(dialog).getByLabelText("Thinking cards");
     const toolCards = within(dialog).getByLabelText("Tool cards");
+    const activityFolds = within(dialog).getByLabelText("Activity folds");
     const assistantRounds = within(dialog).getByLabelText("Assistant rounds");
     expect(assistantRounds).toBeInTheDocument();
     expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
@@ -1154,11 +1155,19 @@ describe("folder grouping and settings page", () => {
     expect(optionLabels("Tool cards")).toEqual([
       "Dynamic",
       "Expanded",
-      "Collapsed",
       "Compact",
+      "Collapsed",
       "Hidden",
     ]);
     fireEvent.click(toolCards);
+    fireEvent.click(activityFolds);
+    expect(optionLabels("Activity folds")).toEqual([
+      "Dynamic",
+      "Expanded",
+      "Compact",
+      "Collapsed",
+    ]);
+    fireEvent.click(activityFolds);
     fireEvent.click(assistantRounds);
     expect(optionLabels("Assistant rounds")).toEqual(["Details", "Divider"]);
     fireEvent.click(assistantRounds);

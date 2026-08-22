@@ -503,19 +503,34 @@ describe("extension_ui_request mapping", () => {
     expect(slice.extensionUiRequests).toEqual([]);
   });
 
-  it("dismisses a pending dialog when its runtime stops", () => {
+  it("clears browser-only liveness when a runtime dies without settling", () => {
     const pending = reduce(emptyEventSlice(), new Set(), {
       type: "extension_ui_request",
       sessionId: "s1",
       id: "r1",
       method: "confirm",
     }).slice;
-    const failed = reduce(pending, new Set(), {
-      type: "runtime_error",
-      error: "crashed",
-    }).slice;
-    expect(failed.extensionUiRequests).toEqual([]);
-    expect(failed.runState).toBe("failed");
+    const failed = reduce(
+      {
+        ...pending,
+        streaming: true,
+        activeAssistantMessageKey: "live:call-1",
+        tools: {
+          tool: { id: "tool", name: "read", phase: "running" },
+        },
+        retry: { attempt: 2, maxAttempts: 3, message: "network" },
+      },
+      new Set(),
+      { type: "runtime_error", error: "crashed" },
+    ).slice;
+    expect(failed).toMatchObject({
+      runState: "failed",
+      streaming: false,
+      activeAssistantMessageKey: null,
+      tools: {},
+      retry: null,
+      extensionUiRequests: [],
+    });
   });
 
   it("turns notify into a fire-and-forget notice with the given severity", () => {

@@ -1,32 +1,55 @@
 import { Loader2, Search } from "lucide-react";
-import { useMemo, useRef } from "react";
-import type {
-  AssistantRoundDisplayPreference,
-  GenericExtensionDisplay,
-  PendingQueues,
-  ToolVisibilityPreference,
-  VisibilityPreference,
-} from "../../shared/contracts";
 import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  type ActivityFoldVisibilityPreference,
+  type AssistantRoundDisplayPreference,
+  type GenericExtensionDisplay,
+  isBusyRunState,
+  type PendingQueues,
+  type RunState,
+  type ToolVisibilityPreference,
+  type UserTurnAnchor,
+  type VisibilityPreference,
+} from "../../shared/contracts";
+import { messageFallbackCorrelation } from "../../shared/message-identity";
+import {
+  type ActivityTool,
   asMessage,
+  type ChatMessage,
   contentItems,
   messageKey,
   messageText,
-  type ActivityTool,
-  type ChatMessage,
   type ToolCallContent,
 } from "../events";
-import { store } from "../store";
+import {
+  store,
+  type ActivityMaterializationMode,
+  type TranscriptActivityRangeState,
+} from "../store";
 import { Dropdown } from "./Dropdown";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
+import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
 import {
   assistantEndsWithToolRun,
   CustomActivityBatch,
-  customActivityIdentity,
-  hasRenderableAssistantContent,
+  customActivityItems,
+  genericContentTitle,
 } from "./transcript-cards";
+import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
+import {
+  type ActivityFoldPresentation,
+  type ActivityTelemetryItem,
+  ResponseActivityFold,
+} from "./transcript-fold";
 import {
   AssistantTurn,
   ExtensionDisplaySurface,
@@ -37,8 +60,8 @@ import {
 } from "./transcript-rows";
 import {
   TRANSCRIPT_SEARCH_SCOPES,
-  useTranscriptSearch,
   type TranscriptSearchScope,
+  useTranscriptSearch,
 } from "./transcript-search";
 import { useTranscriptViewport } from "./transcript-viewport";
 
@@ -46,43 +69,201 @@ import { useTranscriptViewport } from "./transcript-viewport";
 
 const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 
+type ProjectionIdentityRegistry = {
+  prefix: string;
+  byMember: Map<string, string>;
+};
+
+type ProjectionIdentityClaim = {
+  key: string;
+  members: string[];
+};
+
+interface DeferredActivityMarker extends ChatMessage {
+  role: "__inspireDeferredActivity";
+  __inspireActivityRange: TranscriptActivityRangeState;
+}
+
+interface TranscriptGapMarker extends ChatMessage {
+  role: "__inspireTranscriptGap";
+  __inspireGapAfterTurn: number;
+  __inspireGapBeforeTurn: number;
+}
+
+function isDeferredActivityMarker(
+  message: ChatMessage,
+): message is DeferredActivityMarker {
+  return message.role === "__inspireDeferredActivity";
+}
+
+function isTranscriptGapMarker(
+  message: ChatMessage,
+): message is TranscriptGapMarker {
+  return message.role === "__inspireTranscriptGap";
+}
+
+function claimProjectionIdentity(
+  registry: ProjectionIdentityRegistry,
+  claimedKeys: Set<string>,
+  claims: ProjectionIdentityClaim[],
+  members: string[],
+): string {
+  let key: string | undefined;
+  for (const member of members) {
+    const existing = registry.byMember.get(member);
+    if (existing && !claimedKeys.has(existing)) {
+      key = existing;
+      break;
+    }
+  }
+  key ??= `${registry.prefix}:${members[0]}`;
+  claimedKeys.add(key);
+  claims.push({ key, members });
+  return key;
+}
+
 export function Transcript({
   messages,
+  activityRanges = [],
+  promptMapTurns = [],
+  promptMapTotal = 0,
+  promptMapLoadedStarts = [],
+  promptMapLoadingStarts = [],
+  promptMapError = null,
+  promptMapNavigatingOrdinal = null,
   streaming,
+  runState,
   activeAssistantMessageKey = null,
   toolActivity = EMPTY_TOOL_ACTIVITY,
   thinkingVisibility,
   toolVisibility,
+  activityFoldVisibility = "expanded",
   assistantRoundDisplay = "details",
   hasOlder = false,
   loadingOlder = false,
   olderError = null,
   onLoadOlder = store.loadOlderMessages,
+  onMaterializeActivityRanges = store.materializeActivityRanges,
+  onLoadPromptMapTurns = store.loadPromptMapTurns,
+  onNavigatePromptMapTurn = store.navigatePromptMapTurn,
   sessionId = "",
   viewId = "",
+  projectionIncarnation = "",
   queue = { steering: [], followUp: [] },
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
   messages: ChatMessage[];
+  activityRanges?: TranscriptActivityRangeState[];
+  promptMapTurns?: UserTurnAnchor[];
+  promptMapTotal?: number;
+  promptMapLoadedStarts?: number[];
+  promptMapLoadingStarts?: number[];
+  promptMapError?: string | null;
+  promptMapNavigatingOrdinal?: number | null;
   streaming: boolean;
+  runState?: RunState;
   activeAssistantMessageKey?: string | null;
   toolActivity?: Record<string, ActivityTool>;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
+  activityFoldVisibility?: ActivityFoldVisibilityPreference;
   assistantRoundDisplay?: AssistantRoundDisplayPreference;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   olderError?: string | null;
   onLoadOlder?: () => Promise<boolean>;
+  onMaterializeActivityRanges?: (
+    cursors: readonly string[],
+    beforeCommit?: () => void,
+    mode?: ActivityMaterializationMode,
+  ) => Promise<void>;
+  onLoadPromptMapTurns?: (start?: number) => Promise<readonly UserTurnAnchor[]>;
+  onNavigatePromptMapTurn?: (ordinal: number) => Promise<boolean>;
   sessionId?: string;
   viewId?: string;
+  projectionIncarnation?: string;
   queue?: PendingQueues;
   extensionDisplays?: GenericExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const projectionViewKey = `${viewId}\u0000${projectionIncarnation}`;
+  const preserveActivityAnchorRef = useRef<
+    (element: HTMLElement, alignment: "start" | "center" | "end") => void
+  >(() => undefined);
+  // Activity runs and their custom batches are semantic groups even while
+  // older pages extend them from the left or live events extend them from the
+  // right. Member aliases retain the already-mounted disclosure owners.
+  const activityProjectionIdentities = useMemo(
+    () => ({
+      folds: {
+        prefix: `activity-fold:${sessionId}\u0000${projectionViewKey}`,
+        byMember: new Map<string, string>(),
+      },
+      customBatches: {
+        prefix: `custom-batch:${sessionId}\u0000${projectionViewKey}`,
+        byMember: new Map<string, string>(),
+      },
+      manualFoldPresentation: new Map<string, ActivityFoldPresentation>(),
+    }),
+    [projectionViewKey, sessionId],
+  );
+
+  const projectionMessages = useMemo(() => {
+    const rangesByAnchor = new Map<
+      string | null,
+      TranscriptActivityRangeState[]
+    >();
+    for (const range of activityRanges) {
+      const anchored = rangesByAnchor.get(range.afterMessageId) ?? [];
+      anchored.push(range);
+      rangesByAnchor.set(range.afterMessageId, anchored);
+    }
+    const projected: ChatMessage[] = [];
+    const appendRanges = (anchor: string | null) => {
+      for (const range of rangesByAnchor.get(anchor) ?? []) {
+        projected.push({
+          role: "__inspireDeferredActivity",
+          __inspireActivityRange: range,
+        } as DeferredActivityMarker);
+      }
+      rangesByAnchor.delete(anchor);
+    };
+    appendRanges(null);
+    let previousTurnIndex: number | null = null;
+    for (const message of messages) {
+      const turnIndex = Number.isSafeInteger(message.__inspireUserTurnIndex)
+        ? (message.__inspireUserTurnIndex as number)
+        : null;
+      if (
+        previousTurnIndex !== null &&
+        turnIndex !== null &&
+        turnIndex > previousTurnIndex + 1
+      ) {
+        projected.push({
+          role: "__inspireTranscriptGap",
+          __inspireGapAfterTurn: previousTurnIndex,
+          __inspireGapBeforeTurn: turnIndex,
+        } as TranscriptGapMarker);
+      }
+      projected.push(message);
+      appendRanges(message.__inspireMessageId ?? null);
+      if (turnIndex !== null) previousTurnIndex = turnIndex;
+    }
+    // A stale anchor should remain visible as a recoverable range instead of
+    // silently losing transcript content. Materialization will report the
+    // missing boundary and an authoritative refresh can repair it.
+    for (const ranges of rangesByAnchor.values()) {
+      for (const range of ranges)
+        projected.unshift({
+          role: "__inspireDeferredActivity",
+          __inspireActivityRange: range,
+        } as DeferredActivityMarker);
+    }
+    return projected;
+  }, [activityRanges, messages]);
 
   // Tool-call pairing is derived data: recompute only when the message list changes.
   const { toolResults, toolCallIds } = useMemo(() => {
@@ -105,83 +286,302 @@ export function Transcript({
     return { toolResults: results, toolCallIds: callIds };
   }, [messages]);
 
-  let activeStreamingIndex = -1;
-  if (streaming && activeAssistantMessageKey) {
-    const index = messages.findIndex(
+  const authoritativeRunState: RunState =
+    runState ??
+    (streaming || activeAssistantMessageKey !== null ? "running" : "idle");
+  const runBusy = isBusyRunState(authoritativeRunState);
+
+  let activeStreamingMessage: ChatMessage | null = null;
+  if (runBusy && streaming && activeAssistantMessageKey) {
+    const candidate = messages.find(
       (message) => messageKey(message) === activeAssistantMessageKey,
     );
-    const candidate =
-      index >= 0
-        ? (messages[index] as ChatMessage & { __inspireSettled?: unknown })
-        : null;
     if (candidate?.role === "assistant" && candidate.__inspireSettled !== true)
-      activeStreamingIndex = index;
+      activeStreamingMessage = candidate;
   }
   // Preview/mock projections may not carry an active lifecycle identity. Only
   // their literal unsettled tail is safe; never reinterpret settled history as
   // the current retry merely because the host run is busy.
-  if (streaming && !activeAssistantMessageKey) {
-    const tail = messages.at(-1) as
-      | (ChatMessage & { __inspireSettled?: unknown })
-      | undefined;
+  if (runBusy && streaming && !activeAssistantMessageKey) {
+    const tail = messages.at(-1);
     if (tail?.role === "assistant" && tail.__inspireSettled !== true)
-      activeStreamingIndex = messages.length - 1;
+      activeStreamingMessage = tail;
   }
 
-  // Row descriptors rebuild only when a dependency changes; memoized row
-  // components keep settled turns from re-rendering on stream deltas.
-  const rows = useMemo(() => {
-    const built: Array<{
+  // Project visible response passages and the maximal activity between them
+  // into separate rows. Activity cards keep their existing renderers and local
+  // state; only the outer band changes their collective visibility.
+  const rowProjection = useMemo(() => {
+    type Row = {
       key: string;
       node: React.ReactNode;
       searchText: string;
       searchScope: Exclude<TranscriptSearchScope, "all"> | null;
-    }> = [];
-    const hasLaterAssistant = new Array<boolean>(messages.length + 1).fill(
-      false,
-    );
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      turnOrdinal: number | null;
+      turnId: string | null;
+      turnStart: boolean;
+    };
+    type ActivityRun = {
+      memberKeys: string[];
+      nodes: React.ReactNode[];
+      deferredRanges: TranscriptActivityRangeState[];
+      telemetry: ActivityTelemetryItem[];
+      live: boolean;
+      turnOrdinal: number | null;
+      turnId: string | null;
+    };
+    type AssistantSegment = {
+      kind: "response" | "activity";
+      start: number;
+      content: ChatMessage["content"];
+      customMessages: ChatMessage[];
+    };
+
+    const built: Row[] = [];
+    const foldIdentityClaims: ProjectionIdentityClaim[] = [];
+    const customBatchIdentityClaims: ProjectionIdentityClaim[] = [];
+    const claimedFoldKeys = new Set<string>();
+    const claimedCustomBatchKeys = new Set<string>();
+    // Outer disclosure state must survive live-overlay adoption. Ordinary Pi
+    // messages keep their timestamp correlation; displayed custom activity can
+    // change timestamps and instead carries its host-paired durable entry id.
+    const projectionKeyOccurrences = new Map<string, number>();
+    const deferredRangeAlias = (message: ChatMessage): string[] =>
+      typeof message.__inspireActivityRangeCursor === "string"
+        ? [`deferred:${message.__inspireActivityRangeCursor}`]
+        : [];
+    const projectionKey = (message: ChatMessage, fallback: string): string => {
+      const customEntryId =
+        message.role === "custom" &&
+        typeof message.__inspireEntryId === "string"
+          ? `entry:${message.__inspireEntryId}`
+          : null;
+      const base = `${viewId ?? "current"}:${customEntryId ?? messageFallbackCorrelation(message) ?? fallback}`;
+      const occurrence = projectionKeyOccurrences.get(base) ?? 0;
+      projectionKeyOccurrences.set(base, occurrence + 1);
+      return `${base}:${occurrence}`;
+    };
+    let currentTurnOrdinal: number | null = null;
+    let currentTurnId: string | null = null;
+    let activityRun: ActivityRun | null = null;
+    const adoptTurnOwner = (message: ChatMessage) => {
+      if (Number.isSafeInteger(message.__inspireUserTurnIndex))
+        currentTurnOrdinal = message.__inspireUserTurnIndex as number;
+      if (typeof message.__inspireUserTurnId === "string")
+        currentTurnId = message.__inspireUserTurnId;
+      if (message.role === "user") {
+        if (!Number.isSafeInteger(message.__inspireUserTurnIndex))
+          currentTurnOrdinal = (currentTurnOrdinal ?? -1) + 1;
+        if (typeof message.__inspireUserTurnId !== "string")
+          currentTurnId = message.__inspireMessageId ?? messageKey(message);
+      }
+    };
+    const appendActivity = (
+      key: string,
+      node: React.ReactNode,
+      live: boolean,
+      aliases: string[] = [],
+      deferredRange?: TranscriptActivityRangeState,
+      telemetryItems: ActivityTelemetryItem[] = [],
+    ) => {
+      if (!activityRun)
+        activityRun = {
+          memberKeys: [],
+          nodes: [],
+          deferredRanges: [],
+          telemetry: [],
+          live: false,
+          turnOrdinal: currentTurnOrdinal,
+          turnId: currentTurnId,
+        };
+      activityRun.memberKeys.push(key, ...aliases);
+      activityRun.nodes.push(node);
+      if (deferredRange) activityRun.deferredRanges.push(deferredRange);
+      if (telemetryItems.length > 0)
+        activityRun.telemetry.push(...telemetryItems);
+      activityRun.live ||= live;
+    };
+    const flushActivity = (boundaryClosed: boolean, tail = false) => {
+      if (!activityRun) return;
+      const run = activityRun;
+      const lifecycleActive =
+        !boundaryClosed && (run.live || (tail && runBusy));
+      const foldKey = claimProjectionIdentity(
+        activityProjectionIdentities.folds,
+        claimedFoldKeys,
+        foldIdentityClaims,
+        run.memberKeys,
+      );
+      built.push({
+        key: foldKey,
+        node: (
+          <ResponseActivityFold
+            visibility={activityFoldVisibility}
+            lifecycleActive={lifecycleActive}
+            closeRequested={boundaryClosed || !lifecycleActive}
+            initialManualPresentation={
+              activityProjectionIdentities.manualFoldPresentation.get(
+                foldKey,
+              ) ?? null
+            }
+            onManualPresentationChange={(next) =>
+              activityProjectionIdentities.manualFoldPresentation.set(
+                foldKey,
+                next,
+              )
+            }
+            deferredRanges={run.deferredRanges}
+            telemetry={run.telemetry}
+            onMaterializeRanges={onMaterializeActivityRanges}
+            onPreserveAnchor={(element, alignment) =>
+              preserveActivityAnchorRef.current(element, alignment)
+            }
+          >
+            {run.nodes}
+          </ResponseActivityFold>
+        ),
+        searchText: "",
+        searchScope: null,
+        turnOrdinal: run.turnOrdinal,
+        turnId: run.turnId,
+        turnStart: false,
+      });
+      activityRun = null;
+    };
+
+    const hasLaterAssistant = new Array<boolean>(
+      projectionMessages.length + 1,
+    ).fill(false);
+    for (let index = projectionMessages.length - 1; index >= 0; index -= 1) {
       hasLaterAssistant[index] =
         hasLaterAssistant[index + 1]! ||
-        asMessage(messages[index]).role === "assistant";
+        asMessage(projectionMessages[index]).role === "assistant";
     }
 
-    for (let index = 0; index < messages.length; ) {
-      const message = asMessage(messages[index]);
+    for (let index = 0; index < projectionMessages.length; ) {
+      const message = asMessage(projectionMessages[index]);
+
+      if (isTranscriptGapMarker(message)) {
+        flushActivity(true);
+        built.push({
+          key: `transcript-gap:${message.__inspireGapAfterTurn}:${message.__inspireGapBeforeTurn}`,
+          node: (
+            <div className="transcript-gap" role="separator">
+              <span>Conversation segment not loaded</span>
+            </div>
+          ),
+          searchText: "",
+          searchScope: null,
+          turnOrdinal: null,
+          turnId: null,
+          turnStart: false,
+        });
+        currentTurnOrdinal = null;
+        currentTurnId = null;
+        index += 1;
+        continue;
+      }
+
+      adoptTurnOwner(message);
+      if (isDeferredActivityMarker(message)) {
+        const range = message.__inspireActivityRange;
+        const visible =
+          (range.kinds.includes("thinking") &&
+            thinkingVisibility !== "hidden") ||
+          (range.kinds.includes("tool") && toolVisibility !== "hidden");
+        if (visible) {
+          const memberKey = `deferred:${range.cursor}`;
+          const deferredTelemetry: ActivityTelemetryItem[] = range.kinds.map(
+            (k) => ({
+              id: `${memberKey}:${k}`,
+              kind: k === "thinking" ? "thinking" : "tool",
+              label: k === "thinking" ? "Thinking" : "Tool call",
+              deferred: true,
+            }),
+          );
+          appendActivity(memberKey, null, false, [], range, deferredTelemetry);
+        }
+        index += 1;
+        continue;
+      }
 
       if (message.role === "custom") {
-        const batchStart = index;
         const customMessages: ChatMessage[] = [];
-        while (index < messages.length) {
-          const candidate = asMessage(messages[index]);
+        const customProjectionKeys: string[] = [];
+        while (index < projectionMessages.length) {
+          const candidateIndex = index;
+          const candidate = asMessage(projectionMessages[index]);
           if (candidate.role !== "custom") break;
           // display:false remains in Pi/model context but is absent from the
           // browser activity run and does not split adjacent visible messages.
-          if (candidate.display !== false) customMessages.push(candidate);
+          if (candidate.display !== false) {
+            customMessages.push(candidate);
+            customProjectionKeys.push(
+              projectionKey(
+                candidate,
+                messageKey(candidate) ?? `custom:${candidateIndex}`,
+              ),
+            );
+          }
           index += 1;
         }
         if (toolVisibility !== "hidden" && customMessages.length > 0) {
-          built.push({
-            key: `custom-batch:${customActivityIdentity(customMessages[0]!, batchStart)}`,
-            node: (
+          const projectedCustomKey = customProjectionKeys[0]!;
+          const customKey = claimProjectionIdentity(
+            activityProjectionIdentities.customBatches,
+            claimedCustomBatchKeys,
+            customBatchIdentityClaims,
+            customProjectionKeys,
+          );
+          const customLive = customMessages.some(
+            (custom) =>
+              typeof custom.__inspireLiveId === "string" &&
+              custom.__inspireSettled !== true,
+          );
+          const customActivityIds = customProjectionKeys.map(
+            (projectionKey) => `${projectionKey}:custom`,
+          );
+          const customTelemetry: ActivityTelemetryItem[] = customMessages.map(
+            (c, customIndex) => ({
+              id: customActivityIds[customIndex]!,
+              kind: "custom",
+              label:
+                (c as { customType?: string }).customType ?? "Custom activity",
+              live:
+                typeof c.__inspireLiveId === "string" &&
+                c.__inspireSettled !== true,
+            }),
+          );
+          appendActivity(
+            projectedCustomKey,
+            <ActivitySegmentBoundary ids={customActivityIds}>
               <CustomActivityBatch
+                key={customKey}
                 messages={customMessages}
+                activityItemIds={customActivityIds}
                 toolVisibility={toolVisibility}
-                compactRequested={!streaming || hasLaterAssistant[index]!}
+                collapseRequested={!runBusy || hasLaterAssistant[index]!}
               />
-            ),
-            searchText: "",
-            searchScope: null,
-          });
+            </ActivitySegmentBoundary>,
+            customLive,
+            [
+              ...customProjectionKeys.slice(1),
+              ...customMessages.flatMap(deferredRangeAlias),
+            ],
+            undefined,
+            customTelemetry,
+          );
         }
         continue;
       }
 
       const key = messageKey(message) ?? `${message.role}:${index}`;
+      const projectedKey = projectionKey(message, key);
       const settled =
         typeof message.__inspireLiveId !== "string" ||
         message.__inspireSettled === true;
       if (message.role === "user") {
+        flushActivity(true);
         built.push({
           key,
           node: (
@@ -193,10 +593,18 @@ export function Transcript({
           ),
           searchText: settled ? messageText(message) : "",
           searchScope: "user",
+          turnOrdinal: currentTurnOrdinal,
+          turnId: currentTurnId,
+          turnStart: true,
         });
-      } else if (message.role === "assistant") {
+        index += 1;
+        continue;
+      }
+
+      if (message.role === "assistant") {
         let activityEnd = index + 1;
         const trailingCustomMessages: ChatMessage[] = [];
+        const trailingActivityKeys: string[] = [];
         if (assistantEndsWithToolRun(message)) {
           const ownToolCallIds = new Set(
             contentItems(message).flatMap((item) =>
@@ -206,19 +614,34 @@ export function Transcript({
                 : [],
             ),
           );
-          while (activityEnd < messages.length) {
-            const candidate = asMessage(messages[activityEnd]);
+          while (activityEnd < projectionMessages.length) {
+            const candidate = asMessage(projectionMessages[activityEnd]);
             if (
               candidate.role === "toolResult" &&
               typeof candidate.toolCallId === "string" &&
               ownToolCallIds.has(candidate.toolCallId)
             ) {
+              trailingActivityKeys.push(
+                projectionKey(
+                  candidate,
+                  messageKey(candidate) ?? `toolResult:${activityEnd}`,
+                ),
+                ...deferredRangeAlias(candidate),
+              );
               activityEnd += 1;
               continue;
             }
             if (candidate.role === "custom") {
-              if (candidate.display !== false)
+              if (candidate.display !== false) {
                 trailingCustomMessages.push(candidate);
+                trailingActivityKeys.push(
+                  projectionKey(
+                    candidate,
+                    messageKey(candidate) ?? `custom:${activityEnd}`,
+                  ),
+                  ...deferredRangeAlias(candidate),
+                );
+              }
               activityEnd += 1;
               continue;
             }
@@ -226,117 +649,412 @@ export function Transcript({
           }
         }
 
-        const assistantStreaming = index === activeStreamingIndex;
-        // Pi can persist an empty error response before automatically retrying.
-        // It remains authoritative history, but must not become a phantom
-        // Divider-only transcript row with an estimated virtual-list height.
-        if (
-          assistantStreaming ||
-          hasRenderableAssistantContent(
-            message,
-            thinkingVisibility,
-            toolVisibility,
-          ) ||
-          (toolVisibility !== "hidden" && trailingCustomMessages.length > 0)
-        ) {
-          built.push({
-            key,
-            node: (
-              <AssistantTurn
-                message={message}
-                toolResults={toolResults}
-                toolActivity={toolActivity}
-                customMessages={trailingCustomMessages}
-                customCompactRequested={
-                  !streaming || hasLaterAssistant[activityEnd]!
-                }
-                streaming={assistantStreaming}
-                dynamicActive={key === activeAssistantMessageKey}
-                thinkingVisibility={thinkingVisibility}
-                toolVisibility={toolVisibility}
-                assistantRoundDisplay={assistantRoundDisplay}
-              />
-            ),
-            searchText:
-              settled && index !== activeStreamingIndex
-                ? messageText(message)
-                : "",
-            searchScope: "model",
+        const assistantStreaming = message === activeStreamingMessage;
+        const assistantDynamicActive =
+          runBusy && key === activeAssistantMessageKey;
+        const segments: AssistantSegment[] = [];
+        const appendSegmentItem = (
+          kind: AssistantSegment["kind"],
+          item: ReturnType<typeof contentItems>[number],
+          itemIndex: number,
+        ) => {
+          const previous = segments.at(-1);
+          if (
+            previous?.kind === kind &&
+            Array.isArray(previous.content) &&
+            previous.customMessages.length === 0
+          ) {
+            previous.content.push(item);
+            return;
+          }
+          segments.push({
+            kind,
+            start: itemIndex,
+            content: [item],
+            customMessages: [],
+          });
+        };
+
+        if (typeof message.content === "string") {
+          if (message.content.length > 0) {
+            segments.push({
+              kind: "response",
+              start: 0,
+              content: message.content,
+              customMessages: [],
+            });
+          }
+        } else {
+          contentItems(message).forEach((item, itemIndex) => {
+            if (item.type === "text") {
+              if (
+                typeof (item as { text?: unknown }).text === "string" &&
+                (item as { text: string }).text.length > 0
+              ) {
+                appendSegmentItem("response", item, itemIndex);
+              }
+              return;
+            }
+            const visible =
+              item.type === "thinking"
+                ? thinkingVisibility !== "hidden"
+                : item.type === "toolCall"
+                  ? toolVisibility !== "hidden"
+                  : toolVisibility !== "hidden" &&
+                    genericContentTitle(item) !== null;
+            if (visible) appendSegmentItem("activity", item, itemIndex);
           });
         }
+
+        if (toolVisibility !== "hidden" && trailingCustomMessages.length > 0) {
+          const previous = segments.at(-1);
+          if (previous?.kind === "activity") {
+            previous.customMessages = trailingCustomMessages;
+          } else {
+            segments.push({
+              kind: "activity",
+              start: contentItems(message).length,
+              content: [],
+              customMessages: trailingCustomMessages,
+            });
+          }
+        }
+
+        // Pi may persist an empty error response before retrying. Only the
+        // currently active empty assistant becomes a real Working activity.
+        if (segments.length === 0 && assistantStreaming) {
+          segments.push({
+            kind: "activity",
+            start: 0,
+            content: [],
+            customMessages: [],
+          });
+        }
+
+        let firstResponse = -1;
+        let lastResponse = -1;
+        let lastActivity = -1;
+        segments.forEach((segment, segmentIndex) => {
+          if (segment.kind === "response") {
+            if (firstResponse < 0) firstResponse = segmentIndex;
+            lastResponse = segmentIndex;
+          } else lastActivity = segmentIndex;
+        });
+        // Attribution belongs with this call's first response when one exists.
+        // Otherwise a collapsed leading activity band would swallow the round
+        // marker and make equivalent responses look inconsistently unowned.
+        const leadSegment = firstResponse >= 0 ? firstResponse : 0;
+        const fullResponseText = messageText(message);
+
+        segments.forEach((segment, segmentIndex) => {
+          const segmentKey = `${projectedKey}:${segment.kind}:${segment.start}`;
+          const fragmentMessage: ChatMessage = {
+            ...message,
+            content: segment.content,
+          };
+          const fragmentItems = contentItems(fragmentMessage);
+          const activityItemIds = fragmentItems.map(
+            (_, itemIndex) => `${segmentKey}:item:${itemIndex}`,
+          );
+          const customActivityIds = customActivityItems(
+            segment.customMessages,
+          ).map((activity) => `${segmentKey}:${activity.key}`);
+          const segmentStreaming =
+            assistantStreaming && segmentIndex === segments.length - 1;
+          const node = (
+            <AssistantTurn
+              key={segmentKey}
+              message={fragmentMessage}
+              toolResults={toolResults}
+              toolActivity={toolActivity}
+              customMessages={segment.customMessages}
+              activityItemIds={activityItemIds}
+              customActivityIds={customActivityIds}
+              customCollapseRequested={
+                !runBusy || hasLaterAssistant[activityEnd]!
+              }
+              streaming={segmentStreaming}
+              dynamicActive={assistantDynamicActive}
+              thinkingVisibility={thinkingVisibility}
+              toolVisibility={toolVisibility}
+              assistantRoundDisplay={assistantRoundDisplay}
+              showLead={segmentIndex === leadSegment}
+              roundActivityItemId={
+                segment.kind === "activity"
+                  ? (activityItemIds[0] ?? customActivityIds[0])
+                  : undefined
+              }
+              responseCopyText={
+                segment.kind === "response" && segmentIndex === lastResponse
+                  ? fullResponseText
+                  : ""
+              }
+            />
+          );
+
+          if (segment.kind === "response") {
+            flushActivity(true);
+            built.push({
+              key: `response:${segmentKey}`,
+              node,
+              searchText:
+                settled && !assistantStreaming
+                  ? messageText(fragmentMessage)
+                  : "",
+              searchScope: "model",
+              turnOrdinal: currentTurnOrdinal,
+              turnId: currentTurnId,
+              turnStart: false,
+            });
+            return;
+          }
+
+          const customLive = segment.customMessages.some(
+            (custom) =>
+              typeof custom.__inspireLiveId === "string" &&
+              custom.__inspireSettled !== true,
+          );
+          const segmentTelemetry: ActivityTelemetryItem[] = [];
+          fragmentItems.forEach((item, itemIndex) => {
+            if (item.type === "thinking") {
+              segmentTelemetry.push({
+                id: activityItemIds[itemIndex]!,
+                kind: "thinking",
+                label: "Thinking",
+              });
+            } else if (item.type === "toolCall") {
+              segmentTelemetry.push({
+                id: activityItemIds[itemIndex]!,
+                kind: "tool",
+                label: (item as ToolCallContent).name
+                  ? `Tool: ${(item as ToolCallContent).name}`
+                  : "Tool call",
+              });
+            } else if (genericContentTitle(item) !== null) {
+              segmentTelemetry.push({
+                id: activityItemIds[itemIndex]!,
+                kind: "tool",
+                label: genericContentTitle(item) ?? "Activity",
+              });
+            }
+          });
+          if (
+            (assistantDynamicActive || segmentStreaming) &&
+            segmentTelemetry.length > 0
+          ) {
+            segmentTelemetry[segmentTelemetry.length - 1] = {
+              ...segmentTelemetry[segmentTelemetry.length - 1]!,
+              live: true,
+            };
+          }
+          segment.customMessages.forEach((c, customIndex) => {
+            segmentTelemetry.push({
+              id: customActivityIds[customIndex]!,
+              kind: "custom",
+              label:
+                (c as { customType?: string }).customType ?? "Custom activity",
+              live:
+                typeof c.__inspireLiveId === "string" &&
+                c.__inspireSettled !== true,
+            });
+          });
+          appendActivity(
+            segmentKey,
+            <ActivitySegmentBoundary
+              ids={segmentTelemetry.map((item) => item.id)}
+            >
+              {node}
+            </ActivitySegmentBoundary>,
+            assistantDynamicActive || segmentStreaming || customLive,
+            segmentIndex === lastActivity
+              ? [...trailingActivityKeys, ...deferredRangeAlias(message)]
+              : deferredRangeAlias(message),
+            undefined,
+            segmentTelemetry,
+          );
+        });
+
         index = activityEnd;
         continue;
-      } else if (message.role === "toolResult") {
+      }
+
+      if (message.role === "toolResult") {
         const paired =
           typeof message.toolCallId === "string" &&
           toolCallIds.has(message.toolCallId);
-        if (!paired) {
-          built.push({
-            key,
-            node: (
-              <UnpairedToolResultRow
-                toolName={message.toolName}
-                visibility={
-                  toolVisibility === "compact" || toolVisibility === "dynamic"
-                    ? "collapsed"
-                    : toolVisibility
-                }
-              />
-            ),
-            searchText: "",
-            searchScope: null,
-          });
-        }
-      } else {
-        built.push({
-          key,
-          node: (
-            <UnknownRoleRow
-              message={message}
+        if (!paired && toolVisibility !== "hidden") {
+          const activityItemId = `${projectedKey}:tool-result`;
+          const toolTelemetry: ActivityTelemetryItem[] = [
+            {
+              id: activityItemId,
+              kind: "tool",
+              label: message.toolName
+                ? `Tool: ${message.toolName}`
+                : "Tool result",
+            },
+          ];
+          appendActivity(
+            projectedKey,
+            <UnpairedToolResultRow
+              key={key}
+              activityItemId={activityItemId}
+              toolName={message.toolName}
               visibility={
-                toolVisibility === "compact" || toolVisibility === "dynamic"
+                toolVisibility === "compact" ||
+                toolVisibility === "collapsed" ||
+                toolVisibility === "dynamic"
                   ? "collapsed"
                   : toolVisibility
               }
-            />
-          ),
-          searchText: "",
-          searchScope: null,
-        });
+            />,
+            false,
+            deferredRangeAlias(message),
+            undefined,
+            toolTelemetry,
+          );
+        }
+      } else if (toolVisibility !== "hidden") {
+        const activityItemId = `${projectedKey}:unknown`;
+        const unknownTelemetry: ActivityTelemetryItem[] = [
+          { id: activityItemId, kind: "tool", label: "Activity" },
+        ];
+        appendActivity(
+          projectedKey,
+          <UnknownRoleRow
+            key={key}
+            activityItemId={activityItemId}
+            message={message}
+            visibility={
+              toolVisibility === "compact" ||
+              toolVisibility === "collapsed" ||
+              toolVisibility === "dynamic"
+                ? "collapsed"
+                : toolVisibility
+            }
+          />,
+          false,
+          deferredRangeAlias(message),
+          undefined,
+          unknownTelemetry,
+        );
       }
       index += 1;
     }
-    return built;
+
+    flushActivity(false, true);
+    return { rows: built, foldIdentityClaims, customBatchIdentityClaims };
   }, [
-    messages,
+    projectionMessages,
     activeAssistantMessageKey,
-    activeStreamingIndex,
+    activeStreamingMessage,
     streaming,
+    runBusy,
+    activityFoldVisibility,
+    activityProjectionIdentities,
     thinkingVisibility,
     toolVisibility,
     assistantRoundDisplay,
     toolResults,
     toolCallIds,
     toolActivity,
+    onMaterializeActivityRanges,
     sessionId,
     viewId,
+  ]);
+  const { rows, foldIdentityClaims, customBatchIdentityClaims } = rowProjection;
+  const loadedPromptTurns = useMemo(() => {
+    const byOrdinal = new Map<number, UserTurnAnchor>();
+    let inferredOrdinal = -1;
+    for (const message of messages) {
+      if (Number.isSafeInteger(message.__inspireUserTurnIndex))
+        inferredOrdinal = message.__inspireUserTurnIndex as number;
+      if (message.role !== "user") continue;
+      if (!Number.isSafeInteger(message.__inspireUserTurnIndex))
+        inferredOrdinal += 1;
+      const id =
+        message.__inspireMessageId ??
+        messageKey(message) ??
+        `loaded-user:${inferredOrdinal}`;
+      const attachmentCount = contentItems(message).filter(
+        (item) => item.type === "image",
+      ).length;
+      byOrdinal.set(inferredOrdinal, {
+        id,
+        ordinal: inferredOrdinal,
+        snippet:
+          Array.from(
+            messageText(message).replace(/\s+/g, " ").trim().slice(0, 360),
+          )
+            .slice(0, 180)
+            .join("") ||
+          (attachmentCount > 0 ? "Image attachment" : "User message"),
+        attachmentCount,
+      });
+    }
+    return [...byOrdinal.values()];
+  }, [messages]);
+  const effectivePromptTurns = useMemo(() => {
+    const byOrdinal = new Map(
+      promptMapTurns.map((turn) => [turn.ordinal, turn]),
+    );
+    for (const turn of loadedPromptTurns) byOrdinal.set(turn.ordinal, turn);
+    return [...byOrdinal.values()].sort(
+      (left, right) => left.ordinal - right.ordinal,
+    );
+  }, [loadedPromptTurns, promptMapTurns]);
+  const effectivePromptTotal = Math.max(
+    promptMapTotal,
+    (effectivePromptTurns.at(-1)?.ordinal ?? -1) + 1,
+  );
+  const [activePromptOrdinal, setActivePromptOrdinal] = useState<number | null>(
+    null,
+  );
+  const [pendingPromptOrdinal, setPendingPromptOrdinal] = useState<
+    number | null
+  >(null);
+  const promptNavigationOverrideRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const commit = (
+      registry: ProjectionIdentityRegistry,
+      claims: ProjectionIdentityClaim[],
+    ) => {
+      for (const claim of claims) {
+        for (const memberKey of claim.members)
+          registry.byMember.set(memberKey, claim.key);
+      }
+    };
+    commit(activityProjectionIdentities.folds, foldIdentityClaims);
+    commit(
+      activityProjectionIdentities.customBatches,
+      customBatchIdentityClaims,
+    );
+  }, [
+    activityProjectionIdentities,
+    customBatchIdentityClaims,
+    foldIdentityClaims,
   ]);
 
   const viewport = useTranscriptViewport({
     rows,
     sessionId,
+    viewId: projectionViewKey,
     hasOlder,
     olderError,
     onLoadOlder,
     followSignal: messages,
     searchOwnsViewportRef,
   });
+  useLayoutEffect(() => {
+    preserveActivityAnchorRef.current = viewport.preserveAnchorThroughLayout;
+  }, [viewport.preserveAnchorThroughLayout]);
   const search = useTranscriptSearch({
     rows,
     sessionId,
+    viewId: projectionViewKey,
     searchOwnsViewportRef,
     onClear: viewport.restoreGeometricFollow,
     onNavigate: (rowIndex) => {
+      promptNavigationOverrideRef.current = null;
       viewport.releaseLatestFollow();
       if (viewport.virtualize) {
         viewport.virtualizer.scrollToIndex(rowIndex, { align: "center" });
@@ -351,9 +1069,159 @@ export function Transcript({
     },
   });
 
+  const scrollToPromptOrdinal = useCallback(
+    (ordinal: number): boolean => {
+      const rowIndex = rows.findIndex(
+        (row) => row.turnOrdinal === ordinal && row.turnStart,
+      );
+      if (rowIndex < 0) return false;
+      promptNavigationOverrideRef.current = ordinal;
+      viewport.markUserScrollIntent();
+      viewport.releaseLatestFollow();
+      if (viewport.virtualize) {
+        viewport.virtualizer.scrollToIndex(rowIndex, { align: "start" });
+      } else {
+        requestAnimationFrame(() => {
+          viewport.scrollRef.current
+            ?.querySelector<HTMLElement>(`[data-transcript-row="${rowIndex}"]`)
+            ?.scrollIntoView({ block: "start" });
+        });
+      }
+      setActivePromptOrdinal(ordinal);
+      return true;
+    },
+    [rows, viewport],
+  );
+
+  const navigatePromptOrdinal = useCallback(
+    async (ordinal: number) => {
+      search.clearCurrentMatch();
+      if (scrollToPromptOrdinal(ordinal)) return true;
+      if (ordinal >= promptMapTotal) await onLoadPromptMapTurns();
+      setPendingPromptOrdinal(ordinal);
+      const loaded = await onNavigatePromptMapTurn(ordinal);
+      if (!loaded) setPendingPromptOrdinal(null);
+      return loaded;
+    },
+    [
+      onLoadPromptMapTurns,
+      onNavigatePromptMapTurn,
+      promptMapTotal,
+      scrollToPromptOrdinal,
+      search,
+    ],
+  );
+
+  useEffect(() => {
+    promptNavigationOverrideRef.current = null;
+    setActivePromptOrdinal(null);
+    setPendingPromptOrdinal(null);
+  }, [sessionId, projectionViewKey]);
+
+  useLayoutEffect(() => {
+    if (pendingPromptOrdinal === null) return;
+    if (scrollToPromptOrdinal(pendingPromptOrdinal))
+      setPendingPromptOrdinal(null);
+  }, [pendingPromptOrdinal, rows, scrollToPromptOrdinal]);
+
+  useEffect(() => {
+    const scroller = viewport.scrollRef.current;
+    if (!scroller) return;
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const bounds = scroller.getBoundingClientRect();
+        const readingLine = bounds.top + Math.min(bounds.height * 0.32, 220);
+        const candidates = [
+          ...scroller.querySelectorAll<HTMLElement>("[data-user-turn-index]"),
+        ];
+        let selected: HTMLElement | null = null;
+        const overrideOrdinal = promptNavigationOverrideRef.current;
+        if (overrideOrdinal !== null) {
+          selected =
+            candidates.find((candidate) => {
+              if (Number(candidate.dataset.userTurnIndex) !== overrideOrdinal)
+                return false;
+              const rect = candidate.getBoundingClientRect();
+              return rect.bottom > bounds.top && rect.top < bounds.bottom;
+            }) ?? null;
+          if (selected) {
+            setActivePromptOrdinal(overrideOrdinal);
+            return;
+          }
+          promptNavigationOverrideRef.current = null;
+        }
+        const latestOrdinal = effectivePromptTotal - 1;
+        const remaining =
+          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        if (
+          latestOrdinal >= 0 &&
+          scroller.scrollHeight - scroller.clientHeight > 1 &&
+          remaining <= 1 &&
+          candidates.some(
+            (candidate) =>
+              Number(candidate.dataset.userTurnIndex) === latestOrdinal,
+          )
+        ) {
+          setActivePromptOrdinal(latestOrdinal);
+          return;
+        }
+        for (const candidate of candidates) {
+          const rect = candidate.getBoundingClientRect();
+          if (rect.top <= readingLine) selected = candidate;
+          else if (!selected) {
+            selected = candidate;
+            break;
+          } else break;
+        }
+        if (!selected) {
+          setActivePromptOrdinal(null);
+          return;
+        }
+        const ordinal = Number(selected.dataset.userTurnIndex);
+        if (Number.isSafeInteger(ordinal)) setActivePromptOrdinal(ordinal);
+      });
+    };
+    scroller.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    if (viewport.contentRef.current)
+      observer.observe(viewport.contentRef.current);
+    update();
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [
+    effectivePromptTotal,
+    rows,
+    sessionId,
+    projectionViewKey,
+    viewport.contentRef,
+    viewport.scrollRef,
+  ]);
+
   const jumpToLatest = () => {
+    promptNavigationOverrideRef.current = null;
     search.clearCurrentMatch();
     viewport.jumpToLatest();
+  };
+
+  const onActivityFoldClickCapture = (event: React.MouseEvent) => {
+    if (!(event.target instanceof Element)) return;
+    const control = event.target.closest<HTMLElement>(
+      "[data-activity-fold-anchor]",
+    );
+    const fold = control?.closest<HTMLElement>("[data-activity-fold]");
+    const alignment = control?.dataset.activityFoldAnchor;
+    if (
+      !fold ||
+      (alignment !== "start" && alignment !== "center" && alignment !== "end")
+    )
+      return;
+    viewport.preserveAnchorThroughLayout(fold, alignment);
   };
 
   // One delegated handler serves every data-file-path element (Markdown
@@ -392,6 +1260,7 @@ export function Transcript({
             " ",
           ].includes(event.key)
         ) {
+          promptNavigationOverrideRef.current = null;
           viewport.markUserScrollIntent();
         }
       }}
@@ -469,16 +1338,26 @@ export function Transcript({
         aria-live="polite"
         ref={viewport.scrollRef}
         onScroll={viewport.onScroll}
-        onWheel={viewport.markUserScrollIntent}
-        onTouchStart={viewport.markUserScrollIntent}
+        onPointerDown={() => {
+          promptNavigationOverrideRef.current = null;
+        }}
+        onWheel={() => {
+          promptNavigationOverrideRef.current = null;
+          viewport.markUserScrollIntent();
+        }}
+        onTouchStart={() => {
+          promptNavigationOverrideRef.current = null;
+          viewport.markUserScrollIntent();
+        }}
         onTouchMove={viewport.markUserScrollIntent}
+        onClickCapture={onActivityFoldClickCapture}
         onClick={onClick}
         onCopy={handleRichTextCopy}
       >
         <div className="transcript__content" ref={viewport.contentRef}>
           {hasOlder ? (
             <div className="transcript__older-sentinel">
-              {loadingOlder ? (
+              {loadingOlder || viewport.loadingEarlier ? (
                 <span className="transcript__older-status" role="status">
                   <Loader2 size={13} className="spin" aria-hidden />
                   Loading earlier messages…
@@ -515,6 +1394,10 @@ export function Transcript({
                   data-index={item.index}
                   data-transcript-row={item.index}
                   data-transcript-key={rows[item.index]!.key}
+                  data-user-turn-index={
+                    rows[item.index]!.turnOrdinal ?? undefined
+                  }
+                  data-user-turn-id={rows[item.index]!.turnId ?? undefined}
                   ref={viewport.virtualizer.measureElement}
                   className="transcript__virtual-row"
                   style={{ transform: `translateY(${item.start}px)` }}
@@ -530,6 +1413,8 @@ export function Transcript({
                   key={row.key}
                   data-transcript-row={index}
                   data-transcript-key={row.key}
+                  data-user-turn-index={row.turnOrdinal ?? undefined}
+                  data-user-turn-id={row.turnId ?? undefined}
                 >
                   {row.node}
                 </div>
@@ -546,6 +1431,19 @@ export function Transcript({
           ) : null}
         </div>
       </div>
+      <PromptMap
+        key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
+        container={viewport.scrollRef}
+        turns={effectivePromptTurns}
+        total={effectivePromptTotal}
+        activeOrdinal={activePromptOrdinal}
+        loadedStarts={promptMapLoadedStarts}
+        loadingStarts={promptMapLoadingStarts}
+        navigatingOrdinal={promptMapNavigatingOrdinal}
+        error={promptMapError}
+        onLoad={onLoadPromptMapTurns}
+        onNavigate={navigatePromptOrdinal}
+      />
       <ScrollRail
         container={viewport.scrollRef}
         variant="reading"

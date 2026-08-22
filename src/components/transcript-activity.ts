@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 export const CARD_TRANSITION_MS = 180;
 export const DYNAMIC_THINKING_EXPANDED_MIN_MS = 1_800;
-export const DYNAMIC_TOOL_EXPANDED_MIN_MS = 1_600;
-const DYNAMIC_TOOL_COLLAPSED_MIN_MS = 800;
+export const DYNAMIC_THINKING_CLOSE_DELAY_MS = 600;
+export const DYNAMIC_TOOL_EXPANDED_MIN_MS = 1_500;
+export const DYNAMIC_TOOL_CLOSE_DELAY_MS = 500;
+export const DYNAMIC_CUSTOM_EXPANDED_MIN_MS = 1_500;
+export const DYNAMIC_CUSTOM_CLOSE_DELAY_MS = 500;
+export const DYNAMIC_FOLD_EXPANDED_MIN_MS = 2_400;
+export const DYNAMIC_FOLD_CLOSE_DELAY_MS = 800;
+const DYNAMIC_TOOL_COMPACT_MIN_MS = 800;
 
 export function prefersReducedMotion(): boolean {
   return (
@@ -12,7 +18,7 @@ export function prefersReducedMotion(): boolean {
   );
 }
 
-type DynamicActivityPhase = "cards" | "compacting" | "compact";
+type DynamicActivityPhase = "cards" | "collapsing" | "collapsed";
 
 /** A card that the browser actually observes stays expanded long enough to be
  * perceived. Settled history starts closed and never replays old lifecycle
@@ -23,23 +29,27 @@ export function useDynamicCardOpen(
   closeRequested: boolean,
   minimumOpenMs: number,
   onClosed?: () => void,
+  minimumCloseDelayMs = 0,
 ): boolean {
   const [open, setOpen] = useState(dynamic && lifecycleActive);
   const enteredAt = useRef<number | null>(
     dynamic && lifecycleActive ? performance.now() : null,
   );
   const closedNotified = useRef(false);
+  const closeRequestedAt = useRef<number | null>(null);
   const onClosedRef = useRef(onClosed);
   onClosedRef.current = onClosed;
 
   useEffect(() => {
     if (!dynamic) {
       enteredAt.current = null;
+      closeRequestedAt.current = null;
       closedNotified.current = false;
       return;
     }
 
     if (lifecycleActive && !closeRequested) {
+      closeRequestedAt.current = null;
       if (!open) {
         enteredAt.current = performance.now();
         closedNotified.current = false;
@@ -56,31 +66,47 @@ export function useDynamicCardOpen(
       return;
     }
 
-    const entered = enteredAt.current ?? performance.now();
+    const now = performance.now();
+    const entered = enteredAt.current ?? now;
     enteredAt.current = entered;
-    const minimum = prefersReducedMotion() ? 0 : minimumOpenMs;
-    const remaining = Math.max(0, minimum - (performance.now() - entered));
+    if (closeRequestedAt.current === null) closeRequestedAt.current = now;
+    const reducedMotion = prefersReducedMotion();
+    const openMinimum = reducedMotion ? 0 : minimumOpenMs;
+    const closeMinimum = reducedMotion ? 0 : minimumCloseDelayMs;
+    const remaining = Math.max(
+      0,
+      openMinimum - (now - entered),
+      closeMinimum - (now - closeRequestedAt.current),
+    );
     const timer = window.setTimeout(() => setOpen(false), remaining);
     return () => window.clearTimeout(timer);
-  }, [closeRequested, dynamic, lifecycleActive, minimumOpenMs, open]);
+  }, [
+    closeRequested,
+    dynamic,
+    lifecycleActive,
+    minimumCloseDelayMs,
+    minimumOpenMs,
+    open,
+  ]);
 
   return open;
 }
 
 /** Tool calls and displayed custom messages share one density lifecycle.
- * Cards collapse independently; a multi-activity run changes geometry only
- * after every card has closed, the collapsed state has remained perceptible,
- * and its next Pi boundary has arrived. A singleton remains a useful card. */
+ * Cards enter the Compact state independently; a multi-activity run reaches
+ * Collapsed only after every card body has closed, Compact has remained
+ * perceptible, and its next Pi boundary has arrived. A singleton remains a
+ * useful compact card. */
 function useDynamicActivityBatch(
   dynamic: boolean,
   lifecycleObserved: boolean,
-  compactRequested: boolean,
-  compactEligible: boolean,
+  collapseRequested: boolean,
+  collapseEligible: boolean,
   inspectionHeld: boolean,
   allCardsClosed: boolean,
 ) {
   const [phase, setPhase] = useState<DynamicActivityPhase>(
-    dynamic && compactEligible && !lifecycleObserved ? "compact" : "cards",
+    dynamic && collapseEligible && !lifecycleObserved ? "collapsed" : "cards",
   );
   const phaseRef = useRef(phase);
   const observedLifecycle = useRef(lifecycleObserved);
@@ -99,7 +125,7 @@ function useDynamicActivityBatch(
   }, [allCardsClosed]);
 
   useEffect(() => {
-    if (!dynamic || !compactEligible) {
+    if (!dynamic || !collapseEligible) {
       observedLifecycle.current = lifecycleObserved;
       setPhase("cards");
       return;
@@ -107,7 +133,7 @@ function useDynamicActivityBatch(
 
     if (lifecycleObserved) {
       observedLifecycle.current = true;
-      if (!compactRequested) {
+      if (!collapseRequested) {
         if (phase !== "cards") setPhase("cards");
         return;
       }
@@ -115,20 +141,20 @@ function useDynamicActivityBatch(
 
     if (!observedLifecycle.current) {
       // Settled history chooses final density without replaying unseen stages.
-      if (phase !== "compact") setPhase("compact");
+      if (phase !== "collapsed") setPhase("collapsed");
       return;
     }
 
-    if (!compactRequested) return;
+    if (!collapseRequested) return;
     if (inspectionHeld) {
-      if (phase === "compacting") setPhase("cards");
+      if (phase === "collapsing") setPhase("cards");
       return;
     }
-    if (!allCardsClosed || phase === "compact") return;
+    if (!allCardsClosed || phase === "collapsed") return;
 
-    if (phase === "compacting") {
+    if (phase === "collapsing") {
       const timer = window.setTimeout(
-        () => setPhase("compact"),
+        () => setPhase("collapsed"),
         prefersReducedMotion() ? 0 : CARD_TRANSITION_MS,
       );
       return () => window.clearTimeout(timer);
@@ -138,28 +164,28 @@ function useDynamicActivityBatch(
     const collapseTime = prefersReducedMotion() ? 0 : CARD_TRANSITION_MS;
     const minimumCollapsed = prefersReducedMotion()
       ? 0
-      : DYNAMIC_TOOL_COLLAPSED_MIN_MS;
+      : DYNAMIC_TOOL_COMPACT_MIN_MS;
     const remaining = Math.max(
       0,
       collapseTime + minimumCollapsed - (performance.now() - closedAt),
     );
     const timer = window.setTimeout(() => {
-      if (phaseRef.current === "cards") setPhase("compacting");
+      if (phaseRef.current === "cards") setPhase("collapsing");
     }, remaining);
     return () => window.clearTimeout(timer);
   }, [
     allCardsClosed,
-    compactRequested,
+    collapseRequested,
     dynamic,
-    compactEligible,
+    collapseEligible,
     inspectionHeld,
     lifecycleObserved,
     phase,
   ]);
 
   return {
-    compact: phase === "compact",
-    closing: phase === "compacting",
+    collapsed: phase === "collapsed",
+    closing: phase === "collapsing",
     phase,
   };
 }
@@ -170,9 +196,9 @@ function useDynamicActivityBatch(
 export function useDynamicActivityGroup(
   dynamic: boolean,
   lifecycleObserved: boolean,
-  compactRequested: boolean,
+  collapseRequested: boolean,
   activityKeys: string[],
-  compactEligible: boolean,
+  collapseEligible: boolean,
 ) {
   const keySignature = JSON.stringify(activityKeys);
   const currentKeys = useMemo(
@@ -202,8 +228,8 @@ export function useDynamicActivityGroup(
   const batch = useDynamicActivityBatch(
     dynamic,
     lifecycleObserved,
-    compactRequested,
-    compactEligible,
+    collapseRequested,
+    collapseEligible,
     inspectionHeld,
     allCardsClosed,
   );

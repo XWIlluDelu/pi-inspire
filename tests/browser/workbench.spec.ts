@@ -111,6 +111,38 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
 });
 
+test("activity folds move through the manual density ladder", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+
+  const fold = page.locator("[data-activity-fold]").first();
+  await expect(fold).toHaveAttribute(
+    "data-activity-fold-presentation",
+    "collapsed",
+  );
+  await fold
+    .getByRole("button", { name: "Expand assistant activity", exact: true })
+    .click();
+  await expect(fold).toHaveAttribute(
+    "data-activity-fold-presentation",
+    "compact",
+  );
+  await expect(
+    fold.getByText("Earlier activity is available on demand"),
+  ).toHaveCount(0);
+  await fold
+    .getByRole("button", {
+      name: "Collapse assistant activity from the upper boundary",
+    })
+    .click();
+  await expect(fold).toHaveAttribute(
+    "data-activity-fold-presentation",
+    "collapsed",
+  );
+});
+
 test("narrow pairing controls contain a long access token", async ({
   page,
 }) => {
@@ -573,4 +605,156 @@ test.describe("touch narrow workbench", () => {
     ).toBe(true);
     expect(layout.composerButtonsOverlap).toBe(false);
   });
+});
+
+test("prompt map navigates user turns and adapts to the narrow workbench", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Prompt map long-session fixture/);
+  await page.setViewportSize({ width: 1_280, height: 1_400 });
+  const transcript = page.locator(".transcript");
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+
+  const map = page.getByRole("navigation", { name: "User prompt navigation" });
+  const previous = page.locator(".prompt-map__step--previous");
+  const next = page.locator(".prompt-map__step--next");
+  await expect(map).toBeVisible();
+  await expect(next).toBeDisabled();
+  const ticks = map.locator("[data-prompt-ordinal]");
+  await expect(ticks).toHaveCount(12);
+  const restingOrdinals = await ticks.evaluateAll((elements) =>
+    elements.map((element) =>
+      Number((element as HTMLElement).dataset.promptOrdinal),
+    ),
+  );
+  expect(restingOrdinals).toEqual(
+    Array.from({ length: 12 }, (_, index) => index + 1),
+  );
+  await expect(map.locator(".prompt-map__tick--active")).toHaveAttribute(
+    "data-prompt-ordinal",
+    "12",
+  );
+  const restingStep = (await previous.isEnabled()) ? previous : next;
+  await expect
+    .poll(() =>
+      restingStep.evaluate((element) => getComputedStyle(element).opacity),
+    )
+    .toBe("0.28");
+  await page.getByRole("button", { name: "Open prompt map" }).hover();
+  await expect(page.locator(".prompt-map__list")).toBeVisible();
+  expect(
+    await restingStep.evaluate((element) => getComputedStyle(element).opacity),
+  ).toBe("0.28");
+  await page.locator(".topbar__title").hover();
+  await expect(page.locator(".prompt-map__list")).toBeHidden();
+  await page.getByRole("button", { name: "Open prompt map" }).click();
+  await expect(page.locator(".prompt-map__list")).toBeVisible();
+  await expect
+    .poll(async () => (await map.boundingBox())?.width ?? 0)
+    .toBeGreaterThanOrEqual(258);
+  const list = page.locator(".prompt-map__list");
+  await expect
+    .poll(() =>
+      list.evaluate((element) => element.scrollHeight > element.clientHeight),
+    )
+    .toBe(true);
+  await list.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const firstPrompt = page.locator(".prompt-map__turn").first();
+  await expect(firstPrompt).toBeVisible();
+  await firstPrompt.click();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await page.locator(".topbar__title").hover();
+  await expect(
+    page.getByRole("button", { name: "Open prompt map" }),
+  ).toBeVisible();
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeEnabled();
+  const disabledOpacity = Number(
+    await previous.evaluate((element) => getComputedStyle(element).opacity),
+  );
+  const enabledOpacity = Number(
+    await next.evaluate((element) => getComputedStyle(element).opacity),
+  );
+  expect(disabledOpacity).toBeLessThan(enabledOpacity);
+
+  await next.click();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(previous).toBeEnabled();
+  await previous.click();
+  await expect(previous).toBeDisabled();
+
+  await page.getByRole("button", { name: "Open prompt map" }).click();
+  await expect(list).toBeVisible();
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const lastPrompt = page.getByRole("button", {
+    name: /^13\. Prompt map fixture turn 13/,
+  });
+  await expect(lastPrompt).toBeVisible();
+  await lastPrompt.click();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await page.locator(".topbar__title").hover();
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeDisabled();
+
+  await page.getByRole("button", { name: "Open prompt map" }).click();
+  await expect(list).toBeVisible();
+  await list.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await page.locator(".prompt-map__turn").first().click();
+  await page.locator(".topbar__title").hover();
+  await expect(previous).toBeDisabled();
+
+  await page.setViewportSize({ width: 390, height: 780 });
+  const compactBox = await map.boundingBox();
+  expect(compactBox?.width).toBeGreaterThanOrEqual(44);
+  expect(compactBox?.height).toBeGreaterThanOrEqual(44);
+  const mobileControls = await map
+    .locator(".prompt-map__step")
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }),
+    );
+  expect(
+    mobileControls.every(
+      (control) => control.width >= 44 && control.height >= 44,
+    ),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "Open prompt map" }).click();
+  await expect
+    .poll(async () => (await map.boundingBox())?.width ?? 0)
+    .toBeGreaterThanOrEqual(290);
+  const overflow = await page
+    .locator("html")
+    .evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
 });

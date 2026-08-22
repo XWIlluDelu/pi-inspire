@@ -19,11 +19,12 @@ import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { RichText } from "./RichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
+import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {
-  type CompactActivity,
-  CompactActivityStrip,
+  type CollapsedActivity,
+  CollapsedActivityStrip,
   CustomMessageCard,
-  compactCustomActivities,
+  customActivityItems,
   GenericCard,
   genericContentTitle,
   hasRenderableAssistantContent,
@@ -182,7 +183,7 @@ export const UserBubble = memo(function UserBubble({
   );
 });
 
-function hasCompactableActivityRun(
+function hasCollapsibleActivityRun(
   items: ReturnType<typeof contentItems>,
   trailingCustomCount: number,
 ): boolean {
@@ -203,26 +204,47 @@ export const AssistantTurn = memo(function AssistantTurn({
   toolResults,
   toolActivity,
   customMessages,
-  customCompactRequested,
+  activityItemIds = [],
+  customActivityIds = [],
+  customCollapseRequested,
   streaming,
   dynamicActive,
   thinkingVisibility,
   toolVisibility,
   assistantRoundDisplay,
+  showLead = true,
+  roundActivityItemId,
+  responseCopyText,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
   toolActivity: Record<string, ActivityTool>;
   customMessages: ChatMessage[];
-  customCompactRequested: boolean;
+  activityItemIds?: string[];
+  customActivityIds?: string[];
+  customCollapseRequested: boolean;
   streaming: boolean;
   dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   assistantRoundDisplay: AssistantRoundDisplayPreference;
+  /** A projected assistant message carries its round lead exactly once: with
+   * its first response when present, otherwise with its first activity. */
+  showLead?: boolean;
+  /** Compact response folds hide a round lead when its owning first activity
+   * belongs to the omitted prefix. */
+  roundActivityItemId?: string;
+  /** Empty suppresses actions; a full-message value keeps the existing one-copy
+   * affordance on the message's final visible response fragment. */
+  responseCopyText?: string;
 }) {
   const items = contentItems(message);
-  const customActivities = compactCustomActivities(customMessages);
+  const customActivities = customActivityItems(customMessages).map(
+    (activity, index) => ({
+      ...activity,
+      key: customActivityIds[index] ?? activity.key,
+    }),
+  );
   const hasVisibleContent =
     hasRenderableAssistantContent(
       message,
@@ -233,7 +255,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const dynamicTools = toolVisibility === "dynamic";
   const toolKeys = items.flatMap((item, index) =>
     item.type === "toolCall"
-      ? [(item as ToolCallContent).id || `tool:${index}`]
+      ? [
+          activityItemIds[index] ??
+            (item as ToolCallContent).id ??
+            `tool:${index}`,
+        ]
       : [],
   );
   const activityKeys = [
@@ -241,31 +267,36 @@ export const AssistantTurn = memo(function AssistantTurn({
     ...customActivities.map((activity) => activity.key),
   ];
   const hasActivities = activityKeys.length > 0;
-  const compactEligible = hasCompactableActivityRun(
+  const collapseEligible = hasCollapsibleActivityRun(
     items,
     customActivities.length,
   );
   const lifecycleObserved =
     dynamicActive ||
     customMessages.some((custom) => typeof custom.__inspireLiveId === "string");
-  const compactRequested =
-    !dynamicActive && (customMessages.length === 0 || customCompactRequested);
+  const collapseRequested =
+    !dynamicActive && (customMessages.length === 0 || customCollapseRequested);
   const dynamicBatch = useDynamicActivityGroup(
     dynamicTools,
     lifecycleObserved,
-    compactRequested,
+    collapseRequested,
     activityKeys,
-    compactEligible,
+    collapseEligible,
   );
   const renderedItems: React.ReactNode[] =
     typeof message.content === "string" && message.content.length > 0
       ? [<RichText key="text" text={message.content} variant="assistant" />]
       : [];
   const ordinaryToolVisibility: StaticVisibility =
-    toolVisibility === "compact" || dynamicTools ? "collapsed" : toolVisibility;
-  const compactActivities =
-    compactEligible &&
-    (toolVisibility === "compact" || (dynamicTools && dynamicBatch.compact));
+    toolVisibility === "compact" ||
+    toolVisibility === "collapsed" ||
+    dynamicTools
+      ? "collapsed"
+      : toolVisibility;
+  const collapsedActivities =
+    collapseEligible &&
+    (toolVisibility === "collapsed" ||
+      (dynamicTools && dynamicBatch.collapsed));
   let customActivitiesRendered = false;
   // Execution events, not membership in the current batch, own the running
   // status. After reconnect an unobserved call stays expanded but unknown.
@@ -273,7 +304,7 @@ export const AssistantTurn = memo(function AssistantTurn({
 
   for (let index = 0; index < items.length; ) {
     const item = items[index]!;
-    if (item.type === "toolCall" && compactActivities) {
+    if (item.type === "toolCall" && collapsedActivities) {
       const start = index;
       let end = start;
       while (end < items.length && items[end]?.type === "toolCall") end += 1;
@@ -282,12 +313,12 @@ export const AssistantTurn = memo(function AssistantTurn({
       const runLength =
         end - start + (joinsTrailingCustoms ? customActivities.length : 0);
       if (runLength > 1) {
-        const activities: CompactActivity[] = [];
+        const activities: CollapsedActivity[] = [];
         for (let cursor = start; cursor < end; cursor += 1) {
           const call = items[cursor] as ToolCallContent;
           activities.push({
             kind: "tool",
-            key: call.id || `tool:${cursor}`,
+            key: activityItemIds[cursor] ?? call.id ?? `tool:${cursor}`,
             call,
             result: toolResults.get(call.id),
             activity: toolActivity[call.id],
@@ -299,7 +330,7 @@ export const AssistantTurn = memo(function AssistantTurn({
           customActivitiesRendered = true;
         }
         renderedItems.push(
-          <CompactActivityStrip
+          <CollapsedActivityStrip
             key={`tools:${activities[0]?.key ?? start}`}
             activities={activities}
             live={live}
@@ -315,50 +346,59 @@ export const AssistantTurn = memo(function AssistantTurn({
           <RichText key={index} text={text} variant="assistant" />,
         );
     } else if (item.type === "thinking") {
+      const activityItemId =
+        activityItemIds[index] ?? `assistant-item:${index}`;
       renderedItems.push(
-        <ThinkingCard
-          key={index}
-          text={(item as { thinking?: string }).thinking ?? ""}
-          visibility={thinkingVisibility}
-          dynamicActive={dynamicActive}
-        />,
+        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
+          <ThinkingCard
+            text={(item as { thinking?: string }).thinking ?? ""}
+            visibility={thinkingVisibility}
+            dynamicActive={dynamicActive}
+          />
+        </ActivityItemBoundary>,
       );
     } else if (item.type === "toolCall") {
       const call = item as ToolCallContent;
       const result = toolResults.get(call.id);
       const activity = toolActivity[call.id];
-      const toolKey = call.id || `tool:${index}`;
+      const activityItemId =
+        activityItemIds[index] ?? call.id ?? `assistant-item:${index}`;
+      const toolKey = activityItemId;
       renderedItems.push(
-        <ToolCard
-          key={toolKey}
-          call={call}
-          result={result}
-          activity={activity}
-          live={live}
-          visibility={ordinaryToolVisibility}
-          dynamic={dynamicTools}
-          dynamicActive={dynamicActive}
-          forceClosed={dynamicTools && dynamicBatch.closing}
-          onDynamicClosed={
-            dynamicTools ? () => dynamicBatch.markClosed(toolKey) : undefined
-          }
-          onManualOpenChange={
-            dynamicTools
-              ? (open) => dynamicBatch.setInspectionHeld(toolKey, open)
-              : undefined
-          }
-        />,
+        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
+          <ToolCard
+            call={call}
+            result={result}
+            activity={activity}
+            live={live}
+            visibility={ordinaryToolVisibility}
+            dynamic={dynamicTools}
+            dynamicActive={dynamicActive}
+            forceClosed={dynamicTools && dynamicBatch.closing}
+            onDynamicClosed={
+              dynamicTools ? () => dynamicBatch.markClosed(toolKey) : undefined
+            }
+            onManualOpenChange={
+              dynamicTools
+                ? (open) => dynamicBatch.setInspectionHeld(toolKey, open)
+                : undefined
+            }
+          />
+        </ActivityItemBoundary>,
       );
     } else {
       const title = genericContentTitle(item);
       if (title) {
+        const activityItemId =
+          activityItemIds[index] ?? `assistant-item:${index}`;
         renderedItems.push(
-          <GenericCard
-            key={index}
-            item={item}
-            visibility={ordinaryToolVisibility}
-            title={title}
-          />,
+          <ActivityItemBoundary key={activityItemId} id={activityItemId}>
+            <GenericCard
+              item={item}
+              visibility={ordinaryToolVisibility}
+              title={title}
+            />
+          </ActivityItemBoundary>,
         );
       }
     }
@@ -366,9 +406,9 @@ export const AssistantTurn = memo(function AssistantTurn({
   }
 
   if (!customActivitiesRendered && customActivities.length > 0) {
-    if (compactActivities && customActivities.length > 1) {
+    if (collapsedActivities && customActivities.length > 1) {
       renderedItems.push(
-        <CompactActivityStrip
+        <CollapsedActivityStrip
           key={`customs:${customActivities[0]!.key}`}
           activities={customActivities}
           live={false}
@@ -378,48 +418,57 @@ export const AssistantTurn = memo(function AssistantTurn({
       customMessages.forEach((custom, index) => {
         const activityKey = customActivities[index]!.key;
         renderedItems.push(
-          <CustomMessageCard
-            key={activityKey}
-            message={custom}
-            visibility={ordinaryToolVisibility}
-            dynamic={dynamicTools}
-            forceClosed={dynamicTools && dynamicBatch.closing}
-            onDynamicClosed={
-              dynamicTools
-                ? () => dynamicBatch.markClosed(activityKey)
-                : undefined
-            }
-            onManualOpenChange={
-              dynamicTools
-                ? (open) => dynamicBatch.setInspectionHeld(activityKey, open)
-                : undefined
-            }
-          />,
+          <ActivityItemBoundary key={activityKey} id={activityKey}>
+            <CustomMessageCard
+              message={custom}
+              visibility={ordinaryToolVisibility}
+              dynamic={dynamicTools}
+              forceClosed={dynamicTools && dynamicBatch.closing}
+              onDynamicClosed={
+                dynamicTools
+                  ? () => dynamicBatch.markClosed(activityKey)
+                  : undefined
+              }
+              onManualOpenChange={
+                dynamicTools
+                  ? (open) => dynamicBatch.setInspectionHeld(activityKey, open)
+                  : undefined
+              }
+            />
+          </ActivityItemBoundary>,
         );
       });
     }
   }
 
-  const divider = assistantRoundDisplay === "divider";
+  const divider = showLead && assistantRoundDisplay === "divider";
+  const roundLead = divider ? (
+    <span className="turn__divider" aria-hidden />
+  ) : !showLead ? null : (
+    /* Details deliberately remains the existing attribution row verbatim. */
+    <div className="turn__head">
+      <span className="turn__who">Pi</span>
+      {message.model ? (
+        <span className="turn__detail">{message.model}</span>
+      ) : null}
+      {message.timestamp != null ? (
+        <span className="turn__detail">{clockTime(message.timestamp)}</span>
+      ) : null}
+      {message.stopReason && message.stopReason !== "stop" ? (
+        <span className="turn__flag">{message.stopReason}</span>
+      ) : null}
+    </div>
+  );
   return (
     <div
       className={`turn turn--assistant ${divider ? "turn--round-divider" : ""} ${streaming ? "turn--streaming" : ""}`}
     >
-      {divider ? <span className="turn__divider" aria-hidden /> : null}
-      {divider ? null : (
-        /* Details deliberately remains the existing attribution row verbatim. */
-        <div className="turn__head">
-          <span className="turn__who">Pi</span>
-          {message.model ? (
-            <span className="turn__detail">{message.model}</span>
-          ) : null}
-          {message.timestamp != null ? (
-            <span className="turn__detail">{clockTime(message.timestamp)}</span>
-          ) : null}
-          {message.stopReason && message.stopReason !== "stop" ? (
-            <span className="turn__flag">{message.stopReason}</span>
-          ) : null}
-        </div>
+      {roundActivityItemId && roundLead ? (
+        <ActivityItemBoundary id={roundActivityItemId}>
+          {roundLead}
+        </ActivityItemBoundary>
+      ) : (
+        roundLead
       )}
       <div className="assistant-doc">
         {streaming && !hasVisibleContent ? (
@@ -438,7 +487,7 @@ export const AssistantTurn = memo(function AssistantTurn({
         )}
       </div>
       <MessageActions
-        text={messageText(message)}
+        text={responseCopyText ?? messageText(message)}
         copyLabel="Response"
         className="turn__actions--response"
       />
@@ -447,35 +496,43 @@ export const AssistantTurn = memo(function AssistantTurn({
 });
 
 export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
+  activityItemId = "unpaired-tool-result",
   toolName,
   visibility,
 }: {
+  activityItemId?: string;
   toolName?: string;
   visibility: StaticVisibility;
 }) {
   return (
     <div className="turn">
-      <GenericCard
-        item={{ type: `toolResult:${toolName ?? "unknown"}` }}
-        visibility={visibility}
-      />
+      <ActivityItemBoundary id={activityItemId}>
+        <GenericCard
+          item={{ type: `toolResult:${toolName ?? "unknown"}` }}
+          visibility={visibility}
+        />
+      </ActivityItemBoundary>
     </div>
   );
 });
 
 export const UnknownRoleRow = memo(function UnknownRoleRow({
+  activityItemId = "unknown-activity",
   message,
   visibility,
 }: {
+  activityItemId?: string;
   message: ChatMessage;
   visibility: StaticVisibility;
 }) {
   return (
     <div className="turn">
-      <GenericCard
-        item={{ ...message, type: message.role }}
-        visibility={visibility}
-      />
+      <ActivityItemBoundary id={activityItemId}>
+        <GenericCard
+          item={{ ...message, type: message.role }}
+          visibility={visibility}
+        />
+      </ActivityItemBoundary>
     </div>
   );
 });

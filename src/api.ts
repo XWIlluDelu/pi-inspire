@@ -21,7 +21,10 @@ import type {
   ResourceProbeResponse,
   SessionDeleteResponse,
   SessionListResponse,
+  TranscriptActivityPage,
   TranscriptPage,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
   UpdateCheckResponse,
   UploadedAttachment,
 } from "../shared/contracts";
@@ -192,7 +195,38 @@ export function createApi(token: string | null = null) {
     ) =>
       request<TranscriptPage>(
         token,
-        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
+        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}&deferActivity=1`,
+        { signal },
+      ),
+    transcriptActivity: (
+      sessionId: string,
+      cursor: string,
+      signal?: AbortSignal,
+    ) =>
+      request<TranscriptActivityPage>(
+        token,
+        `/api/transcript/activity?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
+        { signal },
+      ),
+    transcriptUserTurns: (
+      sessionId: string,
+      start?: number,
+      signal?: AbortSignal,
+    ) =>
+      request<UserTurnIndexPage>(
+        token,
+        `/api/transcript/user-turns?sessionId=${encodeURIComponent(sessionId)}${start === undefined ? "" : `&start=${start}`}`,
+        { signal },
+      ),
+    transcriptUserTurn: (
+      sessionId: string,
+      id: string,
+      cursor?: string,
+      signal?: AbortSignal,
+    ) =>
+      request<UserTurnTranscriptPage>(
+        token,
+        `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { signal },
       ),
     branchTree: (sessionId: string) =>

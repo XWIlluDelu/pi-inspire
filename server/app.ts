@@ -184,6 +184,27 @@ const transcriptPageSchema = z.object({
   sessionId: sessionIdField,
   cursor: z.string().min(1).max(2_048),
 });
+const transcriptOlderPageSchema = transcriptPageSchema.extend({
+  deferActivity: z.literal("1").optional(),
+});
+const transcriptUserTurnsSchema = z
+  .object({
+    sessionId: sessionIdField,
+    start: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+  })
+  .strict();
+const transcriptUserTurnSchema = z
+  .object({
+    sessionId: sessionIdField,
+    id: z.string().min(1).max(512),
+    cursor: z.string().min(1).max(2_048).optional(),
+  })
+  .strict();
 const branchTreeSchema = z.object({ sessionId: sessionIdField });
 const branchNavigateSchema = z
   .object({
@@ -881,8 +902,29 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.runtime.snapshot()),
   );
   app.get("/api/transcript/older", async (request, response) => {
+    const { sessionId, cursor, deferActivity } =
+      transcriptOlderPageSchema.parse(request.query);
+    response.json(
+      await deps.runtime.transcriptPage(
+        sessionId,
+        cursor,
+        deferActivity === "1",
+      ),
+    );
+  });
+  app.get("/api/transcript/activity", async (request, response) => {
     const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptPage(sessionId, cursor));
+    response.json(await deps.runtime.transcriptActivityPage(sessionId, cursor));
+  });
+  app.get("/api/transcript/user-turns", async (request, response) => {
+    const { sessionId, start } = transcriptUserTurnsSchema.parse(request.query);
+    response.json(await deps.runtime.transcriptUserTurns(sessionId, start));
+  });
+  app.get("/api/transcript/user-turn", async (request, response) => {
+    const { sessionId, id, cursor } = transcriptUserTurnSchema.parse(
+      request.query,
+    );
+    response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
   });
   app.get("/api/branches/tree", async (request, response) => {
     const { sessionId } = branchTreeSchema.parse(request.query);

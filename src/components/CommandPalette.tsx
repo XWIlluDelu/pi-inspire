@@ -1,6 +1,7 @@
 import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
   isAbortableRunState,
   TOOL_VISIBILITY_PREFERENCES,
@@ -242,6 +243,18 @@ export function CommandPalette({
         title: `Tool cards: ${value}`,
         hint: state.prefs.toolVisibility === value ? "current" : undefined,
         run: () => store.setToolVisibility(value),
+      });
+    }
+    for (const value of ACTIVITY_FOLD_VISIBILITIES) {
+      actions.push({
+        id: `activity-folds-${value}`,
+        group: "Preferences",
+        title: `Activity folds: ${value}`,
+        hint:
+          (state.prefs.activityFoldVisibility ?? "dynamic") === value
+            ? "current"
+            : undefined,
+        run: () => store.setActivityFoldVisibility(value),
       });
     }
     for (const value of ASSISTANT_ROUND_DISPLAYS) {
