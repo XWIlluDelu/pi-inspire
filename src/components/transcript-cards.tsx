@@ -48,12 +48,20 @@ import { ResourcePathLabel } from "./ResourcePathLabel";
 import { RichText } from "./RichText";
 import {
   CARD_TRANSITION_MS,
+  DYNAMIC_CUSTOM_CLOSE_DELAY_MS,
+  DYNAMIC_CUSTOM_EXPANDED_MIN_MS,
+  DYNAMIC_THINKING_CLOSE_DELAY_MS,
   DYNAMIC_THINKING_EXPANDED_MIN_MS,
+  DYNAMIC_TOOL_CLOSE_DELAY_MS,
   DYNAMIC_TOOL_EXPANDED_MIN_MS,
   prefersReducedMotion,
   useDynamicActivityGroup,
   useDynamicCardOpen,
 } from "./transcript-activity";
+import {
+  ActivityItemBoundary,
+  useVisibleActivityItemIds,
+} from "./transcript-activity-visibility";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -260,6 +268,8 @@ export function ThinkingCard({
     dynamicActive,
     !dynamicActive,
     DYNAMIC_THINKING_EXPANDED_MIN_MS,
+    undefined,
+    DYNAMIC_THINKING_CLOSE_DELAY_MS,
   );
   const resolvedVisibility: StaticVisibility =
     visibility === "dynamic"
@@ -910,6 +920,7 @@ export function ToolCard({
     complete,
     DYNAMIC_TOOL_EXPANDED_MIN_MS,
     onDynamicClosed,
+    DYNAMIC_TOOL_CLOSE_DELAY_MS,
   );
   const presentation = useMemo(
     () => toolPresentationRegistry.resolve({ call, result }),
@@ -947,7 +958,7 @@ export function ToolCard({
   );
 }
 
-interface CompactToolActivity {
+interface CollapsedToolActivity {
   kind: "tool";
   key: string;
   call: ToolCallContent;
@@ -955,7 +966,7 @@ interface CompactToolActivity {
   activity?: ActivityTool;
 }
 
-interface CompactCustomActivity {
+interface CollapsedCustomActivity {
   kind: "custom";
   key: string;
   message: ChatMessage;
@@ -963,7 +974,7 @@ interface CompactCustomActivity {
   customType: string;
 }
 
-export type CompactActivity = CompactToolActivity | CompactCustomActivity;
+export type CollapsedActivity = CollapsedToolActivity | CollapsedCustomActivity;
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   running: "running",
@@ -996,7 +1007,10 @@ function CustomMessageDetails({ message }: { message: ChatMessage }) {
   );
 }
 
-function compactActivityPresentation(activity: CompactActivity, live: boolean) {
+function collapsedActivityPresentation(
+  activity: CollapsedActivity,
+  live: boolean,
+) {
   if (activity.kind === "custom") {
     return {
       custom: true,
@@ -1034,16 +1048,22 @@ function compactActivityPresentation(activity: CompactActivity, live: boolean) {
   };
 }
 
-/** Compact mode changes only the geometry of an adjacent activity run. Items
- * wrap horizontally, while one selection reveals its ordinary details below
- * the strip without reordering transcript content. */
-export function CompactActivityStrip({
+/** Collapsed mode reduces an adjacent multi-activity run to status tiles.
+ * Items wrap horizontally, while one selection reveals its ordinary details
+ * below the strip without reordering transcript content. */
+export function CollapsedActivityStrip({
   activities,
   live,
 }: {
-  activities: CompactActivity[];
+  activities: CollapsedActivity[];
   live: boolean;
 }) {
+  const visibleActivityIds = useVisibleActivityItemIds();
+  const visibleActivityCount =
+    visibleActivityIds === null
+      ? activities.length
+      : activities.filter((activity) => visibleActivityIds.has(activity.key))
+          .length;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [renderedIndex, setRenderedIndex] = useState<number | null>(null);
   const [origin, setOrigin] = useState(22);
@@ -1051,9 +1071,15 @@ export function CompactActivityStrip({
   const itemsRef = useRef<HTMLDivElement>(null);
   const rendered =
     renderedIndex == null ? null : (activities[renderedIndex] ?? null);
+  const selectionVisible =
+    selectedIndex !== null &&
+    (visibleActivityIds === null ||
+      visibleActivityIds.has(activities[selectedIndex]?.key ?? ""));
   const activityPresentations = useMemo(
     () =>
-      activities.map((activity) => compactActivityPresentation(activity, live)),
+      activities.map((activity) =>
+        collapsedActivityPresentation(activity, live),
+      ),
     [activities, live],
   );
   const renderedPresentation = useMemo(
@@ -1078,6 +1104,8 @@ export function CompactActivityStrip({
     return () => window.clearTimeout(timer);
   }, [selectedIndex, renderedIndex]);
 
+  if (visibleActivityCount === 0) return null;
+
   return (
     <div
       className="activity-strip"
@@ -1092,6 +1120,11 @@ export function CompactActivityStrip({
         aria-label="Activity"
       >
         {activities.map((activity, index) => {
+          if (
+            visibleActivityIds !== null &&
+            !visibleActivityIds.has(activity.key)
+          )
+            return null;
           const active = selectedIndex === index;
           const presentation = activityPresentations[index];
           return (
@@ -1124,9 +1157,9 @@ export function CompactActivityStrip({
         })}
       </div>
       <div
-        className={`activity-strip__reveal ${selectedIndex != null ? "activity-strip__reveal--open" : ""}`}
-        aria-hidden={selectedIndex == null}
-        inert={selectedIndex == null}
+        className={`activity-strip__reveal ${selectionVisible ? "activity-strip__reveal--open" : ""}`}
+        aria-hidden={!selectionVisible}
+        inert={!selectionVisible}
       >
         <div className="activity-strip__reveal-inner">
           {rendered?.kind === "tool" ? (
@@ -1269,7 +1302,7 @@ function customClipboardText(message: ChatMessage): string {
   return sections.join("\n\n");
 }
 
-export function customActivityIdentity(
+function customActivityIdentity(
   message: ChatMessage,
   fallbackIndex: number,
 ): string {
@@ -1293,9 +1326,9 @@ function customActivityKeys(messages: ChatMessage[]): string[] {
   });
 }
 
-export function compactCustomActivities(
+export function customActivityItems(
   messages: ChatMessage[],
-): CompactCustomActivity[] {
+): CollapsedCustomActivity[] {
   const keys = customActivityKeys(messages);
   return messages.map((message, index) => ({
     kind: "custom",
@@ -1405,8 +1438,9 @@ export function CustomMessageCard({
     dynamic,
     lifecycleObserved,
     complete,
-    DYNAMIC_TOOL_EXPANDED_MIN_MS,
+    DYNAMIC_CUSTOM_EXPANDED_MIN_MS,
     onDynamicClosed,
+    DYNAMIC_CUSTOM_CLOSE_DELAY_MS,
   );
   return (
     <CollapsibleCard
@@ -1431,32 +1465,39 @@ export function CustomMessageCard({
 
 export function CustomActivityBatch({
   messages,
+  activityItemIds = [],
   toolVisibility,
-  compactRequested,
+  collapseRequested,
 }: {
   messages: ChatMessage[];
+  activityItemIds?: string[];
   toolVisibility: ToolVisibilityPreference;
-  compactRequested: boolean;
+  collapseRequested: boolean;
 }) {
   const dynamic = toolVisibility === "dynamic";
-  const activities = compactCustomActivities(messages);
+  const activities = customActivityItems(messages).map((activity, index) => ({
+    ...activity,
+    key: activityItemIds[index] ?? activity.key,
+  }));
   const activityKeys = activities.map((activity) => activity.key);
   const lifecycleObserved = messages.some(
     (message) => typeof message.__inspireLiveId === "string",
   );
-  const compactEligible = activities.length > 1;
+  const collapseEligible = activities.length > 1;
   const dynamicBatch = useDynamicActivityGroup(
     dynamic,
     lifecycleObserved,
-    compactRequested,
+    collapseRequested,
     activityKeys,
-    compactEligible,
+    collapseEligible,
   );
   const ordinaryVisibility: StaticVisibility =
-    toolVisibility === "compact" || dynamic ? "collapsed" : toolVisibility;
-  const compact =
-    compactEligible &&
-    (toolVisibility === "compact" || (dynamic && dynamicBatch.compact));
+    toolVisibility === "compact" || toolVisibility === "collapsed" || dynamic
+      ? "collapsed"
+      : toolVisibility;
+  const collapsed =
+    collapseEligible &&
+    (toolVisibility === "collapsed" || (dynamic && dynamicBatch.collapsed));
 
   if (toolVisibility === "hidden" || activities.length === 0) return null;
   return (
@@ -1464,30 +1505,31 @@ export function CustomActivityBatch({
       <div
         className={`custom-activity-batch ${dynamic ? `dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}` : ""}`}
       >
-        {compact ? (
-          <CompactActivityStrip activities={activities} live={false} />
+        {collapsed ? (
+          <CollapsedActivityStrip activities={activities} live={false} />
         ) : (
           messages.map((message, index) => {
             const activityKey = activityKeys[index]!;
             return (
-              <CustomMessageCard
-                key={activityKey}
-                message={message}
-                visibility={ordinaryVisibility}
-                dynamic={dynamic}
-                forceClosed={dynamic && dynamicBatch.closing}
-                onDynamicClosed={
-                  dynamic
-                    ? () => dynamicBatch.markClosed(activityKey)
-                    : undefined
-                }
-                onManualOpenChange={
-                  dynamic
-                    ? (open) =>
-                        dynamicBatch.setInspectionHeld(activityKey, open)
-                    : undefined
-                }
-              />
+              <ActivityItemBoundary key={activityKey} id={activityKey}>
+                <CustomMessageCard
+                  message={message}
+                  visibility={ordinaryVisibility}
+                  dynamic={dynamic}
+                  forceClosed={dynamic && dynamicBatch.closing}
+                  onDynamicClosed={
+                    dynamic
+                      ? () => dynamicBatch.markClosed(activityKey)
+                      : undefined
+                  }
+                  onManualOpenChange={
+                    dynamic
+                      ? (open) =>
+                          dynamicBatch.setInspectionHeld(activityKey, open)
+                      : undefined
+                  }
+                />
+              </ActivityItemBoundary>
             );
           })
         )}

@@ -77,6 +77,7 @@ describe("PreferencesStore validation", () => {
       launch: "welcome",
       thinkingVisibility: "dynamic",
       toolVisibility: "dynamic",
+      activityFoldVisibility: "dynamic",
     });
   });
 });

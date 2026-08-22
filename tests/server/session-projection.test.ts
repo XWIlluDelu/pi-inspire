@@ -183,6 +183,52 @@ describe("SessionProjection framing and last-good state", () => {
     );
   });
 
+  it("retains projection identity after object breadth is bounded", () => {
+    const projected = boundedTranscriptValue({
+      ...Object.fromEntries(
+        Array.from({ length: 300 }, (_, index) => [
+          `field-${index}`,
+          "x".repeat(4_000),
+        ]),
+      ),
+      __inspireMessageId: "entry-id:0",
+      __inspireEntryId: "entry-id",
+      __inspireLiveId: "live-id",
+      __inspireSettled: false,
+    }) as Record<string, unknown>;
+    expect(projected).toMatchObject({
+      __inspireMessageId: "entry-id:0",
+      __inspireEntryId: "entry-id",
+      __inspireLiveId: "live-id",
+      __inspireSettled: false,
+    });
+  });
+
+  it("keeps an oversized activity-only assistant message classified as activity", () => {
+    const densePart = {
+      type: "toolCall",
+      ...Object.fromEntries(
+        Array.from({ length: 64 }, (_, index) => [
+          `argument-${index}`,
+          "x".repeat(4_000),
+        ]),
+      ),
+    };
+    const projected = boundedTranscriptValue({
+      role: "assistant",
+      content: Array.from({ length: 64 }, () => densePart),
+      __inspireMessageId: "activity-id",
+    }) as Record<string, unknown>;
+    expect(projected.__inspireMessageId).toBe("activity-id");
+    expect(projected.content).toEqual([
+      {
+        type: "projectionOmitted",
+        content:
+          "[message omitted: projected content exceeded the transcript item limit]",
+      },
+    ]);
+  });
+
   it("keeps persisted image bytes server-side while exposing stable browser references", async () => {
     const data = Buffer.alloc(512 * 1024, 7).toString("base64");
     const { projection } = await fixture([
@@ -728,6 +774,281 @@ describe("SessionProjection bounded paging", () => {
       await projection.close();
     }
   }, 30_000);
+
+  it("skips activity-only history during upward paging and materializes its opaque range on demand", async () => {
+    const lines: unknown[] = [
+      message("u0", null, "user", "old prompt", 1),
+      message(
+        "a0",
+        "u0",
+        "assistant",
+        [{ type: "text", text: "old response" }],
+        2,
+      ),
+    ];
+    let parent = "a0";
+    for (let index = 0; index < 120; index += 1) {
+      const id = `activity-${index}`;
+      lines.push(
+        message(
+          id,
+          parent,
+          index % 2 === 0 ? "assistant" : "toolResult",
+          index % 2 === 0
+            ? [{ type: "thinking", thinking: `thought ${index}` }]
+            : `tool result ${index}`,
+          index + 3,
+        ),
+      );
+      parent = id;
+    }
+    const { projection } = await fixture(lines);
+    try {
+      const latest = projection.latestPage();
+      expect(latest.messages).toHaveLength(TRANSCRIPT_PAGE_MAX_MESSAGES);
+      const older = projection.visiblePage(latest.olderCursor!);
+      expect(
+        older.messages.map((value) => (value as { content?: unknown }).content),
+      ).toEqual(["old prompt", [{ type: "text", text: "old response" }]]);
+      expect(older.hasOlder).toBe(false);
+      expect(older.activityRanges).toHaveLength(1);
+      const range = older.activityRanges![0]!;
+      expect(range).toMatchObject({
+        messageCount: 20,
+        kinds: ["thinking", "tool"],
+      });
+      expect(range.afterMessageId).toBe(
+        (older.messages[1] as { __inspireMessageId?: string })
+          .__inspireMessageId,
+      );
+
+      const materialized: unknown[] = [];
+      let cursor: string | null = range.cursor;
+      while (cursor) {
+        const page = projection.activityPage(cursor);
+        materialized.unshift(...page.messages);
+        cursor = page.hasMore ? page.cursor : null;
+      }
+      expect(materialized).toHaveLength(20);
+      expect((materialized[0] as { content?: unknown }).content).toEqual([
+        { type: "thinking", thinking: "thought 0" },
+      ]);
+      expect((materialized.at(-1) as { content?: unknown }).content).toBe(
+        "tool result 19",
+      );
+      expect(() => projection.page(range.cursor)).toThrow(/wrong purpose/);
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("does not advertise context-only custom history as deferred visible activity", async () => {
+    const lines: unknown[] = [message("u0", null, "user", "prompt", 1)];
+    let parent = "u0";
+    for (let index = 0; index < 120; index += 1) {
+      const id = `custom-${index}`;
+      lines.push({
+        ...message(id, parent, "custom", "private context", index + 2),
+        message: {
+          role: "custom",
+          content: "private context",
+          display: false,
+          timestamp: index + 2,
+        },
+      });
+      parent = id;
+    }
+    const { projection } = await fixture(lines);
+    try {
+      const latest = projection.latestPage();
+      const older = projection.visiblePage(latest.olderCursor!);
+      expect(older.messages).toHaveLength(1);
+      expect(older.activityRanges).toBeUndefined();
+      expect(older.hasOlder).toBe(false);
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("indexes current-branch user turns and seeks directly to a response-oriented target window", async () => {
+    const lines: unknown[] = [];
+    let parent: string | null = null;
+    for (let turn = 0; turn < 140; turn += 1) {
+      const userId = `u${turn}`;
+      const assistantId = `a${turn}`;
+      lines.push(
+        message(userId, parent, "user", `prompt ${turn}`, turn * 10 + 1),
+      );
+      lines.push(
+        message(
+          assistantId,
+          userId,
+          "assistant",
+          [{ type: "text", text: `response ${turn}` }],
+          turn * 10 + 2,
+        ),
+      );
+      parent = assistantId;
+      if (turn === 3) {
+        for (let activity = 0; activity < 80; activity += 1) {
+          const id = `activity-${activity}`;
+          lines.push(
+            message(
+              id,
+              parent,
+              "assistant",
+              [{ type: "thinking", thinking: `hidden ${activity}` }],
+              turn * 10 + 3 + activity,
+            ),
+          );
+          parent = id;
+        }
+        for (let response = 0; response < 170; response += 1) {
+          const id = `continued-response-${response}`;
+          lines.push(
+            message(
+              id,
+              parent,
+              "assistant",
+              [{ type: "text", text: `continued ${response}` }],
+              turn * 10 + 100 + response,
+            ),
+          );
+          parent = id;
+        }
+      }
+    }
+    const { path, projection } = await fixture(lines);
+    try {
+      const latestTurns = projection.userTurnIndexPage(
+        undefined,
+        projection.leafId,
+        "view-a",
+      );
+      expect(latestTurns.total).toBe(140);
+      expect(latestTurns.start).toBe(40);
+      expect(latestTurns.turns[0]).toMatchObject({
+        ordinal: 40,
+        snippet: "prompt 40",
+      });
+      expect(latestTurns.turns.at(-1)).toMatchObject({ ordinal: 139 });
+
+      await appendFile(
+        path,
+        `${JSON.stringify(
+          message("user-140", parent, "user", "prompt 140", 9_000),
+        )}\n`,
+      );
+      await expect(projection.reconcile(true)).resolves.toMatchObject({
+        messageChange: "append",
+      });
+      expect(
+        projection.userTurnIndexPage(undefined, projection.leafId, "view-a"),
+      ).toMatchObject({
+        total: 141,
+        turns: expect.arrayContaining([
+          expect.objectContaining({ ordinal: 140, snippet: "prompt 140" }),
+        ]),
+      });
+
+      const firstTurns = projection.userTurnIndexPage(
+        0,
+        projection.leafId,
+        "view-a",
+      );
+      const target = firstTurns.turns[3]!;
+      const page = projection.userTurnTranscriptPage(
+        target.id,
+        projection.leafId,
+        "view-a",
+      );
+      expect(page.targetMessageId).toBe(target.id);
+      expect(page.hasOlder).toBe(true);
+      expect(page.olderCursor).toBeTruthy();
+      expect(
+        projection.page(page.olderCursor!, projection.leafId, "view-a").messages
+          .length,
+      ).toBeGreaterThan(0);
+      expect(
+        page.messages.some((value) =>
+          JSON.stringify(value).includes("hidden 0"),
+        ),
+      ).toBe(false);
+      expect(page.activityRanges?.length).toBeGreaterThan(0);
+      expect(page.hasMoreInTurn).toBe(true);
+      expect(page.continuationCursor).toBeTruthy();
+      const continuation = projection.userTurnTranscriptPage(
+        target.id,
+        projection.leafId,
+        "view-a",
+        page.continuationCursor!,
+      );
+      expect(continuation.rangeStart).toBe(page.rangeStart);
+      expect(continuation.rangeEnd).toBeGreaterThan(page.rangeEnd);
+      expect(() => projection.page(page.continuationCursor!)).toThrow(
+        /wrong purpose/,
+      );
+      const annotatedUser = page.messages.find(
+        (value) =>
+          (value as { __inspireMessageId?: string }).__inspireMessageId ===
+          target.id,
+      ) as { __inspireUserTurnIndex?: number; __inspireUserTurnId?: string };
+      expect(annotatedUser).toMatchObject({
+        __inspireUserTurnIndex: 3,
+        __inspireUserTurnId: target.id,
+      });
+      expect(() =>
+        projection.userTurnTranscriptPage(
+          "not-a-turn",
+          projection.leafId,
+          "view-a",
+        ),
+      ).toThrow(/does not exist/);
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("binds the prompt outline and direct seek to the selected branch view", async () => {
+    const { projection } = await fixture([
+      message("u-root", null, "user", "root prompt", 1),
+      message("a-root", "u-root", "assistant", "root response", 2),
+      message("u-main", "a-root", "user", "main prompt", 3),
+      message("a-main", "u-main", "assistant", "main response", 4),
+      message("u-alt", "a-root", "user", "alternate prompt", 5),
+      message("a-alt", "u-alt", "assistant", "alternate response", 6),
+    ]);
+    try {
+      const mainTurns = projection.userTurnIndexPage(
+        0,
+        "a-main",
+        "view-main",
+      ).turns;
+      expect(mainTurns.map((turn) => turn.snippet)).toEqual([
+        "root prompt",
+        "main prompt",
+      ]);
+      expect(
+        projection
+          .userTurnIndexPage(0, "a-alt", "view-alt")
+          .turns.map((turn) => turn.snippet),
+      ).toEqual(["root prompt", "alternate prompt"]);
+
+      const mainTurnId = mainTurns[1]!.id;
+      const main = projection.userTurnTranscriptPage(
+        mainTurnId,
+        "a-main",
+        "view-main",
+      );
+      expect(JSON.stringify(main.messages)).toContain("main response");
+      expect(JSON.stringify(main.messages)).not.toContain("alternate prompt");
+      expect(() =>
+        projection.userTurnTranscriptPage(mainTurnId, "a-alt", "view-alt"),
+      ).toThrow(/does not exist/);
+    } finally {
+      await projection.close();
+    }
+  });
 
   it("keeps cursors across projected message appends and invalidates them when an appended compaction replaces the view", async () => {
     const lines = Array.from({ length: 120 }, (_, index) =>

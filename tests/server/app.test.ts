@@ -598,7 +598,7 @@ describe("local host API", () => {
       .expect(400);
   });
 
-  it("serves authenticated session-addressed older transcript pages", async () => {
+  it("serves authenticated session-addressed transcript pages", async () => {
     const page = {
       sessionId: "mock-active",
       revision: 7,
@@ -607,7 +607,45 @@ describe("local host API", () => {
       hasOlder: false,
       olderCursor: null,
     };
+    const activityPage = {
+      sessionId: "mock-active",
+      revision: 7,
+      viewId: "mock-view-mock-active",
+      messages: [{ role: "toolResult", content: "deferred", timestamp: 2 }],
+      hasMore: false,
+      cursor: null,
+    };
     const paging = vi.spyOn(runtime, "transcriptPage").mockResolvedValue(page);
+    const activityPaging = vi
+      .spyOn(runtime, "transcriptActivityPage")
+      .mockResolvedValue(activityPage);
+    const userTurnIndex = vi
+      .spyOn(runtime, "transcriptUserTurns")
+      .mockResolvedValue({
+        sessionId: "mock-active",
+        revision: 7,
+        viewId: "mock-view-mock-active",
+        total: 1,
+        start: 0,
+        turns: [
+          {
+            id: "user-0",
+            ordinal: 0,
+            snippet: "prompt",
+            attachmentCount: 0,
+          },
+        ],
+      });
+    const userTurnTranscript = vi
+      .spyOn(runtime, "transcriptUserTurn")
+      .mockResolvedValue({
+        ...page,
+        targetMessageId: "user-0",
+        rangeStart: 0,
+        rangeEnd: 1,
+        hasMoreInTurn: false,
+        continuationCursor: null,
+      });
     await request(application.server)
       .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
       .expect(401);
@@ -616,7 +654,54 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(response.body).toEqual(page);
-    expect(paging).toHaveBeenCalledWith("mock-active", "opaque-cursor");
+    expect(paging).toHaveBeenCalledWith("mock-active", "opaque-cursor", false);
+    await request(application.server)
+      .get(
+        "/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor&deferActivity=1",
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(paging).toHaveBeenLastCalledWith(
+      "mock-active",
+      "opaque-cursor",
+      true,
+    );
+
+    await request(application.server)
+      .get("/api/transcript/activity?sessionId=mock-active&cursor=range-cursor")
+      .expect(401);
+    const activityResponse = await request(application.server)
+      .get("/api/transcript/activity?sessionId=mock-active&cursor=range-cursor")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(activityResponse.body).toEqual(activityPage);
+    expect(activityPaging).toHaveBeenCalledWith("mock-active", "range-cursor");
+
+    await request(application.server)
+      .get("/api/transcript/user-turns?sessionId=mock-active&start=0")
+      .expect(401);
+    await request(application.server)
+      .get("/api/transcript/user-turns?sessionId=mock-active&start=0")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((result) => expect(result.body.turns).toHaveLength(1));
+    expect(userTurnIndex).toHaveBeenCalledWith("mock-active", 0);
+
+    await request(application.server)
+      .get("/api/transcript/user-turn?sessionId=mock-active&id=user-0")
+      .expect(401);
+    await request(application.server)
+      .get(
+        "/api/transcript/user-turn?sessionId=mock-active&id=user-0&cursor=turn-cursor",
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((result) => expect(result.body.targetMessageId).toBe("user-0"));
+    expect(userTurnTranscript).toHaveBeenCalledWith(
+      "mock-active",
+      "user-0",
+      "turn-cursor",
+    );
   });
 
   it("serves authenticated, bounded, session-addressed branch operations", async () => {
@@ -740,8 +825,12 @@ describe("local host API", () => {
         .patch("/api/preferences")
         .set("Authorization", `Bearer ${token}`)
         .send({ navCollapsedGroups: ["/home/demo/older"] }),
+      request(application.server)
+        .patch("/api/preferences")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ activityFoldVisibility: "compact" }),
     ]);
-    expect(racing.map((response) => response.status)).toEqual([200, 200]);
+    expect(racing.map((response) => response.status)).toEqual([200, 200, 200]);
     await request(application.server)
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
@@ -767,6 +856,7 @@ describe("local host API", () => {
       launch: "welcome",
       thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
+      activityFoldVisibility: "compact",
       assistantRoundDisplay: "divider",
       projectDisplay: "folder",
       completionAttention: "off",
@@ -820,6 +910,7 @@ describe("local host API", () => {
     expect(response.body).toMatchObject({
       thinkingVisibility: "dynamic",
       toolVisibility: "dynamic",
+      activityFoldVisibility: "dynamic",
     });
   });
 
@@ -841,6 +932,7 @@ describe("local host API", () => {
     expect(response.body).toEqual({
       ...legacy,
       palette: "amber",
+      activityFoldVisibility: "dynamic",
       assistantRoundDisplay: "divider",
       projectDisplay: "folder",
       completionAttention: "off",

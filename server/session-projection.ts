@@ -22,7 +22,13 @@ import {
 import type {
   BranchTreeResponse,
   ProjectionHealth,
+  TranscriptActivityKind,
+  TranscriptActivityPage,
+  TranscriptActivityRange,
   TranscriptPage,
+  UserTurnAnchor,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import type { SessionRecord } from "./session-catalog.js";
@@ -39,6 +45,9 @@ export const MAX_PERSISTED_ENTRY_BYTES = 32 * 1024 * 1024;
 /** Includes the complete JSON representation of a TranscriptPage. */
 export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
+const USER_TURN_INDEX_PAGE_SIZE = 100;
+const USER_TURN_SNIPPET_CHARS = 180;
+const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
 export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
 
@@ -145,6 +154,27 @@ export interface SessionProjectionView {
     effectiveLeafId?: string | null,
     viewId?: string,
   ): TranscriptPage;
+  visiblePage(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
+  activityPage(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptActivityPage;
+  userTurnIndexPage(
+    start?: number,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): UserTurnIndexPage;
+  userTurnTranscriptPage(
+    targetMessageId: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+    cursor?: string,
+  ): UserTurnTranscriptPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
   userText(id: string, maxChars: number): string;
@@ -196,13 +226,30 @@ function contextMessages(
   leafId: string | null,
   byId: Map<string, SessionEntry>,
 ): unknown[] {
-  return buildContextEntries(entries, leafId, byId).flatMap((entry) =>
+  const messages = buildContextEntries(entries, leafId, byId).flatMap((entry) =>
     sessionEntryToContextMessages(entry).map((message, index) => ({
       ...message,
       __inspireMessageId: `${entry.id}:${index}`,
       __inspireEntryId: entry.id,
     })),
   );
+  let turnOrdinal = -1;
+  let turnId: string | null = null;
+  return messages.map((message) => {
+    if (message.role === "user") {
+      turnOrdinal += 1;
+      turnId = message.__inspireMessageId;
+    }
+    return {
+      ...message,
+      ...(turnId !== null
+        ? {
+            __inspireUserTurnId: turnId,
+            __inspireUserTurnIndex: turnOrdinal,
+          }
+        : {}),
+    };
+  });
 }
 
 function projectedMessageId(value: unknown): string | null {
@@ -267,14 +314,40 @@ function boundedTranscriptItem(
   persistedIndex?: number,
 ): BoundedTranscriptItem {
   const browserValue = withoutPersistedImageData(value, persistedIndex);
+  const sourceRecord =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const identityMetadata = sourceRecord
+    ? {
+        ...(typeof sourceRecord.__inspireMessageId === "string"
+          ? { __inspireMessageId: sourceRecord.__inspireMessageId }
+          : {}),
+        ...(typeof sourceRecord.__inspireEntryId === "string"
+          ? { __inspireEntryId: sourceRecord.__inspireEntryId }
+          : {}),
+        ...(typeof sourceRecord.__inspireLiveId === "string"
+          ? { __inspireLiveId: sourceRecord.__inspireLiveId }
+          : {}),
+        ...(typeof sourceRecord.__inspireSettled === "boolean"
+          ? { __inspireSettled: sourceRecord.__inspireSettled }
+          : {}),
+        ...(typeof sourceRecord.__inspireUserTurnId === "string"
+          ? { __inspireUserTurnId: sourceRecord.__inspireUserTurnId }
+          : {}),
+        ...(Number.isSafeInteger(sourceRecord.__inspireUserTurnIndex)
+          ? { __inspireUserTurnIndex: sourceRecord.__inspireUserTurnIndex }
+          : {}),
+      }
+    : {};
   const decorate = (projected: unknown): unknown =>
-    persistedIndex !== undefined &&
-    projected &&
-    typeof projected === "object" &&
-    !Array.isArray(projected)
+    projected && typeof projected === "object" && !Array.isArray(projected)
       ? {
           ...(projected as Record<string, unknown>),
-          __inspireMessageIndex: persistedIndex,
+          ...identityMetadata,
+          ...(persistedIndex !== undefined
+            ? { __inspireMessageIndex: persistedIndex }
+            : {}),
         }
       : projected;
   for (const limits of [
@@ -290,17 +363,125 @@ function boundedTranscriptItem(
     value && typeof value === "object"
       ? (value as Record<string, unknown>)
       : {};
+  const role = typeof record.role === "string" ? record.role : "unknown";
+  const omitted =
+    "[message omitted: projected content exceeded the transcript item limit]";
   const projected = decorate({
-    role: typeof record.role === "string" ? record.role : "unknown",
+    role,
     ...(record.timestamp !== undefined ? { timestamp: record.timestamp } : {}),
+    ...(typeof record.display === "boolean" ? { display: record.display } : {}),
+    ...(typeof record.toolCallId === "string"
+      ? { toolCallId: record.toolCallId }
+      : {}),
+    ...(typeof record.toolName === "string"
+      ? { toolName: record.toolName }
+      : {}),
     content:
-      "[message omitted: projected content exceeded the transcript item limit]",
+      role === "assistant" && !isVisibleTranscriptBoundary(value)
+        ? [{ type: "projectionOmitted", content: omitted }]
+        : omitted,
   });
   return { value: projected, serialized: JSON.stringify(projected) };
 }
 
 export function boundedTranscriptValue(value: unknown): unknown {
   return boundedTranscriptItem(value).value;
+}
+
+function isVisibleTranscriptBoundary(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.role === "user") return true;
+  if (record.role !== "assistant") return false;
+  if (typeof record.content === "string") return record.content.length > 0;
+  return (
+    Array.isArray(record.content) &&
+    record.content.some(
+      (part) =>
+        part !== null &&
+        typeof part === "object" &&
+        !Array.isArray(part) &&
+        (part as Record<string, unknown>).type === "text" &&
+        typeof (part as Record<string, unknown>).text === "string" &&
+        String((part as Record<string, unknown>).text).length > 0,
+    )
+  );
+}
+
+function userTurnSnippet(value: unknown): {
+  snippet: string;
+  attachmentCount: number;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { snippet: "User message", attachmentCount: 0 };
+  const record = value as Record<string, unknown>;
+  const text: string[] = [];
+  let attachmentCount = 0;
+  if (typeof record.content === "string") text.push(record.content);
+  else if (Array.isArray(record.content)) {
+    for (const part of record.content) {
+      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+      const item = part as Record<string, unknown>;
+      if (item.type === "text" && typeof item.text === "string")
+        text.push(item.text);
+      else if (item.type === "image") attachmentCount += 1;
+    }
+  }
+  const normalized = text.join(" ").replace(/\s+/g, " ").trim();
+  return {
+    snippet:
+      normalized.length > 0
+        ? Array.from(normalized.slice(0, USER_TURN_SNIPPET_CHARS * 2))
+            .slice(0, USER_TURN_SNIPPET_CHARS)
+            .join("")
+        : attachmentCount > 0
+          ? attachmentCount === 1
+            ? "Image attachment"
+            : `${attachmentCount} image attachments`
+          : "User message",
+    attachmentCount,
+  };
+}
+
+function projectedTimestamp(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const raw = (value as Record<string, unknown>).timestamp;
+  if (typeof raw !== "string" && typeof raw !== "number") return;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function deferredActivityKinds(value: unknown): TranscriptActivityKind[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  if (record.role === "assistant") {
+    if (!Array.isArray(record.content)) return [];
+    let thinking = false;
+    let tool = false;
+    for (const part of record.content) {
+      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+      const type = (part as Record<string, unknown>).type;
+      if (type === "text") continue;
+      if (type === "thinking") thinking = true;
+      else tool = true;
+    }
+    return [
+      ...(thinking ? (["thinking"] as const) : []),
+      ...(tool ? (["tool"] as const) : []),
+    ];
+  }
+  if (record.role === "custom" && record.display === false) return [];
+  return ["tool"];
+}
+
+function signedCursor(payloadValue: Record<string, unknown>): string {
+  const payload = Buffer.from(JSON.stringify(payloadValue)).toString(
+    "base64url",
+  );
+  const signature = createHmac("sha256", CURSOR_KEY)
+    .update(payload)
+    .digest("base64url");
+  return `${payload}.${signature}`;
 }
 
 function cursorFor(
@@ -312,32 +493,76 @@ function cursorFor(
   effectiveLeafId: string | null,
   viewId: string,
 ): string {
-  const payload = Buffer.from(
-    JSON.stringify({
-      sessionId,
-      incarnation,
-      fingerprint,
-      revision,
-      before,
-      effectiveLeafId,
-      viewId,
-    }),
-  ).toString("base64url");
-  const signature = createHmac("sha256", CURSOR_KEY)
-    .update(payload)
-    .digest("base64url");
-  return `${payload}.${signature}`;
+  return signedCursor({
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    before,
+    effectiveLeafId,
+    viewId,
+  });
 }
 
-function parseCursor(cursor: string): {
+function activityCursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  start: number,
+  before: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  return signedCursor({
+    kind: "activity",
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    start,
+    before,
+    effectiveLeafId,
+    viewId,
+  });
+}
+
+function userTurnCursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  target: number,
+  after: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  return signedCursor({
+    kind: "user-turn",
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    start: target,
+    before: after,
+    effectiveLeafId,
+    viewId,
+  });
+}
+
+interface ParsedCursor {
+  kind: "page" | "activity" | "user-turn";
   sessionId: string;
   incarnation: string;
   fingerprint: string;
   revision: number;
+  start: number;
   before: number;
   effectiveLeafId: string | null;
   viewId: string;
-} {
+}
+
+function parseCursor(cursor: string): ParsedCursor {
   const [payload, supplied] = cursor.split(".");
   if (!payload || !supplied)
     throw Object.assign(new Error("Transcript cursor is invalid"), {
@@ -371,14 +596,31 @@ function parseCursor(cursor: string): {
       (parsed.effectiveLeafId !== null &&
         typeof parsed.effectiveLeafId !== "string") ||
       typeof parsed.viewId !== "string" ||
-      !parsed.viewId
+      !parsed.viewId ||
+      (parsed.kind !== undefined &&
+        parsed.kind !== "activity" &&
+        parsed.kind !== "user-turn") ||
+      ((parsed.kind === "activity" || parsed.kind === "user-turn") &&
+        (!Number.isSafeInteger(parsed.start) ||
+          Number(parsed.start) < 0 ||
+          Number(parsed.start) > Number(parsed.before)))
     )
       throw new Error("invalid");
     return {
+      kind:
+        parsed.kind === "activity"
+          ? "activity"
+          : parsed.kind === "user-turn"
+            ? "user-turn"
+            : "page",
       sessionId: parsed.sessionId,
       incarnation: parsed.incarnation,
       fingerprint: parsed.fingerprint,
       revision: Number(parsed.revision),
+      start:
+        parsed.kind === "activity" || parsed.kind === "user-turn"
+          ? Number(parsed.start)
+          : 0,
       before: Number(parsed.before),
       effectiveLeafId: parsed.effectiveLeafId,
       viewId: parsed.viewId,
@@ -467,6 +709,10 @@ export class SessionProjection
   private currentThinkingLevel = "off";
   private currentLeafId: string | null = null;
   private currentEntries: SessionEntry[] = [];
+  private readonly userTurnIndexes = new Map<
+    string,
+    { revision: number; turns: readonly UserTurnAnchor[] }
+  >();
   private currentHeader: SessionHeader | null = null;
   private currentIdentity: FileIdentity | null = null;
   private currentFingerprint = "";
@@ -1296,6 +1542,12 @@ export class SessionProjection
             ...(durable.__inspireMessageIndex !== undefined
               ? { __inspireMessageIndex: durable.__inspireMessageIndex }
               : {}),
+            ...(durable.__inspireUserTurnId !== undefined
+              ? { __inspireUserTurnId: durable.__inspireUserTurnId }
+              : {}),
+            ...(durable.__inspireUserTurnIndex !== undefined
+              ? { __inspireUserTurnIndex: durable.__inspireUserTurnIndex }
+              : {}),
           };
           continue;
         }
@@ -1317,12 +1569,21 @@ export class SessionProjection
     );
   }
 
-  page(
+  private validatedCursor(
     cursor: string,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-  ): TranscriptPage {
+    expectedKind: ParsedCursor["kind"],
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): { decoded: ParsedCursor; messages: readonly unknown[] } {
     const decoded = parseCursor(cursor);
+    if (decoded.kind !== expectedKind) {
+      throw Object.assign(
+        new Error("Transcript cursor has the wrong purpose"),
+        {
+          status: 400,
+        },
+      );
+    }
     if (decoded.sessionId !== this.sessionId) {
       throw Object.assign(
         new Error("Transcript cursor belongs to another session"),
@@ -1347,14 +1608,14 @@ export class SessionProjection
       const byId = new Map(
         this.currentEntries.map((entry) => [entry.id, entry]),
       );
-      let cursor = effectiveLeafId;
+      let branchCursor = effectiveLeafId;
       let appendDescendant = decoded.effectiveLeafId === null;
-      while (cursor && !appendDescendant) {
-        if (cursor === decoded.effectiveLeafId) appendDescendant = true;
-        cursor = byId.get(cursor)?.parentId ?? null;
+      while (branchCursor && !appendDescendant) {
+        if (branchCursor === decoded.effectiveLeafId) appendDescendant = true;
+        branchCursor = byId.get(branchCursor)?.parentId ?? null;
       }
-      // Older-page cursors survive a strictly append-only continuation of the
-      // same branch. A switch to a sibling/ancestor view remains stale.
+      // Cursors survive a strictly append-only continuation of the same
+      // branch. A switch to a sibling or ancestor view remains stale.
       if (!appendDescendant || decoded.revision < this.appendFromRevision) {
         throw Object.assign(
           new Error(
@@ -1381,6 +1642,20 @@ export class SessionProjection
         status: 400,
       });
     }
+    return { decoded, messages };
+  }
+
+  page(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "page",
+      effectiveLeafId,
+      viewId,
+    );
     return this.buildPage(
       messages,
       decoded.before,
@@ -1388,6 +1663,319 @@ export class SessionProjection
       effectiveLeafId,
       viewId,
     );
+  }
+
+  visiblePage(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "page",
+      effectiveLeafId,
+      viewId,
+    );
+    return this.buildVisiblePage(
+      messages,
+      decoded.before,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  activityPage(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptActivityPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "activity",
+      effectiveLeafId,
+      viewId,
+    );
+    return this.buildActivityPage(
+      messages,
+      decoded.start,
+      decoded.before,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  userTurnIndexPage(
+    start: number | undefined,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): UserTurnIndexPage {
+    const indexKey = effectiveLeafId ?? "\u0000current";
+    const cached = this.userTurnIndexes.get(indexKey);
+    const turns =
+      cached?.revision === this.revision
+        ? cached.turns
+        : this.buildUserTurnIndex(effectiveLeafId);
+    if (cached?.revision !== this.revision) {
+      if (this.userTurnIndexes.size >= 16) this.userTurnIndexes.clear();
+      this.userTurnIndexes.set(indexKey, { revision: this.revision, turns });
+    }
+    if (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
+      throw Object.assign(new Error("User-turn index offset is invalid"), {
+        status: 400,
+      });
+    const pageStart =
+      start === undefined
+        ? Math.max(0, turns.length - USER_TURN_INDEX_PAGE_SIZE)
+        : Math.min(start, turns.length);
+    const page: UserTurnIndexPage = {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      total: turns.length,
+      start: pageStart,
+      turns: turns.slice(pageStart, pageStart + USER_TURN_INDEX_PAGE_SIZE),
+    };
+    if (Buffer.byteLength(JSON.stringify(page)) > USER_TURN_INDEX_MAX_BYTES) {
+      throw new Error("User-turn index page exceeded its declared byte bound");
+    }
+    return page;
+  }
+
+  private buildUserTurnIndex(
+    effectiveLeafId: string | null,
+  ): readonly UserTurnAnchor[] {
+    return this.viewMessages(effectiveLeafId).flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return [];
+      const record = value as Record<string, unknown>;
+      const id = projectedMessageId(value);
+      const ordinal = record.__inspireUserTurnIndex;
+      if (
+        record.role !== "user" ||
+        id === null ||
+        !Number.isSafeInteger(ordinal) ||
+        Number(ordinal) < 0
+      )
+        return [];
+      const summary = userTurnSnippet(value);
+      const timestamp = projectedTimestamp(value);
+      return [
+        {
+          id,
+          ordinal: Number(ordinal),
+          snippet: summary.snippet,
+          ...(timestamp ? { timestamp } : {}),
+          attachmentCount: summary.attachmentCount,
+        },
+      ];
+    });
+  }
+
+  userTurnTranscriptPage(
+    targetMessageId: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+    continuationCursor?: string,
+  ): UserTurnTranscriptPage {
+    const source = this.viewMessages(effectiveLeafId);
+    const target = source.findIndex(
+      (value) =>
+        projectedMessageId(value) === targetMessageId &&
+        Boolean(
+          value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            (value as Record<string, unknown>).role === "user",
+        ),
+    );
+    if (target < 0)
+      throw Object.assign(
+        new Error("User turn does not exist in this branch"),
+        {
+          status: 404,
+        },
+      );
+    let turnEnd = target + 1;
+    while (turnEnd < source.length) {
+      const value = source[turnEnd];
+      if (
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        (value as Record<string, unknown>).role === "user"
+      )
+        break;
+      turnEnd += 1;
+    }
+
+    let cursor = target;
+    if (continuationCursor) {
+      const validated = this.validatedCursor(
+        continuationCursor,
+        "user-turn",
+        effectiveLeafId,
+        viewId,
+      ).decoded;
+      if (
+        validated.start !== target ||
+        validated.before <= target ||
+        validated.before >= turnEnd
+      )
+        throw Object.assign(new Error("User-turn cursor is invalid"), {
+          status: 400,
+        });
+      cursor = validated.before;
+    }
+
+    const messages: unknown[] = [];
+    const activityRanges: TranscriptActivityRange[] = [];
+    let committedEnd = cursor;
+    let previousVisibleId: string | null = null;
+    for (let index = cursor - 1; index >= target; index -= 1) {
+      if (!isVisibleTranscriptBoundary(source[index])) continue;
+      previousVisibleId = projectedMessageId(source[index]);
+      break;
+    }
+    let pendingStart: number | null = null;
+    const pendingKinds = new Set<TranscriptActivityKind>();
+    const makeRange = (
+      rangeStart: number,
+      rangeEnd: number,
+      afterMessageId: string | null,
+      kinds: ReadonlySet<TranscriptActivityKind>,
+    ): TranscriptActivityRange | null =>
+      kinds.size > 0
+        ? {
+            cursor: activityCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              rangeStart,
+              rangeEnd,
+              effectiveLeafId,
+              viewId,
+            ),
+            afterMessageId,
+            messageCount: rangeEnd - rangeStart,
+            kinds: (["thinking", "tool"] as const).filter((kind) =>
+              kinds.has(kind),
+            ),
+          }
+        : null;
+    const shell = (
+      nextMessages: unknown[],
+      nextRanges: TranscriptActivityRange[],
+      rangeEnd: number,
+    ): UserTurnTranscriptPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      messages: nextMessages,
+      ...(nextRanges.length > 0 ? { activityRanges: nextRanges } : {}),
+      hasOlder: target > 0,
+      olderCursor:
+        target > 0
+          ? cursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              target,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+      targetMessageId,
+      rangeStart: target,
+      rangeEnd,
+      hasMoreInTurn: rangeEnd < turnEnd,
+      continuationCursor:
+        rangeEnd < turnEnd
+          ? userTurnCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              target,
+              rangeEnd,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+
+    while (cursor < turnEnd && messages.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const value = source[cursor];
+      if (!isVisibleTranscriptBoundary(value)) {
+        if (pendingStart === null) pendingStart = cursor;
+        for (const kind of deferredActivityKinds(value)) pendingKinds.add(kind);
+        cursor += 1;
+        continue;
+      }
+      const item = boundedTranscriptItem(value, cursor);
+      this.readHooks?.afterMessageProjection?.();
+      const range =
+        pendingStart === null
+          ? null
+          : makeRange(pendingStart, cursor, previousVisibleId, pendingKinds);
+      const nextMessages = [...messages, item.value];
+      const nextRanges = [...activityRanges, ...(range ? [range] : [])];
+      if (
+        Buffer.byteLength(
+          JSON.stringify(shell(nextMessages, nextRanges, cursor + 1)),
+        ) > TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        if (messages.length === 0)
+          throw Object.assign(
+            new Error(
+              "A projected transcript message exceeds the browser page budget",
+            ),
+            { status: 422 },
+          );
+        cursor = pendingStart ?? cursor;
+        break;
+      }
+      messages.push(item.value);
+      if (range) activityRanges.push(range);
+      previousVisibleId = projectedMessageId(value);
+      pendingStart = null;
+      pendingKinds.clear();
+      cursor += 1;
+      committedEnd = cursor;
+    }
+
+    if (cursor === turnEnd && pendingStart !== null) {
+      const trailing = makeRange(
+        pendingStart,
+        turnEnd,
+        previousVisibleId,
+        pendingKinds,
+      );
+      if (
+        trailing &&
+        Buffer.byteLength(
+          JSON.stringify(
+            shell(messages, [...activityRanges, trailing], turnEnd),
+          ),
+        ) <= TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        activityRanges.push(trailing);
+        committedEnd = turnEnd;
+      } else if (!trailing) {
+        committedEnd = turnEnd;
+      }
+    }
+    const page = shell(messages, activityRanges, committedEnd);
+    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES)
+      throw new Error("Transcript page exceeded its declared byte bound");
+    return page;
   }
 
   private buildPage(
@@ -1454,6 +2042,207 @@ export class SessionProjection
       start = index;
     }
     if (reversed.length === 0 && before > 0) {
+      throw Object.assign(
+        new Error(
+          "A projected transcript message exceeds the browser page budget",
+        ),
+        { status: 422 },
+      );
+    }
+    const page = shell(start, reversed.reverse());
+    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {
+      throw new Error("Transcript page exceeded its declared byte bound");
+    }
+    return page;
+  }
+
+  private buildVisiblePage(
+    source: readonly unknown[],
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptPage {
+    let start = before;
+    let pendingActivityEnd: number | null = null;
+    const pendingKinds = new Set<TranscriptActivityKind>();
+    const reversed: unknown[] = [];
+    const ranges: TranscriptActivityRange[] = [];
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+      activityRanges: TranscriptActivityRange[],
+    ): TranscriptPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      messages,
+      ...(activityRanges.length > 0 ? { activityRanges } : {}),
+      hasOlder: candidateStart > 0,
+      olderCursor:
+        candidateStart > 0
+          ? cursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              candidateStart,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+    const range = (
+      rangeStart: number,
+      rangeEnd: number,
+      afterMessageId: string | null,
+      kinds: ReadonlySet<TranscriptActivityKind>,
+    ): TranscriptActivityRange | null =>
+      kinds.size > 0
+        ? {
+            cursor: activityCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              rangeStart,
+              rangeEnd,
+              effectiveLeafId,
+              viewId,
+            ),
+            afterMessageId,
+            messageCount: rangeEnd - rangeStart,
+            kinds: (["thinking", "tool"] as const).filter((kind) =>
+              kinds.has(kind),
+            ),
+          }
+        : null;
+
+    while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const sourceItem = source[index];
+      if (!isVisibleTranscriptBoundary(sourceItem)) {
+        if (pendingActivityEnd === null) pendingActivityEnd = start;
+        for (const kind of deferredActivityKinds(sourceItem))
+          pendingKinds.add(kind);
+        start = index;
+        continue;
+      }
+
+      const item = boundedTranscriptItem(sourceItem, index);
+      this.readHooks?.afterMessageProjection?.();
+      const nextRange =
+        pendingActivityEnd === null
+          ? null
+          : range(
+              index + 1,
+              pendingActivityEnd,
+              projectedMessageId(sourceItem),
+              pendingKinds,
+            );
+      const candidateMessages = [...reversed, item.value].reverse();
+      const candidateRanges = [
+        ...ranges,
+        ...(nextRange ? [nextRange] : []),
+      ].reverse();
+      if (
+        Buffer.byteLength(
+          JSON.stringify(shell(index, candidateMessages, candidateRanges)),
+        ) > TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        // The skipped activity needs this older visible message as its stable
+        // insertion anchor, so leave both for the next page.
+        start = pendingActivityEnd ?? start;
+        break;
+      }
+      reversed.push(item.value);
+      if (nextRange) ranges.push(nextRange);
+      start = index;
+      pendingActivityEnd = null;
+      pendingKinds.clear();
+    }
+
+    if (start === 0 && pendingActivityEnd !== null) {
+      const leading = range(0, pendingActivityEnd, null, pendingKinds);
+      if (leading) {
+        const withLeading = shell(
+          0,
+          [...reversed].reverse(),
+          [...ranges, leading].reverse(),
+        );
+        if (
+          Buffer.byteLength(JSON.stringify(withLeading)) <=
+          TRANSCRIPT_PAGE_MAX_BYTES
+        )
+          ranges.push(leading);
+        else start = pendingActivityEnd;
+      }
+    }
+    if (reversed.length === 0 && start === before && before > 0) {
+      throw Object.assign(
+        new Error(
+          "A projected transcript message exceeds the browser page budget",
+        ),
+        { status: 422 },
+      );
+    }
+    const page = shell(start, reversed.reverse(), ranges.reverse());
+    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {
+      throw new Error("Transcript page exceeded its declared byte bound");
+    }
+    return page;
+  }
+
+  private buildActivityPage(
+    source: readonly unknown[],
+    floor: number,
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptActivityPage {
+    let start = before;
+    const reversed: unknown[] = [];
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+    ): TranscriptActivityPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      effectiveLeafId,
+      messages,
+      hasMore: candidateStart > floor,
+      cursor:
+        candidateStart > floor
+          ? activityCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              floor,
+              candidateStart,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+    while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const item = boundedTranscriptItem(source[index], index);
+      this.readHooks?.afterMessageProjection?.();
+      const candidate = [...reversed, item.value].reverse();
+      if (
+        Buffer.byteLength(JSON.stringify(shell(index, candidate))) >
+        TRANSCRIPT_PAGE_MAX_BYTES
+      )
+        break;
+      reversed.push(item.value);
+      start = index;
+    }
+    if (reversed.length === 0 && before > floor) {
       throw Object.assign(
         new Error(
           "A projected transcript message exceeds the browser page budget",

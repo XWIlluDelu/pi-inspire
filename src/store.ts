@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import {
   type ActiveSnapshot,
+  type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
   type AvailableUpdate,
   type BranchTreeResponse,
@@ -33,6 +34,9 @@ import {
   type SessionSummary,
   type ThemePreference,
   type ToolVisibilityPreference,
+  type TranscriptActivityRange,
+  type UserTurnAnchor,
+  type UserTurnTranscriptPage,
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
@@ -80,6 +84,13 @@ interface ContextUsage {
   contextWindow: number;
   percent: number | null;
 }
+
+export interface TranscriptActivityRangeState extends TranscriptActivityRange {
+  status: "idle" | "loading" | "error";
+  error: string | null;
+}
+
+export type ActivityMaterializationMode = "all" | "tail";
 
 function contextUsage(stats: unknown): ContextUsage | null {
   if (!stats || typeof stats !== "object") return null;
@@ -129,6 +140,8 @@ interface AppState extends EventSlice {
    * snapshot boundary; null when Pi provides no usable data. */
   contextUsage: ContextUsage | null;
   transcriptRevision: number;
+  /** Earliest revision still sharing this projection's unchanged prefix. */
+  transcriptAppendFromRevision: number;
   transcriptIncarnation: string | null;
   transcriptViewId: string | null;
   /** Durable Pi projection leaf. It differs from effective only while the
@@ -139,6 +152,14 @@ interface AppState extends EventSlice {
   olderMessagesCursor: string | null;
   loadingOlderMessages: boolean;
   olderMessagesError: string | null;
+  transcriptActivityRanges: TranscriptActivityRangeState[];
+  /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
+  promptMapTurns: UserTurnAnchor[];
+  promptMapTotal: number;
+  promptMapLoadedStarts: number[];
+  promptMapLoadingStarts: number[];
+  promptMapError: string | null;
+  promptMapNavigatingOrdinal: number | null;
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
@@ -217,6 +238,7 @@ interface AppState extends EventSlice {
 }
 
 const NOTICE_TTL_MS = 8_000;
+const PROMPT_MAP_PAGE_SIZE = 100;
 
 const initialState: AppState = {
   ...emptyEventSlice(),
@@ -239,6 +261,7 @@ const initialState: AppState = {
   commands: [],
   contextUsage: null,
   transcriptRevision: 0,
+  transcriptAppendFromRevision: 0,
   transcriptIncarnation: null,
   transcriptViewId: null,
   transcriptDurableLeafId: null,
@@ -247,6 +270,13 @@ const initialState: AppState = {
   olderMessagesCursor: null,
   loadingOlderMessages: false,
   olderMessagesError: null,
+  transcriptActivityRanges: [],
+  promptMapTurns: [],
+  promptMapTotal: 0,
+  promptMapLoadedStarts: [],
+  promptMapLoadingStarts: [],
+  promptMapError: null,
+  promptMapNavigatingOrdinal: null,
   projectionHealth: { status: "ok" },
   projectionConflict: null,
   projectionError: null,
@@ -460,6 +490,10 @@ export class AppStore {
   private resyncRequest = 0;
   private readyWhileOpening = new Map<string, number>();
   private olderTranscriptRequest: AbortController | null = null;
+  private activityTranscriptRequests = new Map<string, AbortController>();
+  private userTurnIndexRequests = new Map<string, AbortController>();
+  private userTurnIndexPromises = new Map<string, Promise<UserTurnAnchor[]>>();
+  private userTurnTranscriptRequest: AbortController | null = null;
   private transportGeneration = 0;
   /** Live operation kinds own their own terminal attention. Nested automatic
    * compaction must never consume the agent run that owns it. */
@@ -672,6 +706,16 @@ export class AppStore {
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.invalidateSessionListRequests();
+    this.olderTranscriptRequest?.abort();
+    this.olderTranscriptRequest = null;
+    for (const request of this.activityTranscriptRequests.values())
+      request.abort();
+    this.activityTranscriptRequests.clear();
+    for (const request of this.userTurnIndexRequests.values()) request.abort();
+    this.userTurnIndexRequests.clear();
+    this.userTurnIndexPromises.clear();
+    this.userTurnTranscriptRequest?.abort();
+    this.userTurnTranscriptRequest = null;
     this.attentionArms.clear();
     this.authToken = null;
     this.set({
@@ -679,6 +723,12 @@ export class AppStore {
       error: null,
       connection: "offline",
       connectionProblem: null,
+      loadingOlderMessages: false,
+      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
+        (range) => ({ ...range, status: "idle", error: null }),
+      ),
+      promptMapLoadingStarts: [],
+      promptMapNavigatingOrdinal: null,
     });
   }
 
@@ -797,16 +847,45 @@ export class AppStore {
     const viewChanged = Boolean(
       !sessionChanged &&
         nextSessionId &&
-        nextViewId !== this.state.transcriptViewId,
+        (nextViewId !== this.state.transcriptViewId ||
+          (page?.incarnation ?? null) !== this.state.transcriptIncarnation),
     );
-    if (sessionChanged || viewChanged) {
+    const sameProjectionOwner = Boolean(
+      !sessionChanged &&
+        !viewChanged &&
+        page &&
+        nextViewId === this.state.transcriptViewId &&
+        (page.incarnation ?? null) === this.state.transcriptIncarnation,
+    );
+    const projectionLineageCompatible = Boolean(
+      sameProjectionOwner &&
+        page &&
+        (page.revision === this.state.transcriptRevision ||
+          (page.revision > this.state.transcriptRevision &&
+            (page.appendFromRevision ?? page.revision) <=
+              this.state.transcriptRevision)),
+    );
+    const projectionReplaced = Boolean(
+      sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
+    );
+    if (sessionChanged || viewChanged || projectionReplaced) {
       this.selectionGeneration += 1;
       this.branches.invalidateForViewChange();
-      // Conversation-derived previews and older-page requests are authorized
-      // against one opaque branch view, not merely a session id.
+      // Conversation-derived previews and transcript requests are authorized
+      // against one branch lineage, not merely a session id. A same-view
+      // compaction/rewrite invalidates them even when the owner ids survive.
       this.resources.invalidate();
       this.olderTranscriptRequest?.abort();
       this.olderTranscriptRequest = null;
+      for (const request of this.activityTranscriptRequests.values())
+        request.abort();
+      this.activityTranscriptRequests.clear();
+      for (const request of this.userTurnIndexRequests.values())
+        request.abort();
+      this.userTurnIndexRequests.clear();
+      this.userTurnIndexPromises.clear();
+      this.userTurnTranscriptRequest?.abort();
+      this.userTurnTranscriptRequest = null;
       if (sessionChanged) this.git.cancelAll();
     } else if (revisionChanged) {
       // Availability is a filesystem observation made against one transcript
@@ -816,18 +895,12 @@ export class AppStore {
     const newestMessages = (page?.messages ?? []).map(asMessage);
     const historyCompatible = Boolean(
       mode === "preserve" &&
-        !sessionChanged &&
-        !viewChanged &&
+        projectionLineageCompatible &&
         page &&
-        nextViewId === this.state.transcriptViewId &&
-        page.incarnation &&
-        page.incarnation === this.state.transcriptIncarnation &&
         ((page.revision === this.state.transcriptRevision &&
           (this.state.hasOlderMessages !== Boolean(page.hasOlder) ||
             this.state.olderMessagesCursor !== (page.olderCursor ?? null))) ||
-          (page.revision > this.state.transcriptRevision &&
-            (page.appendFromRevision ?? page.revision) <=
-              this.state.transcriptRevision)),
+          page.revision > this.state.transcriptRevision),
     );
     let messages = newestMessages;
     if (historyCompatible) {
@@ -908,6 +981,8 @@ export class AppStore {
       contextUsage: contextUsage(active?.stats ?? null),
       messages,
       transcriptRevision: nextTranscriptRevision,
+      transcriptAppendFromRevision:
+        page?.appendFromRevision ?? nextTranscriptRevision,
       transcriptIncarnation: page?.incarnation ?? null,
       transcriptViewId: nextViewId,
       transcriptDurableLeafId: nextDurableLeafId,
@@ -918,9 +993,36 @@ export class AppStore {
       olderMessagesCursor: historyCompatible
         ? this.state.olderMessagesCursor
         : (page?.olderCursor ?? null),
-      loadingOlderMessages: false,
+      loadingOlderMessages: projectionLineageCompatible
+        ? this.state.loadingOlderMessages
+        : false,
       olderMessagesError: historyCompatible
         ? this.state.olderMessagesError
+        : null,
+      transcriptActivityRanges: historyCompatible
+        ? this.state.transcriptActivityRanges
+        : (page?.activityRanges ?? []).map((range) => ({
+            ...range,
+            status: "idle" as const,
+            error: null,
+          })),
+      promptMapTurns: projectionLineageCompatible
+        ? this.state.promptMapTurns
+        : [],
+      promptMapTotal: projectionLineageCompatible
+        ? this.state.promptMapTotal
+        : 0,
+      promptMapLoadedStarts: projectionLineageCompatible
+        ? this.state.promptMapLoadedStarts
+        : [],
+      promptMapLoadingStarts: projectionLineageCompatible
+        ? this.state.promptMapLoadingStarts
+        : [],
+      promptMapError: projectionLineageCompatible
+        ? this.state.promptMapError
+        : null,
+      promptMapNavigatingOrdinal: projectionLineageCompatible
+        ? this.state.promptMapNavigatingOrdinal
         : null,
       projectionHealth,
       projectionConflict,
@@ -1296,7 +1398,7 @@ export class AppStore {
     const cursor = this.state.olderMessagesCursor;
     const revision = this.state.transcriptRevision;
     const viewId = this.state.transcriptViewId;
-    const effectiveLeafId = this.state.transcriptEffectiveLeafId;
+    const incarnation = this.state.transcriptIncarnation;
     const generation = this.selectionGeneration;
     if (
       !this.api ||
@@ -1315,16 +1417,24 @@ export class AppStore {
         cursor,
         request.signal,
       );
+      const pageLineageCompatible =
+        page.revision === revision ||
+        (page.revision > revision &&
+          (page.appendFromRevision ?? page.revision) <= revision);
+      const currentLineageCompatible =
+        this.state.transcriptRevision === revision ||
+        (this.state.transcriptRevision > revision &&
+          this.state.transcriptAppendFromRevision <= revision);
       if (
         this.state.sessionId !== sessionId ||
         this.selectionGeneration !== generation ||
-        this.state.transcriptRevision !== revision ||
+        !currentLineageCompatible ||
         this.state.transcriptViewId !== viewId ||
-        this.state.transcriptEffectiveLeafId !== effectiveLeafId ||
+        this.state.transcriptIncarnation !== incarnation ||
         page.sessionId !== sessionId ||
-        page.revision !== revision ||
+        !pageLineageCompatible ||
         (page.viewId ?? viewId) !== viewId ||
-        (page.effectiveLeafId ?? effectiveLeafId) !== effectiveLeafId
+        (page.incarnation ?? incarnation) !== incarnation
       )
         return false;
       const existing = new Set(
@@ -1342,8 +1452,22 @@ export class AppStore {
         const key = messageKey(message);
         if (key) this.settledKeys.add(key);
       }
+      const existingRanges = new Set(
+        this.state.transcriptActivityRanges.map((range) => range.cursor),
+      );
+      const activityRanges = (page.activityRanges ?? [])
+        .filter((range) => !existingRanges.has(range.cursor))
+        .map((range) => ({
+          ...range,
+          status: "idle" as const,
+          error: null,
+        }));
       this.set({
         messages: [...older, ...this.state.messages],
+        transcriptActivityRanges: [
+          ...activityRanges,
+          ...this.state.transcriptActivityRanges,
+        ],
         hasOlderMessages: page.hasOlder,
         olderMessagesCursor: page.olderCursor,
         olderMessagesError: null,
@@ -1384,6 +1508,529 @@ export class AppStore {
       )
         this.set({ loadingOlderMessages: false });
     }
+  };
+
+  loadPromptMapTurns = async (start?: number): Promise<UserTurnAnchor[]> => {
+    const sessionId = this.state.sessionId;
+    const revision = this.state.transcriptRevision;
+    const viewId = this.state.transcriptViewId;
+    const incarnation = this.state.transcriptIncarnation;
+    const generation = this.selectionGeneration;
+    if (!this.api || !sessionId || !viewId) return [];
+    if (start !== undefined) {
+      const cached = this.state.promptMapTurns.filter(
+        (turn) =>
+          turn.ordinal >= start && turn.ordinal < start + PROMPT_MAP_PAGE_SIZE,
+      );
+      if (
+        this.state.promptMapLoadedStarts.includes(start) &&
+        (cached.length === PROMPT_MAP_PAGE_SIZE ||
+          start + cached.length >= this.state.promptMapTotal)
+      )
+        return cached;
+    }
+    const requestKey = start === undefined ? "latest" : String(start);
+    const existingRequest = this.userTurnIndexPromises.get(requestKey);
+    if (existingRequest) return existingRequest;
+    const request = new AbortController();
+    this.userTurnIndexRequests.set(requestKey, request);
+    const loadingKey = start ?? -1;
+    if (!this.state.promptMapLoadingStarts.includes(loadingKey))
+      this.set({
+        promptMapLoadingStarts: [
+          ...this.state.promptMapLoadingStarts,
+          loadingKey,
+        ],
+        promptMapError: null,
+      });
+    const pending = (async (): Promise<UserTurnAnchor[]> => {
+      try {
+        const page = await this.api!.transcriptUserTurns(
+          sessionId,
+          start,
+          request.signal,
+        );
+        const pageLineageCompatible =
+          page.revision === revision ||
+          (page.revision > revision &&
+            (page.appendFromRevision ?? page.revision) <= revision);
+        const currentLineageCompatible =
+          this.state.transcriptRevision === revision ||
+          (this.state.transcriptRevision > revision &&
+            this.state.transcriptAppendFromRevision <= revision);
+        if (
+          request.signal.aborted ||
+          this.state.sessionId !== sessionId ||
+          this.selectionGeneration !== generation ||
+          !currentLineageCompatible ||
+          this.state.transcriptViewId !== viewId ||
+          this.state.transcriptIncarnation !== incarnation ||
+          page.sessionId !== sessionId ||
+          !pageLineageCompatible ||
+          page.viewId !== viewId ||
+          (page.incarnation ?? incarnation) !== incarnation
+        )
+          return [];
+        const byOrdinal = new Map(
+          this.state.promptMapTurns.map((turn) => [turn.ordinal, turn]),
+        );
+        for (const turn of page.turns) byOrdinal.set(turn.ordinal, turn);
+        const turns = [...byOrdinal.values()]
+          .filter((turn) => turn.ordinal < page.total)
+          .sort((left, right) => left.ordinal - right.ordinal);
+        this.set({
+          promptMapTurns: turns,
+          promptMapTotal: page.total,
+          promptMapLoadedStarts: [
+            ...new Set([...this.state.promptMapLoadedStarts, page.start]),
+          ].sort((left, right) => left - right),
+          promptMapError: null,
+        });
+        return page.turns;
+      } catch (error) {
+        if (
+          request.signal.aborted ||
+          this.selectionGeneration !== generation ||
+          this.state.transcriptViewId !== viewId
+        )
+          return [];
+        if (error instanceof ApiError && error.status === 409) {
+          await this.resync(sessionId, generation, undefined, false);
+        } else if (error instanceof ApiError && error.status === 401) {
+          this.handleAuthFailure();
+        } else {
+          this.set({
+            promptMapError:
+              error instanceof Error
+                ? error.message
+                : "Failed to load the user-turn outline",
+          });
+        }
+        return [];
+      } finally {
+        if (this.userTurnIndexRequests.get(requestKey) === request)
+          this.userTurnIndexRequests.delete(requestKey);
+        this.userTurnIndexPromises.delete(requestKey);
+        if (
+          this.state.sessionId === sessionId &&
+          this.selectionGeneration === generation &&
+          this.state.transcriptViewId === viewId
+        )
+          this.set({
+            promptMapLoadingStarts: this.state.promptMapLoadingStarts.filter(
+              (value) => value !== loadingKey,
+            ),
+          });
+      }
+    })();
+    this.userTurnIndexPromises.set(requestKey, pending);
+    return pending;
+  };
+
+  navigatePromptMapTurn = async (ordinal: number): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    const revision = this.state.transcriptRevision;
+    const viewId = this.state.transcriptViewId;
+    const incarnation = this.state.transcriptIncarnation;
+    const generation = this.selectionGeneration;
+    if (
+      !this.api ||
+      !sessionId ||
+      !viewId ||
+      !Number.isSafeInteger(ordinal) ||
+      ordinal < 0 ||
+      ordinal >= this.state.promptMapTotal ||
+      this.state.promptMapNavigatingOrdinal !== null
+    )
+      return false;
+    this.set({ promptMapNavigatingOrdinal: ordinal, promptMapError: null });
+    let request: AbortController | null = null;
+    try {
+      let turn = this.state.promptMapTurns.find(
+        (candidate) => candidate.ordinal === ordinal,
+      );
+      if (!turn) {
+        const start =
+          Math.floor(ordinal / PROMPT_MAP_PAGE_SIZE) * PROMPT_MAP_PAGE_SIZE;
+        const page = await this.loadPromptMapTurns(start);
+        turn =
+          page.find((candidate) => candidate.ordinal === ordinal) ??
+          this.state.promptMapTurns.find(
+            (candidate) => candidate.ordinal === ordinal,
+          );
+      }
+      if (!turn) throw new Error("That user turn is no longer available");
+      if (
+        this.state.messages.some(
+          (message) =>
+            message.role === "user" && message.__inspireMessageId === turn!.id,
+        )
+      )
+        return true;
+
+      request = new AbortController();
+      this.userTurnTranscriptRequest?.abort();
+      this.userTurnTranscriptRequest = request;
+      const pages: UserTurnTranscriptPage[] = [];
+      const seenCursors = new Set<string>();
+      let continuationCursor: string | undefined;
+      do {
+        const page = await this.api.transcriptUserTurn(
+          sessionId,
+          turn.id,
+          continuationCursor,
+          request.signal,
+        );
+        const pageLineageCompatible =
+          page.revision === revision ||
+          (page.revision > revision &&
+            (page.appendFromRevision ?? page.revision) <= revision);
+        const currentLineageCompatible =
+          this.state.transcriptRevision === revision ||
+          (this.state.transcriptRevision > revision &&
+            this.state.transcriptAppendFromRevision <= revision);
+        if (
+          request.signal.aborted ||
+          this.state.sessionId !== sessionId ||
+          this.selectionGeneration !== generation ||
+          !currentLineageCompatible ||
+          this.state.transcriptViewId !== viewId ||
+          this.state.transcriptIncarnation !== incarnation ||
+          page.sessionId !== sessionId ||
+          !pageLineageCompatible ||
+          page.viewId !== viewId ||
+          (page.incarnation ?? incarnation) !== incarnation ||
+          page.targetMessageId !== turn.id
+        )
+          return false;
+        pages.push(page);
+        continuationCursor = page.continuationCursor ?? undefined;
+        if (continuationCursor) {
+          if (seenCursors.has(continuationCursor))
+            throw new Error("User-turn transcript cursor did not advance");
+          seenCursors.add(continuationCursor);
+        }
+      } while (continuationCursor);
+
+      const existing = new Set(
+        this.state.messages.map(
+          (message) => messageKey(message) ?? JSON.stringify(message),
+        ),
+      );
+      const incoming = pages
+        .flatMap((page) => page.messages)
+        .map(asMessage)
+        .filter((message) => {
+          const key = messageKey(message) ?? JSON.stringify(message);
+          if (existing.has(key)) return false;
+          existing.add(key);
+          return true;
+        });
+      const messages = [...this.state.messages, ...incoming].sort(
+        (left, right) => {
+          const leftIndex = left.__inspireMessageIndex;
+          const rightIndex = right.__inspireMessageIndex;
+          if (leftIndex === undefined) return rightIndex === undefined ? 0 : 1;
+          if (rightIndex === undefined) return -1;
+          return leftIndex - rightIndex;
+        },
+      );
+      for (const message of incoming) {
+        const key = messageKey(message);
+        if (key) this.settledKeys.add(key);
+      }
+      const existingRanges = new Set(
+        this.state.transcriptActivityRanges.map((range) => range.cursor),
+      );
+      const activityRanges = pages
+        .flatMap((page) => page.activityRanges ?? [])
+        .filter((range) => {
+          if (existingRanges.has(range.cursor)) return false;
+          existingRanges.add(range.cursor);
+          return true;
+        })
+        .map((range) => ({
+          ...range,
+          status: "idle" as const,
+          error: null,
+        }));
+      const firstPage = pages[0]!;
+      const currentEarliest = this.state.messages.reduce(
+        (minimum, message) =>
+          message.__inspireMessageIndex === undefined
+            ? minimum
+            : Math.min(minimum, message.__inspireMessageIndex),
+        Number.POSITIVE_INFINITY,
+      );
+      const extendsEarlier = firstPage.rangeStart < currentEarliest;
+      this.set({
+        messages,
+        transcriptActivityRanges: [
+          ...this.state.transcriptActivityRanges,
+          ...activityRanges,
+        ],
+        ...(extendsEarlier
+          ? {
+              hasOlderMessages: firstPage.hasOlder,
+              olderMessagesCursor: firstPage.olderCursor,
+              olderMessagesError: null,
+            }
+          : {}),
+      });
+      return true;
+    } catch (error) {
+      if (
+        request?.signal.aborted ||
+        this.selectionGeneration !== generation ||
+        this.state.transcriptViewId !== viewId
+      )
+        return false;
+      if (error instanceof ApiError && error.status === 409) {
+        await this.resync(sessionId, generation, undefined, false);
+      } else if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+      } else {
+        this.set({
+          promptMapError:
+            error instanceof Error
+              ? error.message
+              : "Failed to load that user turn",
+        });
+      }
+      return false;
+    } finally {
+      const ownsNavigation = request
+        ? this.userTurnTranscriptRequest === request
+        : this.state.promptMapNavigatingOrdinal === ordinal;
+      if (ownsNavigation) {
+        if (request) this.userTurnTranscriptRequest = null;
+        if (
+          this.state.sessionId === sessionId &&
+          this.selectionGeneration === generation &&
+          this.state.transcriptViewId === viewId
+        )
+          this.set({ promptMapNavigatingOrdinal: null });
+      }
+    }
+  };
+
+  materializeActivityRanges = async (
+    cursors: readonly string[],
+    beforeCommit?: () => void,
+    mode: ActivityMaterializationMode = "all",
+  ): Promise<void> => {
+    const sessionId = this.state.sessionId;
+    const viewId = this.state.transcriptViewId;
+    const incarnation = this.state.transcriptIncarnation;
+    const generation = this.selectionGeneration;
+    if (!this.api || !sessionId || !viewId) return;
+    const requested = this.state.transcriptActivityRanges.filter(
+      (range) => cursors.includes(range.cursor) && range.status !== "loading",
+    );
+    if (requested.length === 0) return;
+    this.set({
+      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
+        (range) =>
+          requested.some((candidate) => candidate.cursor === range.cursor)
+            ? { ...range, status: "loading", error: null }
+            : range,
+      ),
+    });
+
+    const results = await Promise.all(
+      requested.map(async (range) => {
+        const request = new AbortController();
+        this.activityTranscriptRequests.set(range.cursor, request);
+        const pages: ChatMessage[][] = [];
+        const seenCursors = new Set<string>();
+        let cursor: string | null = range.cursor;
+        let received = 0;
+        let hasMore = false;
+        try {
+          while (cursor) {
+            if (seenCursors.has(cursor))
+              throw new Error("Deferred activity cursor did not advance");
+            seenCursors.add(cursor);
+            const page = await this.api!.transcriptActivity(
+              sessionId,
+              cursor,
+              request.signal,
+            );
+            if (
+              page.sessionId !== sessionId ||
+              page.viewId !== viewId ||
+              (page.incarnation !== undefined &&
+                page.incarnation !== incarnation)
+            )
+              throw new Error("Deferred activity belongs to another view");
+            const messages = page.messages.map(asMessage);
+            if (messages.length === 0 && page.hasMore)
+              throw new Error("Deferred activity page made no progress");
+            received += messages.length;
+            if (received > range.messageCount)
+              throw new Error("Deferred activity exceeded its declared range");
+            pages.unshift(messages);
+            hasMore = page.hasMore;
+            cursor = page.hasMore ? page.cursor : null;
+            if (page.hasMore && !cursor)
+              throw new Error("Deferred activity continuation is missing");
+            if (mode === "tail") break;
+          }
+          const remaining = range.messageCount - received;
+          if (mode === "all" && remaining !== 0)
+            throw new Error("Deferred activity range is incomplete");
+          if (mode === "tail" && hasMore !== remaining > 0)
+            throw new Error("Deferred activity continuation is inconsistent");
+          const remainder =
+            mode === "tail" && hasMore && cursor
+              ? {
+                  ...range,
+                  cursor,
+                  messageCount: remaining,
+                  status: "idle" as const,
+                  error: null,
+                }
+              : null;
+          return {
+            range,
+            messages: pages.flat(),
+            remainder,
+            error: null,
+          };
+        } catch (error) {
+          return {
+            range,
+            messages: [] as ChatMessage[],
+            remainder: null,
+            error,
+          };
+        } finally {
+          if (this.activityTranscriptRequests.get(range.cursor) === request)
+            this.activityTranscriptRequests.delete(range.cursor);
+        }
+      }),
+    );
+
+    if (
+      this.state.sessionId !== sessionId ||
+      this.selectionGeneration !== generation ||
+      this.state.transcriptIncarnation !== incarnation ||
+      this.state.transcriptViewId !== viewId
+    )
+      return;
+    const conflict = results.find(
+      (result) =>
+        result.error instanceof ApiError && result.error.status === 409,
+    );
+    if (conflict) {
+      const message =
+        conflict.error instanceof Error
+          ? conflict.error.message
+          : "Deferred activity became stale";
+      this.set({
+        transcriptActivityRanges: this.state.transcriptActivityRanges.map(
+          (range) =>
+            requested.some((candidate) => candidate.cursor === range.cursor)
+              ? { ...range, status: "error", error: message }
+              : range,
+        ),
+      });
+      await this.resync(sessionId, generation, undefined, false);
+      return;
+    }
+    if (
+      results.some(
+        (result) =>
+          result.error instanceof ApiError && result.error.status === 401,
+      )
+    ) {
+      this.set({
+        transcriptActivityRanges: this.state.transcriptActivityRanges.map(
+          (range) =>
+            requested.some((candidate) => candidate.cursor === range.cursor)
+              ? { ...range, status: "idle", error: null }
+              : range,
+        ),
+      });
+      this.handleAuthFailure();
+      return;
+    }
+
+    const nextMessages = [...this.state.messages];
+    const completed = new Set<string>();
+    const remainders = new Map<string, TranscriptActivityRangeState>();
+    const failures = new Map<string, string>();
+    const existing = new Set(
+      nextMessages.map(
+        (message) => messageKey(message) ?? JSON.stringify(message),
+      ),
+    );
+    for (const result of results) {
+      if (result.error) {
+        if (
+          !(
+            result.error instanceof DOMException &&
+            result.error.name === "AbortError"
+          )
+        )
+          failures.set(
+            result.range.cursor,
+            result.error instanceof Error
+              ? result.error.message
+              : "Failed to load deferred activity",
+          );
+        continue;
+      }
+      const insertAt =
+        result.range.afterMessageId === null
+          ? 0
+          : nextMessages.findIndex(
+              (message) =>
+                message.__inspireMessageId === result.range.afterMessageId,
+            ) + 1;
+      if (insertAt === 0 && result.range.afterMessageId !== null) {
+        failures.set(
+          result.range.cursor,
+          "Deferred activity anchor is no longer available",
+        );
+        continue;
+      }
+      const materialized = result.messages
+        .filter((message) => {
+          const key = messageKey(message) ?? JSON.stringify(message);
+          if (existing.has(key)) return false;
+          existing.add(key);
+          return true;
+        })
+        .map((message) => ({
+          ...message,
+          __inspireActivityRangeCursor: result.range.cursor,
+        }));
+      nextMessages.splice(insertAt, 0, ...materialized);
+      for (const message of materialized) {
+        const key = messageKey(message);
+        if (key) this.settledKeys.add(key);
+      }
+      completed.add(result.range.cursor);
+      if (result.remainder)
+        remainders.set(result.range.cursor, result.remainder);
+    }
+    beforeCommit?.();
+    this.set({
+      messages: nextMessages,
+      transcriptActivityRanges: this.state.transcriptActivityRanges.flatMap(
+        (range) => {
+          const remainder = remainders.get(range.cursor);
+          if (remainder) return [remainder];
+          if (completed.has(range.cursor)) return [];
+          const error = failures.get(range.cursor);
+          if (error) return [{ ...range, status: "error" as const, error }];
+          if (requested.some((candidate) => candidate.cursor === range.cursor))
+            return [{ ...range, status: "idle" as const, error: null }];
+          return [range];
+        },
+      ),
+    });
   };
 
   // --- Connection lifecycle ---
@@ -2048,6 +2695,9 @@ export class AppStore {
     this.savePrefs({ thinkingVisibility });
   setToolVisibility = (toolVisibility: ToolVisibilityPreference): void =>
     this.savePrefs({ toolVisibility });
+  setActivityFoldVisibility = (
+    activityFoldVisibility: ActivityFoldVisibilityPreference,
+  ): void => this.savePrefs({ activityFoldVisibility });
   setAssistantRoundDisplay = (
     assistantRoundDisplay: AssistantRoundDisplayPreference,
   ): void => this.savePrefs({ assistantRoundDisplay });

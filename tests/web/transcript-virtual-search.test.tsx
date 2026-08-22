@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -21,6 +21,80 @@ vi.mock("@tanstack/react-virtual", () => ({
 import { Transcript } from "../../src/components/Transcript";
 
 describe("virtualized transcript search navigation", () => {
+  it("clears view-local search when the branch projection changes", () => {
+    const props = {
+      sessionId: "branch-session",
+      messages: [{ role: "assistant", content: "branch answer", timestamp: 1 }],
+      streaming: false,
+      thinkingVisibility: "collapsed" as const,
+      toolVisibility: "collapsed" as const,
+    };
+    const { rerender } = render(<Transcript {...props} viewId="branch-a" />);
+    const search = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    fireEvent.change(search, { target: { value: "answer" } });
+    expect(search).toHaveValue("answer");
+
+    rerender(<Transcript {...props} viewId="branch-b" />);
+    expect(search).toHaveValue("");
+  });
+
+  it("retains a manual fold override when paging crosses into virtualization", () => {
+    const recent = [
+      ...Array.from({ length: 57 }, (_, index) => ({
+        role: "user",
+        content: `user ${index}`,
+        timestamp: index,
+      })),
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "paged activity" }],
+        timestamp: 100,
+      },
+      {
+        role: "assistant",
+        content: "visible response",
+        timestamp: 101,
+      },
+    ];
+    const props = {
+      streaming: false,
+      thinkingVisibility: "expanded" as const,
+      toolVisibility: "collapsed" as const,
+      activityFoldVisibility: "expanded" as const,
+      sessionId: "paging-session",
+      viewId: "paging-view",
+    };
+    const { container, rerender } = render(
+      <Transcript {...props} messages={recent} />,
+    );
+    const initialFold = container.querySelector(
+      "[data-activity-fold]",
+    ) as HTMLElement;
+    fireEvent.click(
+      within(initialFold).getByRole("button", {
+        name: "Collapse assistant activity from the upper boundary",
+      }),
+    );
+    expect(initialFold).toHaveAttribute("data-activity-fold", "closed");
+
+    rerender(
+      <Transcript
+        {...props}
+        messages={[
+          { role: "user", content: "older user", timestamp: -1 },
+          ...recent,
+        ]}
+      />,
+    );
+
+    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
+      "data-activity-fold",
+      "closed",
+    );
+  });
+
   it("mounts and follows the virtual tail across the threshold and same-message tool growth", () => {
     const messages = Array.from({ length: 60 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",

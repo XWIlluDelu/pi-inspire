@@ -46,6 +46,7 @@ export function findLiteralMatches(
 interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {
   rows: readonly Row[];
   sessionId: string;
+  viewId: string;
   searchOwnsViewportRef: MutableRefObject<boolean>;
   onClear: () => void;
   onNavigate: (rowIndex: number) => void;
@@ -58,6 +59,7 @@ interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {
 export function useTranscriptSearch<Row extends TranscriptSearchRow>({
   rows,
   sessionId,
+  viewId,
   searchOwnsViewportRef,
   onClear,
   onNavigate,
@@ -81,7 +83,7 @@ export function useTranscriptSearch<Row extends TranscriptSearchRow>({
     searchOwnsViewportRef.current = false;
     setQueryState("");
     setCurrentMatch(-1);
-  }, [searchOwnsViewportRef, sessionId]);
+  }, [searchOwnsViewportRef, sessionId, viewId]);
 
   useEffect(() => {
     setCurrentMatch((current) =>
