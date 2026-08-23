@@ -129,6 +129,49 @@ describe("SessionCatalogController", () => {
     });
   });
 
+  it("cancels a debounced search when its transport is invalidated", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      harness.controller.search("stale transport query");
+      harness.controller.invalidate();
+
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(harness.sessions).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a new generation hydrate an id while the invalidated request is still pending", async () => {
+    const oldRequest = deferred<{ sessions: SessionSummary[] }>();
+    const currentRequest = deferred<{ sessions: SessionSummary[] }>();
+    const harness = createHarness();
+    harness.patch({ sessionId: "selected" });
+    harness.sessionsByIds
+      .mockReturnValueOnce(oldRequest.promise)
+      .mockReturnValueOnce(currentRequest.promise);
+
+    harness.controller.ensureVisible("selected");
+    expect(harness.sessionsByIds).toHaveBeenCalledTimes(1);
+    harness.controller.invalidate();
+    harness.controller.ensureVisible("selected");
+    expect(harness.sessionsByIds).toHaveBeenCalledTimes(2);
+
+    oldRequest.resolve({ sessions: [session("stale")] });
+    await oldRequest.promise;
+    await Promise.resolve();
+    harness.controller.ensureVisible("selected");
+    expect(harness.sessionsByIds).toHaveBeenCalledTimes(2);
+
+    currentRequest.resolve({ sessions: [session("selected")] });
+    await currentRequest.promise;
+    await vi.waitFor(() =>
+      expect(harness.state().sessions).toEqual([session("selected")]),
+    );
+  });
+
   it("does not let an invalidated request turn a newer transport into pairing", async () => {
     const pending = deferred<{
       sessions: SessionSummary[];

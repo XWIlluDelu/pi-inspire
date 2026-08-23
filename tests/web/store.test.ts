@@ -2894,6 +2894,32 @@ describe("navigation curation", () => {
     expect(store.getState().prefs.theme).toBe("light");
   });
 
+  it("keeps the newest owner when a refused preference write has the same value", async () => {
+    let writes = 0;
+    const patches: Record<string, unknown>[] = [];
+    installFetch((url, init) => {
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        writes += 1;
+        patches.push(jsonBody(init));
+        if (writes === 1) {
+          return { status: 500, body: { error: "preference write rejected" } };
+        }
+        return {
+          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
+        };
+      }
+      return curationRoutes("ok")(url, init);
+    });
+    const { store } = await initStore();
+
+    store.setTheme("dark");
+    store.setTheme("light");
+    store.setTheme("dark");
+    await vi.waitFor(() => expect(patches).toHaveLength(3));
+
+    expect(store.getState().prefs.theme).toBe("dark");
+  });
+
   it("fetches pinned and hidden sessions missing from the first page", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -4649,6 +4675,132 @@ describe("session deletion ownership", () => {
     releasePatch();
     await expect(deleting).resolves.toBe("trashed");
     expect(deleteCalled).toBe(true);
+  });
+
+  it("preserves a newer setting when deletion returns an older preference snapshot", async () => {
+    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
+    let releaseDelete!: () => void;
+    let deleteStarted!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      deleteStarted = resolve;
+    });
+    const patches: Record<string, unknown>[] = [];
+    let deleted = false;
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot(),
+            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
+          }),
+        };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        const patch = jsonBody(init);
+        patches.push(patch);
+        return { body: { ...DEFAULT_PREFS, ...patch } };
+      }
+      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
+        deleteStarted();
+        await deleteGate;
+        deleted = true;
+        return {
+          body: {
+            sessionId: "s2",
+            disposition: "trashed",
+            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions")) {
+        const sessions = deleted ? rows.slice(0, 1) : rows;
+        return {
+          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+
+    const deleting = store.deleteSession("s2");
+    await started;
+    store.setTheme("dark");
+    store.toggleSessionPin("s1");
+    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
+    await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
+    expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
+    releaseDelete();
+
+    await expect(deleting).resolves.toBe("trashed");
+    expect(store.getState().prefs).toMatchObject({
+      theme: "dark",
+      hiddenSessionIds: [],
+    });
+  });
+
+  it("preserves a newer setting when clearing Hidden returns an older preference snapshot", async () => {
+    const row = sessionSummary({ id: "s2" });
+    let releaseClear!: () => void;
+    let clearStarted!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      clearStarted = resolve;
+    });
+    const patches: Record<string, unknown>[] = [];
+    let deleted = false;
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot(),
+            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
+          }),
+        };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        const patch = jsonBody(init);
+        patches.push(patch);
+        return { body: { ...DEFAULT_PREFS, ...patch } };
+      }
+      if (url.startsWith("/api/sessions/clear-hidden")) {
+        clearStarted();
+        await clearGate;
+        deleted = true;
+        return {
+          body: {
+            deleted: [{ sessionId: "s2", disposition: "trashed" }],
+            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
+          },
+        };
+      }
+      if (url.startsWith("/api/sessions")) {
+        const sessions = deleted ? [] : [row];
+        return {
+          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(1));
+
+    const clearing = store.clearHiddenSessions(["s2"]);
+    await started;
+    store.setTheme("dark");
+    await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
+    releaseClear();
+
+    await expect(clearing).resolves.toMatchObject({
+      deleted: [{ sessionId: "s2", disposition: "trashed" }],
+    });
+    expect(store.getState().prefs).toMatchObject({
+      theme: "dark",
+      hiddenSessionIds: [],
+    });
   });
 
   it("keeps local session state intact when deletion is refused", async () => {

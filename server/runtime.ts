@@ -1879,12 +1879,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const entry = expectation.exactEntry;
         if (!entry || source.projection?.entry(entry.id)) return true;
         const destinationEntry = destination.entry(entry.id);
-        if (
-          !destinationEntry ||
-          destinationEntry.parentId !== entry.parentId ||
-          destinationEntry.type !== entry.type
-        )
-          return true;
+        if (!destinationEntry) return true;
+        if (!destination.persistedEntryMatches(entry)) {
+          throw Object.assign(
+            new Error(
+              `Fork destination entry ${entry.id} differs from the worker's persistence claim`,
+            ),
+            { status: 409 },
+          );
+        }
         expectation.settle(null);
         absorbedEntryIds.add(entry.id);
         return false;
@@ -2826,6 +2829,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.extensionResponsePending > 0 ||
         isBusyRunState(slot.runState) ||
         slot.pendingExtensionUiRequests.size > 0 ||
+        slot.pendingQueues.paused ||
         slot.pendingQueues.steering.length > 0 ||
         slot.pendingQueues.followUp.length > 0 ||
         slot.persistenceExpectations.length > 0 ||
@@ -2855,6 +2859,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (
           isBusyRunState(slot.runState) ||
           slot.pendingExtensionUiRequests.size > 0 ||
+          slot.pendingQueues.paused ||
           slot.pendingQueues.steering.length > 0 ||
           slot.pendingQueues.followUp.length > 0 ||
           slot.extensionResponsePending > 0 ||

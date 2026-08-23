@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { constants, type BigIntStats } from "node:fs";
+import { type BigIntStats, constants } from "node:fs";
 import {
   chmod,
+  type FileHandle,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,7 +11,6 @@ import {
   rm,
   rmdir,
   unlink,
-  type FileHandle,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
@@ -237,6 +237,18 @@ async function removeEmptyDirectory(path: string): Promise<void> {
   });
 }
 
+type RemoveEmptyDirectory = (path: string) => Promise<void>;
+
+async function cleanCommittedDirectory(
+  path: string,
+  removeDirectory: RemoveEmptyDirectory,
+): Promise<void> {
+  // Once the payload has moved to Trash or been unlinked, an empty-container
+  // cleanup failure cannot roll the deletion back and must not make it look
+  // retryable. A later cleanup may remove the private empty directory.
+  await removeDirectory(path).catch(() => undefined);
+}
+
 async function quarantineSession(
   path: string,
   inspected: SessionFileIdentity,
@@ -369,12 +381,13 @@ async function permanentlyDeleteQuarantine(
   quarantine: QuarantinedSession,
   inspected: SessionFileIdentity,
   trashError: unknown,
+  removeDirectory: RemoveEmptyDirectory,
 ): Promise<SessionDeleteDisposition> {
   const current = await fileIdentityAt(quarantine.path);
   // The Trash consumer may have moved the authorized inode before reporting
   // failure. An absent private entry therefore has a committed trash outcome.
   if (current === null) {
-    await removeEmptyDirectory(quarantine.directory);
+    await cleanCommittedDirectory(quarantine.directory, removeDirectory);
     return "trashed";
   }
   // Anything other than the exact post-quarantine version is indeterminate.
@@ -419,9 +432,6 @@ async function permanentlyDeleteQuarantine(
 
   try {
     await unlink(purgePath);
-    await removeEmptyDirectory(purgeDirectory);
-    await removeEmptyDirectory(quarantine.directory);
-    return "deleted";
   } catch (error) {
     const failure = Object.assign(
       new Error("The session could not be deleted"),
@@ -433,6 +443,9 @@ async function permanentlyDeleteQuarantine(
     };
     throw failure;
   }
+  await cleanCommittedDirectory(purgeDirectory, removeDirectory);
+  await cleanCommittedDirectory(quarantine.directory, removeDirectory);
+  return "deleted";
 }
 
 /** Delete one catalog-authorized Pi session. The verified public directory
@@ -442,6 +455,7 @@ async function permanentlyDeleteQuarantine(
 export async function deleteSessionFile(
   session: SessionRecord,
   moveToTrash: TrashSessionPath = trashPath,
+  removeDirectory: RemoveEmptyDirectory = removeEmptyDirectory,
 ): Promise<SessionDeleteDisposition> {
   const path = resolve(session.path);
   const inspected = await inspectSessionFile(session);
@@ -456,7 +470,7 @@ export async function deleteSessionFile(
   const current = await fileIdentityAt(quarantine.path);
   if (trashError === undefined) {
     if (current === null) {
-      await removeEmptyDirectory(quarantine.directory);
+      await cleanCommittedDirectory(quarantine.directory, removeDirectory);
       return "trashed";
     }
     if (!sameFileVersion(current, quarantine.identity)) {
@@ -479,5 +493,6 @@ export async function deleteSessionFile(
     quarantine,
     quarantine.identity,
     trashError,
+    removeDirectory,
   );
 }

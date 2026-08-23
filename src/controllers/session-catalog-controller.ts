@@ -78,7 +78,10 @@ export class SessionCatalogController {
   private curationPending = false;
   private olderPromise: Promise<void> | null = null;
   private retry: SessionListRetry | null = null;
-  private hydrationInFlight = new Set<string>();
+  private hydrationInFlight = new Map<
+    string,
+    { ticket: number; token: symbol }
+  >();
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly host: SessionCatalogControllerHost) {}
@@ -88,6 +91,7 @@ export class SessionCatalogController {
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
     this.loadTicket += 1;
+    this.clearSearchTimer();
     this.cancelCurationRequest();
     this.curationPending = false;
     this.olderPromise = null;
@@ -112,6 +116,7 @@ export class SessionCatalogController {
   }
 
   load(query: string): Promise<void> {
+    this.clearSearchTimer();
     if (!this.host.api()) return Promise.resolve();
     this.cancelCurationRequest();
     this.curationPending = false;
@@ -161,7 +166,7 @@ export class SessionCatalogController {
       sessionListOperation: "reset",
       sessionListError: null,
     });
-    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.clearSearchTimer();
     this.searchTimer = setTimeout(() => void this.load(query), 180);
   }
 
@@ -853,8 +858,13 @@ export class SessionCatalogController {
       }
       return Promise.resolve();
     }
-    if (this.hydrationInFlight.has(owner.id)) return Promise.resolve();
-    this.hydrationInFlight.add(owner.id);
+    if (this.hydrationInFlight.get(owner.id)?.ticket === owner.ticket)
+      return Promise.resolve();
+    const requestToken = Symbol("session-hydration");
+    this.hydrationInFlight.set(owner.id, {
+      ticket: owner.ticket,
+      token: requestToken,
+    });
     if (retrying) {
       this.host.patch({
         sessionListHydrating: true,
@@ -911,10 +921,17 @@ export class SessionCatalogController {
           sessionListError: this.hydrationFailure("session ids", error).message,
         });
       } finally {
-        this.hydrationInFlight.delete(owner.id);
+        if (this.hydrationInFlight.get(owner.id)?.token === requestToken) {
+          this.hydrationInFlight.delete(owner.id);
+        }
       }
     })();
     return request;
+  }
+
+  private clearSearchTimer(): void {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = null;
   }
 
   private owns(ticket: number, query: string, api: Api): boolean {

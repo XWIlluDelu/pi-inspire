@@ -205,6 +205,10 @@ export class PreviewProjection
     return null;
   }
 
+  persistedEntryMatches(_entry: SessionEntry): boolean {
+    return false;
+  }
+
   userText(_id: string, _maxChars: number): string {
     throw Object.assign(
       new Error("Branch history is unavailable for this preview"),

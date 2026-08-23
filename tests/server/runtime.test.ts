@@ -2464,6 +2464,47 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("refuses to delete an unselected session while Pending is paused", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers = new Map<string, FakeRpc>();
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await runtime.openSession("a");
+    const worker = workers.get("a")!;
+    await vi.waitFor(() => expect(worker.starts).toBe(1));
+    worker.emit("event", {
+      type: "queue_update",
+      steering: [],
+      followUp: [],
+      pending: pendingState([], [], { paused: true, revision: 1 }),
+    });
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).pendingQueues?.paused).toBe(true),
+    );
+    await runtime.openSession("b");
+
+    await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(remove).not.toHaveBeenCalled();
+    expect(worker.stops).toBe(0);
+    await runtime.close();
+  });
+
   it("stops and retires an idle unselected worker before deleting its file", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
