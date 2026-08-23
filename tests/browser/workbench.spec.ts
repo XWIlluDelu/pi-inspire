@@ -835,9 +835,49 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   await expect(previous).toBeDisabled();
 
   await page.setViewportSize({ width: 390, height: 780 });
+  await expect(map).toBeHidden();
+  const mobileToolbar = page.locator(".transcript-mobile-toolbar");
+  const searchLauncher = page.getByRole("button", {
+    name: "Open conversation search",
+  });
+  const promptLauncher = page.getByRole("button", {
+    name: "Open prompt navigation",
+  });
+  await expect(searchLauncher).toBeVisible();
+  await expect(promptLauncher).toBeVisible();
+  const launcherBoxes = await Promise.all([
+    searchLauncher.boundingBox(),
+    promptLauncher.boundingBox(),
+  ]);
+  expect(
+    launcherBoxes.every(
+      (box) => box !== null && box.width >= 44 && box.height >= 44,
+    ),
+  ).toBe(true);
+  const toolbarBox = await mobileToolbar.boundingBox();
+  const transcriptBox = await transcript.boundingBox();
+  expect((toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0)).toBeLessThanOrEqual(
+    transcriptBox?.y ?? 0,
+  );
+
+  await searchLauncher.click();
+  const mobileSearch = page.getByRole("searchbox", {
+    name: "Search conversation",
+  });
+  await expect(mobileSearch).toBeVisible();
+  await expect(mobileSearch).toBeFocused();
+  await mobileSearch.fill("Prompt map fixture turn 13");
+  await expect(page.getByLabel("Transcript search matches")).toContainText(
+    "1 match",
+  );
+  await page.getByRole("button", { name: "Close conversation search" }).click();
+  await expect(searchLauncher).toBeVisible();
+
+  await promptLauncher.click();
+  await expect(map).toBeVisible();
   const compactBox = await map.boundingBox();
-  expect(compactBox?.width).toBeGreaterThanOrEqual(44);
-  expect(compactBox?.height).toBeGreaterThanOrEqual(44);
+  expect(compactBox?.width).toBeGreaterThanOrEqual(340);
+  expect(compactBox?.height).toBe(44);
   const mobileControls = await map
     .locator(".prompt-map__step")
     .evaluateAll((elements) =>
@@ -851,11 +891,21 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
       (control) => control.width >= 44 && control.height >= 44,
     ),
   ).toBe(true);
+  const mobileTicks = await map
+    .locator("[data-prompt-ordinal]")
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }),
+    );
+  expect(mobileTicks.every((tick) => tick.height > tick.width)).toBe(true);
 
   await page.getByRole("button", { name: "Open prompt map" }).click();
+  await expect(list).toBeVisible();
   await expect
     .poll(async () => (await map.boundingBox())?.width ?? 0)
-    .toBeGreaterThanOrEqual(290);
+    .toBeGreaterThanOrEqual(360);
   const overflow = await page
     .locator("html")
     .evaluate((element) => element.scrollWidth - element.clientWidth);

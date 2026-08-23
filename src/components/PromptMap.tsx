@@ -66,6 +66,7 @@ function FlatChevronDown({ className }: { className?: string }) {
 
 export function PromptMap({
   container,
+  mobileActive = false,
   turns,
   total,
   activeOrdinal,
@@ -77,6 +78,7 @@ export function PromptMap({
   onNavigate,
 }: {
   container?: React.RefObject<HTMLElement | null>;
+  mobileActive?: boolean;
   turns: readonly UserTurnAnchor[];
   total: number;
   activeOrdinal: number | null;
@@ -105,6 +107,7 @@ export function PromptMap({
   const followedOrdinalRef = useRef<number | null>(null);
   const listUserOwnedRef = useRef(false);
   const previousTickOrdinalRef = useRef(activeOrdinal);
+  const previousMobileActiveRef = useRef(mobileActive);
   const turnByOrdinal = useMemo(
     () => new Map(turns.map((turn) => [turn.ordinal, turn])),
     [turns],
@@ -146,6 +149,11 @@ export function PromptMap({
     const nav = navRef.current;
     const root = container?.current;
     if (!nav || !root || typeof ResizeObserver === "undefined") return;
+    if (mobileActive) {
+      nav.style.removeProperty("left");
+      nav.style.removeProperty("top");
+      return;
+    }
 
     let frame: number | null = null;
     const schedule = () => {
@@ -193,7 +201,12 @@ export function PromptMap({
       window.removeEventListener("resize", schedule);
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [container, open]);
+  }, [container, mobileActive, open]);
+
+  useEffect(() => {
+    if (previousMobileActiveRef.current && !mobileActive) setOpen(false);
+    previousMobileActiveRef.current = mobileActive;
+  }, [mobileActive]);
 
   useEffect(
     () => () => {
@@ -343,9 +356,10 @@ export function PromptMap({
   return (
     <nav
       ref={navRef}
-      className={`prompt-map ${open ? "prompt-map--open" : ""}`}
+      className={`prompt-map ${mobileActive ? "prompt-map--mobile-active" : ""} ${open ? "prompt-map--open" : ""}`}
       aria-label="User prompt navigation"
       data-prompt-map
+      data-mobile-active={mobileActive ? "true" : undefined}
       style={
         {
           "--prompt-map-list-height": `${Math.max(1, Math.min(total, 12)) * ROW_HEIGHT}px`,
@@ -515,7 +529,8 @@ export function PromptMap({
             aria-expanded="false"
             title="Open prompt map"
             onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") requestHoverOpen();
+              if (!mobileActive && event.pointerType !== "touch")
+                requestHoverOpen();
             }}
             onFocus={() => {
               cancelHoverOpen();
@@ -524,7 +539,7 @@ export function PromptMap({
                 disclosureFocusRef.current = null;
                 return;
               }
-              if (pointerFocusRef.current) return;
+              if (mobileActive || pointerFocusRef.current) return;
               disclosureFocusRef.current = "open";
               setOpen(true);
             }}
