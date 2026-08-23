@@ -1,4 +1,11 @@
-import { ChevronDown, ChevronUp, List, Loader2, Search, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  GalleryHorizontalEnd,
+  Loader2,
+  Search,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -201,6 +208,8 @@ export function Transcript({
 }) {
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const promptLauncherRef = useRef<HTMLButtonElement>(null);
+  const searchLauncherRef = useRef<HTMLButtonElement>(null);
   const [mobileTranscriptTool, setMobileTranscriptTool] =
     useState<MobileTranscriptTool>(null);
   const projectionViewKey = `${viewId}\u0000${projectionIncarnation}`;
@@ -1083,10 +1092,22 @@ export function Transcript({
     },
   });
 
-  const closeMobileTranscriptTool = useCallback(() => {
-    if (mobileTranscriptTool === "search") search.clear();
-    setMobileTranscriptTool(null);
-  }, [mobileTranscriptTool, search]);
+  const closeMobileTranscriptTool = useCallback(
+    (restoreFocus = false) => {
+      const closedTool = mobileTranscriptTool;
+      if (closedTool === "search") search.clear();
+      setMobileTranscriptTool(null);
+      if (restoreFocus && closedTool) {
+        requestAnimationFrame(() => {
+          (closedTool === "prompt"
+            ? promptLauncherRef.current
+            : searchLauncherRef.current
+          )?.focus();
+        });
+      }
+    },
+    [mobileTranscriptTool, search],
+  );
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
 
@@ -1343,6 +1364,17 @@ export function Transcript({
             aria-label="Transcript tools"
           >
             <button
+              ref={promptLauncherRef}
+              type="button"
+              className="transcript-mobile-toolbar__button"
+              aria-label="Open prompt navigation"
+              title="Open prompt navigation"
+              onClick={() => setMobileTranscriptTool("prompt")}
+            >
+              <GalleryHorizontalEnd size={18} aria-hidden />
+            </button>
+            <button
+              ref={searchLauncherRef}
               type="button"
               className="transcript-mobile-toolbar__button"
               aria-label="Open conversation search"
@@ -1350,15 +1382,6 @@ export function Transcript({
               onClick={() => setMobileTranscriptTool("search")}
             >
               <Search size={18} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="transcript-mobile-toolbar__button"
-              aria-label="Open prompt navigation"
-              title="Open prompt navigation"
-              onClick={() => setMobileTranscriptTool("prompt")}
-            >
-              <List size={18} aria-hidden />
             </button>
           </div>
         ) : null}
@@ -1395,8 +1418,11 @@ export function Transcript({
               event.preventDefault();
               search.navigate(event.shiftKey ? -1 : 1);
             } else if (event.key === "Escape") {
-              closeMobileTranscriptTool();
-              searchInputRef.current?.blur();
+              event.preventDefault();
+              event.stopPropagation();
+              const mobileSearch = mobileTranscriptTool === "search";
+              closeMobileTranscriptTool(mobileSearch);
+              if (!mobileSearch) searchInputRef.current?.blur();
             }
           }}
           placeholder="Search conversation"
@@ -1432,7 +1458,7 @@ export function Transcript({
           className="transcript-search__close"
           aria-label="Close conversation search"
           title="Close search"
-          onClick={closeMobileTranscriptTool}
+          onClick={() => closeMobileTranscriptTool(true)}
         >
           <X size={14} aria-hidden />
         </button>
@@ -1546,6 +1572,7 @@ export function Transcript({
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
         container={viewport.scrollRef}
         mobileActive={mobileTranscriptTool === "prompt"}
+        onDismissMobile={() => closeMobileTranscriptTool(true)}
         turns={effectivePromptTurns}
         total={effectivePromptTotal}
         activeOrdinal={activePromptOrdinal}

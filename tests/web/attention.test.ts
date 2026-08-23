@@ -518,9 +518,11 @@ describe("completion attention", () => {
       sessionId: "bg",
       sessionStatus: { runState: "idle", indicator: "completed" },
     });
+    expect(store.getState().attentionSessionIds).toEqual(["bg"]);
     FakeNotification.instances[0]!.onclick?.(new Event("click"));
     expect(focus).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
+    expect(store.getState().attentionSessionIds).toEqual([]);
     expect(FakeNotification.instances[0]!.close).toHaveBeenCalledOnce();
   });
 
@@ -558,6 +560,35 @@ describe("completion attention", () => {
       expect(patches).toContainEqual({ completionAttention: "desktop" }),
     );
     expect(store.getState().prefs.completionAttention).toBe("desktop");
+  });
+
+  it("does not let a delayed desktop permission result overwrite newer intent", async () => {
+    const patches: Record<string, unknown>[] = [];
+    installFetch(attentionRoutes("off", (patch) => patches.push(patch)));
+    const store = new AppStore();
+    await store.init("token");
+    let resolvePermission!: (permission: NotificationPermission) => void;
+    FakeNotification.permission = "default";
+    FakeNotification.requestPermission.mockImplementationOnce(
+      () =>
+        new Promise<NotificationPermission>((resolve) => {
+          resolvePermission = resolve;
+        }),
+    );
+
+    const desktop = store.setCompletionAttention("desktop");
+    await vi.waitFor(() =>
+      expect(FakeNotification.requestPermission).toHaveBeenCalledOnce(),
+    );
+    await expect(store.setCompletionAttention("title")).resolves.toBe(true);
+    resolvePermission("granted");
+    await expect(desktop).resolves.toBe(false);
+    await vi.waitFor(() =>
+      expect(patches).toContainEqual({ completionAttention: "title" }),
+    );
+
+    expect(patches).not.toContainEqual({ completionAttention: "desktop" });
+    expect(store.getState().prefs.completionAttention).toBe("title");
   });
 
   it("reports an unsupported Notification API without changing the preference", async () => {

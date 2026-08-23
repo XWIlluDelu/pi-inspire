@@ -4,9 +4,11 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-function systemdEscape(value) {
+export function systemdEscape(value) {
   return value.replace(/[^A-Za-z0-9_@%+=:,./-]/gu, (character) =>
-    `\\x${character.codePointAt(0).toString(16).padStart(2, "0")}`,
+    [...Buffer.from(character)]
+      .map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`)
+      .join(""),
   );
 }
 

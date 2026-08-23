@@ -651,11 +651,15 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       );
     }
     const status = this.state.sessionStatuses[sessionId];
+    const pending = this.pendingBySession.get(sessionId);
     if (
-      status &&
-      ["running", "retrying", "compacting", "queued", "conflict"].includes(
-        status.runState,
-      )
+      (status &&
+        ["running", "retrying", "compacting", "queued", "conflict"].includes(
+          status.runState,
+        )) ||
+      pending?.paused ||
+      (pending?.steering.length ?? 0) > 0 ||
+      (pending?.followUp.length ?? 0) > 0
     ) {
       throw Object.assign(
         new Error(
@@ -669,7 +673,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       throw Object.assign(new Error("Session not found"), { status: 404 });
     summaries.splice(index, 1);
     this.sessions.delete(sessionId);
-    const pending = this.pendingBySession.get(sessionId);
     if (pending) {
       for (const entry of [...pending.steering, ...pending.followUp]) {
         this.pendingText.delete(entry.id);

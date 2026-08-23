@@ -24,7 +24,19 @@
     cached?.palette === "amber" || cached?.palette === "teal"
       ? cached.palette
       : "amber";
+  const contentTextSize = ["compact", "comfortable", "large"].includes(
+    cached?.contentTextSize,
+  )
+    ? cached.contentTextSize
+    : "comfortable";
+  const readingWidth = ["narrow", "comfortable", "wide"].includes(
+    cached?.readingWidth,
+  )
+    ? cached.readingWidth
+    : "comfortable";
   document.documentElement.dataset.theme =
     theme === "system" ? systemTheme : theme;
   document.documentElement.dataset.palette = palette;
+  document.documentElement.dataset.contentTextSize = contentTextSize;
+  document.documentElement.dataset.readingWidth = readingWidth;
 })();

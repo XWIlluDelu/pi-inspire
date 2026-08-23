@@ -5,7 +5,10 @@ import type { InspirePreferences } from "../shared/contracts";
 export const VISUAL_PREFERENCES_STORAGE_KEY = "inspire.visual-preferences";
 
 export function cacheVisualPreferences(
-  preferences: Pick<InspirePreferences, "theme" | "palette">,
+  preferences: Pick<
+    InspirePreferences,
+    "theme" | "palette" | "contentTextSize" | "readingWidth"
+  >,
 ): void {
   try {
     window.localStorage.setItem(
@@ -13,6 +16,8 @@ export function cacheVisualPreferences(
       JSON.stringify({
         theme: preferences.theme,
         palette: preferences.palette,
+        contentTextSize: preferences.contentTextSize,
+        readingWidth: preferences.readingWidth,
       }),
     );
   } catch {

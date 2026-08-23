@@ -2,8 +2,8 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rename,
   rm,
   symlink,
@@ -13,8 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { deleteSessionFile } from "../../server/session-delete.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
+import { deleteSessionFile } from "../../server/session-delete.js";
 
 const temporary: string[] = [];
 
@@ -79,6 +79,38 @@ describe("session file deletion", () => {
       }),
     ).resolves.toBe("deleted");
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not turn committed deletion into a retryable failure when container cleanup fails", async () => {
+    const trashedFixture = await fixture("trashed-cleanup");
+    const trashDestination = join(trashedFixture.dir, "trashed.jsonl");
+    const deletedFixture = await fixture("deleted-cleanup");
+    const failCleanup = async () => {
+      throw Object.assign(new Error("cleanup unavailable"), { code: "EACCES" });
+    };
+
+    await expect(
+      deleteSessionFile(
+        trashedFixture.session,
+        async (candidate) => rename(candidate, trashDestination),
+        failCleanup,
+      ),
+    ).resolves.toBe("trashed");
+    await expect(
+      deleteSessionFile(
+        deletedFixture.session,
+        async () => {
+          throw new Error("trash unavailable");
+        },
+        failCleanup,
+      ),
+    ).resolves.toBe("deleted");
+    await expect(readFile(trashedFixture.path)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(deletedFixture.path)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("treats a reported Trash failure as success when the file already moved", async () => {

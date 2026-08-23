@@ -342,6 +342,9 @@ describe("History contextual mode", () => {
     ).toBeInTheDocument();
     fireEvent.keyDown(search, { key: "Escape" });
     expect(search).toHaveValue("");
+    search.focus();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).not.toHaveFocus();
     expect(
       screen.getByRole("button", {
         name: "Edit from here: user: alternate prompt",

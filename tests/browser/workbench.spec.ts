@@ -845,6 +845,18 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   });
   await expect(searchLauncher).toBeVisible();
   await expect(promptLauncher).toBeVisible();
+  await expect(
+    promptLauncher.locator(".lucide-gallery-horizontal-end"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      mobileToolbar
+        .getByRole("button")
+        .evaluateAll((buttons) =>
+          buttons.map((button) => button.getAttribute("aria-label")),
+        ),
+    )
+    .toEqual(["Open prompt navigation", "Open conversation search"]);
   const launcherBoxes = await Promise.all([
     searchLauncher.boundingBox(),
     promptLauncher.boundingBox(),
@@ -856,9 +868,27 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   ).toBe(true);
   const toolbarBox = await mobileToolbar.boundingBox();
   const transcriptBox = await transcript.boundingBox();
-  expect((toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0)).toBeLessThanOrEqual(
-    transcriptBox?.y ?? 0,
+  const transcriptWrapBox = await page
+    .locator(".transcript-wrap")
+    .boundingBox();
+  expect(
+    Math.abs((transcriptBox?.y ?? 0) - (transcriptWrapBox?.y ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((transcriptBox?.height ?? 0) - (transcriptWrapBox?.height ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(toolbarBox?.y ?? 0).toBeGreaterThanOrEqual(transcriptBox?.y ?? 0);
+  expect(toolbarBox?.y ?? 0).toBeLessThan(
+    (transcriptBox?.y ?? 0) + (transcriptBox?.height ?? 0),
   );
+  await expect
+    .poll(() =>
+      mobileToolbar.evaluate((element) => ({
+        background: getComputedStyle(element).backgroundColor,
+        position: getComputedStyle(element).position,
+      })),
+    )
+    .toEqual({ background: "rgba(0, 0, 0, 0)", position: "absolute" });
 
   await searchLauncher.click();
   const mobileSearch = page.getByRole("searchbox", {

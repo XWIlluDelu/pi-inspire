@@ -67,6 +67,7 @@ function FlatChevronDown({ className }: { className?: string }) {
 export function PromptMap({
   container,
   mobileActive = false,
+  onDismissMobile,
   turns,
   total,
   activeOrdinal,
@@ -79,6 +80,7 @@ export function PromptMap({
 }: {
   container?: React.RefObject<HTMLElement | null>;
   mobileActive?: boolean;
+  onDismissMobile?: () => void;
   turns: readonly UserTurnAnchor[];
   total: number;
   activeOrdinal: number | null;
@@ -385,10 +387,16 @@ export function PromptMap({
       }}
       onKeyDown={(event) => {
         pointerFocusRef.current = false;
-        if (open && event.key === "Escape") {
+        if (event.key !== "Escape") return;
+        if (open) {
+          event.preventDefault();
           event.stopPropagation();
           disclosureFocusRef.current = "escape";
           setOpen(false);
+        } else if (mobileActive && onDismissMobile) {
+          event.preventDefault();
+          event.stopPropagation();
+          onDismissMobile();
         }
       }}
     >

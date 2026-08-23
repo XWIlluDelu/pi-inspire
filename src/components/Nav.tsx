@@ -16,10 +16,10 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  isBusyRunState,
-  projectNameFromCwd,
   type InspirePreferences,
+  isBusyRunState,
   type ProjectDirEntry,
+  projectNameFromCwd,
   type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -29,11 +29,11 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
-import { useModalFocus } from "../use-modal-focus";
 
 interface SessionGroup {
   cwd: string;
@@ -791,6 +791,13 @@ export function Nav({
             aria-label="Search sessions"
             value={state.sessionQuery}
             onChange={(event) => store.searchSessions(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (state.sessionQuery) store.searchSessions("");
+              else event.currentTarget.blur();
+            }}
           />
         </label>
       </div>
