@@ -64,6 +64,39 @@ describe("ToolPresentationConfigStore", () => {
     expect(inspected.configuration.rules).toHaveProperty("user.example.search");
   });
 
+  it("loads an optional Thinking summary and structured body declaration", async () => {
+    const { path, store } = await fixture();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        rules: {},
+        mappings: {},
+        thinking: {
+          summary: [
+            {
+              value: { path: "thinking.text", format: "first-line" },
+            },
+          ],
+          blocks: [
+            {
+              type: "markdown",
+              label: "Reasoning",
+              source: { path: "thinking.text" },
+            },
+          ],
+        },
+      }),
+    );
+
+    const inspected = await store.inspect();
+    expect(inspected.warning).toBeUndefined();
+    expect(inspected.configuration.thinking).toMatchObject({
+      summary: [{ value: { path: "thinking.text", format: "first-line" } }],
+      blocks: [{ type: "markdown", label: "Reasoning" }],
+    });
+  });
+
   it("reports invalid private input and leaves only shipped rules active", async () => {
     const { path, store } = await fixture();
     await writeFile(

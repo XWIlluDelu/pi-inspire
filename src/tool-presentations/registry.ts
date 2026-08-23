@@ -1,7 +1,14 @@
-import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
-import { compileToolPresentationRules } from "./declarative";
+import type {
+  ThinkingPresentationRuleDeclaration,
+  ToolPresentationConfiguration,
+} from "../../shared/tool-presentation-config";
+import {
+  compileThinkingPresentationRule,
+  compileToolPresentationRules,
+} from "./declarative";
 import type {
   ResolvedToolPresentation,
+  ToolPresentation,
   ToolPresentationInput,
   ToolPresentationMappings,
   ToolPresentationRule,
@@ -20,6 +27,10 @@ interface ToolPresentationRegistryOptions {
 
 interface ToolPresentationRegistry {
   resolve: (input: ToolPresentationInput) => ResolvedToolPresentation | null;
+}
+
+interface ThinkingPresentationRegistry {
+  resolve: (text: string) => ToolPresentation | null;
 }
 
 /** Build one immutable lookup generation. User mappings replace name bindings;
@@ -60,17 +71,43 @@ export function createToolPresentationRegistry({
   };
 }
 
-export let toolPresentationRegistry = createToolPresentationRegistry();
+export function createThinkingPresentationRegistry(
+  declaration?: ThinkingPresentationRuleDeclaration,
+): ThinkingPresentationRegistry {
+  const present = declaration
+    ? compileThinkingPresentationRule(declaration)
+    : undefined;
+  return {
+    resolve(text) {
+      if (!present) return null;
+      try {
+        return present(text);
+      } catch {
+        return null;
+      }
+    },
+  };
+}
 
-/** Replace the user-owned generation atomically after an authoritative host
- * bootstrap. Existing shipped definitions stay immutable; only exact tool-name
- * mappings are overlaid. */
+export let toolPresentationRegistry = createToolPresentationRegistry();
+export let thinkingPresentationRegistry = createThinkingPresentationRegistry();
+
+/** Replace the user-owned generation after an authoritative host bootstrap.
+ * Existing shells and shipped definitions stay immutable; user declarations
+ * replace only the projected summary and expanded body. */
 export function configureToolPresentationRegistry(
   configuration?: ToolPresentationConfiguration,
 ): void {
-  const resolved = configuration ?? { version: 1, rules: {}, mappings: {} };
+  const resolved: ToolPresentationConfiguration = configuration ?? {
+    version: 1,
+    rules: {},
+    mappings: {},
+  };
   toolPresentationRegistry = createToolPresentationRegistry({
     userRules: compileToolPresentationRules(resolved),
     userMappings: resolved.mappings,
   });
+  thinkingPresentationRegistry = createThinkingPresentationRegistry(
+    resolved.thinking,
+  );
 }

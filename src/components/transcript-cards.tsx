@@ -38,11 +38,15 @@ import {
 import { store } from "../store";
 import type {
   ResolvedToolPresentation,
+  ToolPresentation,
   ToolPresentationBlock,
   ToolPresentationSummary,
 } from "../tool-presentations/model";
 import { toolPresentationSummaryText } from "../tool-presentations/model";
-import { toolPresentationRegistry } from "../tool-presentations/registry";
+import {
+  thinkingPresentationRegistry,
+  toolPresentationRegistry,
+} from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import { RichText } from "./RichText";
@@ -263,6 +267,10 @@ export function ThinkingCard({
   // the display boundary, for both the summary line and the card body.
   const clean = stripTerminalSequences(text);
   const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
+  const presentation = useMemo(
+    () => thinkingPresentationRegistry.resolve(clean),
+    [clean, thinkingPresentationRegistry],
+  );
   const dynamicOpen = useDynamicCardOpen(
     visibility === "dynamic",
     dynamicActive,
@@ -285,14 +293,18 @@ export function ThinkingCard({
       label="Thinking"
       toggleLabel="Thinking"
       summary={
-        <span className="card__summary card__summary--prose">
-          <RichText text={firstLine.slice(0, 90)} variant="thinking" inline />
-        </span>
+        presentation ? (
+          <PresentedSummary summary={presentation.summary} />
+        ) : (
+          <span className="card__summary card__summary--prose">
+            <RichText text={firstLine.slice(0, 90)} variant="thinking" inline />
+          </span>
+        )
       }
       copyText={clean}
       copyLabel="Thinking block"
     >
-      <RichText text={clean} variant="thinking" />
+      <ThinkingDetails text={clean} presentation={presentation} />
     </CollapsibleCard>
   );
 }
@@ -385,11 +397,7 @@ function ToolSummary({ call }: { call: ToolCallContent }) {
   );
 }
 
-function PresentedToolSummary({
-  summary,
-}: {
-  summary: ToolPresentationSummary;
-}) {
+function PresentedSummary({ summary }: { summary: ToolPresentationSummary }) {
   if (summary.parts.length === 0) return null;
   return (
     <span className="card__summary card__summary--tool">
@@ -662,7 +670,7 @@ function ToolPresentationBlockView({
         <div
           className="tool-properties"
           role="group"
-          aria-label={block.label ?? "Tool parameters"}
+          aria-label={block.label ?? "Properties"}
         >
           {block.label ? (
             <div className="card__section-label">{block.label}</div>
@@ -837,6 +845,49 @@ function formatCount(value: number, noun: string): string {
   return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
+function presentationBlocks(
+  presentation: ToolPresentation,
+): ToolPresentationBlock[] | null {
+  let blocks: ToolPresentationBlock[] | null;
+  try {
+    blocks = presentation.blocks();
+  } catch {
+    return null;
+  }
+  if (
+    !blocks ||
+    blocks.some(
+      (block) => block.type === "diff" && !parseUnifiedDiff(block.text),
+    )
+  )
+    return null;
+  return blocks;
+}
+
+function ThinkingDetails({
+  text,
+  presentation,
+}: {
+  text: string;
+  presentation: ToolPresentation | null;
+}) {
+  const blocks = presentation ? presentationBlocks(presentation) : null;
+  if (!blocks) return <RichText text={text} variant="thinking" />;
+  return (
+    <div
+      className="tool-presentation thinking-presentation"
+      data-thinking-presentation="configured"
+    >
+      {blocks.map((block, index) => (
+        <ToolPresentationBlockView
+          block={block}
+          key={`${block.type}:${index}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function ToolDetails({
   call,
   result,
@@ -850,18 +901,8 @@ function ToolDetails({
 }) {
   if (!presentation)
     return <RawToolDetails call={call} result={result} status={status} />;
-  let blocks: ToolPresentationBlock[] | null;
-  try {
-    blocks = presentation.blocks();
-  } catch {
-    blocks = null;
-  }
-  if (
-    !blocks ||
-    blocks.some(
-      (block) => block.type === "diff" && !parseUnifiedDiff(block.text),
-    )
-  )
+  const blocks = presentationBlocks(presentation);
+  if (!blocks)
     return <RawToolDetails call={call} result={result} status={status} />;
   return (
     <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
@@ -939,7 +980,7 @@ export function ToolCard({
       toggleLabel={`${call.name} tool`}
       summary={
         presentation ? (
-          <PresentedToolSummary summary={presentation.summary} />
+          <PresentedSummary summary={presentation.summary} />
         ) : (
           <ToolSummary call={call} />
         )
@@ -1178,9 +1219,7 @@ export function CollapsedActivityStrip({
                 onToggle={() => setSelectedIndex(null)}
                 summary={
                   renderedPresentation ? (
-                    <PresentedToolSummary
-                      summary={renderedPresentation.summary}
-                    />
+                    <PresentedSummary summary={renderedPresentation.summary} />
                   ) : (
                     <ToolSummary call={rendered.call} />
                   )

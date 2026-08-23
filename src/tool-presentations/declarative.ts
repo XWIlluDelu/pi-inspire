@@ -1,4 +1,5 @@
 import type {
+  ThinkingPresentationRuleDeclaration,
   ToolPresentationBlockDeclaration,
   ToolPresentationConfiguration,
   ToolPresentationRuleDeclaration,
@@ -9,6 +10,7 @@ import { toolResultText } from "../events";
 import type {
   ToolImageMimeType,
   ToolListItem,
+  ToolPresentation,
   ToolPresentationBlock,
   ToolPresentationInput,
   ToolPresentationRule,
@@ -17,6 +19,9 @@ import type {
 } from "./model";
 
 type ToolPresentationSummaryPart = ToolPresentationSummary["parts"][number];
+type DeclarativePresentationInput =
+  | ToolPresentationInput
+  | { thinking: { text: string } };
 
 const MAX_SUMMARY_PART_CHARS = 240;
 const MAX_SUMMARY_SOURCE_CHARS = 4_096;
@@ -53,16 +58,23 @@ function property(source: unknown, key: string): unknown {
 
 function selectPath(
   path: string,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): { state: "value"; raw: unknown } | { state: "missing" | "deferred" } {
   const segments = path.split(".");
   let current: unknown;
-  if (segments[0] === "args") {
+  if (segments[0] === "thinking") {
+    if (!("thinking" in input)) return { state: "missing" };
+    current = input.thinking;
+    segments.shift();
+  } else if (segments[0] === "args") {
+    if (!("call" in input)) return { state: "missing" };
     current = input.call.arguments;
     segments.shift();
   } else if (segments[0] === "tool" && segments[1] === "name") {
+    if (!("call" in input)) return { state: "missing" };
     return { state: "value", raw: input.call.name };
   } else if (segments[0] === "result") {
+    if (!("call" in input)) return { state: "missing" };
     if (!input.result) return { state: "deferred" };
     const field = segments[1];
     if (field === "text")
@@ -143,7 +155,7 @@ function formatValue(
 
 function resolveValue(
   declaration: ToolPresentationValueDeclaration,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
   maxChars?: number,
 ): SelectedValue {
   if ("literal" in declaration)
@@ -180,7 +192,7 @@ function compactSummary(value: string): string {
 
 function compileSummary(
   declaration: ToolPresentationRuleDeclaration,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): ToolPresentationSummaryPart[] | null {
   const parts: ToolPresentationSummaryPart[] = [];
   for (const part of declaration.summary) {
@@ -264,7 +276,7 @@ function missingOrDeferred(
 
 function resolveMetadata(
   declaration: ToolPresentationValueDeclaration | undefined,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): string | null | undefined {
   if (!declaration) return undefined;
   const value = resolveValue(declaration, input, MAX_METADATA_CHARS + 1);
@@ -277,9 +289,10 @@ function resolveMetadata(
 
 function resultError(
   declaration: ToolPresentationValueDeclaration,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): boolean {
   return (
+    "call" in input &&
     "path" in declaration &&
     declaration.path.startsWith("result.") &&
     Boolean(input.result?.isError)
@@ -309,7 +322,7 @@ function joinResourcePath(root: string | undefined, child: string): string {
 function listBlocks(
   declaration: Extract<ToolPresentationBlockDeclaration, { type: "list" }>,
   selected: SelectedValue & { state: "value" },
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): ToolPresentationBlock[] | null {
   const root = resolveMetadata(declaration.root, input);
   if (root === null) return null;
@@ -435,7 +448,7 @@ function searchBlocks(
 
 function compileBlock(
   declaration: ToolPresentationBlockDeclaration,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): CompiledBlock {
   if (declaration.type === "properties") {
     const items = [];
@@ -618,7 +631,7 @@ function compileBlock(
 
 function compileBlocks(
   declaration: ToolPresentationRuleDeclaration,
-  input: ToolPresentationInput,
+  input: DeclarativePresentationInput,
 ): ToolPresentationBlock[] | null {
   const blocks: ToolPresentationBlock[] = [];
   for (const block of declaration.blocks) {
@@ -629,20 +642,25 @@ function compileBlocks(
   return blocks;
 }
 
+function presentDeclaration(
+  declaration: ToolPresentationRuleDeclaration,
+  input: DeclarativePresentationInput,
+): ToolPresentation | null {
+  const parts = compileSummary(declaration, input);
+  if (!parts) return null;
+  return {
+    summary: { parts },
+    blocks: () => compileBlocks(declaration, input),
+  };
+}
+
 function compileRule(
   id: string,
   declaration: ToolPresentationRuleDeclaration,
 ): ToolPresentationRule {
   return {
     id,
-    present(input) {
-      const parts = compileSummary(declaration, input);
-      if (!parts) return null;
-      return {
-        summary: { parts },
-        blocks: () => compileBlocks(declaration, input),
-      };
-    },
+    present: (input) => presentDeclaration(declaration, input),
   };
 }
 
@@ -655,4 +673,12 @@ export function compileToolPresentationRules(
   return Object.entries(configuration.rules).map(([id, declaration]) =>
     compileRule(id, declaration),
   );
+}
+
+/** Compile the singleton Thinking declaration against display-cleaned text.
+ * The caller retains ownership of the card shell and native fallback. */
+export function compileThinkingPresentationRule(
+  declaration: ThinkingPresentationRuleDeclaration,
+): (text: string) => ToolPresentation | null {
+  return (text) => presentDeclaration(declaration, { thinking: { text } });
 }
