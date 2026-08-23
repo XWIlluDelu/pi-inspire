@@ -130,12 +130,20 @@ describe("local host API", () => {
           },
         },
         mappings: { example: "user.example.tool" },
+        thinking: {
+          summary: [{ value: { path: "thinking.text", format: "first-line" } }],
+          blocks: [{ type: "markdown", source: { path: "thinking.text" } }],
+        },
       }),
     );
 
     const response = await api().expect(200);
     expect(response.body.toolPresentations.mappings).toEqual({
       example: "user.example.tool",
+    });
+    expect(response.body.toolPresentations.thinking).toMatchObject({
+      summary: [{ value: { path: "thinking.text", format: "first-line" } }],
+      blocks: [{ type: "markdown" }],
     });
     expect(response.body.toolPresentationsWarning).toBeUndefined();
   });
