@@ -10,7 +10,7 @@
 | Design tokens & components | [[design-system]] | The concrete contract — palette roles per theme, type scale, spacing, radii, elevation, motion, and per-component anatomy — that `src/styles.css` implements. |
 | Conversation | [[conversation]] | Compact user bubbles alternate with assistant answers presented as an open document flow containing typed Pi text and activity blocks. |
 | Rich content | [[rich-rendering]] | One defensive Markdown pipeline owns both settled and streaming text, including mathematical notation. |
-| Tool presentation | [[tool-presentations]] | Namespaced rules and exact tool-name mappings project known Pi calls into typed Web blocks, with lazy bodies and one generic raw fallback. |
+| Activity presentation | [[tool-presentations]] | Validated local declarations project known Pi calls and optional Thinking text into bounded summaries and typed Web blocks while their native card shells remain fixed. |
 | Session continuity | [[session-continuity]] | Pi’s JSONL session tree remains canonical while the browser holds only a reloadable, virtualized projection. |
 | Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported extension dialogs natively. |
 | Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |

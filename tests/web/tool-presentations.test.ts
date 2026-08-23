@@ -7,6 +7,7 @@ import {
   toolPresentationSummaryText,
 } from "../../src/tool-presentations/model";
 import {
+  createThinkingPresentationRegistry,
   createToolPresentationRegistry,
   toolPresentationRegistry,
 } from "../../src/tool-presentations/registry";
@@ -263,6 +264,37 @@ describe("declarative tool presentation rules", () => {
     ).toBeNull();
   });
 
+  it("keeps Tool and Thinking field namespaces isolated", () => {
+    const toolSelectingThinking = {
+      version: 1,
+      rules: {
+        "user.custom.rule": {
+          summary: [{ value: { path: "thinking.text" } }],
+          blocks: [],
+        },
+      },
+      mappings: { custom: "user.custom.rule" },
+    };
+    const thinkingSelectingTool = {
+      version: 1,
+      rules: {},
+      mappings: {},
+      thinking: {
+        summary: [{ value: { path: "args.query" } }],
+        blocks: [],
+      },
+    };
+
+    expect(
+      toolPresentationConfigurationSchema.safeParse(toolSelectingThinking)
+        .success,
+    ).toBe(false);
+    expect(
+      toolPresentationConfigurationSchema.safeParse(thinkingSelectingTool)
+        .success,
+    ).toBe(false);
+  });
+
   it("rejects executable or expensive summary shapes at validation", () => {
     const unsafe = {
       version: 1,
@@ -277,6 +309,58 @@ describe("declarative tool presentation rules", () => {
     expect(toolPresentationConfigurationSchema.safeParse(unsafe).success).toBe(
       false,
     );
+  });
+});
+
+describe("declarative Thinking presentation", () => {
+  it("projects display-cleaned text through the shared summary and block protocol", () => {
+    const configuration = toolPresentationConfigurationSchema.parse({
+      version: 1,
+      rules: {},
+      mappings: {},
+      thinking: {
+        summary: [
+          { value: { literal: "Reasoning" } },
+          {
+            value: { path: "thinking.text", format: "first-line" },
+            subdued: true,
+          },
+        ],
+        blocks: [
+          {
+            type: "properties",
+            items: [
+              {
+                label: "Characters",
+                value: { path: "thinking.text", format: "count" },
+              },
+            ],
+          },
+          {
+            type: "markdown",
+            label: "Trace",
+            source: { path: "thinking.text" },
+          },
+        ],
+      },
+    });
+    const registry = createThinkingPresentationRegistry(configuration.thinking);
+    const presentation = registry.resolve("# Plan\n\n- inspect\n- decide");
+
+    expect(
+      presentation && toolPresentationSummaryText(presentation.summary),
+    ).toBe("Reasoning # Plan");
+    expect(presentation?.blocks()).toEqual([
+      {
+        type: "properties",
+        items: [{ label: "Characters", value: "26" }],
+      },
+      {
+        type: "markdown",
+        label: "Trace",
+        text: "# Plan\n\n- inspect\n- decide",
+      },
+    ]);
   });
 });
 

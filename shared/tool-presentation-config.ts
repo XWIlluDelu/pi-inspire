@@ -43,12 +43,13 @@ const fieldPathSchema = z
       (root === "result" &&
         ((second === "text" && rest.length === 0) ||
           (second === "error" && rest.length === 0) ||
-          second === "details"));
+          second === "details")) ||
+      (root === "thinking" && second === "text" && rest.length === 0);
     if (!valid) {
       context.addIssue({
         code: "custom",
         message:
-          "Field paths start with args, result.text, result.error, result.details, or tool.name",
+          "Field paths start with args, result.text, result.error, result.details, tool.name, or thinking.text",
       });
     }
   });
@@ -175,28 +176,79 @@ export const toolPresentationBlockDeclarationSchema = z.discriminatedUnion(
   ],
 );
 
-export const toolPresentationRuleDeclarationSchema = z
+const presentationRuleDeclarationSchema = z
   .object({
     summary: z.array(summaryPartSchema).min(1).max(8),
     blocks: z.array(toolPresentationBlockDeclarationSchema).max(20),
   })
-  .strict()
-  .superRefine((value, context) => {
-    for (const [index, part] of value.summary.entries()) {
-      for (const [key, source] of [
-        ["value", part.value],
-        ["reference", part.reference],
-      ] as const) {
-        if (!source || !("path" in source)) continue;
-        if (source.path === "result.text" || source.format === "json")
-          context.addIssue({
-            code: "custom",
-            path: ["summary", index, key],
-            message:
-              "Summaries stay cheap: result.text and JSON formatting belong in blocks",
-          });
-      }
+  .strict();
+
+type DeclarationPath = Array<string | number>;
+
+function visitFieldPaths(
+  value: unknown,
+  visit: (fieldPath: string, declarationPath: DeclarationPath) => void,
+  declarationPath: DeclarationPath = [],
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      visitFieldPaths(item, visit, [...declarationPath, index]),
+    );
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = [...declarationPath, key];
+    if (key === "path" && typeof child === "string") visit(child, childPath);
+    else visitFieldPaths(child, visit, childPath);
+  }
+}
+
+function validateCheapSummary(
+  value: z.infer<typeof presentationRuleDeclarationSchema>,
+  context: z.RefinementCtx,
+): void {
+  for (const [index, part] of value.summary.entries()) {
+    for (const [key, source] of [
+      ["value", part.value],
+      ["reference", part.reference],
+    ] as const) {
+      if (!source || !("path" in source)) continue;
+      if (source.path === "result.text" || source.format === "json")
+        context.addIssue({
+          code: "custom",
+          path: ["summary", index, key],
+          message:
+            "Summaries stay cheap: result.text and JSON formatting belong in blocks",
+        });
     }
+  }
+}
+
+export const toolPresentationRuleDeclarationSchema =
+  presentationRuleDeclarationSchema.superRefine((value, context) => {
+    validateCheapSummary(value, context);
+    visitFieldPaths(value, (fieldPath, path) => {
+      if (fieldPath.startsWith("thinking."))
+        context.addIssue({
+          code: "custom",
+          path,
+          message: "Tool rules cannot select Thinking fields",
+        });
+    });
+  });
+
+export const thinkingPresentationRuleDeclarationSchema =
+  presentationRuleDeclarationSchema.superRefine((value, context) => {
+    validateCheapSummary(value, context);
+    visitFieldPaths(value, (fieldPath, path) => {
+      if (fieldPath !== "thinking.text")
+        context.addIssue({
+          code: "custom",
+          path,
+          message: "Thinking rules can select only thinking.text",
+        });
+    });
   });
 
 export const toolPresentationConfigurationSchema = z
@@ -204,6 +256,7 @@ export const toolPresentationConfigurationSchema = z
     version: z.literal(1),
     rules: z.record(userRuleIdSchema, toolPresentationRuleDeclarationSchema),
     mappings: z.record(toolNameSchema, ruleIdSchema),
+    thinking: thinkingPresentationRuleDeclarationSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -229,6 +282,9 @@ export type ToolPresentationBlockDeclaration = z.infer<
 >;
 export type ToolPresentationRuleDeclaration = z.infer<
   typeof toolPresentationRuleDeclarationSchema
+>;
+export type ThinkingPresentationRuleDeclaration = z.infer<
+  typeof thinkingPresentationRuleDeclarationSchema
 >;
 export type ToolPresentationConfiguration = z.infer<
   typeof toolPresentationConfigurationSchema
