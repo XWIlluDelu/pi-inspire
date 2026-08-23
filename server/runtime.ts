@@ -2759,9 +2759,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async deletionCatalogRecord(
     sessionId: string,
   ): Promise<SessionRecord> {
-    const session = this.catalog.getUnique
-      ? await this.catalog.getUnique(sessionId)
-      : await this.catalog.get(sessionId);
+    const session = await this.catalog.get(sessionId);
     if (!session)
       throw Object.assign(new Error("Session not found"), { status: 404 });
     return session;

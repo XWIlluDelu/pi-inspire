@@ -19,7 +19,41 @@ function record(id: string, cwd: string, modified: string): SessionRecord {
   };
 }
 
-describe("catalog pagination", () => {
+describe("catalog identity and pagination", () => {
+  it("isolates duplicate Pi ids instead of displaying one path and opening another", async () => {
+    const duplicateNew = record(
+      "duplicate",
+      "/work/new",
+      "2026-07-03T10:00:00Z",
+    );
+    duplicateNew.path = "/sessions/new.jsonl";
+    const duplicateOld = record(
+      "duplicate",
+      "/work/old",
+      "2026-07-01T10:00:00Z",
+    );
+    duplicateOld.path = "/sessions/old.jsonl";
+    const unique = record("unique", "/work/unique", "2026-07-02T10:00:00Z");
+    unique.parentSessionPath = duplicateNew.path;
+    const catalog = new SessionCatalog("/unused", {
+      list: async () => [duplicateOld, unique, duplicateNew],
+    });
+
+    expect(
+      (await catalog.list()).sessions.map((session) => session.id),
+    ).toEqual(["unique"]);
+    await expect(catalog.get("duplicate")).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/ambiguous/i),
+    });
+    await expect(catalog.listByIds(["duplicate"])).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await catalog.list()).sessions[0]).not.toHaveProperty(
+      "parentSessionId",
+    );
+  });
+
   it("uses deterministic newest-first ordering with stable tie-breakers", () => {
     const sameTime = "2026-07-27T10:00:00Z";
     const old = record("old", "/work/a", "2026-07-01T10:00:00Z");

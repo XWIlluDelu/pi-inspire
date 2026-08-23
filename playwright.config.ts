@@ -7,6 +7,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
+  outputDir: "output/playwright/test-results",
   reporter: process.env.CI
     ? [
         ["github"],
