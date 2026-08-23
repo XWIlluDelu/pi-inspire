@@ -1502,7 +1502,7 @@ a {
 .topbar__ident {
   flex: 0 1 auto;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
   min-width: 0;
   max-width: 56%;
@@ -1586,7 +1586,7 @@ a {
 
 .topbar__project:hover,
 .topbar__git:hover {
-  color: var(--muted);
+  color: var(--ink);
   background: var(--bg-inset);
 }
 
@@ -1990,13 +1990,18 @@ a {
 }
 
 .transcript-search > button {
-  width: 25px;
-  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .transcript-search > button:hover:not(:disabled),
@@ -5673,11 +5678,16 @@ body.pane-resizing--vertical .nav {
   align-items: center;
   padding: 2px;
   gap: 2px;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--bg-inset);
 }
 
-.segmented button {
+.segmented button,
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -5686,18 +5696,28 @@ body.pane-resizing--vertical .nav {
   color: var(--body);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.segmented button:hover,
+.segmented__item:hover {
+  color: var(--ink);
 }
 
 .segmented button[aria-pressed="true"],
 .segmented button[aria-selected="true"],
-.segmented .segmented__item--active {
+.segmented .segmented__item--active,
+.segmented__item--active {
   color: var(--accent-deep);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
-  font-weight: 500;
+  font-weight: 550;
 }
 
-.segmented button:disabled {
+.segmented button:disabled,
+.segmented__item:disabled {
   color: var(--faint);
   cursor: not-allowed;
 }
@@ -6301,9 +6321,9 @@ button.res__more:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   gap: var(--space-4);
-  padding: var(--space-16) var(--space-6);
+  padding: var(--space-8) var(--space-6);
 }
 
 /* Brand watermark: a huge, near-invisible math π recedes into the corner.
@@ -6951,43 +6971,6 @@ kbd {
 .settings__empty-action {
   margin-top: var(--space-2);
   font-size: var(--text-xs);
-}
-
-.segmented {
-  display: flex;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--bg-inset);
-  padding: 2px;
-  gap: 2px;
-}
-
-.segmented__item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  background: transparent;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--muted);
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition: color var(--dur-micro) var(--ease-standard),
-              background var(--dur-micro) var(--ease-standard),
-              box-shadow var(--dur-micro) var(--ease-standard);
-}
-
-.segmented__item:hover {
-  color: var(--ink);
-}
-
-.segmented__item--active {
-  background: var(--bg-surface);
-  color: var(--accent-deep);
-  box-shadow: var(--shadow-1);
-  font-weight: 550;
 }
 
 /* --- Overlays (palette + dialogs) --- */

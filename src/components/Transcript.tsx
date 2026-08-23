@@ -1,4 +1,4 @@
-import { List, Loader2, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, List, Loader2, Search, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -1370,9 +1370,8 @@ export function Transcript({
         onClick={(event) => {
           if (
             event.target === event.currentTarget ||
-            (event.target instanceof HTMLElement &&
-              (event.target.tagName === "svg" ||
-                event.target.closest(".transcript-search__icon")))
+            (event.target instanceof Element &&
+              event.target.closest(".transcript-search__icon"))
           ) {
             searchInputRef.current?.focus();
           }
@@ -1418,7 +1417,7 @@ export function Transcript({
           disabled={search.matches.length === 0}
           onClick={() => search.navigate(-1)}
         >
-          ↑
+          <ChevronUp size={13} aria-hidden />
         </button>
         <button
           type="button"
@@ -1426,7 +1425,7 @@ export function Transcript({
           disabled={search.matches.length === 0}
           onClick={() => search.navigate(1)}
         >
-          ↓
+          <ChevronDown size={13} aria-hidden />
         </button>
         <button
           type="button"
