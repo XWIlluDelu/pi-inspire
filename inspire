@@ -49,6 +49,7 @@ lock_path=""
 stop_request_path=""
 launcher_lock_fd=""
 launcher_lock_owned=0
+host_service_output=""
 
 need_node() {
   if ! command -v node >/dev/null 2>&1; then
@@ -150,12 +151,16 @@ should_manage_host_service() {
 }
 
 manage_host_service() {
-  local action="$1" code
+  local action="$1" quiet="${2:-0}" code
+  host_service_output=""
   should_manage_host_service || return 3
-  if node "$host_service_controller" --root "$root" "$action"; then
-    return 0
+  if host_service_output="$(node "$host_service_controller" --root "$root" "$action")"; then
+    code=0
   else
     code=$?
+  fi
+  if [[ "$quiet" != "1" && -n "$host_service_output" ]]; then
+    printf '%s\n' "$host_service_output"
   fi
   return "$code"
 }
@@ -183,6 +188,24 @@ inspect_instance() {
   local mock="$1"
   node "$instance_state" inspect \
     "$state_path" "$root" "$instance_host" "$instance_port" "$mock"
+}
+
+wait_for_host_ready() {
+  local code
+  need_node
+  init_instance
+  while true; do
+    if inspect_instance 0 >/dev/null 2>&1; then
+      return 0
+    else
+      code=$?
+    fi
+    if [[ "$code" == "5" ]]; then
+      echo "The system service started in the wrong INSΠRE runtime mode." >&2
+      return 1
+    fi
+    sleep 0.1
+  done
 }
 
 show_existing() {
@@ -462,18 +485,26 @@ idle_maintenance_restart() {
 status_host() {
   local service_result url
   need_node
-  if manage_host_service status; then
-    # Preserve the established direct-launcher status contract when the
-    # service has published its authenticated instance state.
+  if manage_host_service status 1; then
+    # A running service must still prove that its authenticated Host responds;
+    # an alive but wedged process is not a usable INSΠRE instance.
     init_instance
-    if url="$(inspect_instance 0)"; then echo "$url"; fi
-    return 0
+    if url="$(inspect_instance 0)"; then
+      printf '%s\n' "$host_service_output"
+      echo "$url"
+      return 0
+    fi
+    echo "INSΠRE system service is active, but its Host is not reachable." >&2
+    return 1
   else
     service_result=$?
   fi
   case "$service_result" in
     3) ;;
-    5) return 1 ;;
+    5)
+      [[ -z "$host_service_output" ]] || printf '%s\n' "$host_service_output"
+      return 1
+      ;;
     *) return "$service_result" ;;
   esac
   init_instance
@@ -503,6 +534,9 @@ status_host() {
 }
 
 case "$mode" in
+  wait-ready)
+    wait_for_host_ready
+    ;;
   start | host | "")
     run_host 0
     ;;

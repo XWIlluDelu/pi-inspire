@@ -72,12 +72,15 @@ case "\${2:-}" in
     active="$(< "$FAKE_SYSTEMD_STATE")"
     unit_file_state="$(< "$FAKE_SYSTEMD_UNIT_FILE_STATE")"
     substate="dead"
+    exec_start_post="{ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire wait-ready ; }"
     [[ "$active" == "active" ]] && substate="running"
+    [[ "\${FAKE_SYSTEMD_OUTDATED:-0}" == "1" ]] && exec_start_post=""
     printf '%s\\n' \\
       'LoadState=loaded' \\
       "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-host.service" \\
       "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
       "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
+      "ExecStartPost=$exec_start_post" \
       "UnitFileState=$unit_file_state" \\
       "ActiveState=$active" \\
       "SubState=$substate"
@@ -95,6 +98,8 @@ case "\${2:-}" in
   disable)
     printf 'inactive\\n' > "$FAKE_SYSTEMD_STATE"
     printf 'disabled\\n' > "$FAKE_SYSTEMD_UNIT_FILE_STATE"
+    ;;
+  daemon-reload)
     ;;
   *)
     printf 'unexpected systemctl invocation: %s\\n' "$*" >&2
@@ -178,8 +183,11 @@ describe("production launcher", () => {
     expect(runLauncher([], environment)).toContain(
       "Started INSΠRE system service.",
     );
-    expect(runLauncher(["status"], environment)).toContain(
+    expect(runLauncher(["service", "status-host"], environment)).toContain(
       "INSΠRE system service is running (enabled).",
+    );
+    expect(() => runLauncher(["status"], environment)).toThrow(
+      /Host is not reachable/u,
     );
     expect(runLauncher(["restart"], environment)).toContain(
       "Restarted INSΠRE system service.",
@@ -204,6 +212,38 @@ describe("production launcher", () => {
     );
     expect(log).toContain(
       "--user disable --now inspire-idle-maintenance-restart.timer",
+    );
+  });
+
+  it("installs a readiness-gated host unit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-install-"));
+    temporaryDirectories.push(directory);
+    const environment = await serviceLauncherEnv(directory);
+
+    expect(runLauncher(["service", "install-host"], environment)).toContain(
+      "Installed",
+    );
+    const unit = await readFile(
+      join(
+        environment.XDG_CONFIG_HOME!,
+        "systemd",
+        "user",
+        "inspire-host.service",
+      ),
+      "utf8",
+    );
+    expect(unit).toContain(`ExecStartPost=${launcher} wait-ready`);
+    expect(unit).toContain("TimeoutStartSec=5min");
+  });
+
+  it("rejects an installed host unit without the readiness gate", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-old-"));
+    temporaryDirectories.push(directory);
+    const environment = await serviceLauncherEnv(directory);
+    environment.FAKE_SYSTEMD_OUTDATED = "1";
+
+    expect(() => runLauncher(["status"], environment)).toThrow(
+      /unit is outdated/u,
     );
   });
 
@@ -259,6 +299,7 @@ describe("production launcher", () => {
       token: string;
     };
     expect(firstState.schemaVersion).toBe(1);
+    expect(runLauncher(["wait-ready"], env)).toBe("");
     expect(Buffer.concat(output).toString()).toContain(
       "No managed INSΠRE instance is running.",
     );
