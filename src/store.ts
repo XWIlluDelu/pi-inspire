@@ -6,7 +6,10 @@ import {
   type AvailableUpdate,
   type BranchTreeResponse,
   type CompletionAttentionPreference,
+  type ContentTextSizePreference,
+  defaultInterfaceSettings,
   defaultPreferences,
+  type DesktopSendKeyPreference,
   emptyPendingQueues,
   type GitDiffSide,
   type GitFileChange,
@@ -25,6 +28,7 @@ import {
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
+  type ReadingWidthPreference,
   type ProjectionHealth,
   projectionConflictSeverity,
   projectNameFromCwd,
@@ -653,11 +657,11 @@ export class AppStore {
       sessionId === this.state.sessionId && this.isForeground();
     if (foregroundOwner || this.state.prefs.completionAttention === "off")
       return;
-    if (this.state.prefs.completionAttention === "title") {
-      this.titleAttention.add(sessionId);
-      this.publishTitleAttention();
-      return;
-    }
+    // Desktop attention is progressive: the durable tab marker remains after
+    // the transient OS notification disappears or cannot be delivered.
+    this.titleAttention.add(sessionId);
+    this.publishTitleAttention();
+    if (this.state.prefs.completionAttention === "title") return;
     if (this.state.prefs.completionAttention !== "desktop") return;
     const NotificationApi =
       typeof window !== "undefined" ? window.Notification : undefined;
@@ -2723,7 +2727,13 @@ export class AppStore {
   setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
   setPalette = (palette: PalettePreference): void =>
     this.savePrefs({ palette });
+  setContentTextSize = (contentTextSize: ContentTextSizePreference): void =>
+    this.savePrefs({ contentTextSize });
+  setReadingWidth = (readingWidth: ReadingWidthPreference): void =>
+    this.savePrefs({ readingWidth });
   setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
+  setDesktopSendKey = (desktopSendKey: DesktopSendKeyPreference): void =>
+    this.savePrefs({ desktopSendKey });
   setCompletionAttention = async (
     completionAttention: CompletionAttentionPreference,
   ): Promise<boolean> => {
@@ -2761,7 +2771,7 @@ export class AppStore {
         return false;
       }
     }
-    if (completionAttention !== "title") {
+    if (completionAttention === "off") {
       this.titleAttention.clear();
       this.publishTitleAttention();
     }
@@ -2780,6 +2790,11 @@ export class AppStore {
   setAssistantRoundDisplay = (
     assistantRoundDisplay: AssistantRoundDisplayPreference,
   ): void => this.savePrefs({ assistantRoundDisplay });
+  restoreDefaultSettings = (): void => {
+    this.titleAttention.clear();
+    this.publishTitleAttention();
+    this.savePrefs({ ...defaultInterfaceSettings });
+  };
 
   toggleNavGroup = (cwd: string): void => {
     const current = this.state.prefs.navCollapsedGroups;

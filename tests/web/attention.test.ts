@@ -518,9 +518,11 @@ describe("completion attention", () => {
       sessionId: "bg",
       sessionStatus: { runState: "idle", indicator: "completed" },
     });
+    expect(store.getState().attentionSessionIds).toEqual(["bg"]);
     FakeNotification.instances[0]!.onclick?.(new Event("click"));
     expect(focus).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
+    expect(store.getState().attentionSessionIds).toEqual([]);
     expect(FakeNotification.instances[0]!.close).toHaveBeenCalledOnce();
   });
 

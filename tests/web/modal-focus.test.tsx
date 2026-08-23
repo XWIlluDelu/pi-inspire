@@ -15,8 +15,8 @@ describe("modal focus ownership", () => {
     const user = userEvent.setup();
     const view = render(<Settings onClose={() => undefined} />);
     const dialog = screen.getByRole("dialog", { name: "Settings" });
-    const first = screen.getByRole("textbox", { name: "Search settings" });
-    const last = screen.getByRole("link", { name: "Pi Coding Agent" });
+    const first = screen.getByRole("button", { name: "Close settings" });
+    const last = screen.getByRole("button", { name: "Restore defaults" });
     expect(document.activeElement).toBe(first);
 
     last.focus();

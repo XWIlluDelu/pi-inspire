@@ -30,14 +30,22 @@ function firstPaint(
 }
 
 describe("first-paint visual preferences", () => {
-  it("uses a valid explicit cached theme and palette before React boots", () => {
-    expect(firstPaint('{"theme":"dark","palette":"teal"}')).toEqual({
+  it("uses valid cached visual preferences before React boots", () => {
+    expect(
+      firstPaint(
+        '{"theme":"dark","palette":"teal","contentTextSize":"large","readingWidth":"wide"}',
+      ),
+    ).toEqual({
       theme: "dark",
       palette: "teal",
+      contentTextSize: "large",
+      readingWidth: "wide",
     });
     expect(firstPaint('{"theme":"system","palette":"amber"}', true)).toEqual({
       theme: "dark",
       palette: "amber",
+      contentTextSize: "comfortable",
+      readingWidth: "comfortable",
     });
   });
 
@@ -45,10 +53,18 @@ describe("first-paint visual preferences", () => {
     expect(firstPaint("not json", true)).toEqual({
       theme: "dark",
       palette: "amber",
+      contentTextSize: "comfortable",
+      readingWidth: "comfortable",
     });
-    expect(firstPaint('{"theme":"violet","palette":"blue"}')).toEqual({
+    expect(
+      firstPaint(
+        '{"theme":"violet","palette":"blue","contentTextSize":"giant","readingWidth":"unbounded"}',
+      ),
+    ).toEqual({
       theme: "light",
       palette: "amber",
+      contentTextSize: "comfortable",
+      readingWidth: "comfortable",
     });
   });
 
@@ -59,10 +75,17 @@ describe("first-paint visual preferences", () => {
         setItem: (key: string, value: string) => values.set(key, value),
       },
     });
-    cacheVisualPreferences({ theme: "light", palette: "teal" });
+    cacheVisualPreferences({
+      theme: "light",
+      palette: "teal",
+      contentTextSize: "compact",
+      readingWidth: "narrow",
+    });
     expect(JSON.parse(values.get(VISUAL_PREFERENCES_STORAGE_KEY)!)).toEqual({
       theme: "light",
       palette: "teal",
+      contentTextSize: "compact",
+      readingWidth: "narrow",
     });
     vi.unstubAllGlobals();
   });

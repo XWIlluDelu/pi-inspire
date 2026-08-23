@@ -412,7 +412,13 @@ export function Welcome({
             addFiles(files);
           }}
           onKeyDown={(event) => {
-            if (!shouldSubmitComposerEnter(event.nativeEvent)) return;
+            if (
+              !shouldSubmitComposerEnter(
+                event.nativeEvent,
+                state.prefs.desktopSendKey,
+              )
+            )
+              return;
             event.preventDefault();
             void start();
           }}

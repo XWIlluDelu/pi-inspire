@@ -412,15 +412,26 @@ export function App() {
         media.matches,
       );
       document.documentElement.dataset.palette = state.prefs.palette || "amber";
+      document.documentElement.dataset.contentTextSize =
+        state.prefs.contentTextSize;
+      document.documentElement.dataset.readingWidth = state.prefs.readingWidth;
       cacheVisualPreferences({
         theme: state.prefs.theme,
         palette: state.prefs.palette,
+        contentTextSize: state.prefs.contentTextSize,
+        readingWidth: state.prefs.readingWidth,
       });
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [state.bootstrapped, state.prefs.theme, state.prefs.palette]);
+  }, [
+    state.bootstrapped,
+    state.prefs.theme,
+    state.prefs.palette,
+    state.prefs.contentTextSize,
+    state.prefs.readingWidth,
+  ]);
 
   useEffect(() => {
     // Attention composes with Pi's extension-set title instead of replacing

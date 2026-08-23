@@ -17,112 +17,82 @@ beforeEach(() => {
 });
 
 describe("Settings component UX and navigation", () => {
-  it("renders all categories as ordinary navigation", () => {
+  it("uses three purpose-level categories without a redundant search surface", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
 
-    for (const name of [
-      "Appearance",
-      "Transcript",
-      "Attention",
-      "Startup",
-      "Install",
-      "About",
-    ]) {
+    for (const name of ["Display", "Conversation", "Behavior"])
       expect(
         within(navigation).getByRole("button", { name }),
       ).toBeInTheDocument();
-    }
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
-  it("marks the current category when navigating", () => {
+  it("marks and scrolls to the selected category", async () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
-    const transcript = within(navigation).getByRole("button", {
-      name: "Transcript",
+    const conversation = within(navigation).getByRole("button", {
+      name: "Conversation",
     });
 
-    fireEvent.click(transcript);
-    expect(transcript).toHaveAttribute("aria-current", "true");
+    fireEvent.click(conversation);
+    const section = screen.getByRole("region", { name: "Conversation" });
+    await waitFor(() => expect(section.scrollIntoView).toHaveBeenCalled());
+    expect(conversation).toHaveAttribute("aria-current", "true");
   });
 
-  it("filters visible sections in real time when searching", () => {
+  it("presents the complete settings contract in its owning groups", () => {
     render(<Settings onClose={() => undefined} />);
-    const searchInput = screen.getByPlaceholderText("Search settings...");
 
-    fireEvent.change(searchInput, { target: { value: "theme" } });
+    for (const name of [
+      "Theme",
+      "Color palette",
+      "Content text size",
+      "Reading width",
+      "Project location",
+      "Reasoning detail",
+      "Tool activity",
+      "Activity groups",
+      "Assistant turn details",
+      "Desktop send key",
+      "On launch",
+      "Completion alerts",
+    ])
+      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+
     expect(
-      screen.getByRole("region", { name: "Appearance" }),
+      screen.getByText(
+        "Set how grouped activity is loaded and shown by default.",
+      ),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Startup" }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.change(searchInput, {
-      target: { value: "nonexistent-query-xyz" },
-    });
-    expect(screen.getByText("No settings found")).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Clear search" })[0]!,
-    );
-    expect(
-      screen.getByRole("region", { name: "Appearance" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Startup" })).toBeInTheDocument();
   });
 
-  it("clears search on Escape before closing Settings", () => {
-    const onClose = vi.fn();
-    render(<Settings onClose={onClose} />);
-    const searchInput = screen.getByRole("textbox", {
-      name: "Search settings",
-    });
-
-    fireEvent.change(searchInput, { target: { value: "notification" } });
-    fireEvent.keyDown(searchInput, { key: "Escape" });
-    expect(searchInput).toHaveValue("");
-    expect(onClose).not.toHaveBeenCalled();
-
-    fireEvent.keyDown(searchInput, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-
-  it("restores filtered sections before scrolling to a category", async () => {
+  it("explains every Activity groups density in the selector", () => {
     render(<Settings onClose={() => undefined} />);
-    const searchInput = screen.getByRole("textbox", {
-      name: "Search settings",
-    });
-    const navigation = screen.getByRole("navigation", {
-      name: "Settings categories",
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Activity groups" }));
 
-    fireEvent.change(searchInput, { target: { value: "theme" } });
+    for (const description of [
+      "Adjusts as live activity starts and finishes.",
+      "Loads and shows every activity card.",
+      "Shows up to the latest 24 cards.",
+      "Shows only the group entry until opened.",
+    ])
+      expect(screen.getByText(description)).toBeInTheDocument();
+  });
+
+  it("keeps About and reset actions in the utility footer", () => {
+    render(<Settings onClose={() => undefined} />);
+    expect(
+      screen.getByRole("link", { name: "Pi Coding Agent" }),
+    ).toHaveAttribute("href", "https://github.com/earendil-works/pi");
+    expect(
+      screen.getByRole("button", { name: "Restore defaults" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "About" })).toBeNull();
-    fireEvent.click(within(navigation).getByRole("button", { name: "About" }));
-
-    const about = await screen.findByRole("region", { name: "About" });
-    await waitFor(() => expect(about.scrollIntoView).toHaveBeenCalled());
-    expect(searchInput).toHaveValue("");
-    expect(
-      within(navigation).getByRole("button", { name: "About" }),
-    ).toHaveAttribute("aria-current", "true");
-  });
-
-  it("clears search with the explicit clear button", () => {
-    render(<Settings onClose={() => undefined} />);
-    const searchInput = screen.getByRole("textbox", {
-      name: "Search settings",
-    });
-
-    fireEvent.change(searchInput, { target: { value: "notification" } });
-    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-    expect(searchInput).toHaveValue("");
-    expect(searchInput).toHaveFocus();
   });
 });
