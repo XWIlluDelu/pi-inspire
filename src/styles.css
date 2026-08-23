@@ -7708,26 +7708,22 @@ body.srail-dragging {
     display: none;
   }
 
-  .transcript-wrap {
-    flex-direction: column;
-  }
-
   .transcript-mobile-toolbar {
-    position: relative;
+    position: absolute;
     z-index: 4;
+    top: var(--space-2);
+    right: max(var(--space-3), var(--safe-right));
     display: flex;
-    min-height: 52px;
-    flex: 0 0 52px;
     align-items: center;
     justify-content: flex-end;
-    padding: var(--space-2) max(var(--space-3), var(--safe-right)) 0 max(var(--space-3), var(--safe-left));
-    background: var(--bg-canvas);
+    pointer-events: none;
   }
 
   .transcript-mobile-toolbar__launchers {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
+    pointer-events: auto;
   }
 
   .transcript-mobile-toolbar__button {
@@ -7757,15 +7753,10 @@ body.srail-dragging {
 
   .transcript {
     padding: var(--space-4) max(var(--space-4), var(--safe-right)) var(--space-6) max(var(--space-4), var(--safe-left));
-    scroll-padding-top: var(--space-4);
   }
 
   .transcript-wrap--earlier-branch .transcript {
     padding-top: calc(var(--space-16) + 84px);
-  }
-
-  .transcript-wrap--earlier-branch .earlier-branch-banner {
-    top: calc(52px + var(--space-3));
   }
 
   .transcript-search {
