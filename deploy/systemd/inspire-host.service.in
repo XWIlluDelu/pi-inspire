@@ -10,6 +10,8 @@ Environment=INSPIRE_OPEN=0
 Environment=INSPIRE_QUIET=1
 Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
 ExecStart=@LAUNCHER@
+ExecStartPost=@LAUNCHER@ wait-ready
+TimeoutStartSec=5min
 Restart=on-failure
 RestartSec=3
 

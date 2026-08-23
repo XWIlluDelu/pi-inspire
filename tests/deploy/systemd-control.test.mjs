@@ -26,6 +26,7 @@ function managedProperties(overrides = {}) {
     FragmentPath: hostServicePath(environment),
     WorkingDirectory: root,
     ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire ; }`,
+    ExecStartPost: `{ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
     UnitFileState: "enabled",
     ActiveState: "active",
     SubState: "running",
