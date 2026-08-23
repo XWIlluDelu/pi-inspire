@@ -59,6 +59,18 @@ function expectedExecStart(value, launcher) {
   );
 }
 
+function expectedReadyHook(value, launcher) {
+  const escaped = escapeRegExp(launcher);
+  const boundary = "(?:\\s|;|\\})";
+  return (
+    new RegExp(`(?:^|\\s)path=${escaped}${boundary}`, "u").test(value) &&
+    new RegExp(
+      `(?:^|\\s)argv\\[\\]=${escaped}\\s+wait-ready${boundary}`,
+      "u",
+    ).test(value)
+  );
+}
+
 function commandDetail(result) {
   return `${result.stderr}${result.stdout}`.trim();
 }
@@ -81,6 +93,7 @@ export async function inspectHostService(
       "--property=FragmentPath",
       "--property=WorkingDirectory",
       "--property=ExecStart",
+      "--property=ExecStartPost",
       "--property=UnitFileState",
       "--property=ActiveState",
       "--property=SubState",
@@ -101,6 +114,9 @@ export async function inspectHostService(
     !expectedExecStart(value.ExecStart ?? "", launcher)
   ) {
     return { kind: "foreign", fragmentPath: value.FragmentPath || undefined };
+  }
+  if (!expectedReadyHook(value.ExecStartPost ?? "", launcher)) {
+    return { kind: "outdated" };
   }
   return {
     kind: "managed",
@@ -168,6 +184,10 @@ function foreignMessage(service) {
     : `The ${HOST_SERVICE_NAME} unit belongs to another INSΠRE checkout.`;
 }
 
+function outdatedMessage() {
+  return `The ${HOST_SERVICE_NAME} unit is outdated. Reinstall it with: ./inspire service install-host`;
+}
+
 function usage() {
   console.error(
     "Use: systemd control --root <path> [status|start|stop|restart|enable|disable]",
@@ -190,6 +210,11 @@ async function main() {
     }
     if (service.kind === "foreign") {
       console.error(foreignMessage(service));
+      process.exitCode = 4;
+      return;
+    }
+    if (service.kind === "outdated") {
+      console.error(outdatedMessage());
       process.exitCode = 4;
       return;
     }
@@ -217,6 +242,11 @@ async function main() {
   }
   if (result.kind === "foreign") {
     console.error(foreignMessage(result));
+    process.exitCode = 4;
+    return;
+  }
+  if (result.kind === "outdated") {
+    console.error(outdatedMessage());
     process.exitCode = 4;
     return;
   }
