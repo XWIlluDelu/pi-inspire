@@ -9,6 +9,7 @@ import {
   type PalettePreference,
   type ThemePreference,
 } from "../../shared/contracts";
+import { preferenceChoiceLabel } from "../preference-labels";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { sessionHeading } from "./AppTopbar";
@@ -231,7 +232,7 @@ export function CommandPalette({
       actions.push({
         id: `thinking-${value}`,
         group: "Preferences",
-        title: `Thinking cards: ${value}`,
+        title: `Reasoning details: ${preferenceChoiceLabel(value)}`,
         hint: state.prefs.thinkingVisibility === value ? "current" : undefined,
         run: () => store.setThinkingVisibility(value),
       });
@@ -240,7 +241,7 @@ export function CommandPalette({
       actions.push({
         id: `tools-${value}`,
         group: "Preferences",
-        title: `Tool cards: ${value}`,
+        title: `Tool activity: ${preferenceChoiceLabel(value)}`,
         hint: state.prefs.toolVisibility === value ? "current" : undefined,
         run: () => store.setToolVisibility(value),
       });
@@ -249,7 +250,7 @@ export function CommandPalette({
       actions.push({
         id: `activity-folds-${value}`,
         group: "Preferences",
-        title: `Activity folds: ${value}`,
+        title: `Activity groups: ${preferenceChoiceLabel(value)}`,
         hint:
           (state.prefs.activityFoldVisibility ?? "dynamic") === value
             ? "current"
@@ -261,7 +262,7 @@ export function CommandPalette({
       actions.push({
         id: `assistant-rounds-${value}`,
         group: "Preferences",
-        title: `Assistant rounds: ${value}`,
+        title: `Assistant turn details: ${value === "details" ? "On" : "Off"}`,
         hint:
           state.prefs.assistantRoundDisplay === value ? "current" : undefined,
         run: () => store.setAssistantRoundDisplay(value),

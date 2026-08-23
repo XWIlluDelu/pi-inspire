@@ -422,6 +422,7 @@ export class AppStore {
     beginOpening: (sessionId) => {
       this.invalidateBranchForSelectionIntent();
       this.set({ sessionActionError: null });
+      this.selectionIntentGeneration += 1;
       const ticket = ++this.selectionRequest;
       this.claimOpening(ticket, sessionId);
       return ticket;
@@ -495,6 +496,9 @@ export class AppStore {
   private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
   private selectionGeneration = 0;
+  /** Explicit open, create, and deselect intent. Unlike selectionRequest, this
+   * does not advance for authoritative transport snapshots. */
+  private selectionIntentGeneration = 0;
   /** Latest-wins guard for selection intent: openSession/newSession and every
    * authoritative WebSocket snapshot bump it, so a slower open/new HTTP
    * response cannot overwrite a newer selection the client already applied. */
@@ -813,13 +817,19 @@ export class AppStore {
         this.notify("warning", boot.toolPresentationsWarning);
       this.updates.start();
       this.connectionController.connect(token);
+      const autoContinueIntent = this.selectionIntentGeneration;
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
         // The remembered launch preference applies once per store lifetime so
         // reconnects never hijack a deliberate navigation.
         if (this.autoContinued) return;
         this.autoContinued = true;
-        if (boot.preferences.launch === "continue" && !this.state.sessionId) {
+        if (this.selectionIntentGeneration !== autoContinueIntent) return;
+        if (
+          boot.preferences.launch === "continue" &&
+          !this.state.sessionId &&
+          !this.state.sessionSelectionPending
+        ) {
           const previous = this.state.sessions[0];
           if (previous) void this.openSession(previous.id);
         }
@@ -2180,12 +2190,13 @@ export class AppStore {
         });
         return null;
       }
+      const preferenceOwners = new Map(this.preferenceFieldOwners);
       const result = await this.api.deleteSession(sessionId);
       const deleted = new Set([sessionId]);
       const sessionStatuses = this.forgetDeletedSessions(deleted);
-      const prefs =
-        result.preferences ?? this.preferencesWithoutSessions(deleted);
-      if (result.preferences) this.confirmedPrefs = result.preferences;
+      const prefs = result.preferences
+        ? this.reconcilePreferenceSnapshot(result.preferences, preferenceOwners)
+        : this.preferencesWithoutSessions(deleted);
       this.set({ prefs, sessionStatuses });
       this.notify(
         "info",
@@ -2266,6 +2277,7 @@ export class AppStore {
         return null;
       }
 
+      const preferenceOwners = new Map(this.preferenceFieldOwners);
       const result = await this.api.clearHiddenSessions(sessionIds);
       const deleted = new Set(
         result.deleted.map((session) => session.sessionId),
@@ -2289,8 +2301,9 @@ export class AppStore {
               (cwd) => !projectCwds.has(cwd),
             ),
           };
-      const prefs = result.preferences ?? fallbackPrefs;
-      if (result.preferences) this.confirmedPrefs = result.preferences;
+      const prefs = result.preferences
+        ? this.reconcilePreferenceSnapshot(result.preferences, preferenceOwners)
+        : fallbackPrefs;
       this.set({ prefs, sessionStatuses });
 
       if (result.deleted.length > 0) {
@@ -2600,11 +2613,38 @@ export class AppStore {
    * host in the order the user made them; each patch carries only its own
    * fields, so out-of-order arrival can no longer resurrect stale values. */
   private prefsWrites: Promise<unknown> = Promise.resolve();
+  private preferenceWriteSequence = 0;
+  /** Each field is owned by its newest optimistic write even when a later
+   * value happens to equal an older one. */
+  private preferenceFieldOwners = new Map<keyof InspirePreferences, number>();
+  private completionAttentionRequest = 0;
   /** The last preferences the host confirmed. Rollback restores from here
    * rather than from whatever was on screen when a write started: with two
    * refused writes in a row, that earlier screen value was itself never
    * persisted, and restoring it would show a preference no reload can keep. */
   private confirmedPrefs: InspirePreferences = defaultPreferences;
+
+  private reconcilePreferenceSnapshot(
+    authoritative: InspirePreferences,
+    baselineOwners: ReadonlyMap<keyof InspirePreferences, number>,
+  ): InspirePreferences {
+    const visible = { ...authoritative };
+    const confirmed = { ...authoritative };
+    for (const field of Object.keys(authoritative) as Array<
+      keyof InspirePreferences
+    >) {
+      if (this.preferenceFieldOwners.get(field) === baselineOwners.get(field))
+        continue;
+      Object.assign(visible, { [field]: this.state.prefs[field] });
+      Object.assign(confirmed, { [field]: this.confirmedPrefs[field] });
+    }
+    this.confirmedPrefs = confirmed;
+    return visible;
+  }
+
+  private curationMutationBlocked(): boolean {
+    return Boolean(this.state.deletingSessionId || this.state.clearingHidden);
+  }
 
   private isCurationPatch(patch: Partial<InspirePreferences>): boolean {
     return (
@@ -2661,6 +2701,9 @@ export class AppStore {
   }
 
   private savePrefs(patch: Partial<InspirePreferences>): void {
+    const fields = Object.keys(patch) as Array<keyof InspirePreferences>;
+    const owner = ++this.preferenceWriteSequence;
+    for (const field of fields) this.preferenceFieldOwners.set(field, owner);
     const curationPatch = this.isCurationPatch(patch);
     const previousPrefs = this.state.prefs;
     const nextPrefs = { ...previousPrefs, ...patch };
@@ -2693,12 +2736,12 @@ export class AppStore {
       })
       .catch((error: unknown) => {
         // Truthful control: a refused write cannot leave a control claiming
-        // its change. Only fields still carrying this patch's value roll
-        // back — anything a newer local edit has replaced belongs to that
-        // edit and its own write.
-        const stale = (
-          Object.keys(patch) as Array<keyof InspirePreferences>
-        ).filter((field) => this.state.prefs[field] === patch[field]);
+        // its change. Only fields still owned by this write roll back —
+        // equality is insufficient because a newer edit may cycle back to the
+        // same value.
+        const stale = fields.filter(
+          (field) => this.preferenceFieldOwners.get(field) === owner,
+        );
         const previousPrefs = this.state.prefs;
         if (stale.length > 0) {
           const restored = Object.fromEntries(
@@ -2737,6 +2780,7 @@ export class AppStore {
   setCompletionAttention = async (
     completionAttention: CompletionAttentionPreference,
   ): Promise<boolean> => {
+    const request = ++this.completionAttentionRequest;
     if (completionAttention === "desktop") {
       const NotificationApi =
         typeof window !== "undefined" ? window.Notification : undefined;
@@ -2754,6 +2798,7 @@ export class AppStore {
           // never request permission during bootstrap or background events.
           permission = await NotificationApi.requestPermission();
         } catch {
+          if (request !== this.completionAttentionRequest) return false;
           this.notify(
             "warning",
             "The browser could not request notification permission",
@@ -2761,6 +2806,7 @@ export class AppStore {
           return false;
         }
       }
+      if (request !== this.completionAttentionRequest) return false;
       if (permission !== "granted") {
         this.notify(
           "warning",
@@ -2771,6 +2817,7 @@ export class AppStore {
         return false;
       }
     }
+    if (request !== this.completionAttentionRequest) return false;
     if (completionAttention === "off") {
       this.titleAttention.clear();
       this.publishTitleAttention();
@@ -2791,12 +2838,14 @@ export class AppStore {
     assistantRoundDisplay: AssistantRoundDisplayPreference,
   ): void => this.savePrefs({ assistantRoundDisplay });
   restoreDefaultSettings = (): void => {
+    this.completionAttentionRequest += 1;
     this.titleAttention.clear();
     this.publishTitleAttention();
     this.savePrefs({ ...defaultInterfaceSettings });
   };
 
   toggleNavGroup = (cwd: string): void => {
+    if (this.curationMutationBlocked()) return;
     const current = this.state.prefs.navCollapsedGroups;
     const navCollapsedGroups = current.includes(cwd)
       ? current.filter((item) => item !== cwd)
@@ -2808,6 +2857,7 @@ export class AppStore {
    * identity lists move together so navigation can never file a session in
    * two sections at once. */
   toggleSessionPin = (id: string): void => {
+    if (this.curationMutationBlocked()) return;
     const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
     const pinned = pinnedSessionIds.includes(id);
     this.savePrefs({
@@ -2825,6 +2875,7 @@ export class AppStore {
   };
 
   toggleSessionHidden = (id: string): void => {
+    if (this.curationMutationBlocked()) return;
     const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
     const hidden = hiddenSessionIds.includes(id);
     this.savePrefs({
@@ -2845,6 +2896,7 @@ export class AppStore {
    * groups by. The two states are mutually exclusive without touching any
    * per-session curation. */
   toggleProjectPin = (cwd: string): void => {
+    if (this.curationMutationBlocked()) return;
     const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
     const pinned = pinnedProjectCwds.includes(cwd);
     this.savePrefs({
@@ -2860,6 +2912,7 @@ export class AppStore {
   };
 
   toggleProjectHidden = (cwd: string): void => {
+    if (this.curationMutationBlocked()) return;
     const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
     const hidden = hiddenProjectCwds.includes(cwd);
     this.savePrefs({

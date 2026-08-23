@@ -9,12 +9,12 @@ import {
   Search,
 } from "lucide-react";
 import {
+  type CSSProperties,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import type {
   BranchTreeNode,
@@ -724,10 +724,11 @@ export function BranchTree() {
             aria-label="Search loaded history"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape" && query) {
-                event.preventDefault();
-                setQuery("");
-              }
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (query) setQuery("");
+              else event.currentTarget.blur();
             }}
           />
           <output aria-label="History search matches" aria-live="polite">

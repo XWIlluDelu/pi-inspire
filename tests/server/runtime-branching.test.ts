@@ -59,6 +59,7 @@ class BranchRpc extends EventEmitter {
   forkResponseGate: Promise<void> | null = null;
   forkReplaced: (() => void) | null = null;
   forkDestinationEntry: Record<string, unknown> | null = null;
+  forkEventEntry: Record<string, unknown> | null = null;
   nextStateGate: Promise<void> | null = null;
   stateRequestStarted: (() => void) | null = null;
   forkEventCount = 0;
@@ -210,10 +211,11 @@ class BranchRpc extends EventEmitter {
         typeof this.forkDestinationEntry?.id === "string"
           ? this.forkDestinationEntry.id
           : "alt";
-      if (this.forkDestinationEntry)
+      const forkEventEntry = this.forkEventEntry ?? this.forkDestinationEntry;
+      if (forkEventEntry)
         this.emit("event", {
           type: "entry_appended",
-          entry: this.forkDestinationEntry,
+          entry: forkEventEntry,
         });
       this.forkReplaced?.();
       if (this.forkResponseGate) await this.forkResponseGate;
@@ -630,6 +632,41 @@ describe("stock RPC branch bridge", () => {
     } finally {
       releaseState?.();
       releaseFork?.();
+      await runtime.close();
+    }
+  });
+
+  it("fails closed when a fork persistence claim disagrees with the destination entry", async () => {
+    const { runtime, worker, directory } = await setup();
+    worker.forkPath = join(directory, "forked-claim-mismatch.jsonl");
+    worker.forkDestinationEntry = {
+      type: "custom",
+      id: "destination-state",
+      parentId: "alt",
+      timestamp: "2026-08-01T00:00:00.006Z",
+      customType: "fork-state",
+      data: { active: false },
+    };
+    worker.forkEventEntry = {
+      ...worker.forkDestinationEntry,
+      data: { active: true },
+    };
+    try {
+      const sourceTree = await runtime.branchTree(SESSION_ID);
+      await expect(
+        runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: sourceTree.revision,
+          targetId: "u2",
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining(
+          "differs from the worker's persistence claim",
+        ),
+      });
+      expect(worker.stops).toBe(1);
+    } finally {
       await runtime.close();
     }
   });

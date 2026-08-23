@@ -3,6 +3,7 @@ import {
   hostServicePath,
   inspectHostService,
 } from "../../deploy/systemd/control.mjs";
+import { systemdEscape } from "../../deploy/systemd/install.mjs";
 
 const root = "/workspace/inspire";
 const environment = {
@@ -35,6 +36,12 @@ function managedProperties(overrides = {}) {
 }
 
 describe("host systemd control", () => {
+  it("escapes non-ASCII paths as UTF-8 bytes in unit arguments", () => {
+    expect(systemdEscape("/tmp/测试 path")).toBe(
+      "/tmp/\\xe6\\xb5\\x8b\\xe8\\xaf\\x95\\x20path",
+    );
+  });
+
   it("recognizes only the matching checkout unit", async () => {
     await expect(
       inspectHostService(root, {

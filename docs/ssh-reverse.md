@@ -76,6 +76,8 @@ systemctl --user enable --now inspire-connection-ssh-reverse.service
 
 The two services are independent: the host service owns the local INSΠRE process, while the tunnel service owns only SSH. The tunnel uses `Restart=always`, so it reconnects after a network interruption or server restart; the host uses `Restart=on-failure`. Because the tunnel runs with `BatchMode=yes`, an unattended service needs an SSH identity usable without an interactive password or passphrase prompt.
 
+There is one per-user SSH reverse unit. Lifecycle commands verify that it belongs to the current INSΠRE installation instead of controlling a stale or different checkout. Re-run `install-service` after moving or upgrading the installation; it restarts an active matching unit, but refuses to replace one owned by another active checkout.
+
 For recovery before a graphical login, enable the user manager to persist across logouts:
 
 ```bash

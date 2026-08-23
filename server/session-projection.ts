@@ -177,6 +177,7 @@ export interface SessionProjectionView {
   ): UserTurnTranscriptPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
+  persistedEntryMatches(entry: SessionEntry): boolean;
   userText(id: string, maxChars: number): string;
   viewMessages(effectiveLeafId?: string | null): readonly unknown[];
   reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
@@ -927,6 +928,13 @@ export class SessionProjection
         ? { role: (found.message as { role: string }).role }
         : {}),
     };
+  }
+
+  persistedEntryMatches(entry: SessionEntry): boolean {
+    const found = this.currentEntries.find(
+      (candidate) => candidate.id === entry.id,
+    );
+    return found !== undefined && samePersistedJson(found, entry);
   }
 
   userText(id: string, maxChars: number): string {

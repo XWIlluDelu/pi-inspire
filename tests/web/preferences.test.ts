@@ -140,6 +140,56 @@ describe("launch behavior", () => {
     await vi.waitFor(() => expect(store.getState().sessionId).toBe(summary.id));
   });
 
+  it("does not auto-continue over a new-session intent while the catalog is loading", async () => {
+    const previous = sessionSummary({ id: "previous" });
+    let releaseCatalog!: () => void;
+    let releaseCreate!: () => void;
+    const catalogGate = new Promise<void>((resolve) => {
+      releaseCatalog = resolve;
+    });
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    let openCalls = 0;
+    installFetch(async (url) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            preferences: { ...DEFAULT_PREFS, launch: "continue" },
+          }),
+        };
+      }
+      if (url.startsWith("/api/sessions/new")) {
+        await createGate;
+        return { body: activeSnapshot({ sessionId: "created" }) };
+      }
+      if (url.startsWith("/api/sessions/open")) {
+        openCalls += 1;
+        return { body: activeSnapshot({ sessionId: previous.id }) };
+      }
+      if (url.startsWith("/api/sessions")) {
+        await catalogGate;
+        return {
+          body: { sessions: [previous], total: 1, offset: 0, limit: 40 },
+        };
+      }
+      return undefined;
+    });
+    const store = new AppStore();
+    await store.init("token");
+    const creating = store.newSession("/work/new");
+    expect(store.getState().sessionSelectionPending).toBe(true);
+
+    releaseCatalog();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openCalls).toBe(0);
+    expect(store.getState().sessionId).toBeNull();
+
+    releaseCreate();
+    await expect(creating).resolves.toBe("created");
+    expect(store.getState().sessionId).toBe("created");
+  });
+
   it("welcome: stays on the welcome page even with recent sessions", async () => {
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap")) {

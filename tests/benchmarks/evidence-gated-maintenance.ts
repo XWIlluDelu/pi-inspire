@@ -26,10 +26,13 @@ import type {
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
+  PendingQueues,
   PromptRequest,
   SessionListResponse,
   SessionSummary,
   TranscriptPage,
+  UserTurnIndexPage,
+  UserTurnTranscriptPage,
 } from "../../shared/contracts.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createInspireServer } from "../../server/app.js";
@@ -72,6 +75,38 @@ const CONTROL_MAX_EVENT_LOOP_P95_MS = 25;
 const STREAM_DELTAS = 36;
 const BACKGROUND_SETTLEMENTS = 4;
 const PERSISTED_TARGET_BYTES = 11 * 1024 * 1024;
+function benchmarkPendingQueues(active: boolean): PendingQueues {
+  return {
+    managementAvailable: false,
+    paused: false,
+    revision: active ? 1 : 0,
+    steering: active
+      ? [
+          {
+            id: "benchmark-steer",
+            textPreview: "keep the visible projection bounded",
+            textLength: 35,
+            textTruncated: false,
+            imageCount: 0,
+            nonTextContentCount: 0,
+          },
+        ]
+      : [],
+    followUp: active
+      ? [
+          {
+            id: "benchmark-follow-up",
+            textPreview: "verify navigation chrome",
+            textLength: 24,
+            textTruncated: false,
+            imageCount: 0,
+            nonTextContentCount: 0,
+          },
+        ]
+      : [],
+  };
+}
+
 const EXPECTED_SCENARIO_REQUESTS: Record<string, number> = {
   "/api/branches/navigate": 1,
   "/api/branches/tree": 2,
@@ -100,8 +135,12 @@ function websocketOutcome(event: Record<string, unknown>): string {
     case "agent_start":
     case "agent_settled":
       return `${String(status?.runState ?? "")}:${String(status?.indicator ?? "")}`;
-    case "queue_update":
-      return `${Array.isArray(event.steering) ? event.steering.length : -1}:${Array.isArray(event.followUp) ? event.followUp.length : -1}`;
+    case "queue_update": {
+      const pending = event.pendingQueues as
+        | { steering?: unknown; followUp?: unknown }
+        | undefined;
+      return `${Array.isArray(pending?.steering) ? pending.steering.length : -1}:${Array.isArray(pending?.followUp) ? pending.followUp.length : -1}`;
+    }
     case "tool_execution_start":
       return String(event.toolName ?? "");
     case "message_update":
@@ -116,7 +155,7 @@ function websocketOutcome(event: Record<string, unknown>): string {
   }
 }
 
-function parseWebSocketWitness(payload: string): WebSocketWitness {
+function parseWebSocketWitness(payload: string): WebSocketWitness | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
@@ -126,6 +165,10 @@ function parseWebSocketWitness(payload: string): WebSocketWitness {
   if (!parsed || typeof parsed !== "object")
     throw new Error("WebSocket frame is not an event object");
   const event = parsed as Record<string, unknown>;
+  // Heartbeats are timing-dependent transport health frames, not scenario
+  // events; including them would make deterministic accounting depend on when
+  // an iteration crosses the server's wall-clock heartbeat boundary.
+  if (event.type === "heartbeat") return null;
   if (typeof event.type !== "string" || typeof event.sessionId !== "string") {
     throw new Error("WebSocket frame lacks a typed session address");
   }
@@ -784,12 +827,7 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
         [SESSION_ID]: { runState: this.running ? "running" : "idle" },
         ...this.backgroundStatuses,
       },
-      pendingQueues: this.running
-        ? {
-            steering: ["keep the visible projection bounded"],
-            followUp: ["verify navigation chrome"],
-          }
-        : { steering: [], followUp: [] },
+      pendingQueues: benchmarkPendingQueues(this.running),
       pendingExtensionUiRequests: [],
       extensionDisplays: [],
     };
@@ -869,8 +907,7 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
     this.emit("event", {
       type: "queue_update",
       sessionId: SESSION_ID,
-      steering: ["keep the visible projection bounded"],
-      followUp: ["verify navigation chrome"],
+      pendingQueues: benchmarkPendingQueues(true),
     });
     this.emit("event", {
       type: "message_start",
@@ -974,6 +1011,77 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
       messages: [],
       hasOlder: false,
       olderCursor: null,
+    };
+  }
+
+  async transcriptUserTurns(
+    sessionId: string,
+    start?: number,
+  ): Promise<UserTurnIndexPage> {
+    const turns = this.messages.flatMap((value, index) => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return [];
+      const message = value as Record<string, unknown>;
+      if (message.role !== "user") return [];
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content
+                .flatMap((part) =>
+                  part &&
+                  typeof part === "object" &&
+                  !Array.isArray(part) &&
+                  (part as Record<string, unknown>).type === "text" &&
+                  typeof (part as Record<string, unknown>).text === "string"
+                    ? [(part as Record<string, unknown>).text as string]
+                    : [],
+                )
+                .join(" ")
+            : "";
+      return [
+        {
+          id:
+            typeof message.__inspireMessageId === "string"
+              ? message.__inspireMessageId
+              : `benchmark-user:${index}`,
+          ordinal: 0,
+          snippet:
+            content.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
+          attachmentCount: 0,
+        },
+      ];
+    });
+    turns.forEach((turn, ordinal) => {
+      turn.ordinal = ordinal;
+    });
+    const pageStart =
+      start === undefined
+        ? Math.max(0, turns.length - 100)
+        : Math.min(start, turns.length);
+    return {
+      sessionId,
+      revision: 1,
+      viewId: "benchmark-view",
+      total: turns.length,
+      start: pageStart,
+      turns: turns.slice(pageStart, pageStart + 100),
+    };
+  }
+
+  async transcriptUserTurn(
+    sessionId: string,
+    targetMessageId: string,
+  ): Promise<UserTurnTranscriptPage> {
+    const page = this.active().transcriptPage;
+    return {
+      ...page,
+      sessionId,
+      targetMessageId,
+      rangeStart: 0,
+      rangeEnd: page.messages.length,
+      hasMoreInTurn: false,
+      continuationCursor: null,
     };
   }
 
@@ -1363,9 +1471,11 @@ async function browserIteration(
       (params.response as { payloadData?: unknown } | undefined)?.payloadData ??
         "",
     );
+    const witness = parseWebSocketWitness(payload);
+    if (!witness) return;
     websocketFrames += 1;
     websocketBytes += Buffer.byteLength(payload);
-    websocketWitnesses.push(parseWebSocketWitness(payload));
+    websocketWitnesses.push(witness);
   });
   try {
     await Promise.all([
@@ -1556,17 +1666,17 @@ async function browserIteration(
     );
     const branchAssertions = await client.evaluate<string[]>(`(() => {
       window.confirm = () => true;
-      const rows = [...document.querySelectorAll('.branch-row')];
-      const current = document.querySelector('[aria-label="Current branch: Assistant message"]');
-      const edit = document.querySelector('[aria-label="Edit from here: User message"]');
-      const fork = document.querySelector('[aria-label="Fork from here: User message"]');
-      const refresh = document.querySelector('[aria-label="Refresh branch history"]');
-      if (rows.length !== 4) throw new Error('expected four concrete branch rows');
-      if (!current || !current.disabled || current.getAttribute('aria-current') !== 'true') throw new Error('current branch control is not disabled/current');
-      if (!edit || edit.disabled || !fork || fork.disabled) throw new Error('branch edit/fork actions are unavailable');
-      if (!refresh || refresh.disabled) throw new Error('branch refresh control is unavailable');
+      const turns = [...document.querySelectorAll('.branch-turn')];
+      const current = document.querySelector('[aria-label="Current point: Assistant message"]');
+      const edit = [...document.querySelectorAll('[aria-label="Edit from here: User message"]')].find(node => !node.disabled);
+      const fork = [...document.querySelectorAll('[aria-label="Fork from here: User message"]')].find(node => !node.disabled);
+      const refresh = document.querySelector('[aria-label="Refresh history"]');
+      if (turns.length !== 2) throw new Error('expected two concrete user-turn groups');
+      if (!current || !current.disabled || current.getAttribute('aria-current') !== 'step') throw new Error('current point control is not disabled/current');
+      if (!edit || !fork) throw new Error('branch edit/fork actions are unavailable');
+      if (!refresh || refresh.disabled) throw new Error('history refresh control is unavailable');
       edit.click();
-      return ['four branch rows', 'current branch control', 'edit branch action', 'fork branch action', 'branch refresh control'];
+      return ['two user-turn groups', 'current point control', 'edit branch action', 'fork branch action', 'history refresh control'];
     })()`);
     assertions.push(...branchAssertions);
     await waitFor(
@@ -1606,7 +1716,7 @@ async function browserIteration(
     );
     await waitFor(
       client,
-      `document.querySelector('[aria-label="Pending steer"]') && document.querySelector('[aria-label="Pending queue"]')`,
+      `document.querySelector('[aria-label="Pending input"]') && document.querySelector('[aria-label="Pending steer"]') && document.querySelector('[aria-label="Pending queue"]')`,
     );
     await waitFor(
       client,
@@ -1846,7 +1956,10 @@ export default {
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env, NO_COLOR: "1" },
+        // React's Profiler callback is disabled by its production build. Pin
+        // the evaluator's dev server independently of the invoking shell so a
+        // workstation-wide NODE_ENV cannot silently erase every witness.
+        env: { ...process.env, NODE_ENV: "development", NO_COLOR: "1" },
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
