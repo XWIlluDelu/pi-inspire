@@ -15,7 +15,7 @@ The product begins as a Linux local web application for personal daily use. Its 
 - Project groups can collapse, and important sessions can be pinned persistently to a single top section without altering Pi’s session records.
 - Text, project-file references, pasted or dropped images, and ordinary file attachments can be submitted from the conversation composer.
 - Files and artifacts explicitly referenced by Pi messages or tool activity can be opened beside the conversation as defensive previews, including images, HTML, PDFs, and text/code, without granting the browser arbitrary filesystem access.
-- Thinking and tool activity use distinguishable cards with independently configurable density. Dynamic is the default: current model reasoning remains expanded, completed tools collapse individually, and a completed tool batch compacts when the next model call starts or the run settles; fixed visibility modes remain available.
+- Thinking and tool activity use distinguishable cards with independently configurable density. Adaptive is the default: current model reasoning remains expanded, completed tools compact individually, and a completed tool batch collapses when the next model call starts or the run settles; fixed visibility modes remain available.
 - The initial interface already has the adaptable workbench structure needed for future files, changes, session trees, subagents, timelines, and artifact previews.
 - The application uses the user’s existing Pi models, credentials, settings, extensions, skills, prompts, project context, and session records wherever Pi exposes them safely.
 - Launch behavior is user-selectable between resuming the previous session and showing a useful welcome page.

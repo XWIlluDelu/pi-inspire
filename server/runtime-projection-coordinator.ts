@@ -58,6 +58,16 @@ export class RuntimeProjectionCoordinator {
   ) {}
 
   attach(slot: RuntimeSlot, projection: SessionProjectionView): void {
+    projection.setOwnedAppendWindow?.(
+      () =>
+        slot.projection === projection &&
+        Boolean(slot.process) &&
+        this.writerBaselineMatches(slot) &&
+        (slot.persistenceExpectations.some(
+          (expectation) => expectation.matcher !== null,
+        ) ||
+          Boolean(slot.pendingPartialPersistence)),
+    );
     projection.on("update", (result) => {
       if (slot.projection !== projection || this.host.isClosing()) return;
       slot.projectionTail = slot.projectionTail

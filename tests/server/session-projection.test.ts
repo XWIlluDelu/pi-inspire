@@ -466,6 +466,121 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     }
   });
 
+  it("reuses the verified hash and immutable projection prefix for an owned append", async () => {
+    let prefixChunks = 0;
+    const hooks: SessionProjectionReadHooks = {
+      afterPrefixReadChunk: () => {
+        prefixChunks += 1;
+      },
+    };
+    const { path, projection } = await fixture(
+      [message("u1", null, "user", "one", 1)],
+      "session-a",
+      hooks,
+    );
+    try {
+      const firstProjectedMessage = projection.messages[0];
+      projection.setOwnedAppendWindow(() => true);
+      prefixChunks = 0;
+      await appendFile(
+        path,
+        `${JSON.stringify(message("a1", "u1", "assistant", "two", 2))}\n`,
+      );
+      expect(await projection.reconcile(true)).toMatchObject({
+        changed: true,
+        kind: "append",
+        messageChange: "append",
+      });
+      expect(prefixChunks).toBe(0);
+      expect(projection.messages[0]).toBe(firstProjectedMessage);
+      expect(projection.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "two",
+        __inspireUserTurnId: "u1:0",
+        __inspireUserTurnIndex: 0,
+      });
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("keeps owned linear suffix projection equivalent to a fresh Pi context build", async () => {
+    const { path, record, projection } = await fixture([
+      message("u1", null, "user", "one", 1),
+    ]);
+    let fresh: SessionProjection | null = null;
+    try {
+      projection.setOwnedAppendWindow(() => true);
+      const appended = [
+        {
+          type: "session_info",
+          id: "info",
+          parentId: "u1",
+          timestamp: "2026-08-01T00:00:02.000Z",
+          name: "Named",
+        },
+        {
+          type: "model_change",
+          id: "model",
+          parentId: "info",
+          timestamp: "2026-08-01T00:00:03.000Z",
+          provider: "test-provider",
+          modelId: "test-model",
+        },
+        {
+          type: "thinking_level_change",
+          id: "thinking",
+          parentId: "model",
+          timestamp: "2026-08-01T00:00:04.000Z",
+          thinkingLevel: "high",
+        },
+        {
+          type: "custom_message",
+          id: "custom",
+          parentId: "thinking",
+          timestamp: "2026-08-01T00:00:05.000Z",
+          customType: "notice",
+          content: "custom context",
+          display: true,
+        },
+        {
+          type: "branch_summary",
+          id: "summary",
+          parentId: "custom",
+          timestamp: "2026-08-01T00:00:06.000Z",
+          summary: "branch context",
+          fromId: "u1",
+        },
+        {
+          ...message("a1", "summary", "assistant", "two", 7),
+          message: {
+            role: "assistant",
+            content: "two",
+            timestamp: 7,
+            provider: "answer-provider",
+            model: "answer-model",
+          },
+        },
+      ];
+      await appendFile(
+        path,
+        `${appended.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      );
+      expect(await projection.reconcile(true)).toMatchObject({
+        kind: "append",
+        messageChange: "append",
+      });
+
+      fresh = await SessionProjection.open(record);
+      expect(projection.messages).toEqual(fresh.messages);
+      expect(projection.model).toEqual(fresh.model);
+      expect(projection.thinkingLevel).toBe(fresh.thinkingLevel);
+    } finally {
+      await fresh?.close();
+      await projection.close();
+    }
+  });
+
   it("uses one prefix pass plus the necessary full read for a grown rewrite", async () => {
     let prefixChunks = 0;
     let fullChunks = 0;
@@ -498,6 +613,37 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       expect(projection.messages[0]).toMatchObject({
         content: "new and longer",
       });
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("retains the last-good projection for duplicate or cyclic entry identity", async () => {
+    const { path, projection } = await fixture([
+      message("u1", null, "user", "good", 1),
+    ]);
+    try {
+      await appendFile(
+        path,
+        `${JSON.stringify(message("u1", "u1", "assistant", "duplicate", 2))}\n`,
+      );
+      await projection.reconcile(true);
+      expect(projection.health).toMatchObject({
+        status: "error",
+        message: expect.stringMatching(/duplicate entry/i),
+      });
+      expect(projection.messages).toHaveLength(1);
+
+      await writeFile(
+        path,
+        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", "u2", "user", "cycle one", 1))}\n${JSON.stringify(message("u2", "u1", "assistant", "cycle two", 2))}\n`,
+      );
+      await projection.reconcile(true);
+      expect(projection.health).toMatchObject({
+        status: "error",
+        message: expect.stringMatching(/missing or forward parent/i),
+      });
+      expect(projection.messages[0]).toMatchObject({ content: "good" });
     } finally {
       await projection.close();
     }

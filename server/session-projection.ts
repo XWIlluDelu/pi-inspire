@@ -3,6 +3,7 @@ import {
   createHmac,
   randomBytes,
   timingSafeEqual,
+  type Hash,
 } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { open, stat } from "node:fs/promises";
@@ -39,9 +40,9 @@ import {
 } from "./session-tree.js";
 import { samePersistedJson } from "./persisted-json.js";
 import { projectSafeValue } from "./safe-projection.js";
+import { JsonlObjectDecoder } from "./session-jsonl.js";
 
-/** Persisted JSONL and child RPC frames are independent trust boundaries. */
-export const MAX_PERSISTED_ENTRY_BYTES = 32 * 1024 * 1024;
+export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
 /** Includes the complete JSON representation of a TranscriptPage. */
 export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
@@ -65,6 +66,7 @@ interface FileIdentity {
 interface Candidate {
   identity: FileIdentity;
   fingerprint: string;
+  hashState: Hash;
   committedBytes: number;
   uncommittedBytes: number;
   uncommittedFingerprint: string | null;
@@ -73,6 +75,7 @@ interface Candidate {
   previousTailFingerprint: string | null;
   header: SessionHeader;
   entries: SessionEntry[];
+  entriesById: Map<string, SessionEntry>;
   messages: unknown[];
   model: unknown;
   thinkingLevel: string;
@@ -144,6 +147,9 @@ export interface SessionProjectionView {
   hasActiveEntryType(type: string): boolean;
   suspendReconciliation(): Promise<void>;
   resumeReconciliation(): void;
+  /** Reuse the verified content-hash prefix only while the Host has an exact
+   * append claim from the sole writer for this projection. */
+  setOwnedAppendWindow?(isOpen: () => boolean): void;
   latestPage(
     overlay?: readonly unknown[],
     effectiveLeafId?: string | null,
@@ -222,6 +228,30 @@ function sameVersion(left: FileIdentity, right: FileIdentity): boolean {
   );
 }
 
+function indexSessionEntries(
+  entries: readonly SessionEntry[],
+  existing: ReadonlyMap<string, SessionEntry> = new Map(),
+): Map<string, SessionEntry> {
+  const byId = new Map(existing);
+  for (const entry of entries) {
+    if (
+      typeof entry.type !== "string" ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      (entry.parentId !== null && typeof entry.parentId !== "string")
+    )
+      throw new Error("Persisted session contains an invalid entry identity");
+    if (byId.has(entry.id))
+      throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
+    if (entry.parentId !== null && !byId.has(entry.parentId))
+      throw new Error(
+        `Persisted session entry ${entry.id} has a missing or forward parent`,
+      );
+    byId.set(entry.id, entry);
+  }
+  return byId;
+}
+
 function contextMessages(
   entries: SessionEntry[],
   leafId: string | null,
@@ -251,6 +281,87 @@ function contextMessages(
         : {}),
     };
   });
+}
+
+function appendContextMessages(
+  previous: readonly unknown[],
+  entries: readonly SessionEntry[],
+): unknown[] {
+  let turnOrdinal = -1;
+  let turnId: string | null = null;
+  for (let index = previous.length - 1; index >= 0; index -= 1) {
+    const value = previous[index];
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (
+      Number.isSafeInteger(record.__inspireUserTurnIndex) &&
+      typeof record.__inspireUserTurnId === "string"
+    ) {
+      turnOrdinal = record.__inspireUserTurnIndex as number;
+      turnId = record.__inspireUserTurnId;
+      break;
+    }
+  }
+  const appended = entries.flatMap((entry) =>
+    sessionEntryToContextMessages(entry).map((message, index) => {
+      const id = `${entry.id}:${index}`;
+      if (message.role === "user") {
+        turnOrdinal += 1;
+        turnId = id;
+      }
+      return {
+        ...message,
+        __inspireMessageId: id,
+        __inspireEntryId: entry.id,
+        ...(turnId !== null
+          ? {
+              __inspireUserTurnId: turnId,
+              __inspireUserTurnIndex: turnOrdinal,
+            }
+          : {}),
+      };
+    }),
+  );
+  return [...previous, ...appended];
+}
+
+function appendedContextSettings(
+  currentModel: unknown,
+  currentThinkingLevel: string,
+  entries: readonly SessionEntry[],
+): { model: unknown; thinkingLevel: string } {
+  let model = currentModel;
+  let thinkingLevel = currentThinkingLevel;
+  for (const entry of entries) {
+    if (entry.type === "thinking_level_change") {
+      thinkingLevel = entry.thinkingLevel;
+    } else if (entry.type === "model_change") {
+      model = { provider: entry.provider, id: entry.modelId };
+    } else if (entry.type === "message" && entry.message.role === "assistant") {
+      model = {
+        provider: entry.message.provider,
+        id: entry.message.model,
+      };
+    }
+  }
+  return { model, thinkingLevel };
+}
+
+function isLinearAppend(
+  currentLeafId: string | null,
+  entries: readonly SessionEntry[],
+): boolean {
+  let parentId = currentLeafId;
+  for (const entry of entries) {
+    if (
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      entry.parentId !== parentId
+    )
+      return false;
+    parentId = entry.id;
+  }
+  return !entries.some((entry) => entry.type === "compaction");
 }
 
 function projectedMessageId(value: unknown): string | null {
@@ -638,56 +749,6 @@ function healthError(error: unknown): ProjectionHealth {
   return { status: "error", message };
 }
 
-function decodeJsonlObject(line: Buffer): Record<string, unknown> {
-  if (line.length === 0)
-    throw new Error("Persisted session contains an empty JSONL entry");
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line));
-  } catch (error) {
-    throw new Error(
-      `Persisted session contains a malformed complete JSONL entry: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Persisted session entry must be a JSON object");
-  }
-  return value as Record<string, unknown>;
-}
-
-/** One incremental decoder owns full and append framing. A non-LF tail stays unparsed on disk. */
-class JsonlObjectDecoder {
-  private pending: Buffer = Buffer.alloc(0);
-  constructor(private readonly onFrame: (frame: Buffer) => void) {}
-  tail(): Buffer {
-    return Buffer.from(this.pending);
-  }
-  push(chunk: Buffer): Record<string, unknown>[] {
-    this.pending =
-      this.pending.length === 0 ? chunk : Buffer.concat([this.pending, chunk]);
-    const values: Record<string, unknown>[] = [];
-    while (true) {
-      const lf = this.pending.indexOf(0x0a);
-      if (lf === -1) {
-        if (this.pending.length > MAX_PERSISTED_ENTRY_BYTES)
-          throw new Error(
-            `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
-          );
-        return values;
-      }
-      const line = this.pending.subarray(0, lf);
-      if (line.length > MAX_PERSISTED_ENTRY_BYTES)
-        throw new Error(
-          `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
-        );
-      const frame = this.pending.subarray(0, lf + 1);
-      this.onFrame(frame);
-      this.pending = this.pending.subarray(lf + 1);
-      values.push(decodeJsonlObject(line));
-    }
-  }
-}
-
 export interface SessionProjectionReadHooks {
   afterFullReadChunk?(): Promise<void> | void;
   afterPrefixReadChunk?(): Promise<void> | void;
@@ -710,6 +771,7 @@ export class SessionProjection
   private currentThinkingLevel = "off";
   private currentLeafId: string | null = null;
   private currentEntries: SessionEntry[] = [];
+  private currentEntriesById = new Map<string, SessionEntry>();
   private readonly userTurnIndexes = new Map<
     string,
     { revision: number; turns: readonly UserTurnAnchor[] }
@@ -717,6 +779,7 @@ export class SessionProjection
   private currentHeader: SessionHeader | null = null;
   private currentIdentity: FileIdentity | null = null;
   private currentFingerprint = "";
+  private currentHashState: Hash | null = null;
   private currentCommittedBytes = 0;
   private currentUncommittedBytes = 0;
   private currentUncommittedFingerprint: string | null = null;
@@ -743,6 +806,7 @@ export class SessionProjection
   private reconciliationResume: Promise<void> | null = null;
   private resolveReconciliationResume: (() => void) | null = null;
   private closed = false;
+  private ownedAppendWindow: () => boolean = () => false;
   /** Pi reserves a path for a new session but delays creating the JSONL.
    * Only new-session ownership may enter this state; it remains active across
    * complete-line prefixes until disk catches the creating worker's entries. */
@@ -880,13 +944,12 @@ export class SessionProjection
   }
 
   hasActiveEntryType(type: string): boolean {
-    const byId = new Map(this.currentEntries.map((entry) => [entry.id, entry]));
     const seen = new Set<string>();
     let id = this.currentLeafId;
     while (id !== null) {
       if (seen.has(id)) return false;
       seen.add(id);
-      const entry = byId.get(id);
+      const entry = this.currentEntriesById.get(id);
       if (!entry) return false;
       if (entry.type === type) return true;
       id = entry.parentId;
@@ -916,8 +979,12 @@ export class SessionProjection
     if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
   }
 
+  setOwnedAppendWindow(isOpen: () => boolean): void {
+    this.ownedAppendWindow = isOpen;
+  }
+
   entry(id: string): ProjectionEntryTarget | null {
-    const found = this.currentEntries.find((entry) => entry.id === id);
+    const found = this.currentEntriesById.get(id);
     if (!found) return null;
     return {
       id: found.id,
@@ -931,14 +998,12 @@ export class SessionProjection
   }
 
   persistedEntryMatches(entry: SessionEntry): boolean {
-    const found = this.currentEntries.find(
-      (candidate) => candidate.id === entry.id,
-    );
+    const found = this.currentEntriesById.get(entry.id);
     return found !== undefined && samePersistedJson(found, entry);
   }
 
   userText(id: string, maxChars: number): string {
-    const entry = this.currentEntries.find((candidate) => candidate.id === id);
+    const entry = this.currentEntriesById.get(id);
     if (!entry)
       throw Object.assign(new Error("Branch target does not exist"), {
         status: 404,
@@ -951,7 +1016,7 @@ export class SessionProjection
   ): BranchTreeResponse {
     if (
       effectiveLeafId !== null &&
-      !this.currentEntries.some((entry) => entry.id === effectiveLeafId)
+      !this.currentEntriesById.has(effectiveLeafId)
     ) {
       throw Object.assign(new Error("Effective branch leaf does not exist"), {
         status: 409,
@@ -984,14 +1049,17 @@ export class SessionProjection
     if (effectiveLeafId === this.currentLeafId) return this.currentMessages;
     if (
       effectiveLeafId !== null &&
-      !this.currentEntries.some((entry) => entry.id === effectiveLeafId)
+      !this.currentEntriesById.has(effectiveLeafId)
     ) {
       throw Object.assign(new Error("Effective branch leaf does not exist"), {
         status: 409,
       });
     }
-    const byId = new Map(this.currentEntries.map((entry) => [entry.id, entry]));
-    return contextMessages(this.currentEntries, effectiveLeafId, byId);
+    return contextMessages(
+      this.currentEntries,
+      effectiveLeafId,
+      this.currentEntriesById,
+    );
   }
 
   private startWatching(): void {
@@ -1197,10 +1265,12 @@ export class SessionProjection
         this.currentThinkingLevel = candidate.thinkingLevel;
         this.currentLeafId = candidate.leafId;
         this.currentEntries = candidate.entries;
+        this.currentEntriesById = candidate.entriesById;
         this.currentHeader = candidate.header;
         this.currentFingerprint = candidate.fingerprint;
         this.currentCommittedBytes = candidate.committedBytes;
       }
+      this.currentHashState = candidate.hashState;
       this.currentIdentity = candidate.identity;
       this.currentUncommittedBytes = candidate.uncommittedBytes;
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
@@ -1276,11 +1346,12 @@ export class SessionProjection
     }
   }
 
-  /** Verify the established prefix while parsing only newly appended lines. */
+  /** Reconcile newly appended frames, reusing an owned prefix when provenance allows. */
   private async tryReadAppendCandidate(): Promise<Candidate | null> {
     if (
       !this.currentIdentity ||
       !this.currentHeader ||
+      !this.currentHashState ||
       this.currentRevision === 0
     )
       return null;
@@ -1296,25 +1367,34 @@ export class SessionProjection
     try {
       const before = identity((await handle.stat({ bigint: true })) as never);
       if (!sameObject(before, addressed)) return null;
-      const hash = createHash("sha256");
-      let prefixBytes = 0;
-      if (this.currentCommittedBytes > 0) {
-        for await (const raw of handle.createReadStream({
-          start: 0,
-          end: this.currentCommittedBytes - 1,
-          autoClose: false,
-        })) {
-          const chunk = raw as Buffer;
-          hash.update(chunk);
-          await this.readHooks?.afterPrefixReadChunk?.();
-          prefixBytes += chunk.length;
+      // An exact pending Pi claim supplies the provenance for the ordinary
+      // one-writer append path. Otherwise reread the prefix so unowned rewrites
+      // still fail closed before any new entries are projected.
+      const reuseVerifiedPrefix =
+        before.size > this.currentIdentity.size && this.ownedAppendWindow();
+      const hash = reuseVerifiedPrefix
+        ? this.currentHashState.copy()
+        : createHash("sha256");
+      if (!reuseVerifiedPrefix) {
+        let prefixBytes = 0;
+        if (this.currentCommittedBytes > 0) {
+          for await (const raw of handle.createReadStream({
+            start: 0,
+            end: this.currentCommittedBytes - 1,
+            autoClose: false,
+          })) {
+            const chunk = raw as Buffer;
+            hash.update(chunk);
+            await this.readHooks?.afterPrefixReadChunk?.();
+            prefixBytes += chunk.length;
+          }
         }
+        if (
+          prefixBytes !== this.currentCommittedBytes ||
+          hash.copy().digest("hex") !== this.currentFingerprint
+        )
+          return null;
       }
-      if (
-        prefixBytes !== this.currentCommittedBytes ||
-        hash.copy().digest("hex") !== this.currentFingerprint
-      )
-        return null;
 
       const appended: Record<string, unknown>[] = [];
       let committedBytes = this.currentCommittedBytes;
@@ -1351,19 +1431,41 @@ export class SessionProjection
       if (!sameVersion(before, after) || !sameVersion(after, finalAddressed))
         return null;
       const tail = decoder.tail();
-      const mutable = [
-        structuredClone(this.currentHeader),
-        ...structuredClone(this.currentEntries),
-        ...appended,
-      ] as Array<SessionHeader | SessionEntry>;
-      migrateSessionEntries(mutable);
-      const entries = mutable.slice(1) as SessionEntry[];
+      const appendedEntries = appended as unknown as SessionEntry[];
+      const entriesById = indexSessionEntries(
+        appendedEntries,
+        this.currentEntriesById,
+      );
+      const entries = [...this.currentEntries, ...appendedEntries];
       const leafId = entries.at(-1)?.id ?? null;
-      const byId = new Map(entries.map((entry) => [entry.id, entry]));
-      const context = buildSessionContext(entries, leafId, byId);
+      let messages = this.currentMessages;
+      let model = this.currentModel;
+      let thinkingLevel = this.currentThinkingLevel;
+      if (appendedEntries.length > 0) {
+        if (isLinearAppend(this.currentLeafId, appendedEntries)) {
+          messages = appendContextMessages(
+            this.currentMessages,
+            appendedEntries,
+          );
+          ({ model, thinkingLevel } = appendedContextSettings(
+            this.currentModel,
+            this.currentThinkingLevel,
+            appendedEntries,
+          ));
+        } else {
+          const context = buildSessionContext(entries, leafId, entriesById);
+          messages = contextMessages(entries, leafId, entriesById);
+          model = context.model
+            ? { provider: context.model.provider, id: context.model.modelId }
+            : null;
+          thinkingLevel = context.thinkingLevel;
+        }
+      }
+      const fingerprint = hash.copy().digest("hex");
       return {
         identity: finalAddressed,
-        fingerprint: hash.digest("hex"),
+        fingerprint,
+        hashState: hash,
         committedBytes,
         uncommittedBytes: tail.length,
         uncommittedFingerprint:
@@ -1377,13 +1479,12 @@ export class SessionProjection
             : this.currentUncommittedBytes === 0
               ? null
               : "",
-        header: mutable[0] as SessionHeader,
+        header: this.currentHeader,
         entries,
-        messages: contextMessages(entries, leafId, byId),
-        model: context.model
-          ? { provider: context.model.provider, id: context.model.modelId }
-          : null,
-        thinkingLevel: context.thinkingLevel,
+        entriesById,
+        messages,
+        model,
+        thinkingLevel,
         leafId,
       };
     } finally {
@@ -1464,11 +1565,13 @@ export class SessionProjection
         migrateSessionEntries(mutable);
         const entries = mutable.slice(1) as SessionEntry[];
         const leafId = entries.at(-1)?.id ?? null;
-        const byId = new Map(entries.map((entry) => [entry.id, entry]));
+        const byId = indexSessionEntries(entries);
         const context = buildSessionContext(entries, leafId, byId);
+        const fingerprint = hash.copy().digest("hex");
         return {
           identity: addressed,
-          fingerprint: hash.digest("hex"),
+          fingerprint,
+          hashState: hash,
           committedBytes,
           uncommittedBytes: tail.length,
           uncommittedFingerprint:
@@ -1491,6 +1594,7 @@ export class SessionProjection
                 : "",
           header,
           entries,
+          entriesById: byId,
           messages: contextMessages(entries, leafId, byId),
           model: context.model
             ? { provider: context.model.provider, id: context.model.modelId }
@@ -1613,14 +1717,12 @@ export class SessionProjection
       );
     }
     if (decoded.effectiveLeafId !== effectiveLeafId) {
-      const byId = new Map(
-        this.currentEntries.map((entry) => [entry.id, entry]),
-      );
       let branchCursor = effectiveLeafId;
       let appendDescendant = decoded.effectiveLeafId === null;
       while (branchCursor && !appendDescendant) {
         if (branchCursor === decoded.effectiveLeafId) appendDescendant = true;
-        branchCursor = byId.get(branchCursor)?.parentId ?? null;
+        branchCursor =
+          this.currentEntriesById.get(branchCursor)?.parentId ?? null;
       }
       // Cursors survive a strictly append-only continuation of the same
       // branch. A switch to a sibling or ancestor view remains stale.
