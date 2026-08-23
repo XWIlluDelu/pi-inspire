@@ -36,6 +36,7 @@ import {
   requestInstall,
   subscribeInstallAvailability,
 } from "../install-app";
+import { preferenceChoiceLabel } from "../preference-labels";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
@@ -79,24 +80,19 @@ const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
   { value: "mod-enter", label: "Ctrl/⌘ Enter" },
 ];
 
-function adaptiveLabel(value: string): string {
-  if (value === "dynamic") return "Adaptive";
-  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
-}
-
 const REASONING_DETAILS = VISIBILITY_PREFERENCES.map((value) => ({
   value,
-  label: adaptiveLabel(value),
+  label: preferenceChoiceLabel(value),
 }));
 
 const TOOL_ACTIVITY = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
   value,
-  label: adaptiveLabel(value),
+  label: preferenceChoiceLabel(value),
 }));
 
 const ACTIVITY_GROUPS = ACTIVITY_FOLD_VISIBILITIES.map((value) => ({
   value,
-  label: adaptiveLabel(value),
+  label: preferenceChoiceLabel(value),
   description:
     value === "dynamic"
       ? "Adjusts as live activity starts and finishes."

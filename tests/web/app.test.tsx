@@ -901,12 +901,82 @@ describe("welcome flow", () => {
     );
   });
 
+  it("lets mobile transcript tools own Escape without aborting a busy run", async () => {
+    const media = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query) => ({
+        matches: query === "(max-width: 900px)",
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }));
+    try {
+      await store.openSession("s1");
+      render(<App />);
+      const ws = FakeWebSocket.instances.at(-1)!;
+      const before = abortCalls;
+      act(() => ws.emit({ type: "agent_start" }));
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open conversation search" }),
+      );
+      const search = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      fireEvent.keyDown(search, { key: "Escape" });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Open conversation search" }),
+        ).toHaveFocus(),
+      );
+      expect(abortCalls).toBe(before);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open prompt navigation" }),
+      );
+      fireEvent.keyDown(
+        screen.getByRole("navigation", { name: "User prompt navigation" }),
+        { key: "Escape" },
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Open prompt navigation" }),
+        ).toHaveFocus(),
+      );
+      expect(abortCalls).toBe(before);
+
+      act(() => ws.emit({ type: "agent_settled" }));
+    } finally {
+      media.mockRestore();
+    }
+  });
+
+  it("lets session search own Escape without aborting a busy run", async () => {
+    render(<App />);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    const before = abortCalls;
+    act(() => ws.emit({ type: "agent_start" }));
+
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    search.focus();
+    fireEvent.keyDown(search, { key: "Escape" });
+
+    expect(search).not.toHaveFocus();
+    expect(abortCalls).toBe(before);
+    act(() => ws.emit({ type: "agent_settled" }));
+  });
+
   it("aborts a busy run on Escape when no overlay owns the key", async () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;
     act(() => ws.emit({ type: "agent_start" }));
+    const before = abortCalls;
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(abortCalls).toBe(1);
+    await waitFor(() => expect(abortCalls).toBe(before + 1));
     act(() => ws.emit({ type: "agent_settled" }));
     await waitFor(() => expect(store.getState().runState).toBe("idle"));
     act(() =>
@@ -1246,6 +1316,15 @@ describe("folder grouping and settings page", () => {
     expect(
       await screen.findByRole("dialog", { name: "Command palette" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /Activity groups: Adaptive/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /Assistant turn details: On/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /Activity folds|Assistant rounds/ }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: /Theme: Dark/ }));
     expect(store.getState().prefs.theme).toBe("dark");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
