@@ -91,6 +91,51 @@ describe("settled transcript search", () => {
     expect(search).not.toHaveClass("transcript-search--active");
   });
 
+  it("opens and closes mobile search explicitly without hiding an active query", async () => {
+    const { container } = render(
+      <Transcript
+        sessionId="mobile-search"
+        messages={[
+          { role: "user", content: "find this prompt", timestamp: 1 },
+          { role: "assistant", content: "settled answer", timestamp: 2 },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open conversation search" }),
+    );
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(container.querySelector(".transcript-wrap")).toHaveClass(
+      "transcript-wrap--mobile-search",
+    );
+    expect(
+      screen.getByRole("search", { name: "Search settled transcript" }),
+    ).toHaveClass("transcript-search--mobile-open");
+
+    fireEvent.change(input, { target: { value: "find" } });
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 match");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close conversation search" }),
+    );
+
+    expect(input).toHaveValue("");
+    expect(container.querySelector(".transcript-wrap")).toHaveClass(
+      "transcript-wrap--mobile-idle",
+    );
+    expect(
+      screen.getByRole("button", { name: "Open conversation search" }),
+    ).toBeInTheDocument();
+  });
+
   it("finds case-insensitive literal occurrences only in settled user and assistant text", () => {
     expect(findLiteralMatches("Alpha alpha alphabet", "ALPHA", 3)).toEqual([
       { rowIndex: 3, offset: 0 },

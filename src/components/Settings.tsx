@@ -112,7 +112,7 @@ const COMPLETION_ATTENTION: Array<{
   { value: "desktop", label: "Desktop notification" },
 ];
 
-export interface CategoryMeta {
+interface CategoryMeta {
   id: string;
   label: string;
   icon: React.ReactNode;
