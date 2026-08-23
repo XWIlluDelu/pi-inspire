@@ -113,6 +113,48 @@ describe("design token contract", () => {
     expect(css).toMatch(/\.tool-block__path\s*{[^}]*flex:\s*1 1 0/s);
   });
 
+  it("scopes reading presets to content typography and the shared reading measure", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    expect(css).toMatch(
+      /:root\[data-content-text-size="compact"\]\s*{[^}]*--text-reading:\s*14px/s,
+    );
+    expect(css).toMatch(
+      /:root\[data-content-text-size="large"\]\s*{[^}]*--text-reading:\s*17px/s,
+    );
+    expect(css).toMatch(
+      /\.user-bubble\s*{[^}]*font-size:\s*var\(--text-reading\)/s,
+    );
+    expect(css).toMatch(
+      /\.code-block__pre\s*{[^}]*font-size:\s*var\(--text-reading-code\)/s,
+    );
+    expect(css).toMatch(
+      /\.composer__input\s*{[^}]*font-size:\s*var\(--text-reading\)/s,
+    );
+    expect(css).toMatch(
+      /\.card__body\s*{[^}]*font-size:\s*var\(--text-reading-small\)/s,
+    );
+    expect(css).toMatch(
+      /\.tool-code,\s*\.tool-terminal,\s*\.tool-text\s*{[^}]*font-size:\s*var\(--text-reading-code\)/s,
+    );
+    expect(css).toMatch(
+      /\.diff-view\s*{[^}]*font-size:\s*var\(--text-reading-code\)/s,
+    );
+    expect(css).toMatch(
+      /:root\[data-reading-width="narrow"\]\s*{[^}]*--reading-width-max:\s*680px/s,
+    );
+    expect(css).toMatch(
+      /:root\[data-reading-width="wide"\]\s*{[^}]*--reading-width-max:\s*980px/s,
+    );
+    expect(css).toMatch(/--content-max:\s*var\(--reading-width-max\)/);
+    expect(css).toMatch(/--composer-max:\s*var\(--reading-width-max\)/);
+    expect(css).toMatch(
+      /\.settings\s+\.segmented\s*{[^}]*display:\s*inline-grid[^}]*grid-auto-columns:\s*minmax\(0, 1fr\)/s,
+    );
+    expect(css).toMatch(
+      /\.settings\s+\.segmented__item\s*{[^}]*min-width:\s*0/s,
+    );
+  });
+
   it("preserves user prompt line breaks, bounds token-gate controls, and keeps composer spacers elastic", async () => {
     const css = await readFile(stylesheet, "utf8");
     expect(css).toMatch(

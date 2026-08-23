@@ -72,9 +72,12 @@ anatomy that must remain stable rather than duplicating every declaration.
 - IBM Plex Sans SC owns interface controls, reading text, Chinese/Latin flow,
   and the wordmark. Flux Mono SC owns code, paths, identifiers, timestamps,
   shortcut labels, and machine-oriented data. KaTeX keeps its bundled glyphs.
-- The shared type scale is 11.5px, 12.5px, 14px, 15.5px, 17px, 21px, and 26px;
-  600 is the maximum product weight. CJK running text has no tracking, while
-  short uppercase Latin labels may use restrained tracking.
+- The shared type scale is 11.5px, 12.5px, 14px, 15.5px, 17px, 21px, 26px, and
+  32px; 600 is the maximum product weight. CJK running text has no tracking,
+  while short uppercase Latin labels may use restrained tracking. Compact,
+  Comfortable, and Large content presets remap only conversation prose,
+  headings, code, reasoning, tables, composer drafts, and text previews across
+  this scale; interface controls keep their fixed tiers.
 - The 4px spacing scale is the only general rhythm. Geometry is intentionally
   precise: 2px inline corners, 3px controls, 4px resting surfaces, and 6px
   overlays. `999px` is reserved for genuinely round/capsule affordances such
@@ -84,8 +87,10 @@ anatomy that must remain stable rather than duplicating every declaration.
   the shared shadow roles. The reading stage is a content field, not one giant
   card.
 - Desktop is a three-region workbench: a 220–272px navigation column (48px
-  collapsed rail), a centered 820px reading/composer field, and a contextual
-  pane clamped from 340px to 760px. The 52px topbar aligns the regions without
+  collapsed rail), a centered reading/composer field with Narrow 680px,
+  Comfortable 820px, and Wide 980px measures, and a contextual pane clamped
+  from 340px to 760px. Responsive caps and the available center region still
+  bound every selected measure. The 52px topbar aligns the regions without
   turning the page into a dashboard of boxed panels.
 
 ## Component grammar

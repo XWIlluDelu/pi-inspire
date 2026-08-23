@@ -4,7 +4,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
+  CONTENT_TEXT_SIZES,
   defaultPreferences,
+  DESKTOP_SEND_KEYS,
+  READING_WIDTHS,
   type InspirePreferences,
 } from "../shared/contracts.js";
 
@@ -14,7 +17,10 @@ import {
 const preferenceFields = {
   theme: z.enum(["system", "light", "dark"]),
   palette: z.enum(["amber", "teal"]),
+  contentTextSize: z.enum(CONTENT_TEXT_SIZES),
+  readingWidth: z.enum(READING_WIDTHS),
   launch: z.enum(["welcome", "continue"]),
+  desktopSendKey: z.enum(DESKTOP_SEND_KEYS),
   thinkingVisibility: z.enum(["dynamic", "expanded", "collapsed", "hidden"]),
   toolVisibility: z.enum([
     "dynamic",

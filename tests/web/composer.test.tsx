@@ -235,6 +235,12 @@ describe("composer keyboard submission", () => {
       const textarea = screen.getByLabelText("Message");
       typeDraft("first line");
       expect(fireEvent.keyDown(textarea, { key: "Enter" })).toBe(true);
+      expect(fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true })).toBe(
+        true,
+      );
+      expect(fireEvent.keyDown(textarea, { key: "Enter", metaKey: true })).toBe(
+        true,
+      );
       await act(async () => Promise.resolve());
       expect(promptBodies).toHaveLength(promptsBefore);
 

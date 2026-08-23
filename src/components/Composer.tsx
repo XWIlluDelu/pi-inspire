@@ -144,11 +144,12 @@ export function Composer() {
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!shouldSubmitComposerEnter(event.nativeEvent)) return;
+    if (
+      !shouldSubmitComposerEnter(event.nativeEvent, state.prefs.desktopSendKey)
+    )
+      return;
     event.preventDefault();
-    if (composerBusy && (event.ctrlKey || event.metaKey))
-      void submit("followUp");
-    else void submit(activeBehavior);
+    void submit(activeBehavior);
   };
 
   const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {

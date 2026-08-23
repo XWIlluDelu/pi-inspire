@@ -1132,52 +1132,60 @@ describe("folder grouping and settings page", () => {
     expect(
       within(dialog).getByRole("group", { name: "Project location" }),
     ).toBeInTheDocument();
-    const thinkingCards = within(dialog).getByLabelText("Thinking cards");
-    const toolCards = within(dialog).getByLabelText("Tool cards");
-    const activityFolds = within(dialog).getByLabelText("Activity folds");
-    const assistantRounds = within(dialog).getByLabelText("Assistant rounds");
-    expect(assistantRounds).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("group", { name: "Content text size" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("group", { name: "Reading width" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("group", { name: "Desktop send key" }),
+    ).toBeInTheDocument();
+    const reasoning = within(dialog).getByLabelText("Reasoning detail");
+    const tools = within(dialog).getByLabelText("Tool activity");
+    const activityGroups = within(dialog).getByLabelText("Activity groups");
+    expect(
+      within(dialog).getByRole("switch", { name: "Assistant turn details" }),
+    ).toBeInTheDocument();
     expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
 
     const optionLabels = (label: string) =>
       within(screen.getByRole("listbox", { name: label }))
         .getAllByRole("option")
-        .map((option) => option.textContent);
-    fireEvent.click(thinkingCards);
-    expect(optionLabels("Thinking cards")).toEqual([
-      "Dynamic",
+        .map(
+          (option) =>
+            option.querySelector(".dropdown__option-label")?.textContent,
+        );
+    fireEvent.click(reasoning);
+    expect(optionLabels("Reasoning detail")).toEqual([
+      "Adaptive",
       "Expanded",
       "Collapsed",
       "Hidden",
     ]);
-    fireEvent.click(thinkingCards);
-    fireEvent.click(toolCards);
-    expect(optionLabels("Tool cards")).toEqual([
-      "Dynamic",
+    fireEvent.click(reasoning);
+    fireEvent.click(tools);
+    expect(optionLabels("Tool activity")).toEqual([
+      "Adaptive",
       "Expanded",
       "Compact",
       "Collapsed",
       "Hidden",
     ]);
-    fireEvent.click(toolCards);
-    fireEvent.click(activityFolds);
-    expect(optionLabels("Activity folds")).toEqual([
-      "Dynamic",
+    fireEvent.click(tools);
+    fireEvent.click(activityGroups);
+    expect(optionLabels("Activity groups")).toEqual([
+      "Adaptive",
       "Expanded",
       "Compact",
       "Collapsed",
     ]);
-    fireEvent.click(activityFolds);
-    fireEvent.click(assistantRounds);
-    expect(optionLabels("Assistant rounds")).toEqual(["Details", "Divider"]);
-    fireEvent.click(assistantRounds);
+    fireEvent.click(activityGroups);
     expect(
-      within(dialog).getByRole("combobox", { name: "Completion attention" }),
+      within(dialog).getByRole("combobox", { name: "Completion alerts" }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(
-        /permission is requested only when you choose it/i,
-      ),
+      within(dialog).getByText(/notifications also keep the tab marked/i),
     ).toBeInTheDocument();
     // the overlay floats above the conversation instead of replacing it
     expect(screen.getByText("hello world")).toBeInTheDocument();

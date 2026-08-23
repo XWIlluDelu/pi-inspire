@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 interface DropdownOption {
   value: string;
   label: string;
+  description?: string;
 }
 
 /**
@@ -146,13 +147,20 @@ export function Dropdown({
               role="option"
               id={`${id}-option-${index}`}
               aria-selected={option.value === value}
-              className={`dropdown__option ${index === active ? "dropdown__option--active" : ""}`}
+              className={`dropdown__option ${option.description ? "dropdown__option--described" : ""} ${index === active ? "dropdown__option--active" : ""}`}
               // Focus must stay on the trigger; mousedown would steal it.
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setActive(index)}
               onClick={() => pick(option)}
             >
-              <span className="dropdown__option-label">{option.label}</span>
+              <span className="dropdown__option-copy">
+                <span className="dropdown__option-label">{option.label}</span>
+                {option.description ? (
+                  <span className="dropdown__option-description">
+                    {option.description}
+                  </span>
+                ) : null}
+              </span>
               {option.value === value ? <Check size={12} aria-hidden /> : null}
             </div>
           ))}
