@@ -186,15 +186,14 @@ function catalog(records: SessionRecord[]): SessionCatalogLike {
   const byId = new Map(records.map((item) => [item.id, item]));
   return {
     refresh: async () => records,
-    get: async (id) => byId.get(id),
-    getUnique: async (id) => {
+    get: async (id) => {
       const matches = records.filter((record) => record.id === id);
       if (matches.length > 1)
         throw Object.assign(
           new Error("The session identity is ambiguous in the Pi catalog"),
           { status: 409 },
         );
-      return matches[0];
+      return byId.get(id);
     },
     list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
     listByIds: async () => [],

@@ -21,7 +21,7 @@ Make common tool and Thinking activity immediately legible without coupling the 
 
 ## Checks
 
-- Existing Tool and Thinking cards remain the only owners of identity, disclosure, Dynamic lifecycle, status, copy, resource actions, motion, accessibility, and failure styling. A configured presentation replaces only its summary and expanded body.
+- Existing Tool and Thinking cards remain the only owners of identity, disclosure, Adaptive lifecycle, status, copy, resource actions, motion, accessibility, and failure styling. A configured presentation replaces only its summary and expanded body.
 - Tool rule definitions have namespaced ids and remain separate from exact tool-name mappings. INSΠRE ships project-wide Pi rules and mappings; a machine-local configuration adds declarative rules and replaces mappings without modifying shipped definitions.
 - Tool resolution applies the user mapping for a tool name when present, otherwise the shipped mapping. After selecting that one mapping, a missing, throwing, or shape-incompatible rule returns directly to generic raw rendering; it never tries a second semantic rule.
 - Thinking has one optional direct declaration because it is a singleton activity kind. It may select only display-cleaned `thinking.text`; tool rules cannot select that namespace, and Thinking cannot select tool arguments or results.

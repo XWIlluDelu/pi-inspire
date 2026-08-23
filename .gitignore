@@ -8,7 +8,6 @@
 /.inspire/
 *.tgz
 /coverage/
-/test-results/
 .env
 .env.*
 !.env.example

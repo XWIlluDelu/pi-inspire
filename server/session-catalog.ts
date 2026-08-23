@@ -1,5 +1,4 @@
-import type { SessionInfo } from "@earendil-works/pi-coding-agent";
-import { SessionManager, SettingsManager } from "./pi-runtime.js";
+import { SettingsManager } from "./pi-runtime.js";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,
@@ -7,22 +6,14 @@ import {
   type SessionListResponse,
   type SessionSummary,
 } from "../shared/contracts.js";
+import {
+  SessionMetadataIndex,
+  type SessionRecord,
+} from "./session-metadata.js";
+
+export type { SessionRecord } from "./session-metadata.js";
 
 const CACHE_MS = 5_000;
-const SEARCHABLE_FIRST_MESSAGE_CHARS = 10_000;
-
-export interface SessionRecord {
-  path: string;
-  id: string;
-  cwd: string;
-  name?: string;
-  parentSessionPath?: string;
-  created: Date;
-  modified: Date;
-  messageCount: number;
-  firstMessage: string;
-  searchText: string;
-}
 
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -50,28 +41,6 @@ function displayTitle(session: SessionRecord): string {
     : "New session";
 }
 
-function slimSession(session: SessionInfo): SessionRecord {
-  const firstMessage = session.firstMessage.slice(
-    0,
-    SEARCHABLE_FIRST_MESSAGE_CHARS,
-  );
-  return {
-    path: session.path,
-    id: session.id,
-    cwd: session.cwd,
-    name: session.name,
-    parentSessionPath: session.parentSessionPath,
-    created: session.created,
-    modified: session.modified,
-    messageCount: session.messageCount,
-    firstMessage,
-    searchText: [session.name, firstMessage, session.cwd]
-      .filter(Boolean)
-      .join("\n")
-      .toLowerCase(),
-  };
-}
-
 /** The newest sessions of each named working directory, bounded per directory.
  * Selection is separate from projection so the ordering and the bound stay
  * checkable without a Pi session tree. */
@@ -96,9 +65,6 @@ export function newestPerCwd(
 export interface SessionCatalogLike {
   refresh(force?: boolean): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
-  /** Returns one identity from the last complete catalog projection, refusing
-   * a duplicate instead of guessing which same-id JSONL the caller meant. */
-  getUnique?(id: string): Promise<SessionRecord | undefined>;
   list(options?: {
     query?: string;
     offset?: number;
@@ -116,10 +82,17 @@ export class SessionCatalog implements SessionCatalogLike {
   private cached: SessionRecord[] = [];
   private loadedAt = 0;
   private byId = new Map<string, SessionRecord>();
+  private ambiguousIds = new Set<string>();
   private idByPath = new Map<string, string>();
   private loading: Promise<readonly SessionRecord[]> | null = null;
 
-  constructor(private readonly startupCwd: string) {}
+  constructor(
+    private readonly startupCwd: string,
+    private readonly metadata: Pick<
+      SessionMetadataIndex,
+      "list"
+    > = new SessionMetadataIndex(),
+  ) {}
 
   async refresh(force = false): Promise<readonly SessionRecord[]> {
     if (!force && this.loadedAt > 0 && Date.now() - this.loadedAt < CACHE_MS)
@@ -130,15 +103,21 @@ export class SessionCatalog implements SessionCatalogLike {
       const sessionDir = SettingsManager.create(
         this.startupCwd,
       ).getSessionDir();
-      const sessions = sessionDir
-        ? await SessionManager.listAll(sessionDir)
-        : await SessionManager.listAll();
+      const sessions = await this.metadata.list(sessionDir);
       // Pi storage enumeration is not an ordering contract. Page boundaries
       // require one deterministic newest-first order with stable tie-breakers.
-      this.cached = orderSessionRecords(sessions.map(slimSession));
-      this.byId = new Map(this.cached.map((session) => [session.id, session]));
+      this.cached = orderSessionRecords(sessions);
+      this.byId = new Map();
+      this.ambiguousIds = new Set();
+      for (const session of this.cached) {
+        if (this.ambiguousIds.has(session.id)) continue;
+        if (this.byId.delete(session.id)) this.ambiguousIds.add(session.id);
+        else this.byId.set(session.id, session);
+      }
       this.idByPath = new Map(
-        this.cached.map((session) => [session.path, session.id]),
+        this.cached
+          .filter((session) => !this.ambiguousIds.has(session.id))
+          .map((session) => [session.path, session.id]),
       );
       this.loadedAt = Date.now();
       return this.cached;
@@ -155,31 +134,22 @@ export class SessionCatalog implements SessionCatalogLike {
     // Opening needs stable identity/path/cwd, not freshly sorted list metadata.
     // Keep known identities usable after invalidate() so a click never pays for
     // a global JSONL rescan; explicit/list refreshes still rebuild the catalog.
-    const cached = this.byId.get(id);
-    if (cached) return cached;
-    await this.refresh();
-    return this.byId.get(id);
-  }
-
-  async getUnique(id: string): Promise<SessionRecord | undefined> {
-    // Deletion is already path-local and identity-checked again immediately
-    // before Trash. Reuse the same complete catalog projection that produced
-    // the browser row rather than rescan every JSONL merely to rediscover it.
-    if (this.loadedAt === 0 && this.cached.length === 0) await this.refresh();
-    const matches = this.cached.filter((session) => session.id === id);
-    if (matches.length > 1) {
+    if (!this.byId.has(id) && !this.ambiguousIds.has(id)) await this.refresh();
+    if (this.ambiguousIds.has(id)) {
       throw Object.assign(
         new Error("The session identity is ambiguous in the Pi catalog"),
         { status: 409 },
       );
     }
-    return matches[0];
+    return this.byId.get(id);
   }
 
   async list(
     options: { query?: string; offset?: number; limit?: number } = {},
   ): Promise<SessionListResponse> {
-    const sessions = await this.refresh();
+    const sessions = (await this.refresh()).filter(
+      (session) => !this.ambiguousIds.has(session.id),
+    );
     const query = options.query?.trim().toLowerCase().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset)
       ? Math.floor(options.offset!)
@@ -211,10 +181,12 @@ export class SessionCatalog implements SessionCatalogLike {
 
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
     await this.refresh();
-    return [...new Set(ids)].flatMap((id) => {
-      const session = this.byId.get(id);
-      return session ? [this.project(session)] : [];
-    });
+    const sessions = await Promise.all(
+      [...new Set(ids)].map((id) => this.get(id)),
+    );
+    return sessions.flatMap((session) =>
+      session ? [this.project(session)] : [],
+    );
   }
 
   /** The newest sessions of each named working directory. A folder pinned as
@@ -225,9 +197,13 @@ export class SessionCatalog implements SessionCatalogLike {
     limitPerCwd = 40,
   ): Promise<SessionSummary[]> {
     if (cwds.length === 0) return [];
-    return newestPerCwd(await this.refresh(), cwds, limitPerCwd).map(
-      (session) => this.project(session),
-    );
+    return newestPerCwd(
+      (await this.refresh()).filter(
+        (session) => !this.ambiguousIds.has(session.id),
+      ),
+      cwds,
+      limitPerCwd,
+    ).map((session) => this.project(session));
   }
 
   project(session: SessionRecord): SessionSummary {

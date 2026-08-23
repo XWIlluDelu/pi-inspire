@@ -409,9 +409,6 @@ export class MockCatalog implements SessionCatalogLike {
       searchText: `${summary.title}\n${summary.cwd}`.toLowerCase(),
     };
   }
-  async getUnique(id: string): Promise<SessionRecord | undefined> {
-    return this.get(id);
-  }
   async list(
     options: { query?: string; offset?: number; limit?: number } = {},
   ): Promise<SessionListResponse> {
