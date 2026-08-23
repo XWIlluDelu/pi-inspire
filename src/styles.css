@@ -1918,6 +1918,10 @@ a {
   }
 }
 
+.transcript-mobile-toolbar {
+  display: none;
+}
+
 .transcript-search {
   position: absolute;
   z-index: 3;
@@ -2004,6 +2008,10 @@ a {
 .transcript-search > button:disabled {
   cursor: default;
   opacity: 0.35;
+}
+
+.transcript-search > .transcript-search__close {
+  display: none;
 }
 
 .transcript__column {
@@ -2387,6 +2395,11 @@ a {
 @keyframes prompt-map-open {
   from { opacity: 0; transform: translateY(-50%) scale(0.96) translateX(-4px); }
   to { opacity: 1; transform: translateY(-50%) scale(1) translateX(0); }
+}
+
+@keyframes prompt-map-mobile-open {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* A response-activity fold is a band: two interactive rails bound the activity
@@ -7712,60 +7725,199 @@ body.srail-dragging {
     display: none;
   }
 
+  .transcript-wrap {
+    flex-direction: column;
+  }
+
+  .transcript-mobile-toolbar {
+    position: relative;
+    z-index: 4;
+    display: flex;
+    min-height: 52px;
+    flex: 0 0 52px;
+    align-items: center;
+    justify-content: flex-end;
+    padding: var(--space-2) max(var(--space-3), var(--safe-right)) 0 max(var(--space-3), var(--safe-left));
+    background: var(--bg-canvas);
+  }
+
+  .transcript-mobile-toolbar__launchers {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .transcript-mobile-toolbar__button {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-1);
+    color: var(--muted);
+    cursor: pointer;
+    transition:
+      border-color var(--dur-micro) var(--ease-standard),
+      color var(--dur-micro) var(--ease-standard),
+      background var(--dur-micro) var(--ease-standard);
+  }
+
+  .transcript-mobile-toolbar__button:hover,
+  .transcript-mobile-toolbar__button:focus-visible {
+    border-color: var(--line-strong);
+    background: var(--bg-raised);
+    color: var(--ink);
+  }
+
   .transcript {
     padding: var(--space-4) max(var(--space-4), var(--safe-right)) var(--space-6) max(var(--space-4), var(--safe-left));
+    scroll-padding-top: var(--space-4);
   }
 
-  .transcript-wrap:has(.transcript-search:focus-within) .transcript,
-  .transcript-wrap:has(.transcript-search--active) .transcript {
-    padding-top: var(--space-16);
+  .transcript-wrap--earlier-branch .transcript {
+    padding-top: calc(var(--space-16) + 84px);
   }
 
-  .transcript-wrap--earlier-branch:has(.transcript-search:focus-within) .transcript,
-  .transcript-wrap--earlier-branch:has(.transcript-search--active) .transcript {
-    padding-top: calc(var(--space-16) + 130px);
+  .transcript-wrap--earlier-branch .earlier-branch-banner {
+    top: calc(52px + var(--space-3));
   }
 
   .transcript-search {
-    top: var(--space-2);
-    right: max(var(--space-3), var(--safe-right));
-    left: auto;
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
-    padding: 0;
-    justify-content: center;
-    border-radius: var(--radius-pill);
-    background: var(--bg-surface);
-    box-shadow: var(--shadow-1);
-    cursor: pointer;
-    overflow: hidden;
-    transition:
-      width var(--dur-standard) var(--ease-standard),
-      left var(--dur-standard) var(--ease-standard),
-      border-radius var(--dur-standard) var(--ease-standard);
-  }
-
-  .transcript-search:not(:focus-within):not(.transcript-search--active) > :not(svg:first-child) {
     display: none;
   }
 
-  .transcript-search:focus-within,
-  .transcript-search--active {
-    left: max(var(--space-3), var(--safe-left));
+  .transcript-search--mobile-open {
+    z-index: 5;
+    top: var(--space-2);
     right: max(var(--space-3), var(--safe-right));
+    left: max(var(--space-3), var(--safe-left));
+    display: flex;
     width: auto;
-    height: auto;
-    min-height: 32px;
+    height: 44px;
+    min-height: 44px;
     padding: 3px 5px 3px var(--space-2);
-    border-radius: var(--radius-sm);
+    justify-content: flex-start;
+    border-radius: var(--radius-control);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-1);
     cursor: default;
     overflow: visible;
   }
 
   .transcript-search input {
     width: 100%;
+    min-width: 40px;
+  }
+
+  .transcript-search output {
+    min-width: 4em;
+  }
+
+  .transcript-search > .transcript-search__close {
+    display: inline-flex;
+  }
+
+  .prompt-map:not(.prompt-map--mobile-active) {
+    display: none;
+  }
+
+  .prompt-map--mobile-active {
+    position: absolute;
+    z-index: 5;
+    top: var(--space-2);
+    right: max(var(--space-3), var(--safe-right));
+    left: max(var(--space-3), var(--safe-left));
+    display: flex;
+    width: auto;
+    height: 44px;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--muted);
+    transform: none;
+  }
+
+  .prompt-map--mobile-active .prompt-map__step {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    opacity: 0.6;
+  }
+
+  .prompt-map--mobile-active .prompt-map__step--previous svg,
+  .prompt-map--mobile-active .prompt-map__step--next svg {
+    transform: rotate(-90deg);
+  }
+
+  .prompt-map--mobile-active .prompt-map__step--previous:hover:not(:disabled) {
+    transform: translateX(-1.5px);
+  }
+
+  .prompt-map--mobile-active .prompt-map__step--next:hover:not(:disabled) {
+    transform: translateX(1.5px);
+  }
+
+  .prompt-map--mobile-active .prompt-map__body {
     min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .prompt-map--mobile-active .prompt-map__toggle {
+    width: 100%;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .prompt-map--mobile-active .prompt-map__ticks {
+    width: 100%;
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 var(--space-1);
+  }
+
+  .prompt-map--mobile-active .prompt-map__ticks i,
+  .prompt-map--mobile-active .prompt-map__toggle:hover .prompt-map__ticks i,
+  .prompt-map--mobile-active .prompt-map__toggle:focus-visible .prompt-map__ticks i {
+    width: 2px;
+    height: 14px;
+  }
+
+  .prompt-map--mobile-active .prompt-map__ticks i.prompt-map__tick--active,
+  .prompt-map--mobile-active .prompt-map__toggle:hover .prompt-map__ticks i.prompt-map__tick--active,
+  .prompt-map--mobile-active .prompt-map__toggle:focus-visible .prompt-map__ticks i.prompt-map__tick--active {
+    width: 2.5px;
+    height: 22px;
+  }
+
+  .prompt-map--mobile-active .prompt-map__toggle:hover .prompt-map__ticks i {
+    height: 18px;
+  }
+
+  .prompt-map--mobile-active .prompt-map__toggle:hover .prompt-map__ticks i.prompt-map__tick--active {
+    height: 26px;
+  }
+
+  .prompt-map--mobile-active.prompt-map--open {
+    position: fixed;
+    z-index: 45;
+    top: calc(var(--topbar-h) + var(--safe-top) + var(--space-2));
+    right: max(var(--space-2), var(--safe-right));
+    left: max(var(--space-2), var(--safe-left));
+    display: flex;
+    width: auto;
+    height: min(
+      62dvh,
+      calc(24px + var(--prompt-map-list-height))
+    );
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    transform: none;
+    animation: prompt-map-mobile-open 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .user-bubble {
@@ -7791,7 +7943,7 @@ body.srail-dragging {
    side pane narrows that center, it becomes the same temporary directory
    control used by the narrow workbench. */
 @container reading-stage (max-width: 600px) {
-  .prompt-map {
+  .prompt-map:not(.prompt-map--mobile-active) {
     top: 50%;
     bottom: auto;
     left: max(var(--space-2), var(--safe-left));
@@ -7800,14 +7952,14 @@ body.srail-dragging {
     transform: translateY(-50%);
   }
 
-  .prompt-map .prompt-map__step,
-  .prompt-map__toggle {
+  .prompt-map:not(.prompt-map--mobile-active) .prompt-map__step,
+  .prompt-map:not(.prompt-map--mobile-active) .prompt-map__toggle {
     width: 44px;
     height: 44px;
     min-height: 44px;
   }
 
-  .prompt-map--open {
+  .prompt-map--open:not(.prompt-map--mobile-active) {
     top: 50%;
     bottom: auto;
     left: max(var(--space-3), var(--safe-left));
@@ -7946,6 +8098,10 @@ body.srail-dragging {
 
   .transcript {
     padding-inline: max(var(--space-3), var(--safe-left)) max(var(--space-3), var(--safe-right));
+  }
+
+  .transcript-wrap--earlier-branch .transcript {
+    padding-top: calc(var(--space-16) + 130px);
   }
 
   .transcript-search > button {

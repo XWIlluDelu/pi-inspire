@@ -142,6 +142,63 @@ describe("Prompt Map", () => {
     ).toBe("20");
   });
 
+  it("uses an explicit mobile quick navigator before opening the full directory", async () => {
+    const { container } = render(
+      <Transcript
+        sessionId="mobile-prompt-map"
+        messages={[
+          {
+            role: "user",
+            content: "First prompt",
+            timestamp: 1,
+            __inspireMessageId: "u0",
+            __inspireUserTurnId: "u0",
+            __inspireUserTurnIndex: 0,
+          },
+        ]}
+        promptMapTurns={turns}
+        promptMapTotal={turns.length}
+        promptMapLoadedStarts={[0]}
+        onLoadPromptMapTurns={vi.fn(async () => turns)}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open prompt navigation" }),
+    );
+    const map = screen.getByRole("navigation", {
+      name: "User prompt navigation",
+    });
+    expect(map).toHaveClass("prompt-map--mobile-active");
+    expect(container.querySelector(".transcript-wrap")).toHaveClass(
+      "transcript-wrap--mobile-prompt",
+    );
+    expect(
+      screen.queryByRole("toolbar", { name: "Transcript tools" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt map" }));
+    await waitFor(() => expect(map).toHaveClass("prompt-map--open"));
+    expect(screen.getByRole("list", { name: "User prompts" })).toBeVisible();
+
+    fireEvent.keyDown(map, { key: "Escape" });
+    await waitFor(() => expect(map).not.toHaveClass("prompt-map--open"));
+    expect(map).toHaveClass("prompt-map--mobile-active");
+
+    fireEvent.pointerDown(document.body);
+    await waitFor(() =>
+      expect(container.querySelector(".transcript-wrap")).toHaveClass(
+        "transcript-wrap--mobile-idle",
+      ),
+    );
+    expect(
+      screen.getByRole("toolbar", { name: "Transcript tools" }),
+    ).toBeInTheDocument();
+  });
+
   it("locks duplicate navigation and retries the exact failed target", async () => {
     let settleNavigation!: (loaded: boolean) => void;
     const onNavigate = vi

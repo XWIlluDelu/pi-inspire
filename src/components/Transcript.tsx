@@ -1,4 +1,4 @@
-import { Loader2, Search } from "lucide-react";
+import { List, Loader2, Search, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -70,6 +70,8 @@ import { useTranscriptViewport } from "./transcript-viewport";
 // --- Transcript with pinned auto-scroll ---
 
 const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
+
+type MobileTranscriptTool = "search" | "prompt" | null;
 
 type ProjectionIdentityRegistry = {
   prefix: string;
@@ -199,6 +201,8 @@ export function Transcript({
 }) {
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [mobileTranscriptTool, setMobileTranscriptTool] =
+    useState<MobileTranscriptTool>(null);
   const projectionViewKey = `${viewId}\u0000${projectionIncarnation}`;
   const preserveActivityAnchorRef = useRef<
     (element: HTMLElement, alignment: "start" | "center" | "end") => void
@@ -1079,6 +1083,54 @@ export function Transcript({
     },
   });
 
+  const closeMobileTranscriptTool = useCallback(() => {
+    if (mobileTranscriptTool === "search") search.clear();
+    setMobileTranscriptTool(null);
+  }, [mobileTranscriptTool, search]);
+  const searchQueryRef = useRef(search.query);
+  searchQueryRef.current = search.query;
+
+  useLayoutEffect(() => {
+    if (mobileTranscriptTool !== "search") return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [mobileTranscriptTool]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const narrow = window.matchMedia("(max-width: 900px)");
+    const syncLayout = () => {
+      if (!narrow.matches) setMobileTranscriptTool(null);
+      else if (searchQueryRef.current) setMobileTranscriptTool("search");
+    };
+    syncLayout();
+    narrow.addEventListener("change", syncLayout);
+    return () => narrow.removeEventListener("change", syncLayout);
+  }, []);
+
+  useEffect(() => {
+    if (mobileTranscriptTool === null) return;
+    const closeFromOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest(
+          ".transcript-mobile-toolbar, .transcript-search, [data-prompt-map]",
+        )
+      )
+        return;
+      closeMobileTranscriptTool();
+    };
+    const timer = window.setTimeout(
+      () => document.addEventListener("pointerdown", closeFromOutside, true),
+      0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", closeFromOutside, true);
+    };
+  }, [closeMobileTranscriptTool, mobileTranscriptTool]);
+
   const scrollToPromptOrdinal = useCallback(
     (ordinal: number): boolean => {
       const rowIndex = rows.findIndex(
@@ -1126,6 +1178,7 @@ export function Transcript({
     promptNavigationOverrideRef.current = null;
     setActivePromptOrdinal(null);
     setPendingPromptOrdinal(null);
+    setMobileTranscriptTool(null);
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
@@ -1251,11 +1304,17 @@ export function Transcript({
 
   return (
     <div
-      className={`transcript-wrap ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
+      className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
       tabIndex={-1}
       onKeyDownCapture={(event) => {
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
+          if (
+            typeof window.matchMedia === "function" &&
+            window.matchMedia("(max-width: 900px)").matches
+          ) {
+            setMobileTranscriptTool("search");
+          }
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         } else if (
@@ -1276,8 +1335,36 @@ export function Transcript({
       }}
     >
       <EarlierBranchBanner />
+      <div className="transcript-mobile-toolbar">
+        {mobileTranscriptTool === null ? (
+          <div
+            className="transcript-mobile-toolbar__launchers"
+            role="toolbar"
+            aria-label="Transcript tools"
+          >
+            <button
+              type="button"
+              className="transcript-mobile-toolbar__button"
+              aria-label="Open conversation search"
+              title="Search conversation"
+              onClick={() => setMobileTranscriptTool("search")}
+            >
+              <Search size={18} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="transcript-mobile-toolbar__button"
+              aria-label="Open prompt navigation"
+              title="Open prompt navigation"
+              onClick={() => setMobileTranscriptTool("prompt")}
+            >
+              <List size={18} aria-hidden />
+            </button>
+          </div>
+        ) : null}
+      </div>
       <div
-        className={`transcript-search ${search.query ? "transcript-search--active" : ""}`}
+        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTranscriptTool === "search" ? "transcript-search--mobile-open" : ""}`}
         role="search"
         aria-label="Search settled transcript"
         onClick={(event) => {
@@ -1309,7 +1396,7 @@ export function Transcript({
               event.preventDefault();
               search.navigate(event.shiftKey ? -1 : 1);
             } else if (event.key === "Escape") {
-              search.clear();
+              closeMobileTranscriptTool();
               searchInputRef.current?.blur();
             }
           }}
@@ -1340,6 +1427,15 @@ export function Transcript({
           onClick={() => search.navigate(1)}
         >
           ↓
+        </button>
+        <button
+          type="button"
+          className="transcript-search__close"
+          aria-label="Close conversation search"
+          title="Close search"
+          onClick={closeMobileTranscriptTool}
+        >
+          <X size={14} aria-hidden />
         </button>
       </div>
       <div
@@ -1450,6 +1546,7 @@ export function Transcript({
       <PromptMap
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
         container={viewport.scrollRef}
+        mobileActive={mobileTranscriptTool === "prompt"}
         turns={effectivePromptTurns}
         total={effectivePromptTotal}
         activeOrdinal={activePromptOrdinal}
