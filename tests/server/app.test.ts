@@ -861,7 +861,10 @@ describe("local host API", () => {
     expect(stored.body).toEqual({
       theme: "dark",
       palette: "amber",
+      contentTextSize: "comfortable",
+      readingWidth: "comfortable",
       launch: "welcome",
+      desktopSendKey: "enter",
       thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
       activityFoldVisibility: "compact",
@@ -940,6 +943,9 @@ describe("local host API", () => {
     expect(response.body).toEqual({
       ...legacy,
       palette: "amber",
+      contentTextSize: "comfortable",
+      readingWidth: "comfortable",
+      desktopSendKey: "enter",
       activityFoldVisibility: "dynamic",
       assistantRoundDisplay: "divider",
       projectDisplay: "folder",

@@ -20,6 +20,9 @@ export const ACTIVITY_FOLD_VISIBILITIES = [
   "compact",
   "collapsed",
 ] as const;
+export const CONTENT_TEXT_SIZES = ["compact", "comfortable", "large"] as const;
+export const READING_WIDTHS = ["narrow", "comfortable", "wide"] as const;
+export const DESKTOP_SEND_KEYS = ["enter", "mod-enter"] as const;
 export const THINKING_LEVELS = [
   "off",
   "minimal",
@@ -56,6 +59,9 @@ export type AssistantRoundDisplayPreference =
   (typeof ASSISTANT_ROUND_DISPLAYS)[number];
 export type ActivityFoldVisibilityPreference =
   (typeof ACTIVITY_FOLD_VISIBILITIES)[number];
+export type ContentTextSizePreference = (typeof CONTENT_TEXT_SIZES)[number];
+export type ReadingWidthPreference = (typeof READING_WIDTHS)[number];
+export type DesktopSendKeyPreference = (typeof DESKTOP_SEND_KEYS)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
 export type PalettePreference = "amber" | "teal";
@@ -148,7 +154,13 @@ export interface SessionRuntimeStatus {
 export interface InspirePreferences {
   theme: ThemePreference;
   palette: PalettePreference;
+  /** Reading typography for conversation prose, composer drafts, code, and text previews. */
+  contentTextSize: ContentTextSizePreference;
+  /** Shared maximum measure for the transcript and composer. */
+  readingWidth: ReadingWidthPreference;
   launch: LaunchPreference;
+  /** Desktop-only submit chord; touch-first Return always inserts a line break. */
+  desktopSendKey: DesktopSendKeyPreference;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   /** Presentation of complete non-response activity runs between visible
@@ -176,16 +188,39 @@ export interface InspirePreferences {
   navCollapsedGroups: string[];
 }
 
-export const defaultPreferences: InspirePreferences = {
+/** The complete user-facing Settings surface. Navigation curation and MRU
+ * metadata deliberately stay outside bulk Restore defaults. */
+export const defaultInterfaceSettings = {
   theme: "system",
   palette: "amber",
+  contentTextSize: "comfortable",
+  readingWidth: "comfortable",
   launch: "welcome",
+  desktopSendKey: "enter",
   thinkingVisibility: "dynamic",
   toolVisibility: "dynamic",
   activityFoldVisibility: "dynamic",
   assistantRoundDisplay: "divider",
   projectDisplay: "folder",
   completionAttention: "off",
+} satisfies Pick<
+  InspirePreferences,
+  | "theme"
+  | "palette"
+  | "contentTextSize"
+  | "readingWidth"
+  | "launch"
+  | "desktopSendKey"
+  | "thinkingVisibility"
+  | "toolVisibility"
+  | "activityFoldVisibility"
+  | "assistantRoundDisplay"
+  | "projectDisplay"
+  | "completionAttention"
+>;
+
+export const defaultPreferences: InspirePreferences = {
+  ...defaultInterfaceSettings,
   recentModelIds: [],
   pinnedSessionIds: [],
   pinnedProjectCwds: [],
