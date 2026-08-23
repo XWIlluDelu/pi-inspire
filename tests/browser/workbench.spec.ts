@@ -845,6 +845,18 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   });
   await expect(searchLauncher).toBeVisible();
   await expect(promptLauncher).toBeVisible();
+  await expect(
+    promptLauncher.locator(".lucide-gallery-horizontal-end"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      mobileToolbar
+        .getByRole("button")
+        .evaluateAll((buttons) =>
+          buttons.map((button) => button.getAttribute("aria-label")),
+        ),
+    )
+    .toEqual(["Open prompt navigation", "Open conversation search"]);
   const launcherBoxes = await Promise.all([
     searchLauncher.boundingBox(),
     promptLauncher.boundingBox(),

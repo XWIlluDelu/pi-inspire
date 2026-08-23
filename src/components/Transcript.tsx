@@ -1,4 +1,11 @@
-import { ChevronDown, ChevronUp, List, Loader2, Search, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  GalleryHorizontalEnd,
+  Loader2,
+  Search,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -1345,20 +1352,20 @@ export function Transcript({
             <button
               type="button"
               className="transcript-mobile-toolbar__button"
+              aria-label="Open prompt navigation"
+              title="Open prompt navigation"
+              onClick={() => setMobileTranscriptTool("prompt")}
+            >
+              <GalleryHorizontalEnd size={18} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="transcript-mobile-toolbar__button"
               aria-label="Open conversation search"
               title="Search conversation"
               onClick={() => setMobileTranscriptTool("search")}
             >
               <Search size={18} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="transcript-mobile-toolbar__button"
-              aria-label="Open prompt navigation"
-              title="Open prompt navigation"
-              onClick={() => setMobileTranscriptTool("prompt")}
-            >
-              <List size={18} aria-hidden />
             </button>
           </div>
         ) : null}
