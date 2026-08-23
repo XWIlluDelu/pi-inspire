@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { createInspireServer } from "./app.js";
 import { AttachmentStore } from "./attachments.js";
+import { openBrowser } from "./browser-opener.js";
 import {
   defaultDiagnosticLogPath,
   nullDiagnosticLogger,
@@ -299,17 +300,13 @@ async function announceStarted(): Promise<void> {
     console.log(`  ${url}\n`);
   }
   if (process.env.INSPIRE_OPEN === "1") {
-    const { spawn } = await import("node:child_process");
-    const opener =
-      process.platform === "darwin"
-        ? ["open", [url]]
-        : process.platform === "win32"
-          ? ["cmd", ["/c", "start", "", url]]
-          : ["xdg-open", [url]];
-    spawn(opener[0] as string, opener[1] as string[], {
-      detached: true,
-      stdio: "ignore",
-    }).unref();
+    openBrowser(url, (error) => {
+      diagnostics.record("warning", "browser_open_failed", {
+        errorName: error.name,
+        errorCode: (error as NodeJS.ErrnoException).code,
+      });
+      console.error(`Could not open a browser automatically: ${error.message}`);
+    });
   }
 }
 
