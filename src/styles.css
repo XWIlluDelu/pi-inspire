@@ -3478,11 +3478,6 @@ button.pending-group__mark:disabled,
   border-left-color: var(--activity-tool);
 }
 
-.card--tool {
-  container-name: tool-card;
-  container-type: inline-size;
-}
-
 .card--tool .card__icon,
 .card--custom .card__icon {
   color: var(--activity-tool);
@@ -4053,10 +4048,11 @@ button.pending-group__mark:disabled,
   white-space: nowrap;
 }
 
-/* Resource actions retain the complete path while the narrow projection keeps
-   both contextual and terminal identity instead of clipping the basename. */
+/* Resource actions retain the complete path while the visual projection gives
+   the filename tail first claim on the actual available width. */
 .resource-path {
   display: inline-flex;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -4064,56 +4060,18 @@ button.pending-group__mark:disabled,
   white-space: nowrap;
 }
 
-.resource-path__full {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  align-items: baseline;
-  white-space: nowrap;
-}
-
-.resource-path__full-start {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-path__compact {
-  display: none;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  align-items: baseline;
-  white-space: nowrap;
-}
-
-.resource-path__context {
+.resource-path__leading {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.resource-path__name-start {
-  /* A zero basis gives directory context and the filename tail first claim on
-     the row; this middle segment consumes only the genuinely remaining width. */
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The component already bounds this terminal segment to 14 characters. Let it
-   claim that intrinsic width before the leading segment shrinks; a percentage
-   cap clips ordinary filenames and turns the reclaimed width into a blank gap. */
-.resource-path__full-end,
-.resource-path__name-end {
+/* The component bounds this terminal segment to 14 filename characters. It
+   keeps its intrinsic width while the adjacent leading segment absorbs every
+   genuine overflow, producing one continuous middle omission. */
+.resource-path__tail {
   flex: 0 0 auto;
   min-width: 3ch;
   max-width: 100%;
@@ -4123,8 +4081,7 @@ button.pending-group__mark:disabled,
   white-space: nowrap;
 }
 
-.resource-path__full-end > span,
-.resource-path__name-end > span {
+.resource-path__tail > span {
   display: inline-block;
   direction: ltr;
   unicode-bidi: isolate;
@@ -4170,16 +4127,6 @@ button.pending-group__mark:disabled,
   font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@container tool-card (max-width: 600px) {
-  .resource-path__full {
-    display: none;
-  }
-
-  .resource-path__compact {
-    display: inline-flex;
-  }
 }
 
 .tool-properties dl {
@@ -4823,6 +4770,10 @@ button.pending-group__mark:disabled,
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.composer__delivery .segmented button {
+  justify-content: center;
 }
 
 .composer__meta {

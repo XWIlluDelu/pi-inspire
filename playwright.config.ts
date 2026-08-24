@@ -21,7 +21,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "mkdir -p output/playwright && rm -f output/playwright/preferences.json && INSPIRE_TOKEN=inspire-browser-test-token INSPIRE_PI_COMMAND=./node_modules/.bin/pi INSPIRE_MOCK=1 INSPIRE_MOCK_WORKSPACE=. INSPIRE_MOCK_STREAM_INTERVAL_MS=250 INSPIRE_PREFERENCES_PATH=output/playwright/preferences.json INSPIRE_PORT=4592 npx tsx server/index.ts",
+      "mkdir -p output/playwright && rm -f output/playwright/preferences.json && INSPIRE_INSTALLATION_ROOT=. INSPIRE_TOKEN=inspire-browser-test-token INSPIRE_PI_COMMAND=./node_modules/.bin/pi INSPIRE_MOCK=1 INSPIRE_MOCK_WORKSPACE=. INSPIRE_MOCK_STREAM_INTERVAL_MS=250 INSPIRE_PREFERENCES_PATH=output/playwright/preferences.json INSPIRE_PORT=4592 npx tsx server/index.ts",
     url: "http://127.0.0.1:4592/",
     reuseExistingServer: false,
     timeout: 30_000,
