@@ -7777,6 +7777,13 @@ body.srail-dragging {
     transform: none;
   }
 
+  .prompt-map--mobile-active:not(.prompt-map--open) {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-1);
+  }
+
   .prompt-map--mobile-active .prompt-map__step {
     width: 44px;
     height: 44px;
