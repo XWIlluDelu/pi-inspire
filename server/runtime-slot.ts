@@ -1,9 +1,9 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { type BranchBridgeResult } from "../shared/branch-bridge-protocol.js";
 import {
-  emptyPendingQueues,
+  type ExtensionDisplay,
   type ExtensionUiRequest,
-  type GenericExtensionDisplay,
+  emptyPendingQueues,
   type PendingQueues,
   type ProjectionConflict,
   type RunState,
@@ -125,7 +125,8 @@ export interface RuntimeSlot {
   extensionResponseTail: Promise<void>;
   extensionResponsePending: number;
   pendingQueues: PendingQueues;
-  extensionDisplays: GenericExtensionDisplay[];
+  extensionDisplays: ExtensionDisplay[];
+  extensionStatuses: Record<string, string>;
   availableModels: unknown[] | null;
   commands: unknown[] | null;
   lastUsed: number;
@@ -209,6 +210,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     extensionResponsePending: 0,
     pendingQueues: emptyPendingQueues(),
     extensionDisplays: [],
+    extensionStatuses: {},
     availableModels: null,
     commands: null,
     lastUsed: 0,

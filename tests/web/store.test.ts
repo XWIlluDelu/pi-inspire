@@ -298,11 +298,14 @@ describe("multi-session event routing", () => {
     snapshot.extensionDisplays = [
       {
         id: "setWidget:plan",
-        method: "setWidget",
-        attribution: "plan.ts · plan",
-        payload: { widgetLines: ["step"] },
+        kind: "widget",
+        label: "plan",
+        source: "Pi extension",
+        placement: "aboveEditor",
+        lines: ["step"],
       },
     ];
+    snapshot.extensionStatuses = { usage: "37%" };
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().sessionStatuses).toEqual({
       s1: { runState: "idle" },
@@ -318,17 +321,59 @@ describe("multi-session event routing", () => {
     ]);
     expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toHaveLength(1);
+    expect(store.getState().statuses).toEqual({ usage: "37%" });
     expect(store.getState().activeAssistantMessageKey).toBe("persisted:a1:0");
 
     if (snapshot.active) snapshot.active.activeAssistantMessageKey = null;
     snapshot.pendingExtensionUiRequests = [];
     snapshot.pendingQueues = pendingQueues();
     snapshot.extensionDisplays = [];
+    snapshot.extensionStatuses = {};
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().extensionUiRequests).toEqual([]);
     expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toEqual([]);
+    expect(store.getState().statuses).toEqual({});
     expect(store.getState().activeAssistantMessageKey).toBeNull();
+  });
+
+  it("drops malformed extension displays from authoritative snapshots", async () => {
+    const { store, socket } = await initStore();
+    const snapshot = activeSnapshot();
+    const valid = {
+      id: "setWidget:valid",
+      kind: "widget",
+      label: "valid",
+      source: "Pi extension",
+      placement: "aboveEditor",
+      lines: ["kept"],
+    };
+    (
+      snapshot as unknown as {
+        extensionDisplays: unknown;
+      }
+    ).extensionDisplays = [
+      valid,
+      { ...valid, id: "bad-lines", lines: "not-an-array" },
+      { ...valid, id: "bad-placement", placement: "sidebar" },
+      {
+        ...valid,
+        id: "too-many-lines",
+        lines: Array.from({ length: 201 }, () => "line"),
+      },
+      {
+        id: "raw-without-method",
+        kind: "raw",
+        label: "raw",
+        source: "Pi extension",
+        placement: "aboveEditor",
+        payload: {},
+      },
+    ];
+
+    socket.emit({ type: "snapshot", data: snapshot });
+
+    expect(store.getState().extensionDisplays).toEqual([valid]);
   });
 
   it("clears selected-only extension presentation when switching sessions", async () => {

@@ -18,6 +18,7 @@ import {
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
   emptyPendingQueues,
+  type ExtensionDisplay,
   type GenericExtensionDisplay,
   isBusyRunState,
   type PendingQueues,
@@ -203,9 +204,12 @@ export function Transcript({
   onPendingMessageTexts?: (
     messageIds: readonly string[],
   ) => Promise<string[] | null>;
-  extensionDisplays?: GenericExtensionDisplay[];
+  extensionDisplays?: ExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
+  const genericExtensionDisplays = extensionDisplays.filter(
+    (display): display is GenericExtensionDisplay => display.kind === "raw",
+  );
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const promptLauncherRef = useRef<HTMLButtonElement>(null);
@@ -1556,7 +1560,7 @@ export function Transcript({
           {queue.paused ||
           queue.steering.length > 0 ||
           queue.followUp.length > 0 ||
-          extensionDisplays.length > 0 ? (
+          genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
               <PendingQueueGroups
                 queue={queue}
@@ -1564,7 +1568,7 @@ export function Transcript({
                 onManage={onManagePending}
                 onReadTexts={onPendingMessageTexts}
               />
-              <ExtensionDisplaySurface displays={extensionDisplays} />
+              <ExtensionDisplaySurface displays={genericExtensionDisplays} />
             </div>
           ) : null}
         </div>

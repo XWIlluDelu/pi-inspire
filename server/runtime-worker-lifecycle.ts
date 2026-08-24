@@ -104,6 +104,13 @@ export class RuntimeWorkerLifecycle {
     }
     this.host.detachProcess(rpc);
     this.host.clearPendingExtensionUi(slot, "stopped");
+    slot.extensionDisplays = [];
+    slot.extensionStatuses = {};
+    this.host.emitSlotEvent(slot, {
+      type: "extension_runtime_stopped",
+      extensionDisplays: [],
+      extensionStatuses: {},
+    });
     const stopping = rpc
       .stop()
       .catch((error) => this.host.logRuntimeError(slot.id, error));
@@ -203,6 +210,7 @@ export class RuntimeWorkerLifecycle {
     this.host.clearPendingExtensionUi(slot, "replaced");
     slot.pendingQueues = emptyPendingQueues();
     slot.extensionDisplays = [];
+    slot.extensionStatuses = {};
     slot.availableModels = null;
     slot.commands = null;
     try {
@@ -237,7 +245,11 @@ export class RuntimeWorkerLifecycle {
         revision: slot.projection?.revision,
         sourceVersion: slot.projection?.sourceVersion,
       });
-      this.host.emitSlotEvent(slot, { type: "runtime_ready" });
+      this.host.emitSlotEvent(slot, {
+        type: "runtime_ready",
+        extensionDisplays: slot.extensionDisplays,
+        extensionStatuses: slot.extensionStatuses,
+      });
       this.host.scheduleIdleWorkerEviction();
       return slot;
     } catch (error) {
@@ -251,6 +263,8 @@ export class RuntimeWorkerLifecycle {
         this.host.emitSlotEvent(slot, {
           type: "runtime_error",
           error: failure instanceof Error ? failure.message : String(failure),
+          extensionDisplays: slot.extensionDisplays,
+          extensionStatuses: slot.extensionStatuses,
         });
       } else {
         await rpc.stop();

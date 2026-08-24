@@ -488,12 +488,73 @@ export type ExtensionUiRequest =
   | SupportedExtensionUiRequest
   | UnsupportedExtensionUiRequest;
 
-export interface GenericExtensionDisplay {
+export const MAX_EXTENSION_DISPLAYS = 20;
+export const MAX_EXTENSION_KEY_CHARS = 240;
+export const MAX_EXTENSION_STATUSES = 20;
+export const MAX_EXTENSION_STATUS_CHARS = 1_024;
+export const MAX_EXTENSION_WIDGET_LINES = 200;
+
+/** Bound retained status text by Unicode code point. */
+export function boundedExtensionStatus(text: string): string {
+  const characters: string[] = [];
+  for (const character of text) {
+    if (characters.length === MAX_EXTENSION_STATUS_CHARS) {
+      characters[characters.length - 1] = "…";
+      return characters.join("");
+    }
+    characters.push(character);
+  }
+  return text;
+}
+
+function extensionStatusWithinLimit(text: string): boolean {
+  let count = 0;
+  for (const _character of text) {
+    count += 1;
+    if (count > MAX_EXTENSION_STATUS_CHARS) return false;
+  }
+  return true;
+}
+
+export function parseExtensionStatuses(
+  value: unknown,
+): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        (entry): entry is [string, string] =>
+          entry[0].length > 0 &&
+          entry[0].length <= MAX_EXTENSION_KEY_CHARS &&
+          typeof entry[1] === "string" &&
+          entry[1].length > 0 &&
+          extensionStatusWithinLimit(entry[1]),
+      )
+      .slice(-MAX_EXTENSION_STATUSES),
+  );
+}
+
+interface ExtensionDisplayBase {
   id: string;
+  /** Stable Pi UI key or bounded request identity, not inferred provenance. */
+  label: string;
+  /** Best available producer attribution; Pi RPC currently omits it. */
+  source: string;
+  placement: "aboveEditor" | "belowEditor";
+}
+
+export interface ExtensionWidgetDisplay extends ExtensionDisplayBase {
+  kind: "widget";
+  lines: string[];
+}
+
+export interface GenericExtensionDisplay extends ExtensionDisplayBase {
+  kind: "raw";
   method: string;
-  attribution: string;
   payload: unknown;
 }
+
+export type ExtensionDisplay = ExtensionWidgetDisplay | GenericExtensionDisplay;
 
 export interface PendingMessageSummary {
   id: string;
@@ -794,7 +855,8 @@ export interface ActiveSnapshot {
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   pendingExtensionUiRequests?: ExtensionUiRequest[];
   pendingQueues?: PendingQueues;
-  extensionDisplays?: GenericExtensionDisplay[];
+  extensionDisplays?: ExtensionDisplay[];
+  extensionStatuses?: Record<string, string>;
 }
 
 export interface BootstrapResponse {

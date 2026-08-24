@@ -12,7 +12,7 @@
 | Rich content | [[rich-rendering]] | One defensive Markdown pipeline owns both settled and streaming text, including mathematical notation. |
 | Activity presentation | [[tool-presentations]] | Validated local declarations project known Pi calls and optional Thinking text into bounded summaries and typed Web blocks while their native card shells remain fixed. |
 | Session continuity | [[session-continuity]] | Pi’s JSONL session tree remains canonical while the browser holds only a reloadable, virtualized projection. |
-| Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported extension dialogs natively. |
+| Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported Extension dialogs and text widgets natively without coupling the product to particular Extensions. |
 | Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 

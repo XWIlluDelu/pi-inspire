@@ -15,6 +15,7 @@ import {
   type ProjectionConflict,
   type RunState,
 } from "../../shared/contracts";
+import { stripTerminalSequences } from "../ansi";
 import { messageText, type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { store, useAppState } from "../store";
@@ -293,7 +294,10 @@ export function AppTopbar({
   onToggleResources: () => void;
 }) {
   const state = useAppState();
-  const statuses = Object.entries(state.statuses);
+  const statuses = Object.entries(state.statuses)
+    .map(([key, text]) => [key, stripTerminalSequences(text)] as const)
+    .filter(([, text]) => text.length > 0)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return (
     <header className="topbar">
       <button
