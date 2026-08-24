@@ -896,6 +896,13 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   });
   await expect(mobileSearch).toBeVisible();
   await expect(mobileSearch).toBeFocused();
+  await expect
+    .poll(() =>
+      page
+        .locator(".transcript-search--mobile-open")
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
   await mobileSearch.fill("Prompt map fixture turn 13");
   await expect(page.getByLabel("Transcript search matches")).toContainText(
     "1 match",
@@ -905,6 +912,11 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
 
   await promptLauncher.click();
   await expect(map).toBeVisible();
+  await expect
+    .poll(() =>
+      map.evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
   const compactBox = await map.boundingBox();
   expect(compactBox?.width).toBeGreaterThanOrEqual(340);
   expect(compactBox?.height).toBe(44);
