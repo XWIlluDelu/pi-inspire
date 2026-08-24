@@ -1,11 +1,14 @@
 import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import {
   EXTENSION_ONE_WAY_METHODS,
+  type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
-  type GenericExtensionDisplay,
+  MAX_EXTENSION_DISPLAYS,
+  MAX_EXTENSION_WIDGET_LINES,
   type PendingMessageSummary,
   type PendingQueues,
+  parseExtensionStatuses,
   parseExtensionUiRequest,
   parsePendingExtensionUiRequest,
   type RunState,
@@ -209,7 +212,7 @@ export interface EventSlice {
   queue: PendingQueues;
   extensionUiRequests: ExtensionUiRequest[];
   extensionUiRespondingId: string | null;
-  extensionDisplays: GenericExtensionDisplay[];
+  extensionDisplays: ExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
   editorText: { text: string; nonce: number } | null;
@@ -328,31 +331,55 @@ function upsertExtensionUiRequest(
   return next;
 }
 
+function parseExtensionDisplay(value: unknown): ExtensionDisplay | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const display = value as Record<string, unknown>;
+  if (
+    typeof display.id !== "string" ||
+    typeof display.label !== "string" ||
+    typeof display.source !== "string" ||
+    (display.placement !== "aboveEditor" && display.placement !== "belowEditor")
+  )
+    return null;
+  if (display.kind === "widget") {
+    if (
+      !Array.isArray(display.lines) ||
+      display.lines.length > MAX_EXTENSION_WIDGET_LINES ||
+      !display.lines.every((line) => typeof line === "string")
+    )
+      return null;
+    return {
+      id: display.id,
+      kind: "widget",
+      label: display.label,
+      source: display.source,
+      placement: display.placement,
+      lines: display.lines,
+    };
+  }
+  if (display.kind !== "raw" || typeof display.method !== "string") return null;
+  return {
+    id: display.id,
+    kind: "raw",
+    label: display.label,
+    source: display.source,
+    placement: display.placement,
+    method: display.method,
+    payload: display.payload,
+  };
+}
+
 function updateExtensionDisplay(
-  current: GenericExtensionDisplay[],
+  current: ExtensionDisplay[],
   event: WireEvent,
-): GenericExtensionDisplay[] {
+): ExtensionDisplay[] {
   if (!Array.isArray(event.extensionDisplays)) return current;
   return event.extensionDisplays
     .flatMap((value) => {
-      if (!value || typeof value !== "object") return [];
-      const display = value as Record<string, unknown>;
-      if (
-        typeof display.id !== "string" ||
-        typeof display.method !== "string" ||
-        typeof display.attribution !== "string"
-      )
-        return [];
-      return [
-        {
-          id: display.id,
-          method: display.method,
-          attribution: display.attribution,
-          payload: display.payload,
-        },
-      ];
+      const display = parseExtensionDisplay(value);
+      return display ? [display] : [];
     })
-    .slice(-20);
+    .slice(-MAX_EXTENSION_DISPLAYS);
 }
 
 /**
@@ -369,7 +396,16 @@ export function reduceEvent(
   const settle: string[] = [];
   let resync = false;
   let changed = false;
-
+  const displays = updateExtensionDisplay(current.extensionDisplays, event);
+  if (displays !== current.extensionDisplays) {
+    slice.extensionDisplays = displays;
+    changed = true;
+  }
+  const statuses = parseExtensionStatuses(event.extensionStatuses);
+  if (statuses) {
+    slice.statuses = statuses;
+    changed = true;
+  }
   switch (event.type) {
     case "message_start": {
       const message = asMessage(event.message);
@@ -587,7 +623,7 @@ export function reduceEvent(
       } else if (method === "setStatus") {
         const key = typeof event.statusKey === "string" ? event.statusKey : "";
         if (!key) break;
-        slice.statuses = { ...current.statuses };
+        slice.statuses = { ...slice.statuses };
         if (typeof event.statusText === "string" && event.statusText)
           slice.statuses[key] = event.statusText;
         else delete slice.statuses[key];
@@ -605,14 +641,6 @@ export function reduceEvent(
           changed = true;
         }
       } else {
-        const displays = updateExtensionDisplay(
-          current.extensionDisplays,
-          event,
-        );
-        if (displays !== current.extensionDisplays) {
-          slice.extensionDisplays = displays;
-          changed = true;
-        }
         if (
           !EXTENSION_ONE_WAY_METHODS.has(method) &&
           event.responseRequired !== false

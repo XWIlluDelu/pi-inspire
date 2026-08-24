@@ -298,11 +298,14 @@ describe("multi-session event routing", () => {
     snapshot.extensionDisplays = [
       {
         id: "setWidget:plan",
-        method: "setWidget",
-        attribution: "plan.ts · plan",
-        payload: { widgetLines: ["step"] },
+        kind: "widget",
+        label: "plan",
+        source: "Pi extension",
+        placement: "aboveEditor",
+        lines: ["step"],
       },
     ];
+    snapshot.extensionStatuses = { usage: "37%" };
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().sessionStatuses).toEqual({
       s1: { runState: "idle" },
@@ -318,16 +321,19 @@ describe("multi-session event routing", () => {
     ]);
     expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toHaveLength(1);
+    expect(store.getState().statuses).toEqual({ usage: "37%" });
     expect(store.getState().activeAssistantMessageKey).toBe("persisted:a1:0");
 
     if (snapshot.active) snapshot.active.activeAssistantMessageKey = null;
     snapshot.pendingExtensionUiRequests = [];
     snapshot.pendingQueues = pendingQueues();
     snapshot.extensionDisplays = [];
+    snapshot.extensionStatuses = {};
     socket.emit({ type: "snapshot", data: snapshot });
     expect(store.getState().extensionUiRequests).toEqual([]);
     expect(store.getState().queue).toEqual(snapshot.pendingQueues);
     expect(store.getState().extensionDisplays).toEqual([]);
+    expect(store.getState().statuses).toEqual({});
     expect(store.getState().activeAssistantMessageKey).toBeNull();
   });
 

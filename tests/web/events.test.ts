@@ -538,9 +538,25 @@ describe("extension_ui_request mapping", () => {
           tool: { id: "tool", name: "read", phase: "running" },
         },
         retry: { attempt: 2, maxAttempts: 3, message: "network" },
+        statuses: { usage: "37%" },
+        extensionDisplays: [
+          {
+            id: "setWidget:plan",
+            kind: "widget",
+            label: "plan",
+            source: "Pi extension",
+            placement: "aboveEditor",
+            lines: ["one"],
+          },
+        ],
       },
       new Set(),
-      { type: "runtime_error", error: "crashed" },
+      {
+        type: "runtime_error",
+        error: "crashed",
+        extensionDisplays: [],
+        extensionStatuses: {},
+      },
     ).slice;
     expect(failed).toMatchObject({
       runState: "failed",
@@ -549,6 +565,8 @@ describe("extension_ui_request mapping", () => {
       tools: {},
       retry: null,
       extensionUiRequests: [],
+      extensionDisplays: [],
+      statuses: {},
     });
   });
 
@@ -567,13 +585,12 @@ describe("extension_ui_request mapping", () => {
     });
   });
 
-  it("tracks setStatus entries and removes them when cleared", () => {
+  it("replaces setStatus state from the authoritative Host projection", () => {
     const withStatus = reduce(emptyEventSlice(), new Set(), {
       type: "extension_ui_request",
       id: "r3",
       method: "setStatus",
-      statusKey: "linter",
-      statusText: "linting…",
+      extensionStatuses: { linter: "linting…", invalid: 4 },
     });
     expect(withStatus.slice.statuses).toEqual({ linter: "linting…" });
 
@@ -581,8 +598,7 @@ describe("extension_ui_request mapping", () => {
       type: "extension_ui_request",
       id: "r4",
       method: "setStatus",
-      statusKey: "linter",
-      statusText: undefined,
+      extensionStatuses: {},
     });
     expect(cleared.slice.statuses).toEqual({});
   });
@@ -640,7 +656,7 @@ describe("truthful change reporting", () => {
     expect(result.slice).toBe(slice);
   });
 
-  it("projects setWidget into the bounded generic extension surface and clears by key", () => {
+  it("projects bounded text widgets natively and clears them by key", () => {
     const slice = emptyEventSlice();
     const shown = reduce(slice, new Set(), {
       type: "extension_ui_request",
@@ -648,47 +664,53 @@ describe("truthful change reporting", () => {
       method: "setWidget",
       widgetKey: "plan",
       widgetLines: ["one", "two"],
-      extensionPath: "extensions/plan.ts",
       extensionDisplays: [
         {
           id: "setWidget:plan",
-          method: "setWidget",
-          attribution: "extensions/plan.ts · plan",
-          payload: { widgetLines: ["one", "two"] },
+          kind: "widget",
+          label: "plan",
+          source: "extensions/plan.ts",
+          placement: "belowEditor",
+          lines: ["one", "two"],
         },
       ],
     });
     expect(shown.changed).toBe(true);
     expect(shown.slice.extensionDisplays).toEqual([
-      expect.objectContaining({
+      {
         id: "setWidget:plan",
-        method: "setWidget",
-        attribution: "extensions/plan.ts · plan",
-      }),
+        kind: "widget",
+        label: "plan",
+        source: "extensions/plan.ts",
+        placement: "belowEditor",
+        lines: ["one", "two"],
+      },
     ]);
     expect(shown.slice.extensionUiRequests).toEqual([]);
 
-    const bounded = reduce(shown.slice, new Set(), {
+    const rawFallback = reduce(shown.slice, new Set(), {
       type: "extension_ui_request",
       id: "w1",
       method: "setWidget",
       widgetKey: "plan",
-      widgetLines: ["unbounded wire value"],
       extensionDisplays: [
         {
           id: "setWidget:plan",
+          kind: "raw",
+          label: "plan",
+          source: "extensions/plan.ts",
+          placement: "aboveEditor",
           method: "setWidget",
-          attribution: "extensions/plan.ts · plan",
           payload: { truncated: true, preview: "bounded" },
         },
       ],
     });
-    expect(bounded.slice.extensionDisplays[0]?.payload).toEqual({
-      truncated: true,
-      preview: "bounded",
+    expect(rawFallback.slice.extensionDisplays[0]).toMatchObject({
+      kind: "raw",
+      payload: { truncated: true, preview: "bounded" },
     });
 
-    const cleared = reduce(bounded.slice, new Set(), {
+    const cleared = reduce(rawFallback.slice, new Set(), {
       type: "extension_ui_request",
       id: "w2",
       method: "setWidget",
@@ -728,8 +750,11 @@ describe("truthful change reporting", () => {
       extensionDisplays: [
         {
           id: "showPanel:display-1",
+          kind: "raw",
+          label: "display-1",
+          source: "Pi extension",
+          placement: "aboveEditor",
           method: "showPanel",
-          attribution: "Pi extension · display-1",
           payload: { title: "Build" },
         },
       ],

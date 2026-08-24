@@ -7,9 +7,9 @@ import {
   type BranchTreeResponse,
   type CompletionAttentionPreference,
   type ContentTextSizePreference,
+  type DesktopSendKeyPreference,
   defaultInterfaceSettings,
   defaultPreferences,
-  type DesktopSendKeyPreference,
   emptyPendingQueues,
   type GitDiffSide,
   type GitFileChange,
@@ -28,10 +28,11 @@ import {
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
-  type ReadingWidthPreference,
   type ProjectionHealth,
+  parseExtensionStatuses,
   projectionConflictSeverity,
   projectNameFromCwd,
+  type ReadingWidthPreference,
   type ResourceProbeResult,
   type RunState,
   type SessionDeleteDisposition,
@@ -988,6 +989,8 @@ export class AppStore {
     const clearedProjectionError =
       !projectionError && this.state.error === this.state.projectionError;
     const sessionStatuses = snapshot.sessionStatuses ?? {};
+    const extensionStatuses =
+      parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
     this.reconcileAttentionArms(sessionStatuses);
     this.set({
       sessionId: active?.sessionId ?? null,
@@ -1088,9 +1091,9 @@ export class AppStore {
       extensionDisplays: Array.isArray(snapshot.extensionDisplays)
         ? snapshot.extensionDisplays
         : [],
+      statuses: extensionStatuses,
       ...(sessionChanged
         ? {
-            statuses: {},
             editorText: null,
             pendingAction: null,
             windowTitle: null,

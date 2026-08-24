@@ -22,11 +22,15 @@ import {
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeResponse,
+  type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
-  type GenericExtensionDisplay,
   type HiddenClearResponse,
   isBusyRunState,
+  MAX_EXTENSION_DISPLAYS,
+  MAX_EXTENSION_KEY_CHARS,
+  MAX_EXTENSION_STATUSES,
+  MAX_EXTENSION_WIDGET_LINES,
   MAX_PENDING_MESSAGES,
   MAX_PENDING_PREVIEW_CHARS,
   type NewSessionOptions,
@@ -105,8 +109,21 @@ import {
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "./session-projection.js";
 
-const MAX_EXTENSION_DISPLAYS = 20;
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
+const MAX_EXTENSION_WIDGET_PAYLOAD_BYTES = 24 * 1024;
+const EXTENSION_NON_DISPLAY_UI_METHODS = new Set([
+  "select",
+  "confirm",
+  "input",
+  "editor",
+  "notify",
+  "setStatus",
+  "setTitle",
+  "setEditorText",
+  "set_editor_text",
+  "setWorkingMessage",
+  "setToolsExpanded",
+]);
 const BRANCH_BRIDGE_TIMEOUT_MS = 15_000;
 const BRANCH_EXTENSION_PATH = fileURLToPath(
   new URL(
@@ -2007,26 +2024,55 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private updateExtensionDisplay(
+  private updateExtensionStatus(
     slot: RuntimeSlot,
     record: Record<string, unknown>,
   ): void {
+    if (record.method !== "setStatus") return;
+    const key = typeof record.statusKey === "string" ? record.statusKey : "";
+    if (!key || key.length > MAX_EXTENSION_KEY_CHARS) return;
+    if (
+      record.statusText !== undefined &&
+      record.statusText !== null &&
+      typeof record.statusText !== "string"
+    )
+      return;
+    const statuses = Object.entries(slot.extensionStatuses).filter(
+      ([candidate]) => candidate !== key,
+    );
+    if (typeof record.statusText === "string" && record.statusText.length > 0)
+      statuses.push([key, record.statusText]);
+    slot.extensionStatuses = Object.fromEntries(
+      statuses.slice(-MAX_EXTENSION_STATUSES),
+    );
+  }
+
+  private updateExtensionDisplay(
+    slot: RuntimeSlot,
+    record: Record<string, unknown>,
+  ): boolean {
     const method =
       typeof record.method === "string" ? record.method.slice(0, 120) : "";
-    // Current Pi identifies setWidget as one-way. Future RPC display methods
-    // can opt into this same generic projection with responseRequired:false.
-    if (method !== "setWidget" && record.responseRequired !== false) return;
-    const key = (
+    // Current Pi identifies setWidget as one-way. Unknown future one-way
+    // methods can opt into the attributable raw projection; known commands,
+    // prompts, notifications, and status updates keep their existing owners.
+    if (
+      method !== "setWidget" &&
+      (record.responseRequired !== false ||
+        EXTENSION_NON_DISPLAY_UI_METHODS.has(method))
+    )
+      return false;
+    const label = (
       typeof record.widgetKey === "string" && record.widgetKey
         ? record.widgetKey
         : String(record.id ?? method)
-    ).slice(0, 240);
-    const id = `${method}:${key}`;
+    ).slice(0, MAX_EXTENSION_KEY_CHARS);
+    const id = `${method}:${label}`;
     if (method === "setWidget" && record.widgetLines === undefined) {
       slot.extensionDisplays = slot.extensionDisplays.filter(
         (display) => display.id !== id,
       );
-      return;
+      return true;
     }
     const source = (
       typeof record.extensionPath === "string"
@@ -2035,27 +2081,54 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ? record.extensionName
           : "Pi extension"
     ).slice(0, 500);
-    const projected = safeProjection(record);
-    const encoded = JSON.stringify(projected);
-    const payload =
-      Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
-        ? projected
-        : {
-            truncated: true,
-            preview: Buffer.from(encoded)
-              .subarray(0, MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES)
-              .toString("utf8"),
-          };
-    const display: GenericExtensionDisplay = {
-      id,
-      method,
-      attribution: `${source} · ${key}`,
-      payload,
-    };
+
+    let display: ExtensionDisplay;
+    const placement =
+      record.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor";
+    const widgetLines = record.widgetLines;
+    const isBoundedTextWidget =
+      method === "setWidget" &&
+      Array.isArray(widgetLines) &&
+      widgetLines.length <= MAX_EXTENSION_WIDGET_LINES &&
+      widgetLines.every((line) => typeof line === "string") &&
+      Buffer.byteLength(JSON.stringify(widgetLines)) <=
+        MAX_EXTENSION_WIDGET_PAYLOAD_BYTES;
+    if (isBoundedTextWidget) {
+      display = {
+        id,
+        kind: "widget",
+        label,
+        source,
+        placement,
+        lines: [...widgetLines] as string[],
+      };
+    } else {
+      const projected = safeProjection(record);
+      const encoded = JSON.stringify(projected);
+      const payload =
+        Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
+          ? projected
+          : {
+              truncated: true,
+              preview: Buffer.from(encoded)
+                .subarray(0, MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES)
+                .toString("utf8"),
+            };
+      display = {
+        id,
+        kind: "raw",
+        label,
+        source,
+        placement,
+        method,
+        payload,
+      };
+    }
     slot.extensionDisplays = [
       ...slot.extensionDisplays.filter((candidate) => candidate.id !== id),
       display,
     ].slice(-MAX_EXTENSION_DISPLAYS);
+    return true;
   }
 
   private handleEvent(
@@ -2106,20 +2179,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       case "extension_ui_request": {
         const owned = { ...record, sessionId: slot.id };
         const pending = this.addPendingExtensionUi(slot, owned, rpc);
-        this.updateExtensionDisplay(slot, owned);
+        const statusMethod = record.method === "setStatus";
+        this.updateExtensionStatus(slot, owned);
+        const displayChanged = this.updateExtensionDisplay(slot, owned);
         if (pending) {
           forwardedEvent = {
             ...owned,
             timeout: pending.timeout,
             expiresAt: pending.expiresAt,
           };
-        } else if (
-          record.method === "setWidget" ||
-          record.responseRequired === false
-        ) {
+        } else if (statusMethod || displayChanged) {
+          // The normalized projection is authoritative. Do not duplicate an
+          // unbounded or private producer payload in the browser event.
           forwardedEvent = {
-            ...owned,
-            extensionDisplays: slot.extensionDisplays,
+            type: "extension_ui_request",
+            id: typeof record.id === "string" ? record.id : "",
+            method: typeof record.method === "string" ? record.method : "",
+            responseRequired: false,
+            ...(statusMethod
+              ? { extensionStatuses: slot.extensionStatuses }
+              : { extensionDisplays: slot.extensionDisplays }),
           };
         }
         break;
@@ -2395,10 +2474,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.clearPendingExtensionUi(slot, "stopped");
     slot.pendingQueues = emptyPendingQueues();
     slot.extensionDisplays = [];
+    slot.extensionStatuses = {};
     this.logRuntimeError(slot.id, error, "worker_exit");
     this.emitSlotEvent(slot, {
       type: "runtime_error",
       error: error.message,
+      extensionDisplays: slot.extensionDisplays,
+      extensionStatuses: slot.extensionStatuses,
     });
     this.scheduleIdleWorkerEviction();
   }
@@ -2530,6 +2612,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       pendingExtensionUiRequests: this.pendingExtensionUiRequests(slot),
       pendingQueues: slot.pendingQueues,
       extensionDisplays: slot.extensionDisplays,
+      extensionStatuses: slot.extensionStatuses,
     }) as ActiveSnapshot;
   }
 
@@ -2657,6 +2740,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.clearPendingExtensionUi(current, "replaced");
         current.pendingQueues = emptyPendingQueues();
         current.extensionDisplays = [];
+        current.extensionStatuses = {};
         this.clearWriterProjectionBaseline(current);
         current.overlay = [];
         current.overlayBytes = 0;
@@ -3367,7 +3451,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         sourceVersion: projection.sourceVersion,
         created: true,
       });
-      this.emitSlotEvent(slot, { type: "runtime_ready" });
+      this.emitSlotEvent(slot, {
+        type: "runtime_ready",
+        extensionDisplays: slot.extensionDisplays,
+        extensionStatuses: slot.extensionStatuses,
+      });
       return committedSnapshot;
     } catch (error) {
       const failure = slot.startupError ?? error;
@@ -4098,6 +4186,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // an empty destination queue; never transfer source-local queue state.
         destination.pendingQueues = emptyPendingQueues();
         destination.extensionDisplays = source.extensionDisplays;
+        destination.extensionStatuses = source.extensionStatuses;
         destination.availableModels = extras.models;
         destination.commands = extras.commands;
         destination.lastUsed = ++this.useSequence;
@@ -4135,6 +4224,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.rebindPendingExtensionUi(source, destination, rpc);
         source.pendingQueues = emptyPendingQueues();
         source.extensionDisplays = [];
+        source.extensionStatuses = {};
         source.availableModels = null;
         source.commands = null;
         this.clearWriterProjectionBaseline(source);
@@ -4159,6 +4249,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.emitSlotEvent(destination, {
           type: "runtime_ready",
           forkedFrom: source.id,
+          extensionDisplays: destination.extensionDisplays,
+          extensionStatuses: destination.extensionStatuses,
         });
         this.scheduleIdleWorkerEviction();
         reservation.release();
@@ -4212,6 +4304,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.clearPendingExtensionUi(slot, "aborted");
           slot.pendingQueues = emptyPendingQueues();
           slot.extensionDisplays = [];
+          slot.extensionStatuses = {};
           for (const expectation of slot.persistenceExpectations)
             expectation.settle(null);
           slot.persistenceExpectations = [];
@@ -4724,6 +4817,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         pendingExtensionUiRequests: this.pendingExtensionUiRequests(slot),
         pendingQueues: slot.pendingQueues,
         extensionDisplays: slot.extensionDisplays,
+        extensionStatuses: slot.extensionStatuses,
       }) as ActiveSnapshot;
       if (snapshot.active) {
         slot.preview = {

@@ -1537,7 +1537,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("keeps a read-only recovery snapshot and clears stale dialogs after worker exit", async () => {
+  it("keeps a read-only recovery snapshot and clears stale extension UI after worker exit", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     let worker!: FakeRpc;
@@ -1550,6 +1550,10 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
+    const emitted: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) =>
+      emitted.push(event as Record<string, unknown>),
+    );
 
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
@@ -1558,6 +1562,21 @@ describe("RuntimeController concurrent sessions", () => {
       id: "question-1",
       method: "confirm",
     });
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["one"],
+    });
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "usage",
+      statusText: "37%",
+    });
+    expect((await runtime.snapshot()).extensionDisplays).toHaveLength(1);
     worker.emit("exit", new Error("worker crashed"));
 
     const recovered = await runtime.snapshot();
@@ -1566,7 +1585,14 @@ describe("RuntimeController concurrent sessions", () => {
     ]);
     expect(recovered.runState).toBe("failed");
     expect(recovered.pendingExtensionUiRequests).toEqual([]);
+    expect(recovered.extensionDisplays).toEqual([]);
+    expect(recovered.extensionStatuses).toEqual({});
     expect(recovered.sessionStatuses.a).toEqual({ runState: "failed" });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "runtime_error",
+      extensionDisplays: [],
+      extensionStatuses: {},
+    });
     await runtime.close();
   });
 
@@ -1752,7 +1778,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("retains generic extension display content and cancels unknown interactive methods", async () => {
+  it("projects text widgets, bounds raw displays, and cancels unknown interactive methods", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     let worker!: FakeRpc;
@@ -1765,6 +1791,10 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
+    const emitted: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) =>
+      emitted.push(event as Record<string, unknown>),
+    );
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
 
@@ -1774,22 +1804,121 @@ describe("RuntimeController concurrent sessions", () => {
       method: "setWidget",
       widgetKey: "plan",
       widgetLines: ["one", "two"],
+      widgetPlacement: "belowEditor",
       extensionPath: "/extensions/plan.ts",
-      body: "x".repeat(140 * 1024),
+      body: "must not cross from a native widget",
       apiToken: "must not cross",
     });
     let snapshot = await runtime.snapshot();
     expect(snapshot.extensionDisplays).toEqual([
-      expect.objectContaining({
+      {
         id: "setWidget:plan",
-        attribution: "/extensions/plan.ts · plan",
-        payload: expect.objectContaining({ truncated: true }),
-      }),
+        kind: "widget",
+        label: "plan",
+        source: "/extensions/plan.ts",
+        placement: "belowEditor",
+        lines: ["one", "two"],
+      },
     ]);
     expect(JSON.stringify(snapshot.extensionDisplays)).not.toContain(
       "must not cross",
     );
     expect(snapshot.pendingExtensionUiRequests).toEqual([]);
+    const widgetEvent = emitted.findLast(
+      (event) =>
+        event.type === "extension_ui_request" && event.id === "widget-1",
+    );
+    expect(widgetEvent).toEqual(
+      expect.objectContaining({
+        method: "setWidget",
+        responseRequired: false,
+        extensionDisplays: snapshot.extensionDisplays,
+      }),
+    );
+    expect(widgetEvent).not.toHaveProperty("body");
+    expect(widgetEvent).not.toHaveProperty("apiToken");
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "widget-oversized",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["x".repeat(140 * 1024)],
+    });
+    snapshot = await runtime.snapshot();
+    expect(snapshot.extensionDisplays).toEqual([
+      expect.objectContaining({
+        id: "setWidget:plan",
+        kind: "raw",
+        payload: expect.objectContaining({ truncated: true }),
+      }),
+    ]);
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "usage",
+      statusText: "37%",
+      responseRequired: false,
+    });
+    snapshot = await runtime.snapshot();
+    expect(snapshot.extensionDisplays).toHaveLength(1);
+    expect(snapshot.extensionStatuses).toEqual({ usage: "37%" });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "extension_ui_request",
+      method: "setStatus",
+      extensionStatuses: { usage: "37%" },
+    });
+    expect(emitted.at(-1)).not.toHaveProperty("extensionDisplays");
+    expect(emitted.at(-1)).not.toHaveProperty("statusText");
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "status-clear",
+      method: "setStatus",
+      statusKey: "usage",
+    });
+    expect((await runtime.snapshot()).extensionStatuses).toEqual({});
+
+    for (let index = 0; index < 22; index += 1) {
+      worker.emit("event", {
+        type: "extension_ui_request",
+        id: `status-${index}`,
+        method: "setStatus",
+        statusKey: `status-${index}`,
+        statusText: String(index),
+      });
+    }
+    snapshot = await runtime.snapshot();
+    expect(Object.keys(snapshot.extensionStatuses ?? {})).toHaveLength(20);
+    expect(snapshot.extensionStatuses).not.toHaveProperty("status-0");
+    expect(snapshot.extensionStatuses).not.toHaveProperty("status-1");
+    expect(snapshot.extensionStatuses).toMatchObject({ "status-21": "21" });
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "panel-1",
+      method: "showPanel",
+      responseRequired: false,
+      extensionPath: "/extensions/build.ts",
+      body: "x".repeat(140 * 1024),
+      apiToken: "must not cross",
+    });
+    snapshot = await runtime.snapshot();
+    expect(snapshot.extensionDisplays?.at(-1)).toEqual(
+      expect.objectContaining({
+        id: "showPanel:panel-1",
+        kind: "raw",
+        label: "panel-1",
+        source: "/extensions/build.ts",
+        method: "showPanel",
+        payload: expect.objectContaining({ truncated: true }),
+      }),
+    );
+    expect(JSON.stringify(snapshot.extensionDisplays)).not.toContain(
+      "must not cross",
+    );
 
     worker.emit("event", {
       type: "extension_ui_request",

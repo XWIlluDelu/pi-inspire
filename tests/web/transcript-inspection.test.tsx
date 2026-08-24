@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ExtensionDisplayDock } from "../../src/components/ExtensionDisplays";
 import { Transcript } from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
 import { store } from "../../src/store";
@@ -2131,39 +2132,67 @@ describe("transient conversation projections", () => {
     expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
   });
 
-  it("renders one attributable inspectable generic extension surface", () => {
+  it("renders placed text widgets and an attributable raw fallback", () => {
+    const displays = [
+      {
+        id: "setWidget:plan",
+        kind: "widget" as const,
+        label: "plan",
+        source: "Pi extension",
+        placement: "aboveEditor" as const,
+        lines: ["\u001b[32mone\u001b[0m", "two"],
+      },
+      {
+        id: "setWidget:usage",
+        kind: "widget" as const,
+        label: "usage",
+        source: "Pi extension",
+        placement: "belowEditor" as const,
+        lines: ["5h 37%"],
+      },
+      {
+        id: "showPanel:build",
+        kind: "raw" as const,
+        label: "build",
+        source: "extensions/build.ts",
+        placement: "aboveEditor" as const,
+        method: "showPanel",
+        payload: { status: "passing" },
+      },
+    ];
     render(
-      <Transcript
-        messages={[]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="hidden"
-        extensionDisplays={[
-          {
-            id: "setWidget:plan",
-            method: "setWidget",
-            attribution: "extensions/plan.ts · plan",
-            payload: { widgetLines: ["one"] },
-          },
-          {
-            id: "showPanel:build",
-            method: "showPanel",
-            attribution: "extensions/build.ts · build",
-            payload: { status: "passing" },
-          },
-        ]}
-      />,
+      <>
+        <Transcript
+          messages={[]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="hidden"
+          extensionDisplays={displays}
+        />
+        <ExtensionDisplayDock displays={displays} placement="aboveEditor" />
+        <ExtensionDisplayDock displays={displays} placement="belowEditor" />
+      </>,
     );
-    const surface = screen.getByRole("region", {
+    const above = screen.getByRole("region", {
+      name: "Extension content above composer",
+    });
+    const below = screen.getByRole("region", {
+      name: "Extension content below composer",
+    });
+    expect(within(above).getByText("plan")).toBeInTheDocument();
+    const widgetText = above.querySelector(".extension-display__text");
+    expect(widgetText).toHaveTextContent("one two");
+    expect(widgetText?.textContent).not.toContain("\u001b[32m");
+    expect(within(below).getByText("usage")).toBeInTheDocument();
+    expect(within(below).getByText("5h 37%")).toBeInTheDocument();
+    const fallback = screen.getByRole("region", {
       name: "Extension display content",
     });
     expect(
-      within(surface).getByText("extensions/plan.ts · plan"),
+      within(fallback).getByText("extensions/build.ts · build"),
     ).toBeInTheDocument();
-    expect(
-      within(surface).getByText("extensions/build.ts · build"),
-    ).toBeInTheDocument();
-    fireEvent.click(within(surface).getByText("extensions/plan.ts · plan"));
-    expect(within(surface).getByText(/widgetLines/)).toBeInTheDocument();
+    expect(within(fallback).queryByText("plan")).not.toBeInTheDocument();
+    fireEvent.click(within(fallback).getByText("extensions/build.ts · build"));
+    expect(within(fallback).getByText(/passing/)).toBeInTheDocument();
   });
 });
