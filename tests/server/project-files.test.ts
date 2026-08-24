@@ -1,11 +1,16 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   directoryEntries,
+  invalidateProjectIndex,
   searchProjectFiles,
 } from "../../server/project-files.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("directoryEntries", () => {
   it("derives one directory level from the flat project index, folders first", () => {
@@ -81,5 +86,55 @@ describe("project index authority", () => {
     } finally {
       process.env.PATH = previousPath;
     }
+  });
+
+  it("rejects byte-distinct git paths that cannot be represented as UTF-8", async () => {
+    const root = await scratch();
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      '#!/bin/sh\ncase "$*" in *rev-parse*) echo true;; *) printf "\\377\\0";; esac\n',
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    try {
+      await expect(searchProjectFiles(root)).rejects.toThrow(/valid UTF-8/);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
+  it("keeps a bounded cache entry per active workspace instead of thrashing", async () => {
+    const first = await scratch();
+    const second = await scratch();
+    await writeFile(join(first, "one.txt"), "one\n");
+    await writeFile(join(second, "other.txt"), "other\n");
+
+    expect((await searchProjectFiles(first)).map((item) => item.path)).toEqual([
+      "one.txt",
+    ]);
+    await searchProjectFiles(second);
+    await writeFile(join(first, "two.txt"), "two\n");
+    expect((await searchProjectFiles(first)).map((item) => item.path)).toEqual([
+      "one.txt",
+    ]);
+
+    invalidateProjectIndex(first);
+    expect((await searchProjectFiles(first)).map((item) => item.path)).toEqual([
+      "one.txt",
+      "two.txt",
+    ]);
+  });
+
+  it("uses real git output without shell path quoting", async () => {
+    const root = await scratch();
+    await execFileAsync("git", ["-C", root, "init", "-q"]);
+    await writeFile(join(root, "line\nname.txt"), "content\n");
+    await execFileAsync("git", ["-C", root, "add", "line\nname.txt"]);
+    expect((await searchProjectFiles(root)).map((item) => item.path)).toEqual([
+      "line\nname.txt",
+    ]);
   });
 });

@@ -32,6 +32,17 @@ The frozen activation thresholds are:
 
 Counts and aggregate React work remain diagnostic. Every activation uses independent-sample witnesses: p95 must reach its threshold **and** at least `max(3, ceil(samples * 0.10))` samples must individually cross it. At 21 samples this requires three crossings, so neither one spike nor the two samples that determine nearest-rank p95 can activate work alone. React uses each iteration's surface p95 as its independent value. A Vite chunk-size warning or an isolated microbenchmark never activates maintenance by itself.
 
+### Recorded-run identities
+
+Each historical result below is tied to the Git object that contained both the measured application and evaluator. The evaluator SHA-256 is over `tests/benchmarks/evidence-gated-maintenance.ts` at that commit; the immutable commit carries the corresponding source tree and this note.
+
+| Recorded run                 | Application/evaluator commit               | Source tree                                | Evaluator SHA-256                                                  |
+| ---------------------------- | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------ |
+| 2026-08-01 baseline          | `b4d2b4b26bf2dacafda21c123dc4c8a842476bf6` | `1a1bb2b8278e0304e7c9b8e5e178182287ac5fdd` | `4b4879a2c00648fcddc8c67953434d194132bdecc4bed1b38b6f0f00a408646f` |
+| 2026-08-07 current evidence  | `4002fa6f23400640394601234922e2fcac057c74` | `1f48ddf2cd727fc5473c330eca61c764230bcc12` | `23c87df9e414b03335959b7301c06d35071e425b2e09a4233005fa763beb75a6` |
+| 2026-08-08 project hardening | `c6acf45071fbcc589867a2e4e96d00329e8a795e` | `fc02173b43a68228054e34d3e8054a2daf93fb0a` | `4728f874f766af31d6944db519dfbbdfd9f8402f0e1f2a4340c26005452afd64` |
+| 2026-08-24 recent features   | `11d4bc2ad1487512060a7997d14c8acd9818effb` | `ed732283148a9500b88c4547e6a1a796ee6cdd04` | `279406b52873dd391b76160219021e5b36a07b62f8bbcf9dde64bf5b77bd2ae3` |
+
 ## Package and font-transfer evidence
 
 `npm run size:report` is static package inventory, not a network measurement.

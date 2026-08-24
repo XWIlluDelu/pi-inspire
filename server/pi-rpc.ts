@@ -130,6 +130,10 @@ export class PiRpcProcess extends EventEmitter {
           PI_SKIP_VERSION_CHECK: "1",
           ...this.options.env,
         },
+        // Pi and every tool it launches own an isolated process group on
+        // POSIX. Host eviction can then terminate the whole worker tree rather
+        // than orphaning a long-running shell/tool grandchild.
+        detached: process.platform !== "win32",
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
@@ -145,6 +149,9 @@ export class PiRpcProcess extends EventEmitter {
     child.stdin.on("error", (error) => this.handleExit(child, error));
     child.once("error", (error) => this.handleExit(child, error));
     child.once("exit", (code, signal) => {
+      // The group can outlive its leader when a tool ignores SIGTERM. Once Pi
+      // is gone there is no owner left for such descendants, so reap them.
+      if (process.platform !== "win32") this.signalWorkerTree(child, "SIGKILL");
       if (this.stopping) return;
       this.handleExit(
         child,
@@ -154,6 +161,21 @@ export class PiRpcProcess extends EventEmitter {
 
     this.attachLineReader(child);
     await this.request({ type: "get_state" }, 60_000);
+  }
+
+  private signalWorkerTree(
+    child: ChildProcessWithoutNullStreams,
+    signal: NodeJS.Signals,
+  ): void {
+    if (process.platform !== "win32" && child.pid) {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      }
+    }
+    child.kill(signal);
   }
 
   private attachLineReader(child: ChildProcessWithoutNullStreams): void {
@@ -171,7 +193,7 @@ export class PiRpcProcess extends EventEmitter {
         child,
         new Error(`Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`),
       );
-      child.kill("SIGKILL");
+      this.signalWorkerTree(child, "SIGKILL");
     };
 
     const append = (part: Buffer): boolean => {
@@ -463,13 +485,13 @@ export class PiRpcProcess extends EventEmitter {
         settle();
         return;
       }
-      child.kill("SIGTERM");
+      this.signalWorkerTree(child, "SIGTERM");
       force = setTimeout(() => {
         if (child.exitCode !== null || child.signalCode !== null) {
           settle();
           return;
         }
-        child.kill("SIGKILL");
+        this.signalWorkerTree(child, "SIGKILL");
         hard = setTimeout(settle, 1_000);
         hard.unref?.();
       }, 1_500);

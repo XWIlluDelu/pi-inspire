@@ -49,6 +49,8 @@ A Linux-first local workbench for [Pi Coding Agent](https://github.com/earendil-
 
 Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so the terminal and web workbench use one runtime installation and the same `~/.pi/agent/` state.
 
+Inspire supports the latest Pi release; the exact version pinned in `devDependencies` (currently 0.84.2) is the deterministic witness for that boundary. Older Pi versions may still work but are neither tested nor supported, and Inspire does not carry compatibility branches for them. Startup verifies that the resolved CLI and SDK belong to one external Pi package. Missing runtime capabilities are recorded as `runtime_capability_unavailable` in the private diagnostics log, and unsupported response-bearing extension UI fails explicitly instead of leaving the extension waiting.
+
 Simplest:
 
 ```bash
@@ -107,12 +109,12 @@ npm pack
 
 `prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, proves that Pi is absent from that installation, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then uses one separately installed Pi package for both the public SDK and a real RPC worker and creates an empty session without invoking a model.
 
-The current release is distributed through GitHub Releases rather than the npm registry. Download, verify, and install its local tarball:
+No prebuilt release is currently published. To install from a source checkout, verify and pack the same standalone application locally:
 
 ```bash
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/inspire-pi-gui-0.2.0.tgz
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/SHA256SUMS.txt
-sha256sum -c SHA256SUMS.txt
+npm ci
+npm run release:verify
+npm pack
 npm install --global ./inspire-pi-gui-0.2.0.tgz
 inspire
 ```

@@ -456,6 +456,7 @@ export class AppStore {
   private readonly composer = new ComposerController({
     state: () => this.state,
     api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
     patch: (slice) => this.set(slice),
     notify: (kind, text) => this.notify(kind, text),
     clearVisibleError: (sessionId) => {
@@ -722,6 +723,7 @@ export class AppStore {
     // cannot schedule a retry with the rejected token.
     this.connectionController.stop();
     this.transportGeneration += 1;
+    this.composer.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
@@ -782,6 +784,7 @@ export class AppStore {
   async init(token: string | null = this.authToken): Promise<void> {
     const api = createApi(token);
     const generation = ++this.transportGeneration;
+    this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();

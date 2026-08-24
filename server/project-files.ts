@@ -1,5 +1,6 @@
-import { opendir } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
+import { opendir, realpath } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import type { ProjectDirEntry } from "../shared/contracts.js";
 import { GIT_CONFIG_ARGS, GitInspectionError, spawnGit } from "./git-runner.js";
 import { escapesBase } from "./paths.js";
@@ -12,20 +13,51 @@ const ignored = new Set([
   ".pi-subagents",
 ]);
 const CACHE_MS = 5_000;
-let cache: { cwd: string; expiresAt: number; paths: Promise<string[]> } | null =
-  null;
+const MAX_PROJECT_INDEX_FILES = 20_000;
+const MAX_PROJECT_INDEX_DIRECTORIES = 10_000;
+const PROJECT_INDEX_WALK_MS = 5_000;
+const MAX_PROJECT_INDEX_CACHE_ENTRIES = 8;
+
+interface ProjectIndexCache {
+  expiresAt: number;
+  paths: Promise<string[]>;
+}
+
+const cache = new Map<string, ProjectIndexCache>();
+const cacheAliases = new Map<string, string>();
 
 interface ProjectFileResult {
   path: string;
   name: string;
 }
 
+function validRelativePath(path: string): boolean {
+  return Boolean(path) && !isAbsolute(path) && !escapesBase(path);
+}
+
 async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
   const { stdout } = await spawnGit([...GIT_CONFIG_ARGS, "-C", cwd, ...args], {
     stdoutLimit: 4 * 1024 * 1024,
   });
-  // The runner preserves raw NUL-delimited bytes until the indexing boundary.
-  return stdout.toString("utf8").split("\0").filter(Boolean);
+  // Git -z emits raw pathname bytes. Node strings cannot represent arbitrary
+  // POSIX byte names without replacement collisions, so reject such an index
+  // instead of granting two byte-distinct files one browser identity.
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const paths: string[] = [];
+  let start = 0;
+  try {
+    for (let index = 0; index <= stdout.length; index += 1) {
+      if (index < stdout.length && stdout[index] !== 0) continue;
+      if (index > start) {
+        const path = decoder.decode(stdout.subarray(start, index));
+        if (validRelativePath(path)) paths.push(path);
+      }
+      start = index + 1;
+    }
+  } catch {
+    throw new Error("Git reported a project path that is not valid UTF-8");
+  }
+  return paths;
 }
 
 async function fromGit(cwd: string): Promise<string[]> {
@@ -68,11 +100,19 @@ async function isNonGitDirectory(cwd: string): Promise<boolean> {
 
 /** Non-git walker. Without .gitignore semantics available, hidden entries
  * stay out wholesale — they are where credentials live (.env, .ssh, …). */
-async function fromFilesystem(cwd: string, cap = 10_000): Promise<string[]> {
+async function fromFilesystem(cwd: string): Promise<string[]> {
   const values: string[] = [];
   const pending = [cwd];
-  while (pending.length > 0 && values.length < cap) {
+  const deadline = Date.now() + PROJECT_INDEX_WALK_MS;
+  let directories = 0;
+  while (
+    pending.length > 0 &&
+    values.length < MAX_PROJECT_INDEX_FILES &&
+    directories < MAX_PROJECT_INDEX_DIRECTORIES &&
+    Date.now() < deadline
+  ) {
     const directory = pending.pop()!;
+    directories += 1;
     let entries;
     try {
       entries = await opendir(directory);
@@ -89,24 +129,57 @@ async function fromFilesystem(cwd: string, cap = 10_000): Promise<string[]> {
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) pending.push(absolute);
       else if (entry.isFile()) values.push(relative(cwd, absolute));
-      if (values.length >= cap) break;
+      if (values.length >= MAX_PROJECT_INDEX_FILES) break;
     }
   }
-  return values;
+  return values.sort((left, right) => left.localeCompare(right));
 }
 
-function projectPaths(cwd: string): Promise<string[]> {
-  if (cache?.cwd === cwd && cache.expiresAt > Date.now()) return cache.paths;
-  const paths = fromGit(cwd).catch(async (error) => {
-    if (await isNonGitDirectory(cwd)) return fromFilesystem(cwd);
-    throw error;
-  });
+function removeCacheEntry(root: string): void {
+  cache.delete(root);
+  for (const [alias, target] of cacheAliases) {
+    if (target === root) cacheAliases.delete(alias);
+  }
+}
+
+async function projectPaths(cwd: string): Promise<string[]> {
+  const alias = resolve(cwd);
+  let root: string;
+  try {
+    root = await realpath(alias);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    root = alias;
+  }
+  cacheAliases.set(alias, root);
+  cacheAliases.set(root, root);
+  const existing = cache.get(root);
+  if (existing && existing.expiresAt > Date.now()) {
+    // Map insertion order is the LRU order.
+    cache.delete(root);
+    cache.set(root, existing);
+    return existing.paths;
+  }
+  if (existing) removeCacheEntry(root);
+
+  const paths = fromGit(root)
+    .then((values) => values.slice(0, MAX_PROJECT_INDEX_FILES))
+    .catch(async (error) => {
+      if (await isNonGitDirectory(root)) return fromFilesystem(root);
+      throw error;
+    });
+  const entry = { expiresAt: Date.now() + CACHE_MS, paths };
+  cache.set(root, entry);
+  while (cache.size > MAX_PROJECT_INDEX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    removeCacheEntry(oldest);
+  }
   // A failure is not an index: evict it so the next request retries instead
   // of serving the cached rejection for the whole cache window.
   paths.catch(() => {
-    if (cache?.paths === paths) cache = null;
+    if (cache.get(root)?.paths === paths) removeCacheEntry(root);
   });
-  cache = { cwd, expiresAt: Date.now() + CACHE_MS, paths };
   return paths;
 }
 
@@ -193,5 +266,6 @@ export async function indexedBasenameMatches(
  * exists — so the next request rescans instead of serving the same missing
  * file for the rest of the cache window. */
 export function invalidateProjectIndex(cwd: string): void {
-  if (cache?.cwd === cwd) cache = null;
+  const alias = resolve(cwd);
+  removeCacheEntry(cacheAliases.get(alias) ?? alias);
 }
