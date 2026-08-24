@@ -1467,6 +1467,7 @@ export function Transcript({
         className="transcript"
         role="log"
         aria-live="polite"
+        aria-busy={streaming}
         ref={viewport.scrollRef}
         onScroll={viewport.onScroll}
         onPointerDown={() => {

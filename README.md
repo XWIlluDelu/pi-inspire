@@ -49,6 +49,8 @@ A Linux-first local workbench for [Pi Coding Agent](https://github.com/earendil-
 
 Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so the terminal and web workbench use one runtime installation and the same `~/.pi/agent/` state.
 
+Inspire supports the latest Pi release; the exact version pinned in `devDependencies` (currently 0.84.2) is the deterministic witness for that boundary. Older Pi versions may still work but are neither tested nor supported, and Inspire does not carry compatibility branches for them. Startup verifies that the resolved CLI and SDK belong to one external Pi package. Missing runtime capabilities are recorded as `runtime_capability_unavailable` in the private diagnostics log, and unsupported response-bearing extension UI fails explicitly instead of leaving the extension waiting.
+
 Simplest:
 
 ```bash

@@ -18,7 +18,8 @@ function createHarness(sessionId = "session-a") {
   const prompt = vi.fn();
   const uploadAttachments = vi.fn();
   const deleteAttachment = vi.fn();
-  const api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
+  let generation = 0;
+  let api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
   const patch = vi.fn();
   const notify = vi.fn();
   const clearVisibleError = vi.fn();
@@ -26,6 +27,7 @@ function createHarness(sessionId = "session-a") {
   const controller = new ComposerController({
     state: () => ({ sessionId: activeSessionId }),
     api: () => api,
+    transportGeneration: () => generation,
     patch,
     notify,
     clearVisibleError: (owner) => {
@@ -43,6 +45,12 @@ function createHarness(sessionId = "session-a") {
     notify,
     clearVisibleError,
     failVisible,
+    deleteAttachment,
+    replaceTransport: (replacement?: Api) => {
+      generation += 1;
+      api = replacement ?? api;
+      controller.invalidateForTransportReplacement();
+    },
     activate: (id: string | null) => {
       activeSessionId = id;
     },
@@ -114,5 +122,46 @@ describe("ComposerController", () => {
       "Remove failed attachments before sending",
     );
     expect(harness.prompt).not.toHaveBeenCalled();
+  });
+
+  it("cannot clear a composer after its transport was replaced", async () => {
+    const pending = deferred<void>();
+    const harness = createHarness();
+    harness.prompt.mockReturnValue(pending.promise);
+    harness.controller.addProjectFile("/workspace/kept.ts");
+
+    const sending = harness.controller.send("send");
+    harness.replaceTransport();
+    pending.resolve();
+
+    await expect(sending).resolves.toBe(false);
+    expect(harness.slice()).toEqual({
+      attachments: [],
+      projectFiles: ["/workspace/kept.ts"],
+      sending: false,
+    });
+    expect(harness.clearVisibleError).not.toHaveBeenCalled();
+  });
+
+  it("reclaims an upload that completes on a replaced transport", async () => {
+    const pending = deferred<{
+      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
+    }>();
+    const harness = createHarness();
+    harness.uploadAttachments.mockReturnValue(pending.promise);
+
+    const uploading = harness.controller.addFiles([
+      new File(["late"], "late.txt", { type: "text/plain" }),
+    ]);
+    harness.replaceTransport();
+    pending.resolve({
+      attachments: [{ id: "late-file", fileName: "late.txt", kind: "file" }],
+    });
+    await uploading;
+
+    expect(harness.deleteAttachment).toHaveBeenCalledWith("late-file");
+    expect(harness.slice().attachments).toEqual([
+      expect.objectContaining({ status: "error" }),
+    ]);
   });
 });

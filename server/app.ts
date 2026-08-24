@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -287,10 +287,21 @@ const gitDiffSchema = z.object({
 });
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
+export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
 const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
-export const ACCESS_COOKIE = "inspire_access";
+const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
+
+/** Cookies are scoped by host but not by port. Derive a name per Host origin
+ * so pairing another local port cannot overwrite this instance's token. */
+export function accessCookieName(host: string | undefined): string {
+  const suffix = createHash("sha256")
+    .update(host?.trim().toLowerCase() || "missing-host")
+    .digest("base64url")
+    .slice(0, 12);
+  return `${ACCESS_COOKIE}_${suffix}`;
+}
 
 interface MaintenanceRestartLike {
   reserve(): Promise<MaintenanceRestartOutcome>;
@@ -346,11 +357,15 @@ function bearerToken(request: Request): string | undefined {
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
 }
 
-function cookieToken(header: string | undefined): string | undefined {
+function cookieToken(
+  header: string | undefined,
+  host: string | undefined,
+): string | undefined {
   if (!header) return undefined;
+  const expectedName = accessCookieName(host);
   for (const segment of header.split(";")) {
     const separator = segment.indexOf("=");
-    if (separator < 0 || segment.slice(0, separator).trim() !== ACCESS_COOKIE)
+    if (separator < 0 || segment.slice(0, separator).trim() !== expectedName)
       continue;
     try {
       return decodeURIComponent(segment.slice(separator + 1).trim());
@@ -376,7 +391,7 @@ function setAccessCookie(
   response: Response,
   token: string,
 ): void {
-  response.cookie(ACCESS_COOKIE, token, {
+  response.cookie(accessCookieName(request.get("host")), token, {
     httpOnly: true,
     sameSite: "strict",
     secure: request.secure,
@@ -546,7 +561,7 @@ export function createInspireServer(deps: AppDependencies): {
       return response.status(403).json({ error: "Origin is not allowed" });
     }
     const bearer = bearerToken(request);
-    const cookie = cookieToken(request.get("cookie"));
+    const cookie = cookieToken(request.get("cookie"), request.get("host"));
     if (
       !tokenMatches(bearer, deps.token) &&
       !tokenMatches(cookie, deps.token)
@@ -1014,6 +1029,12 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
 
+  // Unknown API paths are protocol errors, never client-side routes. Keep
+  // them out of the SPA fallback so a typo cannot return index.html as 200.
+  app.all(["/api", "/api/*path"], (_request, response) => {
+    response.status(404).json({ error: "API route not found" });
+  });
+
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
     // A direct local launcher may pair before the application bundle runs,
@@ -1117,6 +1138,13 @@ export function createInspireServer(deps: AppDependencies): {
   deps.runtime.on("event", (event) => {
     const message = JSON.stringify(event);
     const messageBytes = Buffer.byteLength(message);
+    if (messageBytes > MAX_RUNTIME_EVENT_BYTES) {
+      // The next bootstrap snapshot is the recovery authority. Never enqueue
+      // one exceptional extension/runtime object into every browser socket.
+      for (const socket of sockets)
+        closeLaggingSocket(socket, "Runtime event exceeded projection budget");
+      return;
+    }
     for (const socket of sockets) {
       const queue = joining.get(socket);
       if (queue) {
@@ -1144,7 +1172,10 @@ export function createInspireServer(deps: AppDependencies): {
       return;
     }
     const queryToken = url.searchParams.get("token") ?? undefined;
-    const pairedToken = cookieToken(request.headers.cookie);
+    const pairedToken = cookieToken(
+      request.headers.cookie,
+      request.headers.host,
+    );
     const queryTokenAllowed =
       !trustedForwardedHttps(request) || queryToken === undefined;
     if (

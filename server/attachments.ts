@@ -24,6 +24,10 @@ import {
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import { escapesBase } from "./paths.js";
+import {
+  invalidateProjectIndex,
+  isIndexedProjectFile,
+} from "./project-files.js";
 
 interface StoredAttachment extends UploadedAttachment {
   path: string;
@@ -399,13 +403,24 @@ export async function resolveProjectFiles(
   cwd: string,
   requested: string[] = [],
 ): Promise<string[]> {
+  const unique = [...new Set(requested)].slice(0, MAX_PROJECT_FILES);
+  if (unique.length === 0) return [];
   const root = await realpath(cwd);
+  // Selection and send are separate user actions. Force a fresh authority
+  // check so a path deleted, ignored, or retargeted between them cannot be
+  // promoted into the prompt merely because it was offered earlier.
+  invalidateProjectIndex(root);
   return Promise.all(
-    [...new Set(requested)].slice(0, MAX_PROJECT_FILES).map(async (raw) => {
+    unique.map(async (raw) => {
       const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
       const actual = await realpath(candidate);
       if (escapesBase(relative(root, actual))) {
         throw new Error(`Project file is outside the active project: ${raw}`);
+      }
+      if (!(await isIndexedProjectFile(root, actual))) {
+        throw new Error(
+          `Project file is no longer in the project index: ${raw}`,
+        );
       }
       return actual;
     }),
@@ -422,6 +437,8 @@ export function addAttachmentContext(
     .map((item) => item.path);
   const references = [...projectFiles, ...ordinary];
   if (references.length === 0) return message;
-  const lines = references.map((path) => `- ${path}`);
-  return `${message.trim()}\n\nReferenced files available to the agent:\n${lines.join("\n")}`.trim();
+  // JSON string literals keep newlines, bullet prefixes, and other legal
+  // filename characters inside one unambiguous structural item.
+  const lines = references.map((path) => `- ${JSON.stringify(path)}`);
+  return `${message.trim()}\n\nReferenced files available to the agent (JSON paths):\n${lines.join("\n")}`.trim();
 }

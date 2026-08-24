@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,6 +85,47 @@ describe("PreferencesStore validation", () => {
       thinkingVisibility: "dynamic",
       toolVisibility: "dynamic",
       activityFoldVisibility: "dynamic",
+    });
+  });
+
+  it("serializes field patches across independent Host store instances", async () => {
+    const { path } = await fixture();
+    const first = new PreferencesStore(path);
+    const second = new PreferencesStore(path);
+
+    await Promise.all([
+      first.patch({ theme: "dark" }),
+      second.patch({ readingWidth: "wide" }),
+    ]);
+
+    const saved = JSON.parse(await readFile(path, "utf8"));
+    expect(saved).toMatchObject({ theme: "dark", readingWidth: "wide" });
+    expect(await first.read()).toMatchObject({
+      theme: "dark",
+      readingWidth: "wide",
+    });
+  });
+
+  it("recovers an aged lock whose owning process no longer exists", async () => {
+    const { path, store } = await fixture();
+    let deadPid = 999_999;
+    while (true) {
+      try {
+        process.kill(deadPid, 0);
+        deadPid += 1;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+        deadPid += 1;
+      }
+    }
+    const lock = `${path}.lock`;
+    await mkdir(lock);
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: deadPid }));
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+
+    await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
+      theme: "dark",
     });
   });
 });

@@ -73,6 +73,24 @@ Once a user mapping is selected, a missing rule, exception, or incompatible data
 
 Mapping `grep` instead of `custom_search` explicitly replaces the shipped `grep` presentation. This is useful when an extension itself replaces Pi's tool under the native name.
 
+## Thinking presentation
+
+A top-level `thinking` declaration can provide the same `summary` and `blocks` arrays for Thinking cards without a rule or tool-name mapping:
+
+```json
+{
+  "version": 1,
+  "thinking": {
+    "summary": [
+      { "value": { "path": "thinking.text", "format": "first-line" } }
+    ],
+    "blocks": [{ "type": "markdown", "source": { "path": "thinking.text" } }]
+  }
+}
+```
+
+`thinking.text` is the only field root available in this declaration. It contains display-cleaned reasoning text and remains subject to the same validation, truncation, and sanitized Markdown rendering as tool rules. A missing or incompatible declaration falls back to the native Thinking card.
+
 ## Values and fields
 
 Every displayed value is either a literal or a field selection:
