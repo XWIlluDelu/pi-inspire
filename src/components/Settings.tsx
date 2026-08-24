@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -120,7 +121,9 @@ const LAUNCH_OPTIONS: Array<{ value: LaunchPreference; label: string }> = [
   { value: "continue", label: "Continue previous session" },
 ];
 
-type CategoryId = "display" | "conversation" | "behavior" | "updates";
+export type SettingsCategoryId =
+  "display" | "conversation" | "behavior" | "updates";
+type CategoryId = SettingsCategoryId;
 
 const CATEGORIES: Array<{
   id: CategoryId;
@@ -435,27 +438,48 @@ function UpdateEntry({
 
 /** Persistent workbench preferences grouped by user purpose, with secondary
  * install/about/reset utilities kept outside the settings taxonomy. */
-export function Settings({ onClose }: { onClose: () => void }) {
+export function Settings({
+  onClose,
+  initialCategory = "display",
+}: {
+  onClose: () => void;
+  initialCategory?: SettingsCategoryId;
+}) {
   const state = useAppState();
   const install = useSyncExternalStore(
     subscribeInstallAvailability,
     installAvailability,
   );
-  const [activeCategory, setActiveCategory] = useState<CategoryId>("display");
+  const [activeCategory, setActiveCategory] =
+    useState<CategoryId>(initialCategory);
   const contentRef = useRef<HTMLElement>(null);
   const programmaticScroll = useRef(false);
   const dialogRef = useModalFocus<HTMLDivElement>(true, "settings", onClose);
 
-  const scrollToCategory = useCallback((categoryId: CategoryId) => {
-    setActiveCategory(categoryId);
-    const target = document.getElementById(`settings-section-${categoryId}`);
-    if (!target) return;
-    programmaticScroll.current = true;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    window.setTimeout(() => {
-      programmaticScroll.current = false;
-    }, 450);
-  }, []);
+  const scrollToCategory = useCallback(
+    (categoryId: CategoryId, behavior: ScrollBehavior = "smooth") => {
+      setActiveCategory(categoryId);
+      const target = document.getElementById(`settings-section-${categoryId}`);
+      if (!target) return;
+      programmaticScroll.current = true;
+      target.scrollIntoView({ behavior, block: "start" });
+      window.setTimeout(
+        () => {
+          programmaticScroll.current = false;
+        },
+        behavior === "smooth" ? 450 : 0,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (initialCategory === "display") return;
+    const frame = window.requestAnimationFrame(() =>
+      scrollToCategory(initialCategory, "auto"),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialCategory, scrollToCategory]);
 
   const handleContentScroll = useCallback(() => {
     if (programmaticScroll.current) return;

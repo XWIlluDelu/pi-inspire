@@ -8139,8 +8139,9 @@ body.srail-dragging {
   }
 
   .notices {
+    top: calc(var(--topbar-h) + var(--safe-top) + var(--space-2));
     right: max(var(--space-3), var(--safe-right));
-    bottom: max(var(--space-3), var(--safe-bottom));
+    bottom: auto;
     width: min(360px, calc(100vw - max(var(--space-3), var(--safe-left)) - max(var(--space-3), var(--safe-right))));
   }
 }

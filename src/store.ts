@@ -814,6 +814,9 @@ export class AppStore {
       if (!ownsBootstrap()) return;
       this.confirmedPrefs = boot.preferences;
       configureToolPresentationRegistry(boot.toolPresentations);
+      const staleInspireUpdate =
+        this.state.availableUpdate !== null &&
+        this.state.availableUpdate.currentVersion !== boot.version;
       this.set({
         prefs: boot.preferences,
         mock: boot.mock,
@@ -825,7 +828,7 @@ export class AppStore {
         ...(this.state.piVersion && this.state.piVersion !== boot.piVersion
           ? { piUpdateCheck: null }
           : {}),
-        ...(this.state.availableUpdate?.currentVersion !== boot.version
+        ...(staleInspireUpdate
           ? { availableUpdate: null, updateSnoozedUntil: null }
           : {}),
         availableModels: Array.isArray(boot.availableModels)
@@ -2460,10 +2463,14 @@ export class AppStore {
 
   // --- Prompting ---
 
-  sendPrompt = (
+  sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
-  ): Promise<boolean> => this.composer.send(message, behavior);
+  ): Promise<boolean> => {
+    const accepted = await this.composer.send(message, behavior);
+    if (accepted) this.updates.promptAccepted();
+    return accepted;
+  };
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
