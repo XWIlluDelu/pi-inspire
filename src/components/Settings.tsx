@@ -4,6 +4,7 @@ import {
   Monitor,
   Moon,
   Palette,
+  RefreshCw,
   ScrollText,
   Sun,
   X,
@@ -25,10 +26,12 @@ import {
   type DesktopSendKeyPreference,
   type LaunchPreference,
   type PalettePreference,
+  type PiUpdateCheckResponse,
   type ProjectDisplayPreference,
   type ReadingWidthPreference,
   type ThemePreference,
   type ToolVisibilityPreference,
+  type UpdateCheckResponse,
   type VisibilityPreference,
 } from "../../shared/contracts";
 import {
@@ -117,7 +120,7 @@ const LAUNCH_OPTIONS: Array<{ value: LaunchPreference; label: string }> = [
   { value: "continue", label: "Continue previous session" },
 ];
 
-type CategoryId = "display" | "conversation" | "behavior";
+type CategoryId = "display" | "conversation" | "behavior" | "updates";
 
 const CATEGORIES: Array<{
   id: CategoryId;
@@ -138,6 +141,11 @@ const CATEGORIES: Array<{
     id: "behavior",
     label: "Behavior",
     icon: <Compass size={14} aria-hidden />,
+  },
+  {
+    id: "updates",
+    label: "Updates",
+    icon: <RefreshCw size={14} aria-hidden />,
   },
 ];
 
@@ -207,7 +215,7 @@ function Section({
   id: CategoryId;
   icon: ReactNode;
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 }) {
   return (
@@ -223,10 +231,205 @@ function Section({
           </span>
           <h3 className="settings__section-title">{title}</h3>
         </div>
-        <p className="settings__section-desc">{description}</p>
+        {description ? (
+          <p className="settings__section-desc">{description}</p>
+        ) : null}
       </div>
       <div className="settings__card">{children}</div>
     </section>
+  );
+}
+
+function UpdateCheckButton({
+  label,
+  checked,
+  checking,
+  onClick,
+}: {
+  label: string;
+  checked: boolean;
+  checking: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="settings__update-check"
+      aria-label={label}
+      disabled={checking}
+      onClick={onClick}
+    >
+      <RefreshCw
+        size={13}
+        className={checking ? "spin" : undefined}
+        aria-hidden
+      />
+      {checking ? "Checking" : checked ? "Check again" : "Check now"}
+    </button>
+  );
+}
+
+function UpdateStatusRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="settings__update-status-row">
+      <span className="settings__update-status-label">{label}</span>
+      <div className="settings__update-status-value">{children}</div>
+    </div>
+  );
+}
+
+function PiUpdateStatus({
+  currentVersion,
+  check,
+  checking,
+}: {
+  currentVersion: string;
+  check: PiUpdateCheckResponse | null;
+  checking: boolean;
+}) {
+  const version = check?.currentVersion || currentVersion;
+  const pending = checking && !check;
+  return (
+    <div
+      className="settings__update-status"
+      aria-live="polite"
+      aria-busy={checking}
+    >
+      <UpdateStatusRow label="Pi">
+        <span>{version ? `v${version}` : "Version unavailable"}</span>
+        {pending ? (
+          <span className="settings__update-state">Checking…</span>
+        ) : check?.pi.kind === "available" ? (
+          <>
+            <a
+              className="settings__update-link"
+              href={check.pi.releaseUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              v{check.pi.latestVersion} available
+            </a>
+            <code className="settings__update-command">pi update</code>
+          </>
+        ) : check?.pi.kind === "current" ? (
+          <span className="settings__update-state">Up to date</span>
+        ) : check?.pi.kind === "unavailable" ? (
+          <span className="settings__update-state">Check unavailable</span>
+        ) : (
+          <span className="settings__update-state">Not checked</span>
+        )}
+      </UpdateStatusRow>
+
+      <UpdateStatusRow label="Extensions">
+        {pending ? (
+          <span className="settings__update-state">Checking…</span>
+        ) : check?.extensions.kind === "available" ? (
+          <div className="settings__update-packages">
+            <span className="settings__update-link">
+              {check.extensions.updates.length}{" "}
+              {check.extensions.updates.length === 1 ? "update" : "updates"}
+            </span>
+            <ul>
+              {check.extensions.updates.map((update, index) => (
+                <li key={`${update.type}:${update.displayName}:${index}`}>
+                  {update.displayName}
+                </li>
+              ))}
+            </ul>
+            <code className="settings__update-command">
+              pi update --extensions
+            </code>
+          </div>
+        ) : check?.extensions.kind === "none" ? (
+          <span className="settings__update-state">No updates found</span>
+        ) : check?.extensions.kind === "unavailable" ? (
+          <span className="settings__update-state">Check unavailable</span>
+        ) : (
+          <span className="settings__update-state">Not checked</span>
+        )}
+      </UpdateStatusRow>
+    </div>
+  );
+}
+
+function InspireUpdateStatus({
+  currentVersion,
+  check,
+  checking,
+}: {
+  currentVersion: string;
+  check: UpdateCheckResponse | null;
+  checking: boolean;
+}) {
+  return (
+    <div
+      className="settings__update-status"
+      aria-live="polite"
+      aria-busy={checking}
+    >
+      <UpdateStatusRow label="INSΠRE">
+        <span>
+          {currentVersion ? `v${currentVersion}` : "Version unavailable"}
+        </span>
+        {checking && !check ? (
+          <span className="settings__update-state">Checking…</span>
+        ) : check?.kind === "available" ? (
+          <a
+            className="settings__update-link"
+            href={check.update.releaseUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            v{check.update.latestVersion} available
+          </a>
+        ) : check?.kind === "current" ? (
+          <span className="settings__update-state">Up to date</span>
+        ) : check?.kind === "unreleased" ? (
+          <span className="settings__update-state">No release published</span>
+        ) : check?.kind === "unavailable" ? (
+          <span className="settings__update-state">Check unavailable</span>
+        ) : (
+          <span className="settings__update-state">Not checked</span>
+        )}
+      </UpdateStatusRow>
+    </div>
+  );
+}
+
+function UpdateEntry({
+  title,
+  checked,
+  checking,
+  checkLabel,
+  onCheck,
+  children,
+}: {
+  title: string;
+  checked: boolean;
+  checking: boolean;
+  checkLabel: string;
+  onCheck: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="settings__update-entry">
+      <div className="settings__update-entry-header">
+        <span className="settings__field-label">{title}</span>
+        <UpdateCheckButton
+          label={checkLabel}
+          checked={checked}
+          checking={checking}
+          onClick={onCheck}
+        />
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -537,6 +740,40 @@ export function Settings({ onClose }: { onClose: () => void }) {
                     }
                   />
                 </SettingField>
+              </Section>
+
+              <Section
+                id="updates"
+                icon={<RefreshCw size={14} />}
+                title="Updates"
+              >
+                <UpdateEntry
+                  title="Pi & Extensions"
+                  checked={state.piUpdateCheck !== null}
+                  checking={state.piUpdateChecking}
+                  checkLabel="Check Pi and extension updates"
+                  onCheck={store.checkPiUpdate}
+                >
+                  <PiUpdateStatus
+                    currentVersion={state.piVersion}
+                    check={state.piUpdateCheck}
+                    checking={state.piUpdateChecking}
+                  />
+                </UpdateEntry>
+
+                <UpdateEntry
+                  title="INSΠRE"
+                  checked={state.inspireUpdateCheck !== null}
+                  checking={state.inspireUpdateChecking}
+                  checkLabel="Check INSΠRE updates"
+                  onCheck={store.checkInspireUpdate}
+                >
+                  <InspireUpdateStatus
+                    currentVersion={state.version}
+                    check={state.inspireUpdateCheck}
+                    checking={state.inspireUpdateChecking}
+                  />
+                </UpdateEntry>
               </Section>
             </main>
 

@@ -23,6 +23,7 @@ import {
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
   type NewSessionDefaults,
+  type PiUpdateCheckResponse,
   THINKING_LEVELS,
 } from "../shared/contracts.js";
 import {
@@ -35,6 +36,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
+import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
@@ -338,6 +340,8 @@ interface AppDependencies {
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Cached public-release observation; failures never block local work. */
   updateChecker?: UpdateCheckerLike;
+  /** Read-only Pi and configured-package update observation. */
+  piUpdateChecker?: PiUpdateCheckerLike;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
@@ -592,11 +596,24 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ appName: "inspire", mock: deps.mock });
   });
 
-  app.get("/api/update", async (_request, response) => {
+  app.get("/api/update", async (request, response) => {
     response.json(
       deps.updateChecker
-        ? await deps.updateChecker.check()
+        ? await deps.updateChecker.check(request.query.refresh === "1")
         : { kind: "unavailable" },
+    );
+  });
+
+  app.get("/api/pi-update", async (request, response) => {
+    const unavailable: PiUpdateCheckResponse = {
+      currentVersion: deps.piVersion,
+      pi: { kind: "unavailable" },
+      extensions: { kind: "unavailable" },
+    };
+    response.json(
+      deps.piUpdateChecker
+        ? await deps.piUpdateChecker.check(request.query.refresh === "1")
+        : unavailable,
     );
   });
 

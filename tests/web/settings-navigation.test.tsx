@@ -17,16 +17,22 @@ beforeEach(() => {
 });
 
 describe("Settings component UX and navigation", () => {
-  it("uses three purpose-level categories without a redundant search surface", () => {
+  it("uses four purpose-level categories without a redundant search surface", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
 
-    for (const name of ["Display", "Conversation", "Behavior"])
+    for (const name of ["Display", "Conversation", "Behavior", "Updates"])
       expect(
         within(navigation).getByRole("button", { name }),
       ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Check Pi and extension updates" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Check INSΠRE updates" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });

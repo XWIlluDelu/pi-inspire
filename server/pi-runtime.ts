@@ -5,6 +5,7 @@ const sdk = piInstallation.sdk;
 export const {
   ModelRuntime,
   createAgentSession,
+  DefaultPackageManager,
   DefaultResourceLoader,
   getAgentDir,
   SessionManager,

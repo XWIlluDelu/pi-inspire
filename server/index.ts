@@ -34,7 +34,14 @@ import {
   availableModelOptions,
   resolveNewSessionDefaults,
 } from "./model-catalog.js";
-import { ModelRuntime, piInstallation } from "./pi-runtime.js";
+import { PiUpdateChecker } from "./pi-update-checker.js";
+import {
+  DefaultPackageManager,
+  getAgentDir,
+  ModelRuntime,
+  piInstallation,
+  SettingsManager,
+} from "./pi-runtime.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
@@ -81,6 +88,24 @@ const updateChecker = mock
   : new GitHubReleaseUpdateChecker({
       currentVersion: packageJson.version,
       repositoryUrl,
+    });
+const piUpdateChecker = mock
+  ? undefined
+  : new PiUpdateChecker({
+      currentVersion: piInstallation.version,
+      checkExtensions: async () => {
+        const agentDir = getAgentDir();
+        const settingsManager = SettingsManager.create(root, agentDir, {
+          projectTrusted: false,
+        });
+        if (settingsManager.drainErrors().length > 0)
+          throw new Error("Pi settings are unavailable");
+        return new DefaultPackageManager({
+          cwd: root,
+          agentDir,
+          settingsManager,
+        }).checkForAvailableUpdates();
+      },
     });
 const runningSource = mock
   ? { kind: "package" as const, version: packageJson.version }
@@ -212,6 +237,7 @@ const application = createInspireServer({
   piVersion: piInstallation.version,
   maintenanceRestart,
   updateChecker,
+  piUpdateChecker,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),

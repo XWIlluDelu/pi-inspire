@@ -82,6 +82,25 @@ describe("local host API", () => {
           },
         }),
       },
+      piUpdateChecker: {
+        check: async () => ({
+          currentVersion: "0.80.10",
+          pi: {
+            kind: "available",
+            latestVersion: "0.84.3",
+            releaseUrl: "https://pi.dev/changelog",
+          },
+          extensions: {
+            kind: "available",
+            updates: [
+              {
+                displayName: "pi-web-access",
+                type: "npm",
+              },
+            ],
+          },
+        }),
+      },
       availableModels: async () => [
         {
           provider: "anthropic",
@@ -170,6 +189,31 @@ describe("local host API", () => {
           currentVersion: "0.1.0-test",
           latestVersion: "0.2.0",
           releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
+        },
+      });
+  });
+
+  it("keeps Pi and extension update status behind local authentication", async () => {
+    await request(application.server).get("/api/pi-update").expect(401);
+    await request(application.server)
+      .get("/api/pi-update")
+      .query({ refresh: "1" })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200, {
+        currentVersion: "0.80.10",
+        pi: {
+          kind: "available",
+          latestVersion: "0.84.3",
+          releaseUrl: "https://pi.dev/changelog",
+        },
+        extensions: {
+          kind: "available",
+          updates: [
+            {
+              displayName: "pi-web-access",
+              type: "npm",
+            },
+          ],
         },
       });
   });

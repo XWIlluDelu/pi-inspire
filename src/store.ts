@@ -26,6 +26,7 @@ import {
   type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
+  type PiUpdateCheckResponse,
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
@@ -42,6 +43,7 @@ import {
   type ThemePreference,
   type ToolVisibilityPreference,
   type TranscriptActivityRange,
+  type UpdateCheckResponse,
   type UserTurnAnchor,
   type UserTurnTranscriptPage,
   type VisibilityPreference,
@@ -138,8 +140,13 @@ interface AppState extends EventSlice {
   connectionProblem: ConnectionProblem;
   bootstrapped: boolean;
   mock: boolean;
-  /** Host-reported Inspire version, shown on the settings page. */
+  /** Host-reported runtime versions, shown on the settings page. */
   version: string;
+  piVersion: string;
+  inspireUpdateCheck: UpdateCheckResponse | null;
+  piUpdateCheck: PiUpdateCheckResponse | null;
+  inspireUpdateChecking: boolean;
+  piUpdateChecking: boolean;
   availableUpdate: AvailableUpdate | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
@@ -265,6 +272,11 @@ const initialState: AppState = {
   bootstrapped: false,
   mock: false,
   version: "",
+  piVersion: "",
+  inspireUpdateCheck: null,
+  piUpdateCheck: null,
+  inspireUpdateChecking: false,
+  piUpdateChecking: false,
   availableUpdate: null,
   updateSnoozedUntil: null,
   prefs: defaultPreferences,
@@ -806,6 +818,13 @@ export class AppStore {
         prefs: boot.preferences,
         mock: boot.mock,
         version: boot.version,
+        piVersion: boot.piVersion,
+        ...(this.state.version && this.state.version !== boot.version
+          ? { inspireUpdateCheck: null }
+          : {}),
+        ...(this.state.piVersion && this.state.piVersion !== boot.piVersion
+          ? { piUpdateCheck: null }
+          : {}),
         ...(this.state.availableUpdate?.currentVersion !== boot.version
           ? { availableUpdate: null, updateSnoozedUntil: null }
           : {}),
@@ -2685,6 +2704,10 @@ export class AppStore {
         this.set({ extensionUiRespondingId: null });
     }
   };
+
+  checkInspireUpdate = (): void => this.updates.refreshInspire();
+
+  checkPiUpdate = (): void => this.updates.refreshPi();
 
   snoozeUpdate = (): void => this.updates.snooze();
 
