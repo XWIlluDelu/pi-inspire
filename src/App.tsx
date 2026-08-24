@@ -7,11 +7,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Profiler, useCallback, useEffect, useState } from "react";
-import {
-  type AvailableUpdate,
-  isAbortableRunState,
-  type ThemePreference,
-} from "../shared/contracts";
+import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
@@ -24,13 +20,14 @@ import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { ResourcesPane } from "./components/ResourcesPane";
-import { Settings } from "./components/Settings";
+import { Settings, type SettingsCategoryId } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
 import { store, useAppState } from "./store";
 import { hasActiveModal } from "./use-modal-focus";
+import { availableUpdates, type AvailableUpdates } from "./update-availability";
 import { cacheVisualPreferences } from "./visual-preferences";
 
 // Vite replaces MODE at build time. The production false branches are folded
@@ -241,18 +238,63 @@ function NoticeItem({ notice }: { notice: Notice }) {
   );
 }
 
-function UpdateNotice({ update }: { update: AvailableUpdate }) {
-  const message = `INSΠRE ${update.latestVersion} is available. You’re using ${update.currentVersion}.`;
+function updateNoticeText(updates: AvailableUpdates): string {
+  const items: string[] = [];
+  if (updates.pi) items.push(`Pi ${updates.pi.latestVersion}`);
+  if (updates.extensions.length > 0) {
+    items.push(
+      `${updates.extensions.length} extension${updates.extensions.length === 1 ? "" : "s"}`,
+    );
+  }
+  if (updates.inspire) items.push(`INSΠRE ${updates.inspire.latestVersion}`);
+  return `${items.join(" · ")} available.`;
+}
+
+function updateNoticeDetails(updates: AvailableUpdates): string {
+  const lines: string[] = [];
+  if (updates.pi) {
+    lines.push(
+      `Pi ${updates.pi.currentVersion} → ${updates.pi.latestVersion}`,
+      "Run pi update",
+      updates.pi.releaseUrl,
+    );
+  }
+  if (updates.extensions.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      "Extensions",
+      ...updates.extensions.map((update) => `- ${update.displayName}`),
+      "Run pi update --extensions",
+    );
+  }
+  if (updates.inspire) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `INSΠRE ${updates.inspire.currentVersion} → ${updates.inspire.latestVersion}`,
+      updates.inspire.releaseUrl,
+    );
+  }
+  return lines.join("\n");
+}
+
+function UpdateNotice({
+  updates,
+  onViewUpdates,
+}: {
+  updates: AvailableUpdates;
+  onViewUpdates: () => void;
+}) {
+  const message = updateNoticeText(updates);
   return (
     <div className="notice notice--info" role="status">
       <div className="notice__head">
         <span className="notice__title">
           <Download size={13} aria-hidden />
-          <span>Update available</span>
+          <span>Updates available</span>
         </span>
         <div className="notice__actions">
           <CopyAction
-            text={`${message}\n${update.releaseUrl}`}
+            text={updateNoticeDetails(updates)}
             label="Update details"
             className="notice__copy"
           />
@@ -260,7 +302,7 @@ function UpdateNotice({ update }: { update: AvailableUpdate }) {
             type="button"
             className="notice__dismiss"
             onClick={store.snoozeUpdate}
-            aria-label="Close update for 24 hours"
+            aria-label="Close updates for 24 hours"
             title="Close for 24 hours"
           >
             <X size={13} aria-hidden />
@@ -271,32 +313,36 @@ function UpdateNotice({ update }: { update: AvailableUpdate }) {
         <span>{message}</span>{" "}
         <a
           className="notice__link"
-          href={update.releaseUrl}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`View INSΠRE ${update.latestVersion} release`}
+          href="#settings-updates"
+          onClick={(event) => {
+            event.preventDefault();
+            onViewUpdates();
+          }}
         >
-          View release
+          View updates
         </a>
       </div>
     </div>
   );
 }
 
-function Notices() {
+function Notices({ onViewUpdates }: { onViewUpdates: () => void }) {
   const state = useAppState();
-  const update =
-    state.availableUpdate &&
+  const updates =
+    !state.inspireUpdateChecking &&
+    !state.piUpdateChecking &&
     (!state.updateSnoozedUntil || state.updateSnoozedUntil <= Date.now())
-      ? state.availableUpdate
+      ? availableUpdates(state)
       : null;
-  if (state.notices.length === 0 && !update) return null;
+  if (state.notices.length === 0 && !updates) return null;
   return (
     <div className="notices" aria-live="polite">
       {state.notices.map((notice) => (
         <NoticeItem key={notice.id} notice={notice} />
       ))}
-      {update ? <UpdateNotice update={update} /> : null}
+      {updates ? (
+        <UpdateNotice updates={updates} onViewUpdates={onViewUpdates} />
+      ) : null}
     </div>
   );
 }
@@ -322,6 +368,8 @@ export function App() {
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] =
+    useState<SettingsCategoryId>("display");
   const extensionOverlayOpen = state.extensionUiRequests.length > 0;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
@@ -398,6 +446,14 @@ export function App() {
     }
     if (extensionOverlayOpen || hasActiveModal()) return;
     setPaletteOpen(false);
+    setSettingsCategory("display");
+    setSettingsOpen(true);
+  }, [extensionOverlayOpen, settingsOpen]);
+
+  const openUpdateSettings = useCallback(() => {
+    if (extensionOverlayOpen || (hasActiveModal() && !settingsOpen)) return;
+    setPaletteOpen(false);
+    setSettingsCategory("updates");
     setSettingsOpen(true);
   }, [extensionOverlayOpen, settingsOpen]);
 
@@ -669,7 +725,10 @@ export function App() {
           </div>
         ) : null}
         {settingsOpen && !extensionOverlayOpen ? (
-          <Settings onClose={() => setSettingsOpen(false)} />
+          <Settings
+            initialCategory={settingsCategory}
+            onClose={() => setSettingsOpen(false)}
+          />
         ) : null}
         {state.sessionId ? (
           <section className="reading-stage">
@@ -735,7 +794,7 @@ export function App() {
         />
       ) : null}
       <ExtensionUiDialog />
-      <Notices />
+      <Notices onViewUpdates={openUpdateSettings} />
     </div>
   );
 }
