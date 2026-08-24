@@ -5429,14 +5429,19 @@ button.pending-group__mark:disabled,
 }
 
 .model-picker__menu {
+  position: fixed;
+  display: flex;
   width: min(520px, calc(100vw - var(--space-8)));
+  min-width: 0;
   max-height: min(440px, 60dvh);
+  flex-direction: column;
   padding: 0;
   overflow: hidden;
 }
 
 .model-picker__search {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
@@ -5455,8 +5460,10 @@ button.pending-group__mark:disabled,
 }
 
 .model-picker__list {
-  max-height: 360px;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-1);
 }
 

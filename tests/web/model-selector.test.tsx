@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   groupModels,
   groupPreparedModels,
+  placeModelMenu,
   prepareModelOptions,
 } from "../../src/components/ModelSelector";
 import { ModelSelector } from "../../src/components/ModelSelector";
@@ -74,6 +75,27 @@ describe("model grouping", () => {
         .flatMap((group) => group.models)
         .map((model) => model.id),
     ).toEqual(["gpt-5"]);
+  });
+});
+
+describe("model picker placement", () => {
+  const bounds = { left: 0, top: 64, right: 390, bottom: 430 };
+
+  it("flips below when the mobile keyboard leaves too little room above", () => {
+    const placement = placeModelMenu(
+      { left: 12, top: 100, right: 140, bottom: 136 },
+      bounds,
+      430,
+    );
+
+    expect(placement).toMatchObject({
+      direction: "down",
+      left: 16,
+      top: 140,
+      width: 358,
+      maxHeight: 282,
+    });
+    expect(placement.top! + placement.maxHeight).toBe(422);
   });
 });
 
