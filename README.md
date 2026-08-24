@@ -107,12 +107,12 @@ npm pack
 
 `prepack` builds the browser client and compiled Node host. The verifier requires npm's canonical `inspire` bin metadata, checks the exact tarball through `npm publish --dry-run`, installs it with production dependencies only, proves that Pi is absent from that installation, confirms that required assets are present while tests and TypeScript source are absent, exercises the generated `inspire` bin through mock `start`, `status`, authenticated health, and `stop`, then uses one separately installed Pi package for both the public SDK and a real RPC worker and creates an empty session without invoking a model.
 
-The current release is distributed through GitHub Releases rather than the npm registry. Download, verify, and install its local tarball:
+No prebuilt release is currently published. To install from a source checkout, verify and pack the same standalone application locally:
 
 ```bash
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/inspire-pi-gui-0.2.0.tgz
-curl -fLO https://github.com/XWIlluDelu/pi-inspire/releases/download/v0.2.0/SHA256SUMS.txt
-sha256sum -c SHA256SUMS.txt
+npm ci
+npm run release:verify
+npm pack
 npm install --global ./inspire-pi-gui-0.2.0.tgz
 inspire
 ```
