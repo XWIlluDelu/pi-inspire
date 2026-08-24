@@ -22,6 +22,7 @@ import {
 } from "./pi-runtime.js";
 import type {
   BranchTreeResponse,
+  ComposerHistoryPage,
   ProjectionHealth,
   TranscriptActivityKind,
   TranscriptActivityPage,
@@ -32,6 +33,7 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { projectComposerHistoryPage } from "./composer-history.js";
 import type { SessionRecord } from "./session-catalog.js";
 import {
   BRANCH_TREE_MAX_BYTES,
@@ -181,6 +183,11 @@ export interface SessionProjectionView {
     viewId?: string,
     cursor?: string,
   ): UserTurnTranscriptPage;
+  composerHistoryPage(
+    start?: number,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): ComposerHistoryPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
   persistedEntryMatches(entry: SessionEntry): boolean;
@@ -1852,6 +1859,24 @@ export class SessionProjection
       throw new Error("User-turn index page exceeded its declared byte bound");
     }
     return page;
+  }
+
+  composerHistoryPage(
+    start = 0,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): ComposerHistoryPage {
+    return projectComposerHistoryPage(
+      this.viewMessages(effectiveLeafId),
+      {
+        sessionId: this.sessionId,
+        revision: this.revision,
+        viewId,
+        incarnation: this.incarnation,
+        effectiveLeafId,
+      },
+      start,
+    );
   }
 
   private buildUserTurnIndex(

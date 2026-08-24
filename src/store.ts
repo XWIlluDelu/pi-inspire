@@ -19,6 +19,7 @@ import {
   type HostRootsResponse,
   type InspirePreferences,
   type LaunchPreference,
+  MAX_COMPOSER_HISTORY_ENTRIES,
   type ModelIdentity,
   type ModelOption,
   modelIdentityKey,
@@ -1529,6 +1530,93 @@ export class AppStore {
         this.state.transcriptViewId === viewId
       )
         this.set({ loadingOlderMessages: false });
+    }
+  };
+
+  loadComposerHistory = async (
+    sessionId: string,
+    viewId: string,
+    incarnation: string | null,
+  ): Promise<string[] | null> => {
+    const api = this.api;
+    const generation = this.selectionGeneration;
+    const transportGeneration = this.transportGeneration;
+    const effectiveLeafId = this.state.transcriptEffectiveLeafId;
+    const ownsScope = () =>
+      this.api === api &&
+      this.transportGeneration === transportGeneration &&
+      this.selectionGeneration === generation &&
+      this.state.sessionId === sessionId &&
+      this.state.transcriptViewId === viewId &&
+      this.state.transcriptIncarnation === incarnation &&
+      this.state.transcriptEffectiveLeafId === effectiveLeafId;
+    if (!api || !ownsScope()) return null;
+
+    try {
+      // A user append can shift newest-first offsets between bounded pages.
+      // Restart one read-only pass when its content identity changes.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        let start = 0;
+        let historyId: string | null = null;
+        let total: number | null = null;
+        const entries: string[] = [];
+        let changed = false;
+        while (true) {
+          const page = await api.composerHistory(sessionId, start);
+          if (
+            !ownsScope() ||
+            page.sessionId !== sessionId ||
+            page.viewId !== viewId ||
+            (page.incarnation ?? null) !== incarnation ||
+            (page.effectiveLeafId ?? null) !== effectiveLeafId
+          )
+            return null;
+          if (
+            page.start !== start ||
+            !Number.isSafeInteger(page.total) ||
+            page.total < 0 ||
+            page.total > MAX_COMPOSER_HISTORY_ENTRIES ||
+            entries.length + page.entries.length > page.total
+          )
+            throw new Error("The Host returned invalid composer history");
+          if (historyId === null) {
+            historyId = page.historyId;
+            total = page.total;
+          } else if (page.historyId !== historyId || page.total !== total) {
+            changed = true;
+            break;
+          }
+          entries.push(...page.entries);
+          if (page.nextStart === null) {
+            if (entries.length !== page.total)
+              throw new Error("The Host returned incomplete composer history");
+            return entries;
+          }
+          if (
+            page.nextStart !== start + page.entries.length ||
+            page.nextStart <= start
+          )
+            throw new Error(
+              "The Host returned invalid composer history paging",
+            );
+          start = page.nextStart;
+        }
+        if (!changed) break;
+      }
+      return null;
+    } catch (error) {
+      if (!ownsScope()) return null;
+      if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+      } else if (!(error instanceof ApiError && error.status === 409)) {
+        this.fail(
+          error instanceof Error
+            ? `Prompt history could not be loaded: ${error.message}`
+            : "Prompt history could not be loaded",
+          "warning",
+        );
+      }
+      return null;
     }
   };
 

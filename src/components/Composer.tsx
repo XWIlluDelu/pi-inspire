@@ -1,11 +1,19 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { parseCompactCommand } from "../../shared/commands";
 import {
   isAbortableRunState,
   isBusyRunState,
   THINKING_LEVELS,
 } from "../../shared/contracts";
 import { clipboardFiles } from "../clipboard-files";
+import {
+  composerHistory,
+  composerHistoryScopeKey,
+  hydrateComposerHistory,
+  rememberComposerHistory,
+  type ComposerHistoryScope,
+} from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { store, useAppState } from "../store";
@@ -57,6 +65,30 @@ function ContextMeter() {
 export function Composer() {
   const state = useAppState();
   const sessionId = state.sessionId;
+  const historyScope = useMemo<ComposerHistoryScope | null>(
+    () =>
+      sessionId && state.transcriptViewId
+        ? {
+            sessionId,
+            viewId: state.transcriptViewId,
+            incarnation: state.transcriptIncarnation,
+          }
+        : null,
+    [sessionId, state.transcriptIncarnation, state.transcriptViewId],
+  );
+  const historyKey = historyScope
+    ? composerHistoryScopeKey(historyScope)
+    : null;
+  const [historyState, setHistoryState] = useState(() => ({
+    key: historyKey,
+    entries: historyScope ? composerHistory(historyScope) : [],
+  }));
+  const history =
+    historyState.key === historyKey
+      ? historyState.entries
+      : historyScope
+        ? composerHistory(historyScope)
+        : [];
   const [draft, setDraft] = useState(() =>
     sessionId ? sessionDraft(sessionId) : "",
   );
@@ -95,6 +127,30 @@ export function Composer() {
     if (sessionId) setSessionDraft(sessionId, text);
   };
 
+  useLayoutEffect(() => {
+    setHistoryState({
+      key: historyKey,
+      entries: historyScope ? composerHistory(historyScope) : [],
+    });
+  }, [historyKey, historyScope]);
+
+  useEffect(() => {
+    if (!historyScope) return;
+    let cancelled = false;
+    void hydrateComposerHistory(historyScope, () =>
+      store.loadComposerHistory(
+        historyScope.sessionId,
+        historyScope.viewId,
+        historyScope.incarnation,
+      ),
+    ).then((entries) => {
+      if (!cancelled) setHistoryState({ key: historyKey, entries });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [historyKey, historyScope]);
+
   const previousSessionRef = useRef(sessionId);
   // Restore the target draft before paint so immediate typing after navigation
   // cannot be overwritten by delayed session synchronization.
@@ -108,6 +164,14 @@ export function Composer() {
     setDropActive(false);
     setDeliveryBehavior("steer");
   }, [sessionId]);
+
+  const previousHistoryKeyRef = useRef(historyKey);
+  useLayoutEffect(() => {
+    if (previousHistoryKeyRef.current === historyKey) return;
+    previousHistoryKeyRef.current = historyKey;
+    if (previousSessionRef.current === sessionId)
+      setDraft(sessionId ? sessionDraft(sessionId) : "");
+  }, [historyKey, sessionId]);
 
   useEffect(() => {
     if (busy && !wasBusyRef.current) setDeliveryBehavior("steer");
@@ -136,8 +200,21 @@ export function Composer() {
     const message = draft;
     if (!canSend || state.sending || sessionOpening) return;
     const owner = sessionId;
+    if (owner && sessionDraft(owner) !== message)
+      setSessionDraft(owner, message);
     const sent = await store.sendPrompt(message, behavior);
     if (!sent || !owner) return;
+    const recordsHistory = !(
+      parseCompactCommand(message) &&
+      state.attachments.length === 0 &&
+      state.projectFiles.length === 0
+    );
+    if (recordsHistory && historyScope) {
+      const entries = rememberComposerHistory(historyScope, message);
+      setHistoryState((current) =>
+        current.key === historyKey ? { key: historyKey, entries } : current,
+      );
+    }
     if (sessionDraft(owner) !== message) return;
     setSessionDraft(owner, "");
     if (store.getState().sessionId === owner) setDraft("");
@@ -214,13 +291,15 @@ export function Composer() {
         onRemove={store.removeProjectFile}
       />
       <ComposerInput
-        key={`input-${sessionId ?? "none"}`}
+        key={`input-${historyKey ?? sessionId ?? "none"}`}
         value={draft}
         onChange={updateDraft}
+        onHistoryPreview={setDraft}
+        history={history}
         commands={state.commands}
         completionDisabled={state.sending || sessionOpening}
         disabled={sessionOpening}
-        completionScope={sessionId}
+        completionScope={historyKey}
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={

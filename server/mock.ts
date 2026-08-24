@@ -8,6 +8,7 @@ import type {
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeResponse,
+  ComposerHistoryPage,
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
@@ -24,6 +25,7 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { emptyPendingQueues } from "../shared/contracts.js";
+import { projectComposerHistoryPage } from "./composer-history.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import type { ResourceContext } from "./resources.js";
 import type { PendingManagementRequest, RuntimeLike } from "./runtime.js";
@@ -1133,6 +1135,28 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       continuationCursor: null,
     };
   }
+  async composerHistory(
+    sessionId: string,
+    start = 0,
+  ): Promise<ComposerHistoryPage> {
+    const active = this.requireSession(sessionId);
+    return projectComposerHistoryPage(
+      active.transcriptPage.messages,
+      {
+        sessionId,
+        revision: active.transcriptPage.revision,
+        viewId: active.transcriptPage.viewId,
+        ...(active.transcriptPage.incarnation
+          ? { incarnation: active.transcriptPage.incarnation }
+          : {}),
+        ...(active.transcriptPage.effectiveLeafId !== undefined
+          ? { effectiveLeafId: active.transcriptPage.effectiveLeafId }
+          : {}),
+      },
+      start,
+    );
+  }
+
   async branchTree(sessionId: string): Promise<BranchTreeResponse> {
     const active = this.requireSession(sessionId);
     if (sessionId !== BRANCH_FIXTURE_SESSION_ID) {
