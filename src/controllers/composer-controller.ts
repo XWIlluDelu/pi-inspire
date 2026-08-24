@@ -1,6 +1,7 @@
 import { MAX_PROJECT_FILES } from "../../shared/contracts";
 import { selectAttachmentFiles } from "../attachment-selection";
 import type { Api } from "../api";
+import { discardComposerHistory } from "../composer-history";
 import { deleteSessionDraft } from "../session-drafts";
 
 export interface PendingAttachment {
@@ -107,6 +108,7 @@ export class ComposerController {
       this.composers.delete(sessionId);
     }
     deleteSessionDraft(sessionId);
+    discardComposerHistory(sessionId);
   }
 
   async send(

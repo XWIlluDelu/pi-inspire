@@ -195,11 +195,18 @@ export function PromptMap({
 
     const resizeObserver = new ResizeObserver(schedule);
     resizeObserver.observe(root);
+    // Reading width changes the centered child without resizing this scrollport.
+    const readingWidthObserver = new MutationObserver(schedule);
+    readingWidthObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-reading-width"],
+    });
     window.addEventListener("resize", schedule);
     sync();
 
     return () => {
       resizeObserver.disconnect();
+      readingWidthObserver.disconnect();
       window.removeEventListener("resize", schedule);
       if (frame !== null) cancelAnimationFrame(frame);
     };

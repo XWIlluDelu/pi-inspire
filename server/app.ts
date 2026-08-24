@@ -16,6 +16,7 @@ import {
   type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
+  MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_PENDING_MESSAGES,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
@@ -257,6 +258,17 @@ const transcriptUserTurnSchema = z
     sessionId: sessionIdField,
     id: z.string().min(1).max(512),
     cursor: z.string().min(1).max(2_048).optional(),
+  })
+  .strict();
+const composerHistorySchema = z
+  .object({
+    sessionId: sessionIdField,
+    start: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_COMPOSER_HISTORY_ENTRIES)
+      .optional(),
   })
   .strict();
 const branchTreeSchema = z.object({ sessionId: sessionIdField });
@@ -1011,6 +1023,10 @@ export function createInspireServer(deps: AppDependencies): {
       request.query,
     );
     response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
+  });
+  app.get("/api/composer/history", async (request, response) => {
+    const { sessionId, start } = composerHistorySchema.parse(request.query);
+    response.json(await deps.runtime.composerHistory(sessionId, start));
   });
   app.get("/api/branches/tree", async (request, response) => {
     const { sessionId } = branchTreeSchema.parse(request.query);

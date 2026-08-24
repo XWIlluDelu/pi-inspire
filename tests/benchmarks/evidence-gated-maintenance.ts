@@ -23,6 +23,7 @@ import type {
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeResponse,
+  ComposerHistoryPage,
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
@@ -37,6 +38,7 @@ import type {
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createInspireServer } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
+import { projectComposerHistoryPage } from "../../server/composer-history.js";
 import {
   GitInspectionService,
   type GitInspectionLike,
@@ -1083,6 +1085,23 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
       hasMoreInTurn: false,
       continuationCursor: null,
     };
+  }
+
+  async composerHistory(
+    sessionId: string,
+    start = 0,
+  ): Promise<ComposerHistoryPage> {
+    return projectComposerHistoryPage(
+      this.messages,
+      {
+        sessionId,
+        revision: 1,
+        viewId: "benchmark-view",
+        incarnation: "benchmark-incarnation",
+        effectiveLeafId: "active-assistant-79",
+      },
+      start,
+    );
   }
 
   async branchTree(sessionId: string): Promise<BranchTreeResponse> {

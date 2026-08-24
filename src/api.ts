@@ -6,6 +6,7 @@ import type {
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeResponse,
+  ComposerHistoryPage,
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
@@ -247,6 +248,11 @@ export function createApi(token: string | null = null) {
         token,
         `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { signal },
+      ),
+    composerHistory: (sessionId: string, start = 0) =>
+      request<ComposerHistoryPage>(
+        token,
+        `/api/composer/history?sessionId=${encodeURIComponent(sessionId)}&start=${start}`,
       ),
     branchTree: (sessionId: string) =>
       request<BranchTreeResponse>(
