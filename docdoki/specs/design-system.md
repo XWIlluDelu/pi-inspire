@@ -120,7 +120,9 @@ anatomy that must remain stable rather than duplicating every declaration.
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short
   0.97→1 pop-in. Modal focus/keyboard ownership is behaviorally centralized in
   `useModalFocus`; a visual overlay never leaves shell shortcuts active below
-  it.
+  it. Settings update checks use the same section/card geometry as preferences:
+  two compact status lanes separate Pi plus Extensions from INSΠRE, keep copy
+  terse, and expose actions without promoting the surface into a dashboard.
 
 ## Responsive, motion, and accessibility
 

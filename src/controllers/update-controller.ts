@@ -1,5 +1,6 @@
 import {
   type AvailableUpdate,
+  type PiUpdateCheckResponse,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_SNOOZE_MS,
   type UpdateCheckResponse,
@@ -9,6 +10,12 @@ import type { Api } from "../api";
 const UPDATE_SNOOZE_STORAGE_KEY = "inspire.update-snooze";
 
 interface UpdateControllerState {
+  version: string;
+  piVersion: string;
+  inspireUpdateCheck: UpdateCheckResponse | null;
+  piUpdateCheck: PiUpdateCheckResponse | null;
+  inspireUpdateChecking: boolean;
+  piUpdateChecking: boolean;
   availableUpdate: AvailableUpdate | null;
   updateSnoozedUntil: number | null;
 }
@@ -16,7 +23,7 @@ interface UpdateControllerState {
 interface UpdateControllerHost {
   state(): UpdateControllerState;
   patch(patch: Partial<UpdateControllerState>): void;
-  api(): Pick<Api, "update"> | null;
+  api(): Pick<Api, "update" | "piUpdate"> | null;
   transportGeneration(): number;
 }
 
@@ -80,9 +87,11 @@ function saveSnooze(version: string, dismissedAt: number): void {
   }
 }
 
-/** Owns release observation cadence and the browser-local 24-hour snooze. */
+/** Owns update observations and the browser-local Inspire-release snooze. */
 export class UpdateController {
   private requestGeneration = 0;
+  private inspireRequest = 0;
+  private piRequest = 0;
   private checkTimer: ReturnType<typeof setTimeout> | null = null;
   private snoozeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -90,8 +99,17 @@ export class UpdateController {
 
   invalidateForTransportReplacement(): void {
     this.requestGeneration += 1;
+    this.inspireRequest += 1;
+    this.piRequest += 1;
     if (this.checkTimer) clearTimeout(this.checkTimer);
     this.checkTimer = null;
+    const state = this.host.state();
+    if (state.inspireUpdateChecking || state.piUpdateChecking) {
+      this.host.patch({
+        inspireUpdateChecking: false,
+        piUpdateChecking: false,
+      });
+    }
   }
 
   start(): void {
@@ -101,6 +119,57 @@ export class UpdateController {
     const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
     void this.inspect(api, requestGeneration, transportGeneration);
+  }
+
+  refreshInspire(): void {
+    const api = this.host.api();
+    if (!api || this.host.state().inspireUpdateChecking) return;
+    void this.requestInspire(
+      api,
+      true,
+      this.requestGeneration,
+      this.host.transportGeneration(),
+    );
+  }
+
+  refreshPi(): void {
+    const api = this.host.api();
+    if (!api || this.host.state().piUpdateChecking) return;
+    const request = ++this.piRequest;
+    const requestGeneration = this.requestGeneration;
+    const transportGeneration = this.host.transportGeneration();
+    this.host.patch({ piUpdateChecking: true });
+    void api
+      .piUpdate(true)
+      .then((piUpdateCheck) => {
+        if (
+          request !== this.piRequest ||
+          !this.owns(api, requestGeneration, transportGeneration)
+        )
+          return;
+        this.host.patch({ piUpdateCheck });
+      })
+      .catch(() => {
+        if (
+          request !== this.piRequest ||
+          !this.owns(api, requestGeneration, transportGeneration)
+        )
+          return;
+        this.host.patch({
+          piUpdateCheck: {
+            currentVersion: this.host.state().piVersion,
+            pi: { kind: "unavailable" },
+            extensions: { kind: "unavailable" },
+          },
+        });
+      })
+      .finally(() => {
+        if (
+          request === this.piRequest &&
+          this.owns(api, requestGeneration, transportGeneration)
+        )
+          this.host.patch({ piUpdateChecking: false });
+      });
   }
 
   snooze(): void {
@@ -114,7 +183,7 @@ export class UpdateController {
   }
 
   private owns(
-    api: Pick<Api, "update">,
+    api: Pick<Api, "update" | "piUpdate">,
     requestGeneration: number,
     transportGeneration: number,
   ): boolean {
@@ -126,30 +195,61 @@ export class UpdateController {
   }
 
   private async inspect(
-    api: Pick<Api, "update">,
+    api: Pick<Api, "update" | "piUpdate">,
     requestGeneration: number,
     transportGeneration: number,
   ): Promise<void> {
+    await this.requestInspire(
+      api,
+      false,
+      requestGeneration,
+      transportGeneration,
+    );
+    if (this.owns(api, requestGeneration, transportGeneration)) {
+      this.checkTimer = setTimeout(() => {
+        this.checkTimer = null;
+        void this.inspect(api, requestGeneration, transportGeneration);
+      }, UPDATE_CHECK_INTERVAL_MS);
+    }
+  }
+
+  private async requestInspire(
+    api: Pick<Api, "update" | "piUpdate">,
+    force: boolean,
+    requestGeneration: number,
+    transportGeneration: number,
+  ): Promise<void> {
+    const request = ++this.inspireRequest;
+    this.host.patch({ inspireUpdateChecking: true });
     try {
-      const response = await api.update();
-      if (!this.owns(api, requestGeneration, transportGeneration)) return;
+      const response = await api.update(force);
+      if (
+        request !== this.inspireRequest ||
+        !this.owns(api, requestGeneration, transportGeneration)
+      )
+        return;
       this.apply(response);
     } catch {
-      // Update visibility is advisory; connectivity failures never become
-      // local-work errors and never erase the last confirmed status.
+      if (
+        request !== this.inspireRequest ||
+        !this.owns(api, requestGeneration, transportGeneration)
+      )
+        return;
+      if (!this.host.state().inspireUpdateCheck)
+        this.host.patch({ inspireUpdateCheck: { kind: "unavailable" } });
     } finally {
-      if (this.owns(api, requestGeneration, transportGeneration)) {
-        this.checkTimer = setTimeout(() => {
-          this.checkTimer = null;
-          void this.inspect(api, requestGeneration, transportGeneration);
-        }, UPDATE_CHECK_INTERVAL_MS);
-      }
+      if (
+        request === this.inspireRequest &&
+        this.owns(api, requestGeneration, transportGeneration)
+      )
+        this.host.patch({ inspireUpdateChecking: false });
     }
   }
 
   private apply(response: UpdateCheckResponse): void {
+    this.host.patch({ inspireUpdateCheck: response });
     if (response.kind === "unavailable") return;
-    if (response.kind === "current") {
+    if (response.kind === "current" || response.kind === "unreleased") {
       removeSavedSnooze(updateStorage());
       if (this.snoozeTimer) clearTimeout(this.snoozeTimer);
       this.snoozeTimer = null;

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AvailableUpdate,
+  type PiUpdateCheckResponse,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_SNOOZE_MS,
   type UpdateCheckResponse,
@@ -9,6 +10,12 @@ import {
 import { UpdateController } from "../../src/controllers/update-controller";
 
 interface State {
+  version: string;
+  piVersion: string;
+  inspireUpdateCheck: UpdateCheckResponse | null;
+  piUpdateCheck: PiUpdateCheckResponse | null;
+  inspireUpdateChecking: boolean;
+  piUpdateChecking: boolean;
   availableUpdate: AvailableUpdate | null;
   updateSnoozedUntil: number | null;
 }
@@ -38,10 +45,31 @@ function available(latestVersion = "1.1.0"): UpdateCheckResponse {
 }
 
 function harness(initialResponse: UpdateCheckResponse = available()) {
-  let state: State = { availableUpdate: null, updateSnoozedUntil: null };
+  let state: State = {
+    version: "1.0.0",
+    piVersion: "0.84.2",
+    inspireUpdateCheck: null,
+    piUpdateCheck: null,
+    inspireUpdateChecking: false,
+    piUpdateChecking: false,
+    availableUpdate: null,
+    updateSnoozedUntil: null,
+  };
   let response = initialResponse;
   let transportGeneration = 1;
-  const api = { update: vi.fn(async () => response) };
+  const piResponse: PiUpdateCheckResponse = {
+    currentVersion: "0.84.2",
+    pi: {
+      kind: "available",
+      latestVersion: "0.84.3",
+      releaseUrl: "https://pi.dev/changelog",
+    },
+    extensions: { kind: "none" },
+  };
+  const api = {
+    update: vi.fn(async () => response),
+    piUpdate: vi.fn(async () => piResponse),
+  };
   const controller = new UpdateController({
     state: () => state,
     patch: (patch) => {
@@ -106,14 +134,49 @@ describe("update status controller", () => {
     });
   });
 
+  it("runs the two manual checks independently with cache bypass", async () => {
+    const test = harness({ kind: "unreleased" });
+
+    test.controller.refreshPi();
+    await vi.waitFor(() => expect(test.state().piUpdateChecking).toBe(false));
+    expect(test.api.piUpdate).toHaveBeenCalledWith(true);
+    expect(test.state().piUpdateCheck?.pi).toMatchObject({
+      kind: "available",
+      latestVersion: "0.84.3",
+    });
+
+    test.controller.refreshInspire();
+    await vi.waitFor(() =>
+      expect(test.state().inspireUpdateChecking).toBe(false),
+    );
+    expect(test.api.update).toHaveBeenCalledWith(true);
+    expect(test.state().inspireUpdateCheck).toEqual({ kind: "unreleased" });
+  });
+
   it("does not publish a response owned by a replaced transport", async () => {
     let resolveUpdate!: (response: UpdateCheckResponse) => void;
     const pending = new Promise<UpdateCheckResponse>((resolve) => {
       resolveUpdate = resolve;
     });
-    let state: State = { availableUpdate: null, updateSnoozedUntil: null };
+    let state: State = {
+      version: "1.0.0",
+      piVersion: "0.84.2",
+      inspireUpdateCheck: null,
+      piUpdateCheck: null,
+      inspireUpdateChecking: false,
+      piUpdateChecking: false,
+      availableUpdate: null,
+      updateSnoozedUntil: null,
+    };
     let transportGeneration = 1;
-    const api = { update: vi.fn(() => pending) };
+    const api = {
+      update: vi.fn(() => pending),
+      piUpdate: vi.fn(async () => ({
+        currentVersion: "0.84.2",
+        pi: { kind: "current" as const, latestVersion: "0.84.2" },
+        extensions: { kind: "none" as const },
+      })),
+    };
     const controller = new UpdateController({
       state: () => state,
       patch: (patch) => {
