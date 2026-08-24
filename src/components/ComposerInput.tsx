@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -8,6 +9,7 @@ import {
   type KeyboardEventHandler,
 } from "react";
 import type { ProjectFileResult } from "../api";
+import { isTextareaCaretOnVisualEdge } from "../composer-history";
 import {
   parseCaretCompletion,
   rankCommands,
@@ -112,6 +114,8 @@ function CompletionMenu({
 export function ComposerInput({
   value,
   onChange,
+  onHistoryPreview,
+  history = [],
   commands,
   completionDisabled = false,
   disabled = false,
@@ -129,6 +133,8 @@ export function ComposerInput({
 }: {
   value: string;
   onChange: (value: string) => void;
+  onHistoryPreview?: (value: string) => void;
+  history?: readonly string[];
   commands: readonly PiCommand[];
   completionDisabled?: boolean;
   disabled?: boolean;
@@ -156,6 +162,22 @@ export function ComposerInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const inputValueRef = useRef(value);
+  const historyIndexRef = useRef(-1);
+  const historyDraftRef = useRef<{
+    value: string;
+    start: number;
+    end: number;
+    direction: "forward" | "backward" | "none";
+    scrollTop: number;
+  } | null>(null);
+  const historyPreviewValueRef = useRef<string | null>(null);
+  const pendingSelectionRef = useRef(0);
+
+  const exitHistoryBrowsing = useCallback(() => {
+    historyIndexRef.current = -1;
+    historyDraftRef.current = null;
+    historyPreviewValueRef.current = null;
+  }, []);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -165,16 +187,32 @@ export function ComposerInput({
   }, [maxHeightRatio, value]);
 
   useEffect(() => {
+    if (
+      historyIndexRef.current >= 0 &&
+      value !== historyPreviewValueRef.current
+    )
+      exitHistoryBrowsing();
     if (value !== inputValueRef.current) setCompletion(null);
     inputValueRef.current = value;
-  }, [value]);
+  }, [value, exitHistoryBrowsing]);
 
   useEffect(() => {
     setCompletion(null);
-  }, [completionDisabled, completionScope]);
+    exitHistoryBrowsing();
+  }, [completionScope, exitHistoryBrowsing]);
+
+  useEffect(() => {
+    if (completionDisabled) exitHistoryBrowsing();
+    setCompletion(null);
+  }, [completionDisabled, exitHistoryBrowsing]);
 
   const updateCompletion = (draft: string, caret: number | null) => {
-    if (composingRef.current || completionDisabled || caret === null) {
+    if (
+      composingRef.current ||
+      completionDisabled ||
+      historyIndexRef.current >= 0 ||
+      caret === null
+    ) {
       setCompletion(null);
       return;
     }
@@ -274,6 +312,7 @@ export function ComposerInput({
     const next = reusesInlineDelimiter
       ? { ...inserted, caret: inserted.caret + 1 }
       : inserted;
+    exitHistoryBrowsing();
     inputValueRef.current = next.value;
     onChange(next.value);
     setCompletion(null);
@@ -281,6 +320,83 @@ export function ComposerInput({
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(next.caret, next.caret);
     });
+  };
+
+  const previewHistory = (
+    nextValue: string,
+    start: number,
+    end: number,
+    direction: "forward" | "backward" | "none",
+    scrollTop: number | "start" | "end",
+  ) => {
+    const nonce = ++pendingSelectionRef.current;
+    historyPreviewValueRef.current = nextValue;
+    inputValueRef.current = nextValue;
+    (onHistoryPreview ?? onChange)(nextValue);
+    setCompletion(null);
+    requestAnimationFrame(() => {
+      const element = textareaRef.current;
+      if (
+        nonce !== pendingSelectionRef.current ||
+        !element ||
+        element.value !== nextValue
+      )
+        return;
+      element.focus({ preventScroll: true });
+      element.setSelectionRange(start, end, direction);
+      element.scrollTop =
+        scrollTop === "start"
+          ? 0
+          : scrollTop === "end"
+            ? element.scrollHeight
+            : scrollTop;
+    });
+  };
+
+  const navigateHistory = (direction: -1 | 1, element: HTMLTextAreaElement) => {
+    if (history.length === 0) return;
+    const current = historyIndexRef.current;
+    if (direction === -1) {
+      const next = Math.min(current + 1, history.length - 1);
+      if (current === -1) {
+        historyDraftRef.current = {
+          value: element.value,
+          start: element.selectionStart,
+          end: element.selectionEnd,
+          direction: element.selectionDirection,
+          scrollTop: element.scrollTop,
+        };
+      }
+      historyIndexRef.current = next;
+      const nextValue = history[next] ?? "";
+      previewHistory(nextValue, 0, 0, "none", "start");
+      return;
+    }
+    if (current < 0) return;
+    if (current === 0) {
+      const draft = historyDraftRef.current;
+      exitHistoryBrowsing();
+      const nextValue = draft?.value ?? "";
+      previewHistory(
+        nextValue,
+        draft?.start ?? nextValue.length,
+        draft?.end ?? nextValue.length,
+        draft?.direction ?? "none",
+        draft?.scrollTop ?? "end",
+      );
+      historyPreviewValueRef.current = null;
+      return;
+    }
+    const next = current - 1;
+    historyIndexRef.current = next;
+    const nextValue = history[next] ?? "";
+    previewHistory(
+      nextValue,
+      nextValue.length,
+      nextValue.length,
+      "none",
+      "end",
+    );
   };
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
@@ -314,6 +430,48 @@ export function ComposerInput({
         return;
       }
     }
+    if (
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd &&
+      history.length > 0
+    ) {
+      const element = event.currentTarget;
+      const caret = element.selectionStart;
+      if (
+        event.key === "ArrowUp" &&
+        isTextareaCaretOnVisualEdge(element, "first")
+      ) {
+        event.preventDefault();
+        const lineStart = element.value.lastIndexOf("\n", caret - 1) + 1;
+        if (
+          element.value === "" ||
+          historyIndexRef.current >= 0 ||
+          caret === lineStart
+        ) {
+          navigateHistory(-1, element);
+        } else {
+          element.setSelectionRange(lineStart, lineStart);
+        }
+        return;
+      }
+      if (
+        event.key === "ArrowDown" &&
+        isTextareaCaretOnVisualEdge(element, "last")
+      ) {
+        event.preventDefault();
+        if (historyIndexRef.current >= 0) {
+          navigateHistory(1, element);
+        } else {
+          const newline = element.value.indexOf("\n", caret);
+          const lineEnd = newline < 0 ? element.value.length : newline;
+          element.setSelectionRange(lineEnd, lineEnd);
+        }
+        return;
+      }
+    }
     onKeyDown?.(event);
   };
 
@@ -342,6 +500,7 @@ export function ComposerInput({
           placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => {
+            exitHistoryBrowsing();
             inputValueRef.current = event.target.value;
             onChange(event.target.value);
             updateCompletion(event.target.value, event.target.selectionStart);

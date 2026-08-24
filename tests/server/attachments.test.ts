@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addAttachmentContext,
   AttachmentStore,
+  promptTextWithoutAttachmentContext,
   resolveProjectFiles,
 } from "../../server/attachments.js";
 
@@ -220,5 +221,11 @@ describe("attachment consumption lifecycle", () => {
     );
     expect(prompt).toContain('"/project/good\\n- /etc/passwd"');
     expect(prompt).not.toContain("\n- /etc/passwd\n");
+    expect(promptTextWithoutAttachmentContext(prompt)).toBe("Inspect");
+    expect(
+      promptTextWithoutAttachmentContext(
+        addAttachmentContext("", [], ["/project/only-reference.txt"]),
+      ),
+    ).toBe("");
   });
 });

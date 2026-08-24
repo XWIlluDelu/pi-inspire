@@ -28,6 +28,8 @@ let abortBodies: Record<string, unknown>[];
 let promptFails: boolean;
 let fileSearchFails: boolean;
 let slowSearchGate: Promise<void> | null;
+let historyEntries: string[];
+let historyRequests: number;
 
 beforeAll(async () => {
   promptBodies = [];
@@ -35,11 +37,34 @@ beforeAll(async () => {
   promptFails = false;
   fileSearchFails = false;
   slowSearchGate = null;
+  historyEntries = [];
+  historyRequests = 0;
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
     if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
+    if (url.startsWith("/api/composer/history")) {
+      historyRequests += 1;
+      const requestUrl = new URL(url, "https://inspire.test");
+      const sessionId = requestUrl.searchParams.get("sessionId") ?? "s1";
+      const start = Number(requestUrl.searchParams.get("start") ?? 0);
+      const state = store.getState();
+      return {
+        body: {
+          sessionId,
+          revision: state.transcriptRevision,
+          viewId: state.transcriptViewId,
+          incarnation: state.transcriptIncarnation,
+          effectiveLeafId: state.transcriptEffectiveLeafId,
+          historyId: `history-${historyEntries.join("|")}`,
+          total: historyEntries.length,
+          start,
+          entries: historyEntries.slice(start),
+          nextStart: null,
+        },
+      };
+    }
     if (url.startsWith("/api/sessions"))
       return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
     if (url.startsWith("/api/attachments")) {
@@ -210,6 +235,50 @@ describe("composer attachments", () => {
 });
 
 describe("composer keyboard submission", () => {
+  it("browses Pi prompt history at visual-line boundaries and restores the draft", async () => {
+    clearLeftovers();
+    historyEntries = ["latest prompt", "older prompt"];
+    const requestsBefore = historyRequests;
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          transcriptPage: {
+            viewId: "history-view",
+            incarnation: "history-projection",
+          },
+        }),
+      }),
+    );
+
+    render(<Composer />);
+    await waitFor(() =>
+      expect(historyRequests).toBeGreaterThan(requestsBefore),
+    );
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("working draft");
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(textarea).toHaveValue("working draft");
+    expect(textarea.selectionStart).toBe(0);
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    await waitFor(() => expect(textarea).toHaveValue("latest prompt"));
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    await waitFor(() => expect(textarea).toHaveValue("older prompt"));
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    await waitFor(() => expect(textarea).toHaveValue("latest prompt"));
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    await waitFor(() => expect(textarea).toHaveValue("working draft"));
+
+    typeDraft("newly sent prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(textarea).toHaveValue(""));
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    await waitFor(() => expect(textarea).toHaveValue("newly sent prompt"));
+  });
+
   it("keeps software-keyboard Return as a line break on touch-first devices", async () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;

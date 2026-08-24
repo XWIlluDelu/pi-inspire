@@ -23,6 +23,7 @@ import {
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeResponse,
+  type ComposerHistoryPage,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
@@ -239,6 +240,10 @@ export interface RuntimeLike {
     targetMessageId: string,
     cursor?: string,
   ): Promise<UserTurnTranscriptPage>;
+  composerHistory(
+    sessionId: string,
+    start?: number,
+  ): Promise<ComposerHistoryPage>;
   branchTree(sessionId: string): Promise<BranchTreeResponse>;
   navigateBranch(
     request: BranchNavigateRequest,
@@ -4929,6 +4934,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.effectiveLeaf(slot),
         slot.viewId,
         cursor,
+      );
+    });
+  }
+
+  async composerHistory(
+    sessionId: string,
+    start = 0,
+  ): Promise<ComposerHistoryPage> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      if (!slot.projection)
+        throw Object.assign(new Error("Session projection is not available"), {
+          status: 503,
+        });
+      await this.reconcileSlot(slot, true);
+      return slot.projection.composerHistoryPage(
+        start,
+        this.effectiveLeaf(slot),
+        slot.viewId,
       );
     });
   }

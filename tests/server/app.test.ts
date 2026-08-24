@@ -720,6 +720,18 @@ describe("local host API", () => {
         hasMoreInTurn: false,
         continuationCursor: null,
       });
+    const composerHistory = vi
+      .spyOn(runtime, "composerHistory")
+      .mockResolvedValue({
+        sessionId: "mock-active",
+        revision: 7,
+        viewId: "mock-view-mock-active",
+        historyId: "history-7",
+        total: 1,
+        start: 0,
+        entries: ["prompt"],
+        nextStart: null,
+      });
     await request(application.server)
       .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
       .expect(401);
@@ -776,6 +788,16 @@ describe("local host API", () => {
       "user-0",
       "turn-cursor",
     );
+
+    await request(application.server)
+      .get("/api/composer/history?sessionId=mock-active&start=0")
+      .expect(401);
+    await request(application.server)
+      .get("/api/composer/history?sessionId=mock-active&start=0")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((result) => expect(result.body.entries).toEqual(["prompt"]));
+    expect(composerHistory).toHaveBeenCalledWith("mock-active", 0);
   });
 
   it("serves authenticated, bounded, session-addressed branch operations", async () => {

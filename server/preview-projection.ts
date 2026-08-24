@@ -2,12 +2,14 @@ import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type {
   BranchTreeResponse,
+  ComposerHistoryPage,
   TranscriptActivityPage,
   TranscriptPage,
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
+import { projectComposerHistoryPage } from "./composer-history.js";
 import {
   boundedTranscriptValue,
   type InitialMaterializationAttestation,
@@ -192,6 +194,23 @@ export class PreviewProjection
       hasMoreInTurn: false,
       continuationCursor: null,
     };
+  }
+
+  composerHistoryPage(
+    start = 0,
+    effectiveLeafId: string | null = null,
+    viewId = "preview",
+  ): ComposerHistoryPage {
+    return projectComposerHistoryPage(
+      this.preview.transcriptPage.messages,
+      {
+        sessionId: this.sessionId,
+        revision: this.revision,
+        viewId,
+        effectiveLeafId,
+      },
+      start,
+    );
   }
 
   branchTree(): BranchTreeResponse {

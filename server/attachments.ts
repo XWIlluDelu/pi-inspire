@@ -427,6 +427,9 @@ export async function resolveProjectFiles(
   );
 }
 
+const REFERENCE_CONTEXT_HEADING =
+  "Referenced files available to the agent (JSON paths):";
+
 export function addAttachmentContext(
   message: string,
   files: StoredAttachment[],
@@ -440,5 +443,36 @@ export function addAttachmentContext(
   // JSON string literals keep newlines, bullet prefixes, and other legal
   // filename characters inside one unambiguous structural item.
   const lines = references.map((path) => `- ${JSON.stringify(path)}`);
-  return `${message.trim()}\n\nReferenced files available to the agent (JSON paths):\n${lines.join("\n")}`.trim();
+  return `${message.trim()}\n\n${REFERENCE_CONTEXT_HEADING}\n${lines.join("\n")}`.trim();
+}
+
+/** Recover the editor-owned text from INSΠRE's deterministic file context. */
+export function promptTextWithoutAttachmentContext(prompt: string): string {
+  const heading = `${REFERENCE_CONTEXT_HEADING}\n`;
+  const marker = `\n\n${heading}`;
+  const trailingContext = prompt.lastIndexOf(marker);
+  const contextStart =
+    trailingContext >= 0
+      ? trailingContext
+      : prompt.startsWith(heading)
+        ? 0
+        : -1;
+  if (contextStart < 0) return prompt;
+  const referenceStart =
+    contextStart === 0 ? heading.length : contextStart + marker.length;
+  const lines = prompt.slice(referenceStart).split("\n");
+  if (
+    lines.length === 0 ||
+    lines.some((line) => {
+      if (!line.startsWith("- ")) return true;
+      try {
+        const path = JSON.parse(line.slice(2));
+        return typeof path !== "string" || !isAbsolute(path);
+      } catch {
+        return true;
+      }
+    })
+  )
+    return prompt;
+  return (contextStart === 0 ? "" : prompt.slice(0, contextStart)).trim();
 }
