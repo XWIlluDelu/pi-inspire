@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_EXTENSION_STATUS_CHARS } from "../../shared/contracts";
 import {
   type EventSlice,
   emptyEventSlice,
@@ -590,7 +591,11 @@ describe("extension_ui_request mapping", () => {
       type: "extension_ui_request",
       id: "r3",
       method: "setStatus",
-      extensionStatuses: { linter: "linting…", invalid: 4 },
+      extensionStatuses: {
+        linter: "linting…",
+        oversized: "x".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
+        invalid: 4,
+      },
     });
     expect(withStatus.slice.statuses).toEqual({ linter: "linting…" });
 
@@ -601,6 +606,30 @@ describe("extension_ui_request mapping", () => {
       extensionStatuses: {},
     });
     expect(cleared.slice.statuses).toEqual({});
+  });
+
+  it("bounds legacy setStatus events and retains only the latest 20", () => {
+    let current = emptyEventSlice();
+    for (let index = 0; index < 22; index += 1) {
+      current = reduce(current, new Set(), {
+        type: "extension_ui_request",
+        id: `legacy-status-${index}`,
+        method: "setStatus",
+        statusKey: `status-${index}`,
+        statusText: "🧭".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
+      }).slice;
+    }
+    expect(Object.keys(current.statuses)).toHaveLength(20);
+    expect(current.statuses).not.toHaveProperty("status-0");
+    expect(current.statuses).not.toHaveProperty("status-1");
+    expect(Object.values(current.statuses)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^(?:🧭)*…$/u)]),
+    );
+    expect(
+      Object.values(current.statuses).every(
+        (status) => Array.from(status).length <= MAX_EXTENSION_STATUS_CHARS,
+      ),
+    ).toBe(true);
   });
 
   it("injects set_editor_text with an incrementing nonce", () => {

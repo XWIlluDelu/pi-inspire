@@ -16,7 +16,7 @@ The supported Pi version is the one pinned by this project. Its RPC behavior is 
 | `registerTool()` | The tool runs in Pi. Unknown tools receive a complete generic card. | Add a data-only Tool Presentation when the arguments or result have a stable useful shape. |
 | `select`, `confirm`, `input`, `editor` | Native INSΠRE modal dialog. | Use for interactions that must block the Extension until the user answers. |
 | `notify` | Transient notice. | Use for a completed event, warning, or failure—not durable state. |
-| `setStatus` | Compact text in the desktop top bar; long values are visually truncated with the full value in the tooltip. Current keyed values survive a browser reconnect and clear with the owning worker. | Keep it short and clear it with the same key. Mobile intentionally omits Extension status text. |
+| `setStatus` | Compact text in the desktop top bar. The Host retains at most 1,024 characters per value; the top bar may visually truncate that retained value further and expose it in a tooltip. Current keyed values survive a browser reconnect and clear with the owning worker. | Keep it short and clear it with the same key. Mobile intentionally omits Extension status text. |
 | `setWidget(key, string[], placement)` | Native bounded text widget immediately above or below the Composer. Updates replace the same key; `undefined` clears it. | Best generic surface for Todo lists, quotas, and session state that informs the next prompt. |
 | `setWidget(key, componentFactory)` | Ignored by Pi in RPC mode. | Supply a string-array branch when `ctx.mode === "rpc"`; retain the factory for TUI mode. |
 | `setTitle` | Browser document title. | Treat it as transient session presentation. |
@@ -102,7 +102,7 @@ function updateTodoPresentation(ctx: ExtensionContext, todos: Todo[]) {
 }
 ```
 
-Use one stable, namespaced key; every update replaces that widget. Clear it when empty and during the Extension lifecycle that invalidates its state. Send plain semantic text in RPC mode. INSΠRE strips terminal control sequences rather than reproducing ANSI styling.
+Use one stable, namespaced key; every update replaces that widget. Keys longer than 240 characters are rejected rather than truncated into a different identity. Clear it when empty and during the Extension lifecycle that invalidates its state. Send plain semantic text in RPC mode. INSΠRE strips terminal control sequences rather than reproducing ANSI styling.
 
 Do not parse the TUI component's rendered lines back into a Todo model. Both renderers must read the same Extension-owned state.
 

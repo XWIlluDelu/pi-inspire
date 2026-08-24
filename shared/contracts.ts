@@ -491,7 +491,30 @@ export type ExtensionUiRequest =
 export const MAX_EXTENSION_DISPLAYS = 20;
 export const MAX_EXTENSION_KEY_CHARS = 240;
 export const MAX_EXTENSION_STATUSES = 20;
+export const MAX_EXTENSION_STATUS_CHARS = 1_024;
 export const MAX_EXTENSION_WIDGET_LINES = 200;
+
+/** Bound retained status text by Unicode code point. */
+export function boundedExtensionStatus(text: string): string {
+  const characters: string[] = [];
+  for (const character of text) {
+    if (characters.length === MAX_EXTENSION_STATUS_CHARS) {
+      characters[characters.length - 1] = "…";
+      return characters.join("");
+    }
+    characters.push(character);
+  }
+  return text;
+}
+
+function extensionStatusWithinLimit(text: string): boolean {
+  let count = 0;
+  for (const _character of text) {
+    count += 1;
+    if (count > MAX_EXTENSION_STATUS_CHARS) return false;
+  }
+  return true;
+}
 
 export function parseExtensionStatuses(
   value: unknown,
@@ -503,7 +526,9 @@ export function parseExtensionStatuses(
         (entry): entry is [string, string] =>
           entry[0].length > 0 &&
           entry[0].length <= MAX_EXTENSION_KEY_CHARS &&
-          typeof entry[1] === "string",
+          typeof entry[1] === "string" &&
+          entry[1].length > 0 &&
+          extensionStatusWithinLimit(entry[1]),
       )
       .slice(-MAX_EXTENSION_STATUSES),
   );

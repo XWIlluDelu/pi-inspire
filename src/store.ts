@@ -78,6 +78,7 @@ import {
   emptyEventSlice,
   messageKey,
   type Notice,
+  parseExtensionDisplays,
   reduceEvent,
   type WireEvent,
 } from "./events";
@@ -1088,9 +1089,7 @@ export class AppStore {
         sessionChanged || viewChanged
           ? null
           : this.state.extensionUiRespondingId,
-      extensionDisplays: Array.isArray(snapshot.extensionDisplays)
-        ? snapshot.extensionDisplays
-        : [],
+      extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
       statuses: extensionStatuses,
       ...(sessionChanged
         ? {

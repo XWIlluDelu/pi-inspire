@@ -1,10 +1,13 @@
 import { applyAssistantMessageDelta } from "../shared/assistant-stream";
 import {
+  boundedExtensionStatus,
   EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
   MAX_EXTENSION_DISPLAYS,
+  MAX_EXTENSION_KEY_CHARS,
+  MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
   type PendingMessageSummary,
   type PendingQueues,
@@ -336,7 +339,10 @@ function parseExtensionDisplay(value: unknown): ExtensionDisplay | null {
   const display = value as Record<string, unknown>;
   if (
     typeof display.id !== "string" ||
+    display.id.length === 0 ||
     typeof display.label !== "string" ||
+    display.label.length === 0 ||
+    display.label.length > MAX_EXTENSION_KEY_CHARS ||
     typeof display.source !== "string" ||
     (display.placement !== "aboveEditor" && display.placement !== "belowEditor")
   )
@@ -357,7 +363,12 @@ function parseExtensionDisplay(value: unknown): ExtensionDisplay | null {
       lines: display.lines,
     };
   }
-  if (display.kind !== "raw" || typeof display.method !== "string") return null;
+  if (
+    display.kind !== "raw" ||
+    typeof display.method !== "string" ||
+    display.method.length === 0
+  )
+    return null;
   return {
     id: display.id,
     kind: "raw",
@@ -369,17 +380,22 @@ function parseExtensionDisplay(value: unknown): ExtensionDisplay | null {
   };
 }
 
-function updateExtensionDisplay(
+export function parseExtensionDisplays(value: unknown): ExtensionDisplay[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .flatMap((item) => {
+      const display = parseExtensionDisplay(item);
+      return display ? [display] : [];
+    })
+    .slice(-MAX_EXTENSION_DISPLAYS);
+}
+
+function extensionDisplaysFromEvent(
   current: ExtensionDisplay[],
   event: WireEvent,
 ): ExtensionDisplay[] {
   if (!Array.isArray(event.extensionDisplays)) return current;
-  return event.extensionDisplays
-    .flatMap((value) => {
-      const display = parseExtensionDisplay(value);
-      return display ? [display] : [];
-    })
-    .slice(-MAX_EXTENSION_DISPLAYS);
+  return parseExtensionDisplays(event.extensionDisplays);
 }
 
 /**
@@ -396,7 +412,7 @@ export function reduceEvent(
   const settle: string[] = [];
   let resync = false;
   let changed = false;
-  const displays = updateExtensionDisplay(current.extensionDisplays, event);
+  const displays = extensionDisplaysFromEvent(current.extensionDisplays, event);
   if (displays !== current.extensionDisplays) {
     slice.extensionDisplays = displays;
     changed = true;
@@ -622,11 +638,15 @@ export function reduceEvent(
         changed = true;
       } else if (method === "setStatus") {
         const key = typeof event.statusKey === "string" ? event.statusKey : "";
-        if (!key) break;
-        slice.statuses = { ...slice.statuses };
+        if (!key || key.length > MAX_EXTENSION_KEY_CHARS) break;
+        const entries = Object.entries(slice.statuses).filter(
+          ([candidate]) => candidate !== key,
+        );
         if (typeof event.statusText === "string" && event.statusText)
-          slice.statuses[key] = event.statusText;
-        else delete slice.statuses[key];
+          entries.push([key, boundedExtensionStatus(event.statusText)]);
+        slice.statuses = Object.fromEntries(
+          entries.slice(-MAX_EXTENSION_STATUSES),
+        );
         changed = true;
       } else if (method === "setTitle") {
         slice.windowTitle =

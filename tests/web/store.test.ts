@@ -337,6 +337,45 @@ describe("multi-session event routing", () => {
     expect(store.getState().activeAssistantMessageKey).toBeNull();
   });
 
+  it("drops malformed extension displays from authoritative snapshots", async () => {
+    const { store, socket } = await initStore();
+    const snapshot = activeSnapshot();
+    const valid = {
+      id: "setWidget:valid",
+      kind: "widget",
+      label: "valid",
+      source: "Pi extension",
+      placement: "aboveEditor",
+      lines: ["kept"],
+    };
+    (
+      snapshot as unknown as {
+        extensionDisplays: unknown;
+      }
+    ).extensionDisplays = [
+      valid,
+      { ...valid, id: "bad-lines", lines: "not-an-array" },
+      { ...valid, id: "bad-placement", placement: "sidebar" },
+      {
+        ...valid,
+        id: "too-many-lines",
+        lines: Array.from({ length: 201 }, () => "line"),
+      },
+      {
+        id: "raw-without-method",
+        kind: "raw",
+        label: "raw",
+        source: "Pi extension",
+        placement: "aboveEditor",
+        payload: {},
+      },
+    ];
+
+    socket.emit({ type: "snapshot", data: snapshot });
+
+    expect(store.getState().extensionDisplays).toEqual([valid]);
+  });
+
   it("clears selected-only extension presentation when switching sessions", async () => {
     installFetch(baseRoutes);
     const { store, socket } = await initStore();

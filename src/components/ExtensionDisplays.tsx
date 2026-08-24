@@ -12,25 +12,24 @@ function displayHeading(display: ExtensionDisplay): {
   title: string;
   detail: string | null;
 } {
-  if (display.source && display.source !== "Pi extension") {
-    return {
-      title: display.source,
-      detail: display.label || null,
-    };
-  }
+  const title = stripTerminalSequences(display.label).trim() || "Extension";
+  const source = stripTerminalSequences(display.source).trim();
   return {
-    title: display.label || "Extension",
-    detail: null,
+    title,
+    detail: source && source !== "Pi extension" ? source : null,
   };
 }
 
 function TextWidget({ display }: { display: ExtensionWidgetDisplay }) {
   const heading = displayHeading(display);
   const text = display.lines.map(stripTerminalSequences).join("\n");
+  const accessibleName = heading.detail
+    ? `${heading.title} widget from ${heading.detail}`
+    : `${heading.title} widget`;
   return (
     <section
       className="extension-display extension-display--widget"
-      aria-label={`${heading.title} widget`}
+      aria-label={accessibleName}
     >
       <header className="extension-display__head">
         <span className="extension-display__lead">
@@ -46,7 +45,7 @@ function TextWidget({ display }: { display: ExtensionWidgetDisplay }) {
         </span>
         <CopyAction
           text={text}
-          label={`${heading.title} widget`}
+          label={accessibleName}
           className="extension-display__copy"
         />
       </header>

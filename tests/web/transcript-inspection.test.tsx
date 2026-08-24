@@ -2138,7 +2138,7 @@ describe("transient conversation projections", () => {
         id: "setWidget:plan",
         kind: "widget" as const,
         label: "plan",
-        source: "Pi extension",
+        source: "extensions/plan.ts",
         placement: "aboveEditor" as const,
         lines: ["\u001b[32mone\u001b[0m", "two"],
       },
@@ -2180,6 +2180,17 @@ describe("transient conversation projections", () => {
       name: "Extension content below composer",
     });
     expect(within(above).getByText("plan")).toBeInTheDocument();
+    expect(within(above).getByText("extensions/plan.ts")).toBeInTheDocument();
+    expect(
+      within(above).getByRole("region", {
+        name: "plan widget from extensions/plan.ts",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(above).getByRole("button", {
+        name: "Copy plan widget from extensions/plan.ts",
+      }),
+    ).toBeInTheDocument();
     const widgetText = above.querySelector(".extension-display__text");
     expect(widgetText).toHaveTextContent("one two");
     expect(widgetText?.textContent).not.toContain("\u001b[32m");

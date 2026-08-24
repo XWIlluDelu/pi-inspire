@@ -13,6 +13,10 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import {
+  MAX_EXTENSION_KEY_CHARS,
+  MAX_EXTENSION_STATUS_CHARS,
+} from "../../shared/contracts.js";
+import {
   type PiRpcOptions,
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
@@ -1840,6 +1844,23 @@ describe("RuntimeController concurrent sessions", () => {
 
     worker.emit("event", {
       type: "extension_ui_request",
+      id: "widget-key-oversized",
+      method: "setWidget",
+      widgetKey: "k".repeat(MAX_EXTENSION_KEY_CHARS + 1),
+      widgetLines: ["must be rejected"],
+    });
+    snapshot = await runtime.snapshot();
+    expect(snapshot.extensionDisplays).toEqual([
+      expect.objectContaining({ id: "setWidget:plan", kind: "widget" }),
+    ]);
+    expect(emitted.at(-1)).toMatchObject({
+      extensionDisplays: snapshot.extensionDisplays,
+    });
+    expect(emitted.at(-1)).not.toHaveProperty("widgetKey");
+    expect(emitted.at(-1)).not.toHaveProperty("widgetLines");
+
+    worker.emit("event", {
+      type: "extension_ui_request",
       id: "widget-oversized",
       method: "setWidget",
       widgetKey: "plan",
@@ -1872,6 +1893,31 @@ describe("RuntimeController concurrent sessions", () => {
     });
     expect(emitted.at(-1)).not.toHaveProperty("extensionDisplays");
     expect(emitted.at(-1)).not.toHaveProperty("statusText");
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "status-oversized",
+      method: "setStatus",
+      statusKey: "usage",
+      statusText: "x".repeat(MAX_EXTENSION_STATUS_CHARS + 200),
+    });
+    expect((await runtime.snapshot()).extensionStatuses?.usage).toBe(
+      `${"x".repeat(MAX_EXTENSION_STATUS_CHARS - 1)}…`,
+    );
+
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "status-multibyte",
+      method: "setStatus",
+      statusKey: "usage",
+      statusText: "🧭".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
+    });
+    const multibyteStatus = (await runtime.snapshot()).extensionStatuses?.usage;
+    expect(multibyteStatus).toBeDefined();
+    expect(Array.from(multibyteStatus!).length).toBeLessThanOrEqual(
+      MAX_EXTENSION_STATUS_CHARS,
+    );
+    expect(multibyteStatus).toMatch(/^(?:🧭)*…$/u);
 
     worker.emit("event", {
       type: "extension_ui_request",

@@ -17,6 +17,7 @@ import {
 import { parseCompactCommand } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
+  boundedExtensionStatus,
   type BranchForkRequest,
   type BranchForkResponse,
   type BranchNavigateRequest,
@@ -2041,7 +2042,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ([candidate]) => candidate !== key,
     );
     if (typeof record.statusText === "string" && record.statusText.length > 0)
-      statuses.push([key, record.statusText]);
+      statuses.push([key, boundedExtensionStatus(record.statusText)]);
     slot.extensionStatuses = Object.fromEntries(
       statuses.slice(-MAX_EXTENSION_STATUSES),
     );
@@ -2062,11 +2063,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         EXTENSION_NON_DISPLAY_UI_METHODS.has(method))
     )
       return false;
-    const label = (
+    const label =
       typeof record.widgetKey === "string" && record.widgetKey
         ? record.widgetKey
-        : String(record.id ?? method)
-    ).slice(0, MAX_EXTENSION_KEY_CHARS);
+        : String(record.id ?? method);
+    // A stable Pi UI key is identity, not display text. Reject rather than
+    // truncating distinct keys into the same widget and clear target. This UI
+    // method remains consumed so its rejected raw payload is not forwarded.
+    if (!label || label.length > MAX_EXTENSION_KEY_CHARS) return true;
     const id = `${method}:${label}`;
     if (method === "setWidget" && record.widgetLines === undefined) {
       slot.extensionDisplays = slot.extensionDisplays.filter(
