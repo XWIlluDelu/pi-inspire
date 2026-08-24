@@ -87,22 +87,16 @@ describe("design token contract", () => {
     );
   });
 
-  it("preserves both ends of narrow resource paths and gives block paths the remaining row", async () => {
+  it("keeps the resource tail adjacent while block paths use the remaining row", async () => {
     const css = await readFile(stylesheet, "utf8");
     expect(css).toMatch(
-      /\.resource-path__full\s*{[^}]*display:\s*inline-flex[^}]*overflow:\s*hidden/s,
+      /\.resource-path\s*{[^}]*display:\s*inline-flex[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/s,
     );
     expect(css).toMatch(
-      /\.resource-path__full-start\s*{[^}]*flex:\s*1 1 auto[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
+      /\.resource-path__leading\s*{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
     );
     expect(css).toMatch(
-      /\.resource-path__name-start\s*{[^}]*flex:\s*1 1 0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
-    );
-    expect(css).toMatch(
-      /\.resource-path__name-end\s*{[^}]*flex:\s*0 0 auto[^}]*min-width:\s*3ch[^}]*max-width:\s*100%[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/s,
-    );
-    expect(css).toMatch(
-      /\.card--tool\s*{[^}]*container-name:\s*tool-card[^}]*container-type:\s*inline-size[^}]*}[\s\S]*?@container\s+tool-card\s*\(max-width:\s*600px\)[\s\S]*?\.resource-path__full\s*{[^}]*display:\s*none[^}]*}[\s\S]*?\.resource-path__compact\s*{[^}]*display:\s*inline-flex/s,
+      /\.resource-path__tail\s*{[^}]*flex:\s*0 0 auto[^}]*min-width:\s*3ch[^}]*max-width:\s*100%[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/s,
     );
     expect(css).toMatch(
       /\.tool-block__heading\s*{[^}]*justify-content:\s*flex-start[^}]*gap:\s*var\(--space-2\)/s,

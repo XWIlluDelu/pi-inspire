@@ -14,7 +14,7 @@ scope:
 
 ## Objective
 
-Replace the narrow-workbench Prompt Map rail and unusable collapsed search with one transparent control floating over Transcript without reserving layout height. Its idle state exposes Search and Prompt Map launchers; Search and a 90-degree-rotated Prompt Map each take over that floating zone explicitly, and the Prompt Map retains its complete virtual directory.
+Replace the narrow-workbench Prompt Map rail and unusable collapsed search with one control floating over Transcript without reserving layout height. Its backdrop-free idle state exposes Search and Prompt Map launchers; Search and a 90-degree-rotated Prompt Map each take over that floating zone on a surface background, and the Prompt Map retains its complete virtual directory.
 
 ## Progress
 

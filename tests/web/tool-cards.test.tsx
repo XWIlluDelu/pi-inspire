@@ -2,6 +2,10 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
+import {
+  projectResourcePath,
+  ResourcePathLabel,
+} from "../../src/components/ResourcePathLabel";
 import { ToolCard } from "../../src/components/transcript-cards";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
@@ -143,7 +147,56 @@ describe("native Pi tool cards", () => {
     expect(summaryParts[2]).toHaveClass("tool-summary__part--resource");
   });
 
-  it("keeps complete resource actions behind path-aware narrow labels", () => {
+  it("projects resource paths through exactly one adjacent leading and tail pair", () => {
+    const cases = [
+      {
+        path: "server/app.ts",
+        leading: "server/",
+        tail: "app.ts",
+      },
+      {
+        path: "src/components/Nav.tsx",
+        leading: "src/components/",
+        tail: "Nav.tsx",
+      },
+      {
+        path: "C:\\workspace\\src\\really-long-file-name.ts",
+        leading: "C:\\workspace\\src\\really-lon",
+        tail: "g-file-name.ts",
+      },
+      {
+        path: "file:///home/user/folder/report.json",
+        leading: "file:///home/user/folder/",
+        tail: "report.json",
+      },
+      {
+        path: "/home/user/directory/",
+        leading: "/home/user/",
+        tail: "directory/",
+      },
+    ];
+    const { container } = render(
+      <>
+        {cases.map(({ path }) => (
+          <ResourcePathLabel key={path} path={path} />
+        ))}
+      </>,
+    );
+
+    for (const [index, expected] of cases.entries()) {
+      expect(projectResourcePath(expected.path)).toEqual({
+        leading: expected.leading,
+        tail: expected.tail,
+      });
+      const label = container.querySelectorAll(".resource-path")[index];
+      expect(label).toHaveTextContent(expected.path);
+      expect(label.children).toHaveLength(2);
+      expect(label.children[0]).toHaveClass("resource-path__leading");
+      expect(label.children[1]).toHaveClass("resource-path__tail");
+    }
+  });
+
+  it("keeps complete resource actions behind one middle-truncation label", () => {
     const readPath =
       "docdoki/stages/archive/challenge-response-fold-pagination-2026-08-22.md";
     const editPath =
@@ -173,29 +226,16 @@ describe("native Pi tool cards", () => {
       </>,
     );
 
-    const expectations = [
-      {
-        path: readPath,
-        compact: "docdoki/…/challenge-response-fold-pagination-2026-08-22.md",
-      },
-      {
-        path: editPath,
-        compact: "/…/pickup/test/workstream-announcement-records-2026-08-22.ts",
-      },
-    ];
-    for (const { path, compact } of expectations) {
+    for (const path of [readPath, editPath]) {
       const resource = screen.getByRole("button", { name: path });
+      const label = resource.querySelector(".resource-path");
       expect(resource).toHaveAttribute("data-file-path", path);
       expect(resource).toHaveAttribute("title", `Preview ${path}`);
-      expect(resource.querySelector(".resource-path__full")).toHaveTextContent(
-        path,
+      expect(label).toHaveTextContent(path);
+      expect(label?.querySelector(".resource-path__tail")).toHaveTextContent(
+        Array.from(path).slice(-14).join(""),
       );
-      expect(
-        resource.querySelector(".resource-path__full-end"),
-      ).toHaveTextContent(Array.from(path).slice(-14).join(""));
-      expect(
-        resource.querySelector(".resource-path__compact"),
-      ).toHaveTextContent(compact);
+      expect(label?.querySelector(".resource-path__leading")).not.toBeNull();
     }
     expect(container.querySelector(".tool-block__heading")).toContainElement(
       container.querySelector(".tool-block__path"),
@@ -254,10 +294,12 @@ describe("native Pi tool cards", () => {
     expect(screen.getByText("Arguments")).toBeInTheDocument();
     expect(screen.getByText("Result")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
-    expect(
-      screen
-        .getByRole("button", { name: "src/app.ts" })
-        .querySelector(".resource-path__compact"),
-    ).toHaveTextContent("src/app.ts");
+    const resource = screen.getByRole("button", { name: "src/app.ts" });
+    expect(resource.querySelector(".resource-path__leading")).toHaveTextContent(
+      "src/",
+    );
+    expect(resource.querySelector(".resource-path__tail")).toHaveTextContent(
+      "app.ts",
+    );
   });
 });
