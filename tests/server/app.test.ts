@@ -14,9 +14,10 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import {
-  ACCESS_COOKIE,
+  accessCookieName,
   createInspireServer,
   MAX_JOINING_EVENT_BYTES,
+  MAX_RUNTIME_EVENT_BYTES,
 } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
@@ -309,7 +310,9 @@ describe("local host API", () => {
       .send({ token })
       .expect(204);
     const setCookie = paired.headers["set-cookie"] as unknown as string[];
-    expect(setCookie[0]).toContain(`${ACCESS_COOKIE}=`);
+    expect(setCookie[0]).toContain(
+      `${accessCookieName(new URL(baseUrl).host)}=`,
+    );
     expect(setCookie[0]).toContain("HttpOnly");
     expect(setCookie[0]).toContain("SameSite=Strict");
     expect(setCookie[0]).toContain("Path=/");
@@ -334,6 +337,69 @@ describe("local host API", () => {
       expect(firstFrame.type).toBe("snapshot");
     } finally {
       socket.close();
+    }
+  });
+
+  it("keeps pairing cookies independent across Host ports", async () => {
+    const otherToken = "other-local-token";
+    const other = createInspireServer({
+      token: otherToken,
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(temporary, "other-uploads")),
+      preferences: new PreferencesStore(
+        join(temporary, "other-preferences.json"),
+      ),
+      resources: new ResourceStore(),
+      git,
+      mock: true,
+      version: "0.1.0-test",
+      piVersion: "0.80.10",
+    });
+    await new Promise<void>((resolve) =>
+      other.server.listen(0, "127.0.0.1", resolve),
+    );
+    const firstHost = "127.0.0.1:4587";
+    const secondHost = "127.0.0.1:4588";
+    try {
+      const first = await request(application.server)
+        .post("/api/auth/pair")
+        .set("Host", firstHost)
+        .set("Origin", `http://${firstHost}`)
+        .send({ token })
+        .expect(204);
+      const second = await request(other.server)
+        .post("/api/auth/pair")
+        .set("Host", secondHost)
+        .set("Origin", `http://${secondHost}`)
+        .send({ token: otherToken })
+        .expect(204);
+      const firstCookie = String(first.headers["set-cookie"]).split(";", 1)[0]!;
+      const secondCookie = String(second.headers["set-cookie"]).split(
+        ";",
+        1,
+      )[0]!;
+      expect(firstCookie).toContain(`${accessCookieName(firstHost)}=`);
+      expect(secondCookie).toContain(`${accessCookieName(secondHost)}=`);
+      expect(accessCookieName(firstHost)).not.toBe(
+        accessCookieName(secondHost),
+      );
+      const cookies = `${firstCookie}; ${secondCookie}`;
+
+      await request(application.server)
+        .get("/api/bootstrap")
+        .set("Host", firstHost)
+        .set("Origin", `http://${firstHost}`)
+        .set("Cookie", cookies)
+        .expect(200);
+      await request(other.server)
+        .get("/api/bootstrap")
+        .set("Host", secondHost)
+        .set("Origin", `http://${secondHost}`)
+        .set("Cookie", cookies)
+        .expect(200);
+    } finally {
+      await other.close();
     }
   });
 
@@ -421,10 +487,10 @@ describe("local host API", () => {
         .redirects(0)
         .expect(303);
       expect(launch.headers.location).toBe("/");
-      expect(String(launch.headers["set-cookie"])).toContain(
-        `${ACCESS_COOKIE}=`,
-      );
+      expect(String(launch.headers["set-cookie"])).toContain("inspire_access_");
       await browser.get("/api/bootstrap").expect(200);
+      const missingApi = await browser.get("/api/not-a-route").expect(404);
+      expect(missingApi.body).toEqual({ error: "API route not found" });
     } finally {
       await served.close();
       await rm(dist, { recursive: true, force: true });
@@ -463,7 +529,7 @@ describe("local host API", () => {
         .expect(303);
       expect(directLaunch.headers.location).toBe("/");
       expect(String(directLaunch.headers["set-cookie"])).toContain(
-        `${ACCESS_COOKIE}=`,
+        "inspire_access_",
       );
       expect(String(directLaunch.headers["set-cookie"])).not.toContain(
         "Secure",
@@ -477,7 +543,7 @@ describe("local host API", () => {
         .expect(303);
       expect(forwardedLaunch.headers.location).toBe("/");
       expect(String(forwardedLaunch.headers["set-cookie"])).not.toContain(
-        `${ACCESS_COOKIE}=`,
+        "inspire_access_",
       );
 
       const paired = await request(relay.server)
@@ -1284,6 +1350,28 @@ describe("local host API", () => {
     } finally {
       responsive.close();
       await heartbeatApp.close();
+    }
+  });
+
+  it("closes joined sockets before broadcasting one oversized runtime event", async () => {
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("message", () => resolve());
+        socket.once("error", reject);
+      });
+      const closed = new Promise<number>((resolve) =>
+        socket.once("close", resolve),
+      );
+      runtime.emit("event", {
+        type: "extension_display",
+        payload: "x".repeat(MAX_RUNTIME_EVENT_BYTES + 1),
+      });
+      expect(await closed).toBe(1013);
+    } finally {
+      socket.close();
     }
   });
 

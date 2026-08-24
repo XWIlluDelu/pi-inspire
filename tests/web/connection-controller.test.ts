@@ -170,4 +170,97 @@ describe("ConnectionController", () => {
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
     expect(host.reconnect).toHaveBeenCalledWith("token");
   });
+
+  it("coalesces complete partial messages but flushes before lifecycle events", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+
+    for (const text of ["a", "ab", "abc"]) {
+      socket.emit({
+        type: "message_update",
+        sessionId: "session-a",
+        message: {
+          __inspireLiveId: "assistant-a",
+          role: "assistant",
+          content: text,
+        },
+      });
+    }
+    expect(host.applyEvent).toHaveBeenCalledTimes(1);
+    socket.emit({
+      type: "message_end",
+      sessionId: "session-a",
+      message: {
+        __inspireLiveId: "assistant-a",
+        role: "assistant",
+        content: "abc",
+      },
+    });
+
+    expect(host.applyEvent).toHaveBeenCalledTimes(3);
+    expect(host.applyEvent.mock.calls[1]![0]).toMatchObject({
+      type: "message_update",
+      message: { content: "abc" },
+    });
+    expect(host.applyEvent.mock.calls[2]![0]).toMatchObject({
+      type: "message_end",
+    });
+  });
+
+  it("releases the latest partial message on its render timer", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+
+    for (const text of ["a", "ab"]) {
+      socket.emit({
+        type: "message_update",
+        sessionId: "session-a",
+        message: {
+          __inspireLiveId: "assistant-a",
+          role: "assistant",
+          content: text,
+        },
+      });
+    }
+    expect(host.applyEvent).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(15);
+    expect(host.applyEvent).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(host.applyEvent).toHaveBeenCalledTimes(2);
+    expect(host.applyEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: "message_update",
+        message: expect.objectContaining({ content: "ab" }),
+      }),
+    );
+  });
+
+  it("rebuilds from a snapshot when a live reducer rejects an event", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    host.applyEvent.mockImplementation((event: { type?: string }) => {
+      if (event.type === "agent_start") throw new Error("invalid transition");
+    });
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+    socket.emit({ type: "agent_start", sessionId: "session-a" });
+
+    expect(socket.closeCount).toBe(1);
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1_000);
+    expect(host.reconnect).toHaveBeenCalledWith("token");
+  });
 });

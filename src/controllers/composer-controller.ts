@@ -33,6 +33,7 @@ export type ComposerSlice = Pick<
 interface ComposerControllerHost {
   state(): ComposerControllerState;
   api(): Api | null;
+  transportGeneration(): number;
   patch(slice: ComposerSlice): void;
   notify(kind: "warning", text: string): void;
   clearVisibleError(sessionId: string): void;
@@ -46,6 +47,7 @@ interface ComposerControllerHost {
  */
 export class ComposerController {
   private readonly composers = new Map<string, ComposerPartition>();
+  private requestEpoch = 0;
 
   constructor(private readonly host: ComposerControllerHost) {}
 
@@ -58,6 +60,25 @@ export class ComposerController {
           sending: composer.sending,
         }
       : { attachments: [], projectFiles: [], sending: false };
+  }
+
+  invalidateForTransportReplacement(): void {
+    this.requestEpoch += 1;
+    for (const [sessionId, composer] of this.composers) {
+      composer.sending = false;
+      composer.attachments = composer.attachments.map((item) =>
+        item.status === "uploading"
+          ? {
+              ...item,
+              status: "error",
+              error: "Connection changed while uploading; add this file again",
+            }
+          : item,
+      );
+      this.prune(sessionId, composer);
+    }
+    const sessionId = this.host.state().sessionId;
+    if (sessionId) this.publish(sessionId);
   }
 
   discard(sessionId: string): void {
@@ -95,6 +116,12 @@ export class ComposerController {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
     if (!api || !sessionId) return false;
+    const generation = this.host.transportGeneration();
+    const requestEpoch = this.requestEpoch;
+    const ownsTransport = (): boolean =>
+      this.host.api() === api &&
+      this.host.transportGeneration() === generation &&
+      this.requestEpoch === requestEpoch;
     const composer = this.forSession(sessionId);
     if (composer.sending) return false;
     if (composer.attachments.some((item) => item.status === "uploading")) {
@@ -127,6 +154,7 @@ export class ComposerController {
         ...(projectFiles.length > 0 ? { projectFiles } : {}),
         behavior,
       });
+      if (!ownsTransport()) return false;
       // Accepted: clear exactly what was delivered, from the owner session's
       // partition — never from whichever session is visible by now.
       // Artifacts staged while the request was in flight belong to the next
@@ -148,6 +176,7 @@ export class ComposerController {
       this.host.clearVisibleError(sessionId);
       return true;
     } catch (error) {
+      if (!ownsTransport()) return false;
       // Keep failures attached to the session that sent the prompt. A switch
       // before the HTTP result arrives must not overwrite the new session's
       // visible error.
@@ -157,9 +186,11 @@ export class ComposerController {
       );
       return false;
     } finally {
-      composer.sending = false;
-      this.prune(sessionId, composer);
-      this.publish(sessionId);
+      if (ownsTransport()) {
+        composer.sending = false;
+        this.prune(sessionId, composer);
+        this.publish(sessionId);
+      }
     }
   }
 
@@ -167,6 +198,12 @@ export class ComposerController {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
     if (!api || !sessionId || files.length === 0) return;
+    const generation = this.host.transportGeneration();
+    const requestEpoch = this.requestEpoch;
+    const ownsTransport = (): boolean =>
+      this.host.api() === api &&
+      this.host.transportGeneration() === generation &&
+      this.requestEpoch === requestEpoch;
     const composer = this.forSession(sessionId);
     const { accepted, warning } = selectAttachmentFiles(
       composer.attachments,
@@ -195,6 +232,14 @@ export class ComposerController {
 
     try {
       const { attachments: uploaded } = await api.uploadAttachments(accepted);
+      if (!ownsTransport()) {
+        await Promise.all(
+          uploaded.map((item) =>
+            api.deleteAttachment(item.id).catch(() => undefined),
+          ),
+        );
+        return;
+      }
       composer.attachments = composer.attachments.map((item) => {
         const index = pending.findIndex(
           (candidate) => candidate.localId === item.localId,
@@ -221,13 +266,11 @@ export class ComposerController {
             (item) => item.localId === candidate.localId,
           )
         ) {
-          void this.host
-            .api()
-            ?.deleteAttachment(id)
-            .catch(() => undefined);
+          void api.deleteAttachment(id).catch(() => undefined);
         }
       });
     } catch (error) {
+      if (!ownsTransport()) return;
       const message = error instanceof Error ? error.message : "Upload failed";
       composer.attachments = composer.attachments.map((item) =>
         pending.some((candidate) => candidate.localId === item.localId)

@@ -1,9 +1,52 @@
+import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl } from "../api";
 import type { WireEvent } from "../events";
 
 export const FIRST_SNAPSHOT_TIMEOUT_MS = 10_000;
 export const STREAM_INACTIVITY_TIMEOUT_MS = 45_000;
+const SHORT_STREAM_RENDER_INTERVAL_MS = 16;
+const MEDIUM_STREAM_RENDER_INTERVAL_MS = 32;
+const LONG_STREAM_RENDER_INTERVAL_MS = 50;
 const RECENT_STREAM_ACTIVITY_MS = 30_000;
+
+function completeMessageUpdate(
+  event: WireEvent,
+): { event: WireEvent; key: string; textLength: number } | null {
+  if (
+    event.type !== "message_update" ||
+    !event.message ||
+    typeof event.message !== "object" ||
+    Array.isArray(event.message)
+  )
+    return null;
+  const message = event.message as Record<string, unknown>;
+  const identity = structuralMessageIdentity(message);
+  if (!identity) return null;
+  const content = message.content;
+  const textLength =
+    typeof content === "string"
+      ? content.length
+      : Array.isArray(content)
+        ? content.reduce((total, part) => {
+            if (typeof part === "string") return total + part.length;
+            if (!part || typeof part !== "object" || Array.isArray(part))
+              return total;
+            const text = (part as Record<string, unknown>).text;
+            return total + (typeof text === "string" ? text.length : 0);
+          }, 0)
+        : 0;
+  return {
+    event,
+    key: `${typeof event.sessionId === "string" ? event.sessionId : ""}\0${identity}`,
+    textLength,
+  };
+}
+
+function streamRenderInterval(textLength: number): number {
+  if (textLength > 32_000) return LONG_STREAM_RENDER_INTERVAL_MS;
+  if (textLength > 8_000) return MEDIUM_STREAM_RENDER_INTERVAL_MS;
+  return SHORT_STREAM_RENDER_INTERVAL_MS;
+}
 
 export type ManagedConnectionState =
   | "connecting"
@@ -77,6 +120,12 @@ export class ConnectionController {
   private reconnectPending = false;
   private synchronized = false;
   private lastFrameAt = 0;
+  private streamUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingStreamUpdate: {
+    socket: WebSocket;
+    event: WireEvent;
+    key: string;
+  } | null = null;
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
@@ -141,11 +190,13 @@ export class ConnectionController {
       this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       if (event.type === "heartbeat") return;
-      try {
-        this.host.applyEvent(event);
-      } catch {
-        // A later authoritative snapshot can reconcile an unsupported frame.
+      const streamUpdate = completeMessageUpdate(event);
+      if (streamUpdate) {
+        this.queueStreamUpdate(socket, streamUpdate);
+        return;
       }
+      if (!this.flushStreamUpdate(socket)) return;
+      this.applySocketEvent(socket, event);
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
@@ -234,6 +285,51 @@ export class ConnectionController {
     this.host.reconnect(this.token);
   }
 
+  private applySocketEvent(socket: WebSocket, event: WireEvent): boolean {
+    if (this.socket !== socket) return false;
+    try {
+      this.host.applyEvent(event);
+      return true;
+    } catch {
+      // A reducer invariant failure leaves event ordering untrustworthy.
+      // Rebuild from the Host snapshot instead of keeping a partial UI.
+      this.failSocket(socket);
+      return false;
+    }
+  }
+
+  private flushStreamUpdate(socket: WebSocket): boolean {
+    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
+    this.streamUpdateTimer = null;
+    const pending = this.pendingStreamUpdate;
+    this.pendingStreamUpdate = null;
+    if (!pending || pending.socket !== socket) return this.socket === socket;
+    return this.applySocketEvent(socket, pending.event);
+  }
+
+  private queueStreamUpdate(
+    socket: WebSocket,
+    update: { event: WireEvent; key: string; textLength: number },
+  ): void {
+    if (
+      this.pendingStreamUpdate &&
+      (this.pendingStreamUpdate.socket !== socket ||
+        this.pendingStreamUpdate.key !== update.key) &&
+      !this.flushStreamUpdate(socket)
+    )
+      return;
+    this.pendingStreamUpdate = {
+      socket,
+      event: update.event,
+      key: update.key,
+    };
+    if (this.streamUpdateTimer) return;
+    this.streamUpdateTimer = setTimeout(() => {
+      this.streamUpdateTimer = null;
+      this.flushStreamUpdate(socket);
+    }, streamRenderInterval(update.textLength));
+  }
+
   private failSocket(socket: WebSocket): void {
     if (this.socket !== socket) return;
     this.socket = null;
@@ -296,6 +392,9 @@ export class ConnectionController {
   private clearStreamTimers(): void {
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
     this.watchdogTimer = null;
+    this.streamUpdateTimer = null;
+    this.pendingStreamUpdate = null;
   }
 }

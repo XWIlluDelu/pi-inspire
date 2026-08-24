@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   CONTENT_TEXT_SIZES,
@@ -70,6 +71,28 @@ interface DiskPreferences {
 interface PreferencesInspection {
   preferences: InspirePreferences;
   warning?: string;
+}
+
+const LOCK_RETRY_MS = 20;
+const LOCK_WAIT_MS = 5_000;
+const STALE_LOCK_MS = 30_000;
+const LOCK_OWNER_FILE = "owner.json";
+
+async function lockOwnerAlive(lock: string): Promise<boolean | null> {
+  try {
+    const owner = JSON.parse(
+      await readFile(join(lock, LOCK_OWNER_FILE), "utf8"),
+    ) as { pid?: unknown };
+    if (!Number.isInteger(owner.pid) || Number(owner.pid) <= 0) return null;
+    try {
+      process.kill(Number(owner.pid), 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : true;
+    }
+  } catch {
+    return null;
+  }
 }
 
 function projectPreferences(value: unknown): {
@@ -178,6 +201,61 @@ export class PreferencesStore {
     return (await this.inspect()).preferences;
   }
 
+  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const parent = dirname(this.path);
+    const lock = `${this.path}.lock`;
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    const startedAt = Date.now();
+    while (true) {
+      try {
+        await mkdir(lock, { mode: 0o700 });
+        try {
+          await writeFile(
+            join(lock, LOCK_OWNER_FILE),
+            `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now() })}\n`,
+            { mode: 0o600, flag: "wx" },
+          );
+        } catch (error) {
+          await rm(lock, { recursive: true, force: true });
+          throw error;
+        }
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const lockStat = await stat(lock).catch(() => null);
+        if (!lockStat) continue;
+        const lockAge = Date.now() - lockStat.mtimeMs;
+        const ownerAlive = await lockOwnerAlive(lock);
+        if (
+          ownerAlive === false ||
+          (ownerAlive === null && lockAge > STALE_LOCK_MS)
+        ) {
+          const stale = `${lock}.stale-${process.pid}-${randomUUID()}`;
+          try {
+            await rename(lock, stale);
+            await rm(stale, { recursive: true, force: true });
+          } catch (staleError) {
+            if ((staleError as NodeJS.ErrnoException).code !== "ENOENT")
+              throw staleError;
+          }
+          continue;
+        }
+        if (Date.now() - startedAt >= LOCK_WAIT_MS) {
+          throw Object.assign(
+            new Error("Timed out waiting to update saved preferences"),
+            { status: 503 },
+          );
+        }
+        await delay(LOCK_RETRY_MS);
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
+
   private async persist(preferences: InspirePreferences): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
@@ -201,19 +279,26 @@ export class PreferencesStore {
     return result;
   }
 
+  private mutate(
+    transform: (current: InspirePreferences) => unknown,
+  ): Promise<InspirePreferences> {
+    return this.enqueue(() =>
+      this.withWriteLock(async () => {
+        const current = await this.readDisk();
+        const invalid = this.invalidSourceError(current);
+        if (invalid) throw invalid;
+        const preferences = preferencesSchema.parse(
+          transform(current.preferences),
+        );
+        await this.persist(preferences);
+        return preferences;
+      }),
+    );
+  }
+
   async patch(value: unknown): Promise<InspirePreferences> {
     const patch = preferencesPatchSchema.parse(value);
-    return this.enqueue(async () => {
-      const current = await this.readDisk();
-      const invalid = this.invalidSourceError(current);
-      if (invalid) throw invalid;
-      const preferences = preferencesSchema.parse({
-        ...current.preferences,
-        ...patch,
-      });
-      await this.persist(preferences);
-      return preferences;
-    });
+    return this.mutate((current) => ({ ...current, ...patch }));
   }
 
   /** The read/transform/write stays in one serialized preference operation,
@@ -226,31 +311,24 @@ export class PreferencesStore {
     const deleted = new Set(deletedSessionIds);
     const clearedHidden = new Set(clearedHiddenSessionIds);
     const clearedProjects = new Set(clearedProjectCwds);
-    return this.enqueue(async () => {
-      const current = await this.readDisk();
-      const invalid = this.invalidSourceError(current);
-      if (invalid) throw invalid;
-      const preferences = preferencesSchema.parse({
-        ...current.preferences,
-        pinnedSessionIds: current.preferences.pinnedSessionIds.filter(
-          (id) => !deleted.has(id),
-        ),
-        hiddenSessionIds: current.preferences.hiddenSessionIds.filter(
-          (id) => !clearedHidden.has(id),
-        ),
-        pinnedProjectCwds: current.preferences.pinnedProjectCwds.filter(
-          (cwd) => !clearedProjects.has(cwd),
-        ),
-        hiddenProjectCwds: current.preferences.hiddenProjectCwds.filter(
-          (cwd) => !clearedProjects.has(cwd),
-        ),
-        navCollapsedGroups: current.preferences.navCollapsedGroups.filter(
-          (cwd) => !clearedProjects.has(cwd),
-        ),
-      });
-      await this.persist(preferences);
-      return preferences;
-    });
+    return this.mutate((current) => ({
+      ...current,
+      pinnedSessionIds: current.pinnedSessionIds.filter(
+        (id) => !deleted.has(id),
+      ),
+      hiddenSessionIds: current.hiddenSessionIds.filter(
+        (id) => !clearedHidden.has(id),
+      ),
+      pinnedProjectCwds: current.pinnedProjectCwds.filter(
+        (cwd) => !clearedProjects.has(cwd),
+      ),
+      hiddenProjectCwds: current.hiddenProjectCwds.filter(
+        (cwd) => !clearedProjects.has(cwd),
+      ),
+      navCollapsedGroups: current.navCollapsedGroups.filter(
+        (cwd) => !clearedProjects.has(cwd),
+      ),
+    }));
   }
 
   /** Remove the committed subset of a Hidden clear. Only a complete clear

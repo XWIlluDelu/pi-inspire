@@ -381,12 +381,14 @@ describe("RuntimeController concurrent sessions", () => {
     const promptCommand = worker.commands.find(
       (command) => command.type === "prompt",
     );
-    const referenced = String(promptCommand?.message ?? "").split("\n- ")[1];
+    const referenced = JSON.parse(
+      String(promptCommand?.message ?? "").split("\n- ")[1]!,
+    ) as string;
     expect(referenced).toContain("notes.txt");
-    await expect(access(referenced!)).resolves.toBeUndefined();
+    await expect(access(referenced)).resolves.toBeUndefined();
     // Consumed after delivery: a late DELETE is equally moot.
     await store.remove(doc.id);
-    await expect(access(referenced!)).resolves.toBeUndefined();
+    await expect(access(referenced)).resolves.toBeUndefined();
     await runtime.close();
   });
 
@@ -433,8 +435,10 @@ describe("RuntimeController concurrent sessions", () => {
     const promptCommand = worker.commands.find(
       (command) => command.type === "prompt",
     );
-    const referenced = String(promptCommand?.message ?? "").split("\n- ")[1];
-    await expect(access(referenced!)).resolves.toBeUndefined();
+    const referenced = JSON.parse(
+      String(promptCommand?.message ?? "").split("\n- ")[1]!,
+    ) as string;
+    await expect(access(referenced)).resolves.toBeUndefined();
     await runtime.close();
   });
 
@@ -2609,9 +2613,11 @@ describe("RuntimeController concurrent sessions", () => {
     const promptCommand = worker.commands.find(
       (command) => command.type === "prompt",
     );
-    const referenced = String(promptCommand?.message ?? "").split("\n- ")[1];
+    const referenced = JSON.parse(
+      String(promptCommand?.message ?? "").split("\n- ")[1]!,
+    ) as string;
     expect(referenced).toContain("notes.txt");
-    await expect(access(referenced!)).resolves.toBeUndefined();
+    await expect(access(referenced)).resolves.toBeUndefined();
     await expect(store.resolveForPrompt([file.id])).rejects.toThrow(
       /already belong/,
     );

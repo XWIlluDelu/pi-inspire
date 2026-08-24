@@ -574,6 +574,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly selectionReservations = new Map<string, number>();
   private readonly forkReservationsById = new Map<string, ForkReservation>();
   private readonly forkReservationsByPath = new Map<string, ForkReservation>();
+  private readonly unavailableCapabilityWarnings = new WeakMap<
+    RuntimeSlot,
+    Set<string>
+  >();
   private selectedSessionId: string | null = null;
   /** Monotonic selection age: a slower, earlier open/new completion must not
    * steal the selection back from a newer one. */
@@ -2399,6 +2403,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.scheduleIdleWorkerEviction();
   }
 
+  private runtimeCapabilityUnavailable(
+    slot: RuntimeSlot,
+    capability: string,
+    error: unknown,
+  ): unknown[] {
+    let reported = this.unavailableCapabilityWarnings.get(slot);
+    if (!reported) {
+      reported = new Set<string>();
+      this.unavailableCapabilityWarnings.set(slot, reported);
+    }
+    if (reported.has(capability)) return [];
+    reported.add(capability);
+    const errorCode =
+      error && typeof error === "object"
+        ? (error as { code?: unknown }).code
+        : undefined;
+    this.diagnostics.record("warning", "runtime_capability_unavailable", {
+      sessionId: slot.id,
+      slotIncarnation: slot.incarnationId,
+      capability,
+      errorType: error instanceof Error ? error.name : typeof error,
+      ...(typeof errorCode === "string" ? { errorCode } : {}),
+    });
+    return [];
+  }
+
   private async readRuntimeExtras(
     slot: RuntimeSlot,
     rpc: PiRpcProcess,
@@ -2408,14 +2438,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     commands: unknown[];
   }> {
     const [stats, models, commands] = await Promise.all([
-      rpc.request({ type: "get_session_stats" }).catch(() => undefined),
+      rpc.request({ type: "get_session_stats" }).catch((error) => {
+        this.runtimeCapabilityUnavailable(slot, "get_session_stats", error);
+        return undefined;
+      }),
       slot.availableModels
         ? Promise.resolve(slot.availableModels)
         : rpc
             .request<{ models: unknown[] }>({ type: "get_available_models" })
             .then(
               (result) => (slot.availableModels = result.models),
-              () => [],
+              (error) =>
+                this.runtimeCapabilityUnavailable(
+                  slot,
+                  "get_available_models",
+                  error,
+                ),
             ),
       slot.commands
         ? Promise.resolve(slot.commands)
@@ -2431,7 +2469,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 );
               }));
             },
-            () => [],
+            (error) =>
+              this.runtimeCapabilityUnavailable(slot, "get_commands", error),
           ),
     ]);
     return { stats, models, commands };

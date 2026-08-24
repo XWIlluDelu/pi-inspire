@@ -124,6 +124,7 @@ esac
     ...environment,
     HOME: join(directory, "home"),
     XDG_CONFIG_HOME: configHome,
+    XDG_RUNTIME_DIR: join(directory, "runtime"),
     PATH: `${bin}:${environment.PATH ?? ""}`,
     INSPIRE_OPEN: "0",
     FAKE_SYSTEMD_LOG: log,
