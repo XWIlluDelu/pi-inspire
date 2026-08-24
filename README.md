@@ -119,7 +119,7 @@ No prebuilt release is currently published. To install from a source checkout, v
 npm ci
 npm run release:verify
 npm pack
-npm install --global ./inspire-pi-gui-0.2.0.tgz
+npm install --global ./inspire-pi-gui-0.3.0.tgz
 inspire
 ```
 

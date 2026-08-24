@@ -1,6 +1,6 @@
 {
   "name": "inspire-pi-gui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A Linux-first local web workbench for Pi Coding Agent",
   "type": "module",
   "license": "MIT",
