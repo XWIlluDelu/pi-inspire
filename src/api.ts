@@ -17,6 +17,7 @@ import type {
   NewSessionDefaults,
   NewSessionOptions,
   PendingQueues,
+  PiUpdateCheckResponse,
   ProjectDirEntry,
   PromptRequest,
   ResourceDescriptor,
@@ -206,7 +207,16 @@ function post<T>(
 export function createApi(token: string | null = null) {
   return {
     bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
-    update: () => request<UpdateCheckResponse>(token, "/api/update"),
+    update: (refresh = false) =>
+      request<UpdateCheckResponse>(
+        token,
+        `/api/update${refresh ? "?refresh=1" : ""}`,
+      ),
+    piUpdate: (refresh = false) =>
+      request<PiUpdateCheckResponse>(
+        token,
+        `/api/pi-update${refresh ? "?refresh=1" : ""}`,
+      ),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
     olderTranscript: (
       sessionId: string,

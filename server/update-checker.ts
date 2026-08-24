@@ -2,6 +2,11 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
   type UpdateCheckResponse,
 } from "../shared/contracts.js";
+import {
+  isNewerStableRelease,
+  normalizedVersion,
+  parseSemanticVersion,
+} from "./semantic-version.js";
 
 const GITHUB_API_VERSION = "2026-03-10";
 const UPDATE_REQUEST_TIMEOUT_MS = 5_000;
@@ -12,20 +17,13 @@ type FetchLatest = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-interface ReleaseVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: boolean;
-}
-
 interface GitHubRepository {
   owner: string;
   name: string;
 }
 
 export interface UpdateCheckerLike {
-  check(): Promise<UpdateCheckResponse>;
+  check(force?: boolean): Promise<UpdateCheckResponse>;
 }
 
 interface UpdateCheckerOptions {
@@ -33,37 +31,6 @@ interface UpdateCheckerOptions {
   repositoryUrl: string | undefined;
   fetchLatest?: FetchLatest;
   now?: () => number;
-}
-
-function numericPart(value: string): number | null {
-  const part = Number(value);
-  return Number.isSafeInteger(part) ? part : null;
-}
-
-function parseVersion(
-  value: string,
-  stableOnly: boolean,
-): ReleaseVersion | null {
-  const match =
-    /^(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
-      value,
-    );
-  if (!match || (stableOnly && match[4])) return null;
-  const major = numericPart(match[1]!);
-  const minor = numericPart(match[2]!);
-  const patch = numericPart(match[3]!);
-  if (major === null || minor === null || patch === null) return null;
-  return { major, minor, patch, prerelease: Boolean(match[4]) };
-}
-
-function newerStableRelease(
-  latest: ReleaseVersion,
-  current: ReleaseVersion,
-): boolean {
-  for (const key of ["major", "minor", "patch"] as const) {
-    if (latest[key] !== current[key]) return latest[key] > current[key];
-  }
-  return current.prerelease;
 }
 
 function githubRepository(
@@ -93,7 +60,7 @@ function githubRepository(
  */
 export class GitHubReleaseUpdateChecker implements UpdateCheckerLike {
   private readonly repository: GitHubRepository | null;
-  private readonly current: ReleaseVersion | null;
+  private readonly current: ReturnType<typeof parseSemanticVersion>;
   private readonly fetchLatest: FetchLatest;
   private readonly now: () => number;
   private cached: { expiresAt: number; response: UpdateCheckResponse } | null =
@@ -102,15 +69,15 @@ export class GitHubReleaseUpdateChecker implements UpdateCheckerLike {
 
   constructor(private readonly options: UpdateCheckerOptions) {
     this.repository = githubRepository(options.repositoryUrl);
-    this.current = parseVersion(options.currentVersion, false);
+    this.current = parseSemanticVersion(options.currentVersion, false);
     this.fetchLatest = options.fetchLatest ?? fetch;
     this.now = options.now ?? Date.now;
   }
 
-  check(): Promise<UpdateCheckResponse> {
-    if (this.cached && this.cached.expiresAt > this.now())
-      return Promise.resolve(this.cached.response);
+  check(force = false): Promise<UpdateCheckResponse> {
     if (this.inFlight) return this.inFlight;
+    if (!force && this.cached && this.cached.expiresAt > this.now())
+      return Promise.resolve(this.cached.response);
 
     this.inFlight = this.checkLatest()
       .catch((): UpdateCheckResponse => ({ kind: "unavailable" }))
@@ -145,14 +112,15 @@ export class GitHubReleaseUpdateChecker implements UpdateCheckerLike {
         signal: AbortSignal.timeout(UPDATE_REQUEST_TIMEOUT_MS),
       },
     );
+    if (response.status === 404) return { kind: "unreleased" };
     if (!response.ok) return { kind: "unavailable" };
     const payload = (await response.json()) as { tag_name?: unknown };
     if (typeof payload.tag_name !== "string") return { kind: "unavailable" };
-    const latest = parseVersion(payload.tag_name, true);
+    const latest = parseSemanticVersion(payload.tag_name, true);
     if (!latest) return { kind: "unavailable" };
-    if (!newerStableRelease(latest, this.current)) return { kind: "current" };
+    if (!isNewerStableRelease(latest, this.current)) return { kind: "current" };
 
-    const latestVersion = `${latest.major}.${latest.minor}.${latest.patch}`;
+    const latestVersion = normalizedVersion(latest);
     return {
       kind: "available",
       update: {

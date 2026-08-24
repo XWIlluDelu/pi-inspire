@@ -907,7 +907,29 @@ export interface AvailableUpdate {
 export type UpdateCheckResponse =
   | { kind: "available"; update: AvailableUpdate }
   | { kind: "current" }
+  | { kind: "unreleased" }
   | { kind: "unavailable" };
+
+export interface PiExtensionUpdate {
+  displayName: string;
+  type: "npm" | "git";
+}
+
+export type PiVersionUpdateStatus =
+  | { kind: "available"; latestVersion: string; releaseUrl: string }
+  | { kind: "current"; latestVersion: string }
+  | { kind: "unavailable" };
+
+export type PiExtensionUpdateStatus =
+  | { kind: "available"; updates: PiExtensionUpdate[] }
+  | { kind: "none" }
+  | { kind: "unavailable" };
+
+export interface PiUpdateCheckResponse {
+  currentVersion: string;
+  pi: PiVersionUpdateStatus;
+  extensions: PiExtensionUpdateStatus;
+}
 
 export interface UploadedAttachment {
   id: string;

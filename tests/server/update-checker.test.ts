@@ -78,9 +78,21 @@ describe("GitHub release update checker", () => {
 
     await checker.check();
     expect(fetchLatest).toHaveBeenCalledTimes(1);
+    await checker.check(true);
+    expect(fetchLatest).toHaveBeenCalledTimes(2);
     now += UPDATE_CHECK_INTERVAL_MS + 1;
     await checker.check();
-    expect(fetchLatest).toHaveBeenCalledTimes(2);
+    expect(fetchLatest).toHaveBeenCalledTimes(3);
+  });
+
+  it("distinguishes a repository with no published release", async () => {
+    const checker = new GitHubReleaseUpdateChecker({
+      currentVersion: "1.3.2",
+      repositoryUrl: "https://github.com/example/inspire",
+      fetchLatest: vi.fn(async () => new Response(null, { status: 404 })),
+    });
+
+    await expect(checker.check()).resolves.toEqual({ kind: "unreleased" });
   });
 
   it("keeps malformed metadata and remote failures non-blocking", async () => {
