@@ -875,7 +875,9 @@ export function ExtensionDisplaySurface({
         <details key={display.id} className="extension-surface__item">
           <summary>
             <code>{display.method}</code>
-            <span>{display.attribution}</span>
+            <span>
+              {display.source} · {display.label}
+            </span>
           </summary>
           <pre className="card__mono">
             {JSON.stringify(display.payload, null, 2)}

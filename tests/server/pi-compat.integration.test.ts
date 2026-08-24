@@ -123,7 +123,11 @@ export default function (pi) {
       const edited = await ctx.ui.editor("Editor", "draft");
       ctx.ui.notify("compat-notify", "info");
       ctx.ui.setStatus("compat-status", "ready");
-      ctx.ui.setWidget("compat-widget", ["line one", "line two"]);
+      ctx.ui.setWidget(
+        "compat-widget",
+        ["line one", "line two"],
+        { placement: "belowEditor" },
+      );
       ctx.ui.setTitle("compat-title");
       ctx.ui.setEditorText("compat-editor-text");
       ctx.ui.setStatus("compat-result", JSON.stringify({ selected, confirmed, input, edited }));
@@ -306,6 +310,13 @@ describe("installed Pi compatibility boundary", () => {
           "set_editor_text",
         ]),
       );
+      expect(
+        uiEvents.find((event) => event.method === "setWidget"),
+      ).toMatchObject({
+        widgetKey: "compat-widget",
+        widgetLines: ["line one", "line two"],
+        widgetPlacement: "belowEditor",
+      });
 
       await rpc.request({ type: "prompt", message: "/compat-append" });
       expect(appendedEvents).toHaveLength(1);

@@ -19,6 +19,7 @@ import { AppTopbar } from "./components/AppTopbar";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import { CopyAction } from "./components/CopyAction";
+import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
@@ -567,7 +568,15 @@ export function App() {
   const composerContent = state.sessionId ? (
     <div className="composer-dock">
       <ActivityBar />
+      <ExtensionDisplayDock
+        displays={state.extensionDisplays}
+        placement="aboveEditor"
+      />
       <Composer />
+      <ExtensionDisplayDock
+        displays={state.extensionDisplays}
+        placement="belowEditor"
+      />
     </div>
   ) : null;
   const resourcesContent = state.resourcesOpen ? (

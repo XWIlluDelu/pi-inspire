@@ -7,9 +7,9 @@ import {
   type BranchTreeResponse,
   type CompletionAttentionPreference,
   type ContentTextSizePreference,
+  type DesktopSendKeyPreference,
   defaultInterfaceSettings,
   defaultPreferences,
-  type DesktopSendKeyPreference,
   emptyPendingQueues,
   type GitDiffSide,
   type GitFileChange,
@@ -28,10 +28,11 @@ import {
   type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
-  type ReadingWidthPreference,
   type ProjectionHealth,
+  parseExtensionStatuses,
   projectionConflictSeverity,
   projectNameFromCwd,
+  type ReadingWidthPreference,
   type ResourceProbeResult,
   type RunState,
   type SessionDeleteDisposition,
@@ -77,6 +78,7 @@ import {
   emptyEventSlice,
   messageKey,
   type Notice,
+  parseExtensionDisplays,
   reduceEvent,
   type WireEvent,
 } from "./events";
@@ -988,6 +990,8 @@ export class AppStore {
     const clearedProjectionError =
       !projectionError && this.state.error === this.state.projectionError;
     const sessionStatuses = snapshot.sessionStatuses ?? {};
+    const extensionStatuses =
+      parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
     this.reconcileAttentionArms(sessionStatuses);
     this.set({
       sessionId: active?.sessionId ?? null,
@@ -1085,12 +1089,10 @@ export class AppStore {
         sessionChanged || viewChanged
           ? null
           : this.state.extensionUiRespondingId,
-      extensionDisplays: Array.isArray(snapshot.extensionDisplays)
-        ? snapshot.extensionDisplays
-        : [],
+      extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
+      statuses: extensionStatuses,
       ...(sessionChanged
         ? {
-            statuses: {},
             editorText: null,
             pendingAction: null,
             windowTitle: null,

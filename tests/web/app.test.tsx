@@ -400,7 +400,7 @@ describe("welcome flow", () => {
         id: "context-status",
         method: "setStatus",
         statusKey: "magic-context",
-        statusText: text,
+        statusText: `\u001b[36m${text}\u001b[0m`,
       }),
     );
 

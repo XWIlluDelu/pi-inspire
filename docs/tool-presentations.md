@@ -1,6 +1,6 @@
 # Custom tool presentations
 
-INSΠRE ships presentation rules for Pi's native tools. A local user can add data-only rules for custom tools and replace exact tool-name mappings without changing INSΠRE or the tool extension.
+INSΠRE ships presentation rules for Pi's native tools. A local user can add data-only rules for custom tools and replace exact tool-name mappings without changing INSΠRE or the tool extension. See [Adapting Pi Extensions to INSΠRE](extensions.md) when deciding whether behavior belongs in a command, widget, or Tool Presentation.
 
 ## Configuration location
 
