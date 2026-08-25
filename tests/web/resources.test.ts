@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   collectSessionResourceReferences,
   isLocalResourceReference,
+  resourceReferenceLine,
+  stripResourceLocation,
 } from "../../shared/resource-references";
 import { collectResources, MAX_RESOURCE_ROWS } from "../../src/resources";
 
@@ -115,6 +117,19 @@ describe("Pi resource references", () => {
     expect(isLocalResourceReference("report.pdf#L2")).toBe(true);
     expect(isLocalResourceReference("report.pdf#page=2")).toBe(true);
     expect(isLocalResourceReference("../figures/chart.svg")).toBe(true);
+    expect(isLocalResourceReference("/repo/LICENSE")).toBe(true);
+    expect(isLocalResourceReference("/unstaged/")).toBe(false);
+    expect(isLocalResourceReference("/**")).toBe(false);
+  });
+
+  it("uses one location grammar for resolution and source-line navigation", () => {
+    expect(stripResourceLocation("src/view.tsx:123:7")).toBe("src/view.tsx");
+    expect(stripResourceLocation("src/view.tsx#L9-L12")).toBe("src/view.tsx");
+    expect(resourceReferenceLine("@src/view.tsx:123:7")).toBe(123);
+    expect(resourceReferenceLine("<src/view.tsx#L9-L12>")).toBe(9);
+    expect(resourceReferenceLine("src/view.tsx:4?raw=1")).toBe(4);
+    expect(resourceReferenceLine("src/view.tsx#L0")).toBeNull();
+    expect(resourceReferenceLine("src/view.tsx")).toBeNull();
   });
 
   it("stops the recent-first walk at the presented bound, leaving authority callers complete", () => {

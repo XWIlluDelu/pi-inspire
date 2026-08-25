@@ -234,7 +234,11 @@ describe("ResourceStore", () => {
     ]);
 
     expect(results).toEqual([
-      { reference: "visible.md", availability: "available" },
+      {
+        reference: "visible.md",
+        availability: "available",
+        workspacePath: "visible.md",
+      },
       {
         reference: "missing.md",
         availability: "missing",

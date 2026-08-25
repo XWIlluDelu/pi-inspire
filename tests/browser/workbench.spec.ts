@@ -104,7 +104,7 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   ).toBeVisible();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await expect(
-    page.getByRole("complementary", { name: "Files and resources" }),
+    page.getByRole("complementary", { name: "Context panel" }),
   ).toBeVisible();
   expect(externalRequests).toEqual([]);
   const fontTransfer = await stopFontTransfer();
@@ -314,23 +314,19 @@ test("project-file picker restores focus to its trigger", async ({ page }) => {
   await expect(trigger).toBeFocused();
 });
 
-test("resource history virtualizes rows and sandboxed HTML makes no external request", async ({
+test("files workbench searches, scrolls source, and isolates HTML previews", async ({
   page,
 }) => {
   await pairedPage(page);
   await openMockSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.getByRole("region", { name: "Referenced files" });
-  await expect(
-    resources.getByRole("button", { name: /^Earlier files \(65\)$/ }),
-  ).toBeVisible();
-  await resources
-    .getByRole("button", { name: /^Earlier files \(65\)$/ })
-    .click();
-  await expect(resources.locator(".res__virtual")).toBeVisible();
-  const mountedRows = await resources.locator(".res__virtual-row").count();
-  expect(mountedRows).toBeGreaterThan(0);
-  expect(mountedRows).toBeLessThan(73);
+  const resources = page.getByRole("complementary", {
+    name: "Context panel",
+  });
+  const recent = resources
+    .locator(".files-browser__section")
+    .filter({ hasText: "Recent in this chat" });
+  await expect(recent.locator(".recent-file")).toHaveCount(5);
 
   const localOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
@@ -346,24 +342,88 @@ test("resource history virtualizes rows and sandboxed HTML makes no external req
     }
     await route.continue();
   });
+  await recent.getByRole("button", { name: /sandbox-resource\.html/ }).click();
+  await resources.getByRole("button", { name: "Sandbox", exact: true }).click();
+  const frame = page.frameLocator(
+    "iframe[title='Preview sandbox-resource.html']",
+  );
+  await expect(frame.locator("h1")).toHaveText("Sandbox fixture");
+  expect(externalRequests).toEqual([]);
+
+  await resources.getByRole("button", { name: "Back to files" }).click();
   await resources
-    .getByRole("button", { name: /sandbox-resource\.html/ })
+    .getByRole("searchbox", { name: "Search workspace files" })
+    .fill("ResourcesPane.tsx");
+  await resources
+    .locator('[data-workspace-path="src/components/ResourcesPane.tsx"]')
+    .click();
+  const source = resources.getByRole("region", { name: "File source" });
+  await expect(source).toBeVisible();
+  expect(
+    await source.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+
+  await resources.getByRole("spinbutton", { name: "Go to line" }).fill("900");
+  await resources
+    .getByRole("spinbutton", { name: "Go to line" })
+    .press("Enter");
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+
+  await source.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.getByRole("separator", { name: "Resize files panel" }).hover();
+  await page.mouse.wheel(0, 480);
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+});
+
+test("files navigation preserves context across desktop and narrow drawers", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+
+  const pane = page.getByRole("complementary", { name: "Context panel" });
+  const search = pane.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  await search.fill("WorkspaceBrowser.tsx");
+  await pane
+    .locator('[data-workspace-path="src/components/WorkspaceBrowser.tsx"]')
     .click();
   await expect(
-    page.getByRole("button", { name: "Open in sandboxed view" }),
+    pane.getByRole("button", { name: "Back to files" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Open in sandboxed view" }).click();
-  const frame = page.frameLocator("iframe[title^='Sandboxed preview']");
-  await expect(frame.locator("h1")).toHaveText("Sandbox fixture");
-  await expect
-    .poll(async () => {
-      const sandbox = page
-        .frames()
-        .find((candidate) => candidate.url().startsWith("blob:"));
-      return sandbox ? sandbox.evaluate(() => document.readyState) : null;
-    })
-    .toBe("complete");
-  expect(externalRequests).toEqual([]);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const drawer = page.getByRole("dialog", { name: "Context panel" });
+  await drawer.getByRole("button", { name: "Back to files" }).click();
+  await expect(
+    drawer.getByRole("searchbox", { name: "Search workspace files" }),
+  ).toHaveValue("WorkspaceBrowser.tsx");
+  await drawer.getByRole("button", { name: "Close context pane" }).click();
+
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  const navigation = page.getByRole("dialog", { name: "Sessions" });
+  const explorer = navigation.getByRole("region", { name: "Workspace files" });
+  await explorer.locator(".explorer__header").click();
+  await explorer.locator('[data-workspace-path="README.md"]').click();
+
+  await expect(page.getByRole("dialog", { name: "Sessions" })).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(
+    page
+      .getByRole("dialog", { name: "Context panel" })
+      .getByRole("button", { name: "Back to files" }),
+  ).toBeVisible();
 });
 
 test("earlier-branch banner can fork and return to the durable leaf", async ({

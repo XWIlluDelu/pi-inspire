@@ -142,6 +142,24 @@ beforeAll(async () => {
         body: { error: "model unavailable after selection" },
       }));
     }
+    if (url.startsWith("/api/composer/history")) {
+      const requestUrl = new URL(url, "https://inspire.test");
+      const state = store.getState();
+      return {
+        body: {
+          sessionId: requestUrl.searchParams.get("sessionId") ?? "s1",
+          revision: state.transcriptRevision,
+          viewId: state.transcriptViewId,
+          incarnation: state.transcriptIncarnation,
+          effectiveLeafId: state.transcriptEffectiveLeafId,
+          historyId: "app-test-history",
+          total: 0,
+          start: 0,
+          entries: [],
+          nextStart: null,
+        },
+      };
+    }
     if (url.startsWith("/api/files/list")) {
       const dir =
         new URL(url, "http://localhost").searchParams.get("dir") ?? "";
@@ -337,14 +355,14 @@ describe("welcome flow", () => {
       fireEvent.click(resourcesToggle);
       expect(
         await screen.findByRole("dialog", {
-          name: "Files and resources",
+          name: "Context panel",
         }),
       ).toHaveAttribute("aria-modal", "true");
       expect(resourcesToggle).toHaveAttribute("aria-expanded", "true");
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() =>
         expect(
-          screen.queryByRole("dialog", { name: "Files and resources" }),
+          screen.queryByRole("dialog", { name: "Context panel" }),
         ).not.toBeInTheDocument(),
       );
       expect(resourcesToggle).toHaveAttribute("aria-expanded", "false");
@@ -564,7 +582,7 @@ describe("welcome flow", () => {
 
     fireEvent.click(git);
     const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
+      name: "Context panel",
     });
     expect(
       within(pane).getByRole("button", { name: "Changes" }),
@@ -1288,7 +1306,10 @@ describe("folder grouping and settings page", () => {
 
   it("explores the workspace from the nav and opens a file preview", async () => {
     render(<App />);
-    const region = screen.getByRole("region", { name: "Workspace files" });
+    fireEvent.click(sessionRowButton(document.body, "Previous work"));
+    const region = await screen.findByRole("region", {
+      name: "Workspace files",
+    });
     fireEvent.click(within(region).getByRole("button", { name: /demo/ }));
 
     expect(
@@ -1302,9 +1323,9 @@ describe("folder grouping and settings page", () => {
 
     fireEvent.click(within(region).getByRole("button", { name: /README\.md/ }));
     expect(
-      await screen.findByRole("complementary", { name: "Files and resources" }),
+      await screen.findByRole("complementary", { name: "Context panel" }),
     ).toBeInTheDocument();
-    expect(await screen.findByText("No preview available")).toBeInTheDocument();
+    expect(await screen.findByText("Binary file")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Toggle resources panel" }),
     );

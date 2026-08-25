@@ -332,13 +332,7 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function CodeBlock({
-  language,
-  code,
-}: {
-  language: string;
-  code: string;
-}) {
+function CodeBlock({ language, code }: { language: string; code: string }) {
   const { copied, copy } = useCopied();
   const highlighted = hljs.getLanguage(language)
     ? hljs.highlight(code, { language }).value

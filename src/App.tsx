@@ -6,7 +6,13 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { Profiler, useCallback, useEffect, useState } from "react";
+import {
+  Profiler,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
@@ -424,6 +430,13 @@ export function App() {
     if (!narrowViewport) setMobileNavOpen(false);
   }, [narrowViewport]);
 
+  // Resource opens can originate inside the navigation tree. Close the nav
+  // before paint so the narrow layout never mounts two modal drawers.
+  useLayoutEffect(() => {
+    if (narrowViewport && mobileNavOpen && state.resourcesOpen)
+      setMobileNavOpen(false);
+  }, [mobileNavOpen, narrowViewport, state.resourcesOpen]);
+
   // An extension dialog is an attributed operation boundary, not background
   // chrome. It supersedes the two app-level overlays instead of competing for
   // focus or Escape ownership.
@@ -773,6 +786,7 @@ export function App() {
               max={(viewport) => Math.min(920, viewport - 640)}
               label="Resize files panel"
               variant="ctx"
+              wheelTargetSelector="#context-pane [data-pane-scroll-active='true']"
             />
           )}
           {MAINTENANCE_BENCHMARK ? (
