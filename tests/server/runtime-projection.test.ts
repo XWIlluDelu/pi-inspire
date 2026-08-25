@@ -1002,7 +1002,7 @@ describe("RuntimeController projection ownership gate", () => {
           id: "question",
           confirmed: true,
         }),
-      ).rejects.toThrow(/changed on disk/);
+      ).rejects.toThrow(/could not verify ownership/);
       expect(
         workers[0]!.commands.some(
           (command) => command.type === "extension_ui_response",
@@ -1052,7 +1052,7 @@ describe("RuntimeController projection ownership gate", () => {
         message: "/compact",
       });
       const rejected = expect(compacting).rejects.toThrow(
-        /changed on disk outside this worker/,
+        /could not verify ownership/,
       );
       await started;
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
@@ -1108,7 +1108,7 @@ describe("RuntimeController projection ownership gate", () => {
         return result;
       };
       await expect(first.runtime.rename("session-a", "owned")).rejects.toThrow(
-        /changed on disk outside this worker/,
+        /could not verify ownership/,
       );
       expect((await first.runtime.snapshot()).runState).toBe("conflict");
     } finally {
@@ -1143,7 +1143,7 @@ describe("RuntimeController projection ownership gate", () => {
       };
       await expect(
         second.runtime.setThinkingLevel("session-a", "high"),
-      ).rejects.toThrow(/changed on disk outside this worker/);
+      ).rejects.toThrow(/could not verify ownership/);
       expect((await second.runtime.snapshot()).runState).toBe("conflict");
     } finally {
       await second.runtime.close();
@@ -1314,33 +1314,179 @@ describe("RuntimeController projection ownership gate", () => {
     }
   });
 
-  it("rejects a worker witness whose final leaf includes an unowned trailing entry", async () => {
+  it("accepts a worker witness that has advanced beyond the projection snapshot", async () => {
     const { runtime, workers, path } = await setup();
     try {
       const worker = workers[0]!;
-      const owned = {
+      const observed = {
         type: "custom",
-        id: "extension-owned",
+        id: "extension-observed",
         parentId: "u1",
         timestamp: "2026-08-01T00:00:02.000Z",
         customType: "web-search-results",
         data: { resultCount: 1 },
       };
       const trailing = {
-        type: "message",
-        id: "external-trailing",
-        parentId: "extension-owned",
+        type: "custom",
+        id: "extension-trailing",
+        parentId: observed.id,
         timestamp: "2026-08-01T00:00:03.000Z",
-        message: { role: "assistant", content: "external", timestamp: 3 },
+        customType: "ctx-status",
+        data: { phase: "later" },
       };
-      worker.startupEntries = [owned, trailing];
+      worker.startupEntries = [observed, trailing];
       worker.startupLeafId = trailing.id;
       worker.emit("event", { type: "agent_start" });
-      await appendFile(path, `${JSON.stringify(owned)}\n`);
+      await appendFile(path, `${JSON.stringify(observed)}\n`);
 
       await expect(
-        runtime.rename("session-a", "must reject trailing witness"),
-      ).rejects.toThrow(/changed on disk/);
+        runtime.rename("session-a", "accept advancing witness"),
+      ).resolves.toBeUndefined();
+      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("accepts an exact observed prefix when the same worker advances during witness lookup", async () => {
+    const records: Array<{
+      level: string;
+      event: string;
+      fields?: Record<string, unknown>;
+    }> = [];
+    const diagnostics: DiagnosticLogger = {
+      hostId: "host-test",
+      record: (level, event, fields) => records.push({ level, event, fields }),
+      flush: async () => undefined,
+      close: async () => undefined,
+    };
+    const { runtime, workers, path } = await setup(
+      [],
+      undefined,
+      true,
+      "",
+      true,
+      diagnostics,
+    );
+    let releaseWitness: (() => void) | undefined;
+    try {
+      const worker = workers[0]!;
+      const observed = {
+        type: "custom",
+        id: "extension-observed",
+        parentId: "u1",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results",
+        data: { resultCount: 1 },
+      };
+      const trailing = {
+        type: "custom",
+        id: "extension-trailing",
+        parentId: observed.id,
+        timestamp: "2026-08-01T00:00:03.000Z",
+        customType: "ctx-status",
+        data: { phase: "later" },
+      };
+      let markWitnessStarted!: () => void;
+      const witnessStarted = new Promise<void>((resolve) => {
+        markWitnessStarted = resolve;
+      });
+      const witnessGate = new Promise<void>((resolve) => {
+        releaseWitness = resolve;
+      });
+      const originalRequest = worker.request.bind(worker);
+      worker.request = async <T>(
+        command: Record<string, unknown>,
+      ): Promise<T> => {
+        if (command.type !== "get_entries") return originalRequest<T>(command);
+        markWitnessStarted();
+        await witnessGate;
+        return originalRequest<T>(command);
+      };
+
+      const getEntriesBefore = worker.commands.filter(
+        (command) => command.type === "get_entries",
+      ).length;
+      worker.emit("event", { type: "agent_start" });
+      worker.startupEntries = [observed];
+      worker.startupLeafId = observed.id;
+      await appendFile(path, `${JSON.stringify(observed)}\n`);
+
+      const reconciling = runtime.rename(
+        "session-a",
+        "during worker advancement",
+      );
+      await witnessStarted;
+
+      worker.startupEntries = [observed, trailing];
+      worker.startupLeafId = trailing.id;
+      await appendFile(path, `${JSON.stringify(trailing)}\n`);
+      worker.emit("event", {
+        type: "entry_appended",
+        entry: structuredClone(observed),
+      });
+      worker.emit("event", {
+        type: "entry_appended",
+        entry: structuredClone(trailing),
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      releaseWitness?.();
+
+      await expect(reconciling).resolves.toBeUndefined();
+      await expect(
+        runtime.rename("session-a", "after worker advancement"),
+      ).resolves.toBeUndefined();
+
+      expect(
+        worker.commands.filter((command) => command.type === "get_entries")
+          .length - getEntriesBefore,
+      ).toBe(1);
+      expect(worker.stops).toBe(0);
+      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
+      const witnessed = records.find(
+        (record) =>
+          record.event === "persistence_ownership_decision" &&
+          record.fields?.owned === true &&
+          record.fields?.workerWitness !== undefined,
+      );
+      expect(witnessed?.fields?.workerWitness).toEqual({
+        observedEntries: 1,
+        workerEntries: 2,
+        aheadBy: 1,
+        observedLeafId: observed.id,
+        workerLeafId: trailing.id,
+      });
+    } finally {
+      releaseWitness?.();
+      await runtime.close();
+    }
+  });
+
+  it("rejects a worker witness whose observed prefix differs in persisted content", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      const worker = workers[0]!;
+      const workerEntry = {
+        type: "custom",
+        id: "same-entry-id",
+        parentId: "u1",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        customType: "web-search-results",
+        data: { owner: "worker" },
+      };
+      const diskEntry = {
+        ...workerEntry,
+        data: { owner: "external" },
+      };
+      worker.startupEntries = [workerEntry];
+      worker.startupLeafId = workerEntry.id;
+      worker.emit("event", { type: "agent_start" });
+      await appendFile(path, `${JSON.stringify(diskEntry)}\n`);
+
+      await expect(
+        runtime.rename("session-a", "must reject mismatched prefix"),
+      ).rejects.toThrow(/could not verify ownership/);
       expect((await runtime.snapshot()).active?.projectionConflict?.kind).toBe(
         "external-change",
       );
@@ -1387,7 +1533,7 @@ describe("RuntimeController projection ownership gate", () => {
 
       await expect(
         runtime.rename("session-a", "must not write"),
-      ).rejects.toThrow(/changed on disk/);
+      ).rejects.toThrow(/could not verify ownership/);
       const conflict = (await runtime.snapshot()).active?.projectionConflict;
       expect(conflict).toMatchObject({ kind: "external-change" });
       expect(conflict?.incidentId).toMatch(/^inc_[A-Za-z0-9_-]+$/);
@@ -1398,6 +1544,13 @@ describe("RuntimeController projection ownership gate", () => {
       );
       expect(decision?.fields).toMatchObject({
         ownershipRejection: "worker-entry-mismatch",
+        workerWitness: {
+          observedEntries: 1,
+          workerEntries: 0,
+          aheadBy: 0,
+          observedLeafId: "external-custom",
+          workerLeafId: "u1",
+        },
       });
       const incident = records.find(
         (record) => record.event === "projection_conflict",
@@ -1407,6 +1560,13 @@ describe("RuntimeController projection ownership gate", () => {
         sessionId: "session-a",
         conflictKind: "external-change",
         ownershipRejection: "worker-entry-mismatch",
+        workerWitness: {
+          observedEntries: 1,
+          workerEntries: 0,
+          aheadBy: 0,
+          observedLeafId: "external-custom",
+          workerLeafId: "u1",
+        },
       });
       expect(JSON.stringify(records)).not.toContain('"external":true');
       expect(worker.stops).toBe(1);
@@ -1435,7 +1595,7 @@ describe("RuntimeController projection ownership gate", () => {
       );
       await expect(
         runtime.rename("session-a", "must not write"),
-      ).rejects.toThrow(/changed on disk/);
+      ).rejects.toThrow(/could not verify ownership/);
       expect(
         workers[0]!.commands.some(
           (command) => command.type === "set_session_name",
@@ -1444,7 +1604,7 @@ describe("RuntimeController projection ownership gate", () => {
       const snapshot = await runtime.snapshot();
       expect(snapshot.runState).toBe("conflict");
       expect(snapshot.active?.projectionConflict?.message).toMatch(
-        /changed on disk/,
+        /could not verify ownership/,
       );
       expect(snapshot.active?.projectionConflict?.kind).toBe("external-change");
       await runtime.abort("session-a");
@@ -1482,7 +1642,7 @@ describe("RuntimeController projection ownership gate", () => {
           id: "blocked",
           confirmed: true,
         }),
-      ).rejects.toThrow(/changed on disk outside this worker/);
+      ).rejects.toThrow(/could not verify ownership/);
       expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
       await runtime.abort("session-a");
       const recovered = await runtime.snapshot();
