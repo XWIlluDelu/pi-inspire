@@ -27,6 +27,7 @@ import {
   type NewSessionOptions,
   type PalettePreference,
   type PiUpdateCheckResponse,
+  type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
   type ProjectionHealth,
@@ -73,11 +74,6 @@ import { ResourceController } from "./controllers/resource-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
 import { UpdateController } from "./controllers/update-controller";
-import {
-  emptyWorkspaceBrowserState,
-  WorkspaceController,
-  type WorkspaceBrowserState,
-} from "./controllers/workspace-controller";
 import {
   asMessage,
   type ChatMessage,
@@ -138,7 +134,7 @@ function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-interface AppState extends EventSlice, WorkspaceBrowserState {
+interface AppState extends EventSlice {
   needsToken: boolean;
   connection: ConnectionState;
   connectionProblem: ConnectionProblem;
@@ -262,8 +258,6 @@ interface AppState extends EventSlice, WorkspaceBrowserState {
    * mention stays unverified until the host classifies it for this branch
    * view; only a successful resolve grants a separate content handle. */
   resourceAvailability: Record<string, ResourceProbeResult>;
-  /** Canonical workspace identity for successfully resolved references. */
-  resourceWorkspacePaths: Record<string, string>;
   error: string | null;
 }
 
@@ -272,7 +266,6 @@ const PROMPT_MAP_PAGE_SIZE = 100;
 
 const initialState: AppState = {
   ...emptyEventSlice(),
-  ...emptyWorkspaceBrowserState(),
   needsToken: false,
   connection: "connecting",
   connectionProblem: null,
@@ -355,7 +348,6 @@ const initialState: AppState = {
   selectedGitSide: null,
   gitDiff: null,
   resourceAvailability: {},
-  resourceWorkspacePaths: {},
   error: null,
 };
 
@@ -363,14 +355,6 @@ export class AppStore {
   private state: AppState = initialState;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
-  /** WorkspaceController owns the one shared tree/search projection consumed
-   * by both file-browser surfaces. */
-  private readonly workspace = new WorkspaceController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
-  });
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
   private readonly resources = new ResourceController({
@@ -381,8 +365,6 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     prepareGitForResourceOpen: (contextMode) =>
       this.git.prepareResourceOpen(contextMode),
-    revealWorkspacePath: (workspacePath) =>
-      this.workspace.revealPath(workspacePath),
   });
   /** GitController owns polling, selection, and diff request lifecycles.
    * AppStore remains the sole state publisher and cross-domain transaction
@@ -758,7 +740,6 @@ export class AppStore {
     this.transportGeneration += 1;
     this.composer.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
-    this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.invalidateSessionListRequests();
@@ -821,7 +802,6 @@ export class AppStore {
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
-    this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.authToken = token;
@@ -950,7 +930,6 @@ export class AppStore {
       // against one branch lineage, not merely a session id. A same-view
       // compaction/rewrite invalidates them even when the owner ids survive.
       this.resources.invalidate();
-      if (sessionChanged) this.workspace.cancelRequests();
       this.olderTranscriptRequest?.abort();
       this.olderTranscriptRequest = null;
       for (const request of this.activityTranscriptRequests.values())
@@ -1156,8 +1135,6 @@ export class AppStore {
             selectedGitSide: null,
             gitDiff: null,
             resourceAvailability: {},
-            resourceWorkspacePaths: {},
-            ...emptyWorkspaceBrowserState(),
             // Composer work belongs to its session; the switch swaps in the
             // destination's staged slice.
             ...this.composer.slice(nextSessionId),
@@ -1172,10 +1149,9 @@ export class AppStore {
               selectedResourceReference: null,
               resourcePreview: null,
               resourceAvailability: {},
-              resourceWorkspacePaths: {},
             }
           : revisionChanged
-            ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
+            ? { resourceAvailability: {} }
             : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
@@ -2670,23 +2646,16 @@ export class AppStore {
     return result.files.map((file) => ({ ...file, workspaceCwd: result.cwd }));
   };
 
-  loadWorkspaceDirectory = (dir: string): Promise<void> =>
-    this.workspace.loadDirectory(dir);
-
-  toggleWorkspaceDirectory = (dir: string): void => {
-    this.workspace.toggleDirectory(dir);
+  /** One level of the workspace explorer; failures read as an empty level. */
+  listProjectDirectory = async (dir: string): Promise<ProjectDirEntry[]> => {
+    const sessionId = this.state.sessionId;
+    if (!this.api || !sessionId) return [];
+    try {
+      return (await this.api.listFiles(sessionId, dir)).entries;
+    } catch {
+      return [];
+    }
   };
-
-  setWorkspaceQuery = (query: string): void => {
-    this.workspace.setQuery(query);
-  };
-
-  openWorkspaceFile = (path: string): Promise<void> => {
-    this.workspace.revealPath(path);
-    return this.resources.openResource(path);
-  };
-
-  refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
@@ -3142,11 +3111,6 @@ export class AppStore {
     this.resources.probeResources(references);
 
   clearResourceSelection = (): void => {
-    this.resources.clearSelection();
-  };
-
-  clearContextDetail = (): void => {
-    if (this.state.contextMode === "changes") this.git.clearDiffSelection();
     this.resources.clearSelection();
   };
 

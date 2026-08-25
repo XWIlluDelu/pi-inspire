@@ -38,11 +38,7 @@ import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
-import {
-  invalidateProjectIndex,
-  listProjectDirectory,
-  searchProjectFiles,
-} from "./project-files.js";
+import { listProjectDirectory, searchProjectFiles } from "./project-files.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
@@ -198,7 +194,6 @@ const fileListSchema = z.object({
       (value) => !value.split("/").includes(".."),
       "dir must stay inside the project",
     ),
-  refresh: z.literal("1").optional(),
 });
 const hostDirsSchema = z.object({
   path: z
@@ -854,13 +849,12 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ files: await searchProjectFiles(cwd, q, limit) });
   });
   app.get("/api/files/list", async (request, response) => {
-    const { sessionId, dir, refresh } = fileListSchema.parse(request.query);
+    const { sessionId, dir } = fileListSchema.parse(request.query);
     const cwd = deps.runtime.sessionCwd(sessionId);
     if (!cwd)
       return response
         .status(409)
         .json({ error: "That session is not open on this host" });
-    if (refresh) invalidateProjectIndex(cwd);
     response.json({ entries: await listProjectDirectory(cwd, dir) });
   });
   app.get("/api/git/status", async (request, response) => {

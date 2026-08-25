@@ -335,11 +335,9 @@ function escapeHtml(value: string): string {
 export function CodeBlock({
   language,
   code,
-  lineNumbers = false,
 }: {
   language: string;
   code: string;
-  lineNumbers?: boolean;
 }) {
   const { copied, copy } = useCopied();
   const highlighted = hljs.getLanguage(language)
@@ -364,26 +362,13 @@ export function CodeBlock({
           )}
         </button>
       </div>
-      <div className={lineNumbers ? "code-block__source" : undefined}>
-        {lineNumbers ? (
-          <pre className="code-block__lines" aria-hidden>
-            {code
-              .split("\n")
-              .map((_, index) => index + 1)
-              .join("\n")}
-          </pre>
-        ) : null}
-        <pre
-          className={`code-block__pre ${lineNumbers ? "code-block__pre--numbered" : ""}`}
-          tabIndex={0}
-        >
-          {/* highlight.js escapes its input; the generated markup contains only span tags */}
-          <code
-            className={`hljs language-${language}`}
-            dangerouslySetInnerHTML={{ __html: highlighted }}
-          />
-        </pre>
-      </div>
+      <pre className="code-block__pre" tabIndex={0}>
+        {/* highlight.js escapes its input; the generated markup contains only span tags */}
+        <code
+          className={`hljs language-${language}`}
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
+      </pre>
     </div>
   );
 }

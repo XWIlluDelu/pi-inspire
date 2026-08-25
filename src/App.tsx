@@ -6,13 +6,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import {
-  Profiler,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useState,
-} from "react";
+import { Profiler, useCallback, useEffect, useState } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
@@ -429,14 +423,6 @@ export function App() {
   useEffect(() => {
     if (!narrowViewport) setMobileNavOpen(false);
   }, [narrowViewport]);
-
-  // Resource opens may originate inside the navigation tree rather than from
-  // the topbar toggle. Close the primary drawer before paint so one narrow
-  // navigation action can never leave two modal owners mounted.
-  useLayoutEffect(() => {
-    if (narrowViewport && mobileNavOpen && state.resourcesOpen)
-      setMobileNavOpen(false);
-  }, [mobileNavOpen, narrowViewport, state.resourcesOpen]);
 
   // An extension dialog is an attributed operation boundary, not background
   // chrome. It supersedes the two app-level overlays instead of competing for

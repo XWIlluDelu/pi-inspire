@@ -353,26 +353,15 @@ export function createApi(token: string | null = null) {
         `/api/attachments/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       ),
-    searchFiles: (
-      sessionId: string,
-      query: string,
-      limit = 50,
-      signal?: AbortSignal,
-    ) =>
+    searchFiles: (sessionId: string, query: string, limit = 50) =>
       request<{ files: ProjectFileResult[] }>(
         token,
         `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}`,
-        { signal },
       ),
-    listFiles: (
-      sessionId: string,
-      dir: string,
-      options: { signal?: AbortSignal; refresh?: boolean } = {},
-    ) =>
+    listFiles: (sessionId: string, dir: string) =>
       request<{ entries: ProjectDirEntry[] }>(
         token,
-        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}${options.refresh ? "&refresh=1" : ""}`,
-        { signal: options.signal },
+        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}`,
       ),
     gitStatus: (sessionId: string, signal?: AbortSignal) =>
       request<GitStatusResponse>(

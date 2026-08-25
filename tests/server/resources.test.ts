@@ -152,7 +152,6 @@ describe("ResourceStore", () => {
 
     expect(descriptor).toMatchObject({
       sessionId: "s1",
-      workspacePath: "report.md",
       name: "report.md",
       mimeType: "text/markdown",
       kind: "markdown",
@@ -235,11 +234,7 @@ describe("ResourceStore", () => {
     ]);
 
     expect(results).toEqual([
-      {
-        reference: "visible.md",
-        availability: "available",
-        workspacePath: "visible.md",
-      },
+      { reference: "visible.md", availability: "available" },
       {
         reference: "missing.md",
         availability: "missing",

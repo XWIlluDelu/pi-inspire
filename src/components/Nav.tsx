@@ -3,35 +3,36 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  FileText,
   Folder,
   Inbox,
   Loader2,
   Pin,
   PinOff,
   Plus,
-  PanelRightOpen,
   Search,
   SearchX,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   type InspirePreferences,
   isBusyRunState,
+  type ProjectDirEntry,
   projectNameFromCwd,
   type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
-import { store, useAppState } from "../store";
+import {
+  gitDecorationForChange,
+  gitDecorationForDirectory,
+  presentGitFacet,
+} from "../git-presentation";
+import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
-import {
-  WorkspaceFileSearch,
-  WorkspaceSearchResults,
-  WorkspaceTree,
-} from "./WorkspaceBrowser";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 interface SessionGroup {
@@ -157,9 +158,10 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
   attention: "Needs recovery",
 };
 
-/** Compact quick navigation over the shared workspace projection. The right
- * Files pane consumes the same expansion, search, identity, and selection
- * state; only this surface's disclosure remains local. */
+/** Read-only explorer for the visible session's workspace. Collapsed it is a
+ * single bar at the bottom of the nav; expanded it takes the lower half.
+ * Levels come from the host's project index (same source as the composer's
+ * file search), and clicking a file opens the session-bound preview. */
 function WorkspaceExplorer({
   selectedSessionId,
 }: {
@@ -168,60 +170,164 @@ function WorkspaceExplorer({
   const state = useAppState();
   const cwd = selectedSessionId === state.sessionId ? state.cwd : null;
   const [open, setOpen] = useState(false);
+  const [levels, setLevels] = useState<Map<string, ProjectDirEntry[]>>(
+    new Map(),
+  );
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // The tree always reflects the visible session's workspace.
+  useEffect(() => {
+    setLevels(new Map());
+    setExpanded(new Set());
+  }, [cwd]);
+
+  const load = (dir: string) => {
+    // The listing resolves against whichever workspace the host has active
+    // when it lands; drop it if this explorer no longer shows that one.
+    const owner = cwd;
+    void store.listProjectDirectory(dir).then((entries) => {
+      if (store.getState().cwd !== owner) return;
+      setLevels((previous) => new Map(previous).set(dir, entries));
+    });
+  };
 
   useEffect(() => {
     store.setGitSurfaceVisible("workspace-explorer", open && cwd !== null);
     return () => store.setGitSurfaceVisible("workspace-explorer", false);
   }, [open, cwd]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the current render's loader is intentionally invoked only when this explorer opens or changes workspace.
+  useEffect(() => {
+    if (open && cwd !== null) load("");
+  }, [open, cwd]);
+
   if (!cwd) return null;
+
+  const toggleDir = (path: string) => {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    if (!levels.has(path)) load(path);
+  };
+
+  const renderLevel = (dir: string, depth: number): React.ReactNode => {
+    const entries = levels.get(dir);
+    const indent = { paddingLeft: `${12 + depth * 14}px` };
+    if (!entries)
+      return (
+        <div className="explorer__note" style={indent}>
+          Loading…
+        </div>
+      );
+    if (entries.length === 0)
+      return (
+        <div className="explorer__note" style={indent}>
+          Empty
+        </div>
+      );
+    return entries.map((entry) => {
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.type === "dir") {
+        const isOpen = expanded.has(path);
+        const rollup = gitDecorationForDirectory(state.gitStatus, path);
+        return (
+          <Fragment key={path}>
+            <button
+              type="button"
+              className="explorer__row"
+              style={indent}
+              aria-expanded={isOpen}
+              onClick={() => toggleDir(path)}
+            >
+              <ChevronRight
+                size={11}
+                className={`chev ${isOpen ? "chev--open" : ""}`}
+                aria-hidden
+              />
+              <Folder size={12} aria-hidden />
+              <span
+                className={`explorer__name ${rollup ? `git-deco--${rollup}` : ""}`}
+              >
+                {entry.name}
+              </span>
+              {rollup ? (
+                <span
+                  className={`git-rollup git-deco--${rollup}`}
+                  role="img"
+                  aria-label={
+                    rollup === "conflict"
+                      ? "Contains conflicts"
+                      : `Contains ${rollup} files`
+                  }
+                  title={
+                    rollup === "conflict"
+                      ? "Contains conflicts"
+                      : `Contains ${rollup} files`
+                  }
+                />
+              ) : null}
+            </button>
+            {isOpen ? renderLevel(path, depth + 1) : null}
+          </Fragment>
+        );
+      }
+      const change = gitChangeForWorkspacePath(state.gitStatus, path);
+      const facet = presentGitFacet(change);
+      const decoration = gitDecorationForChange(change);
+      return (
+        <button
+          key={path}
+          type="button"
+          className="explorer__row explorer__row--file"
+          style={indent}
+          title={path}
+          onClick={() => void store.openResource(path)}
+        >
+          <FileText size={12} aria-hidden />
+          <span
+            className={`explorer__name ${decoration ? `git-deco--${decoration}` : ""}`}
+          >
+            {entry.name}
+          </span>
+          {facet ? (
+            <span
+              className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
+              role="img"
+              aria-label={facet.label}
+              title={facet.label}
+            >
+              {facet.mark}
+            </span>
+          ) : null}
+        </button>
+      );
+    });
+  };
 
   return (
     <section
       className={`explorer ${open ? "explorer--open" : ""}`}
       aria-label="Workspace files"
     >
-      <div className="explorer__heading">
-        <button
-          type="button"
-          className="explorer__header"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-          title={cwd}
-        >
-          <Folder size={13} aria-hidden />
-          <span className="explorer__title">Files</span>
-          <ChevronUp
-            size={12}
-            className={`chev-flip ${open ? "chev-flip--open" : ""}`}
-            aria-hidden
-          />
-        </button>
-        <button
-          type="button"
-          className="explorer__open-full icon-button"
-          aria-label="Open full file browser"
-          title="Open full file browser"
-          onClick={() => {
-            store.setContextMode("files");
-            store.setResourcesOpen(true);
-          }}
-        >
-          <PanelRightOpen size={13} aria-hidden />
-        </button>
-      </div>
-      {open ? (
-        <div className="explorer__browser">
-          <WorkspaceFileSearch compact />
-          <div className="explorer__tree">
-            {state.workspaceQuery.trim() ? (
-              <WorkspaceSearchResults />
-            ) : (
-              <WorkspaceTree />
-            )}
-          </div>
-        </div>
-      ) : null}
+      <button
+        type="button"
+        className="explorer__header"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title={cwd}
+      >
+        <Folder size={13} aria-hidden />
+        <span className="explorer__title">{state.project}</span>
+        <ChevronUp
+          size={12}
+          className={`chev-flip ${open ? "chev-flip--open" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open ? <div className="explorer__tree">{renderLevel("", 0)}</div> : null}
     </section>
   );
 }

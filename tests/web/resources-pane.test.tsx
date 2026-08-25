@@ -27,10 +27,6 @@ function scrollResourceListToEnd(list: HTMLElement): void {
   fireEvent.scroll(list);
 }
 
-function showReferencedFiles(pane: HTMLElement): void {
-  fireEvent.click(within(pane).getByRole("button", { name: "Referenced" }));
-}
-
 describe("Files pane", () => {
   let gitStatusFails = false;
   let missingProbeReference: string | null = null;
@@ -262,36 +258,6 @@ describe("Files pane", () => {
             ],
           });
         }
-        if (url.startsWith("/api/files/list")) {
-          const dir =
-            new URL(url, "http://local").searchParams.get("dir") ?? "";
-          return Response.json({
-            entries:
-              dir === ""
-                ? [
-                    { name: "src", type: "dir" },
-                    { name: "notes.md", type: "file" },
-                    ...(missingProbeReference === "demo.html"
-                      ? []
-                      : [{ name: "demo.html", type: "file" }]),
-                  ]
-                : dir === "src"
-                  ? [{ name: "app.ts", type: "file" }]
-                  : [],
-          });
-        }
-        if (url.startsWith("/api/files?")) {
-          const query = (
-            new URL(url, "http://local").searchParams.get("q") ?? ""
-          ).toLowerCase();
-          return Response.json({
-            files: [
-              { name: "app.ts", path: "src/app.ts" },
-              { name: "notes.md", path: "notes.md" },
-              { name: "demo.html", path: "demo.html" },
-            ].filter((file) => file.path.includes(query)),
-          });
-        }
         if (url.startsWith("/api/resources/list")) {
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             cursor?: string;
@@ -347,11 +313,7 @@ describe("Files pane", () => {
                     availability: "missing",
                     message: "The referenced file was not found",
                   }
-                : {
-                    reference,
-                    availability: "available",
-                    workspacePath: reference,
-                  },
+                : { reference, availability: "available" },
             ),
           });
         }
@@ -363,9 +325,7 @@ describe("Files pane", () => {
           return Response.json({
             id: html ? "html" : "markdown",
             sessionId: "s1",
-            viewId: "view-s1",
             reference: body.reference,
-            workspacePath: body.reference,
             name: body.reference,
             mimeType: html ? "text/html" : "text/markdown",
             size: 64,
@@ -481,63 +441,12 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
   });
 
-  it("shares tree expansion, search, and canonical selection across both file surfaces", async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-
-    fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
-    expect(
-      await within(pane).findByRole("button", { name: "app.ts" }),
-    ).toBeInTheDocument();
-
-    const explorer = screen.getByLabelText("Workspace files");
-    fireEvent.click(within(explorer).getByRole("button", { expanded: false }));
-    expect(
-      await within(explorer).findByRole("button", { name: "app.ts" }),
-    ).toBeInTheDocument();
-
-    const paneSearch = within(pane).getByRole("searchbox", {
-      name: "Search workspace files",
-    });
-    const explorerSearch = within(explorer).getByRole("searchbox", {
-      name: "Search workspace files",
-    });
-    fireEvent.change(paneSearch, { target: { value: "notes" } });
-    expect(explorerSearch).toHaveValue("notes");
-    await waitFor(() =>
-      expect(
-        within(pane).getAllByRole("button", { name: /notes\.md/i }),
-      ).toHaveLength(1),
-    );
-  });
-
-  it("provides preview, numbered source, metadata, and explicit detail return", async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-
-    fireEvent.click(await within(pane).findByRole("tab", { name: "Source" }));
-    expect(pane.querySelector(".code-block__lines")).toHaveTextContent("1");
-    fireEvent.click(within(pane).getByRole("tab", { name: "Info" }));
-    expect(within(pane).getByText("Path")).toBeInTheDocument();
-    expect(within(pane).getAllByText("notes.md").length).toBeGreaterThan(0);
-
-    fireEvent.click(within(pane).getByRole("button", { name: "Back to list" }));
-    expect(store.getState().selectedResourceReference).toBeNull();
-  });
-
   it("refreshes files without requesting Git status", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
     const pane = await screen.findByRole("complementary", {
       name: "Files and resources",
     });
-    showReferencedFiles(pane);
     await waitFor(() =>
       expect(
         within(pane)
@@ -582,7 +491,6 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Files and resources",
     });
-    showReferencedFiles(pane);
     const list = within(pane).getByLabelText("Referenced files");
     await waitFor(() =>
       expect(list.querySelectorAll(".res__row")).toHaveLength(8),
@@ -622,7 +530,6 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Files and resources",
     });
-    showReferencedFiles(pane);
     fireEvent.click(
       await within(pane).findByRole("button", { name: "Earlier files (142)" }),
     );
@@ -672,7 +579,6 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Files and resources",
     });
-    showReferencedFiles(pane);
     const list = within(pane).getByLabelText("Referenced files");
     fireEvent.click(
       await within(pane).findByRole("button", { name: "Earlier files (142)" }),
@@ -716,7 +622,6 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Files and resources",
     });
-    showReferencedFiles(pane);
     expect(
       await within(pane).findByText("Earlier files unavailable"),
     ).toBeInTheDocument();
@@ -734,10 +639,6 @@ describe("Files pane", () => {
     missingProbeReference = "demo.html";
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-    showReferencedFiles(pane);
 
     const missing = await screen.findByRole("button", {
       name: /demo\.html.*missing/i,
@@ -760,10 +661,6 @@ describe("Files pane", () => {
     expect(
       await screen.findByRole("heading", { name: "Previewed notes" }),
     ).toBeInTheDocument();
-    const pane = screen.getByRole("complementary", {
-      name: "Files and resources",
-    });
-    showReferencedFiles(pane);
     const notesRow = screen.getByRole("button", {
       name: /notes\.md.*unstaged modified/i,
     });

@@ -417,10 +417,6 @@ export interface ResourceDescriptor {
   /** Opaque branch-view generation that authorized this handle. */
   viewId: string;
   reference: string;
-  /** Canonical project-index path when the resolved file is inside the
-   * session workspace. This location joins workspace and citation views
-   * without exposing an unrestricted absolute host path. */
-  workspacePath?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -440,8 +436,6 @@ type ResourceAvailability =
 export interface ResourceProbeResult {
   reference: string;
   availability: ResourceAvailability;
-  /** Present only after successful host resolution inside the workspace. */
-  workspacePath?: string;
   message?: string;
   matches?: string[];
 }
