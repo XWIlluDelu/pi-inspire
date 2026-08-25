@@ -46,6 +46,13 @@ export interface OwnershipDecision {
   source?: "expectation" | "worker-entries" | "initial-materialization";
   reason?: OwnershipRejectionReason;
   expectationsConsumed?: number;
+  workerWitness?: {
+    observedEntries: number;
+    workerEntries: number;
+    aheadBy: number;
+    observedLeafId: string | null;
+    workerLeafId: string | null;
+  };
 }
 
 export interface BranchBridgeIdentity {

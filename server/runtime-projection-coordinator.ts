@@ -253,6 +253,7 @@ export class RuntimeProjectionCoordinator {
     const ownershipFields = (): Record<string, unknown> => ({
       ownershipSource: lastOwnership?.source,
       ownershipRejection: lastOwnership?.reason,
+      workerWitness: lastOwnership?.workerWitness,
       appendedEntries: Array.isArray(result.appendedEntries)
         ? result.appendedEntries.map((entry) => entryDescriptor(entry))
         : [],
@@ -377,7 +378,7 @@ export class RuntimeProjectionCoordinator {
           this.host.setProjectionConflict(
             slot,
             "external-change",
-            "Session changed on disk outside this worker; the worker was stopped safely. Recover before writing again",
+            "INSΠRE could not verify ownership of a session change; the worker was stopped safely. Recover before writing again",
             ownershipFields(),
           );
           await this.host.stopWriter(slot);

@@ -1336,10 +1336,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return true;
   }
 
+  private consumeWitnessedExpectationPrefix(
+    slot: RuntimeSlot,
+    appendedEntries: readonly SessionEntry[],
+    previouslyMatched: readonly PersistenceExpectation[],
+  ): number {
+    for (const expectation of previouslyMatched) {
+      const index = slot.persistenceExpectations.indexOf(expectation);
+      if (index >= 0) slot.persistenceExpectations.splice(index, 1);
+    }
+
+    let matchedEntries = previouslyMatched.length;
+    while (matchedEntries < appendedEntries.length) {
+      const expectation = slot.persistenceExpectations[0];
+      const entry = appendedEntries[matchedEntries];
+      if (!expectation || !entry || expectation.matcher?.(entry) !== true)
+        break;
+      slot.persistenceExpectations.shift();
+      matchedEntries += 1;
+    }
+    return matchedEntries;
+  }
+
   private async workerAppendWitness(
     slot: RuntimeSlot,
     result: ProjectionReconcileResult,
-    expectationsConsumed: number,
+    matchedExpectations: readonly PersistenceExpectation[],
   ): Promise<OwnershipDecision> {
     const rpc = slot.process;
     const projection = slot.projection;
@@ -1352,6 +1374,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     ) {
       return { owned: false, reason: "entries-unavailable" };
     }
+    const expectedParentId =
+      slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
     try {
       const response = await rpc.request<Record<string, unknown>>({
         type: "get_entries",
@@ -1359,8 +1383,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       });
       if (slot.process !== rpc)
         return { owned: false, reason: "worker-unavailable" };
-      const expectedParentId =
-        slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+      if (slot.projection !== projection)
+        return { owned: false, reason: "projection-unavailable" };
       const workerChain = parseRpcEntryChain(response, {
         expectedParentId,
         maxEntries: NEW_SESSION_ENTRY_MAX_COUNT,
@@ -1368,24 +1392,47 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         label: "incremental",
       });
       const workerEntries = workerChain.entries;
-      if (
-        workerEntries.length < appendedEntries.length ||
-        workerChain.leafId !== projection.leafId
-      ) {
-        return { owned: false, reason: "worker-entry-mismatch" };
+      const observedLeafId =
+        appendedEntries.at(-1)?.id ?? result.previousLeafId ?? null;
+      const workerWitness = {
+        observedEntries: appendedEntries.length,
+        workerEntries: workerEntries.length,
+        aheadBy: Math.max(0, workerEntries.length - appendedEntries.length),
+        observedLeafId,
+        workerLeafId: workerChain.leafId,
+      };
+      if (workerEntries.length < appendedEntries.length) {
+        return {
+          owned: false,
+          reason: "worker-entry-mismatch",
+          workerWitness,
+        };
       }
       for (let index = 0; index < appendedEntries.length; index += 1) {
         if (!samePersistedJson(workerEntries[index], appendedEntries[index])) {
-          return { owned: false, reason: "worker-entry-mismatch" };
+          return {
+            owned: false,
+            reason: "worker-entry-mismatch",
+            workerWitness,
+          };
         }
       }
+      const expectationsConsumed = this.consumeWitnessedExpectationPrefix(
+        slot,
+        appendedEntries,
+        matchedExpectations,
+      );
       for (const entry of appendedEntries.slice(expectationsConsumed)) {
         if (entry.type === "custom")
           this.rememberAbsorbedPersistenceEntry(slot, entry);
       }
-      slot.persistenceExpectations.splice(0, expectationsConsumed);
       if (slot.navigationLease) slot.navigationLease = null;
-      return { owned: true, source: "worker-entries", expectationsConsumed };
+      return {
+        owned: true,
+        source: "worker-entries",
+        expectationsConsumed,
+        workerWitness,
+      };
     } catch {
       return { owned: false, reason: "worker-entries-unavailable" };
     }
@@ -1436,16 +1483,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
     let expectedParent =
       slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
-    let expectationsConsumed = 0;
+    const matchedExpectations: PersistenceExpectation[] = [];
     for (const entry of result.appendedEntries) {
       if (entry.parentId !== expectedParent)
         return { owned: false, reason: "parent-mismatch" };
       expectedParent = entry.id;
 
-      const expectation = slot.persistenceExpectations[expectationsConsumed];
+      const expectation =
+        slot.persistenceExpectations[matchedExpectations.length];
       if (initialMaterialization) {
         if (expectation?.matcher?.(entry) === true) {
-          expectationsConsumed += 1;
+          matchedExpectations.push(expectation);
         } else if (
           (entry.type === "message" || entry.type === "custom_message") &&
           !this.rememberAbsorbedPersistenceEntry(slot, entry)
@@ -1455,21 +1503,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         continue;
       }
       if (!expectation)
-        return this.workerAppendWitness(slot, result, expectationsConsumed);
+        return this.workerAppendWitness(slot, result, matchedExpectations);
       await expectation.ready;
       if (expectation.matcher?.(entry) !== true)
-        return this.workerAppendWitness(slot, result, expectationsConsumed);
-      expectationsConsumed += 1;
+        return this.workerAppendWitness(slot, result, matchedExpectations);
+      matchedExpectations.push(expectation);
     }
 
-    slot.persistenceExpectations.splice(0, expectationsConsumed);
+    slot.persistenceExpectations.splice(0, matchedExpectations.length);
     if (slot.navigationLease) slot.navigationLease = null;
     return {
       owned: true,
       source: initialMaterialization
         ? "initial-materialization"
         : "expectation",
-      expectationsConsumed,
+      expectationsConsumed: matchedExpectations.length,
     };
   }
 
