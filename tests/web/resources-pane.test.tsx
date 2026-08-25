@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import {
-  act,
   fireEvent,
   render,
   screen,
@@ -9,39 +8,29 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitPathIdentity } from "../../shared/contracts";
+import { stripResourceLocation } from "../../shared/resource-references";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
-  FakeWebSocket,
   installFakeWebSocket,
 } from "./helpers";
 
-function scrollResourceListToEnd(list: HTMLElement): void {
-  Object.defineProperties(list, {
-    scrollHeight: { configurable: true, value: 2_304 },
-    clientHeight: { configurable: true, value: 320 },
-    scrollTop: { configurable: true, value: 2_000, writable: true },
-  });
-  fireEvent.scroll(list);
-}
-
 describe("Files pane", () => {
+  let testToken = 0;
   let gitStatusFails = false;
   let missingProbeReference: string | null = null;
-  let resourceListFails = false;
-  let resourceListFailureCursor: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
+  let resourceProbeRequests = 0;
   let bootstrapMessages: unknown[] = [];
   let transcriptRevision = 1;
 
   beforeEach(async () => {
     gitStatusFails = false;
     missingProbeReference = null;
-    resourceListFails = false;
-    resourceListFailureCursor = null;
     resourceListRequests = [];
+    resourceProbeRequests = 0;
     transcriptRevision = 1;
     bootstrapMessages = [
       {
@@ -93,6 +82,26 @@ describe("Files pane", () => {
             total: 0,
             offset: 0,
             limit: 40,
+          });
+        if (url.startsWith("/api/files/list")) {
+          const dir =
+            new URL(url, "http://localhost").searchParams.get("dir") ?? "";
+          return Response.json({
+            entries:
+              dir === "src"
+                ? [
+                    { name: "main.ts", type: "file" },
+                    { name: "long.ts", type: "file" },
+                  ]
+                : [
+                    { name: "src", type: "dir" },
+                    { name: "README.md", type: "file" },
+                  ],
+          });
+        }
+        if (url.startsWith("/api/files?"))
+          return Response.json({
+            files: [{ name: "main.ts", path: "src/main.ts" }],
           });
         const gitPath = (
           id: string,
@@ -267,12 +276,6 @@ describe("Files pane", () => {
             ...(body.cursor ? { cursor: body.cursor } : {}),
             ...(body.limit ? { limit: body.limit } : {}),
           });
-          if (resourceListFails || body.cursor === resourceListFailureCursor) {
-            return Response.json(
-              { error: "Reference index unavailable" },
-              { status: 503 },
-            );
-          }
           const resources = [
             "notes.md",
             "demo.html",
@@ -299,6 +302,7 @@ describe("Files pane", () => {
           });
         }
         if (url.startsWith("/api/resources/probe")) {
+          resourceProbeRequests += 1;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             references: string[];
           };
@@ -313,7 +317,11 @@ describe("Files pane", () => {
                     availability: "missing",
                     message: "The referenced file was not found",
                   }
-                : { reference, availability: "available" },
+                : {
+                    reference,
+                    availability: "available",
+                    workspacePath: reference,
+                  },
             ),
           });
         }
@@ -321,19 +329,33 @@ describe("Files pane", () => {
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
           };
-          const html = body.reference.endsWith(".html");
+          const resolvedPath = stripResourceLocation(body.reference);
+          const html = resolvedPath.endsWith(".html");
+          const text = resolvedPath.endsWith(".ts");
           return Response.json({
-            id: html ? "html" : "markdown",
+            id: html ? "html" : text ? "text" : "markdown",
             sessionId: "s1",
             reference: body.reference,
-            name: body.reference,
-            mimeType: html ? "text/html" : "text/markdown",
-            size: 64,
-            kind: html ? "html" : "markdown",
+            workspacePath: resolvedPath,
+            name: resolvedPath.split("/").at(-1) ?? resolvedPath,
+            mimeType: html
+              ? "text/html"
+              : text
+                ? "text/typescript"
+                : "text/markdown",
+            size: text ? 2_048 : 64,
+            kind: html ? "html" : text ? "text" : "markdown",
           });
         }
         if (url.includes("/api/resources/markdown/content"))
           return new Response("# Previewed notes");
+        if (url.includes("/api/resources/text/content"))
+          return new Response(
+            Array.from(
+              { length: 120 },
+              (_, index) => `export const line${index + 1} = ${index + 1};`,
+            ).join("\n"),
+          );
         if (url.includes("/api/resources/html/content")) {
           return new Response(
             '<html><head><base href="https://bad.invalid"><meta http-equiv="refresh" content="0;url=https://bad.invalid"></head><body><script>bad()</script><h1>Safe page</h1></body></html>',
@@ -342,7 +364,9 @@ describe("Files pane", () => {
         return Response.json({ error: `unhandled ${url}` }, { status: 404 });
       }),
     );
-    await store.init("token");
+    await store.init(`token-${++testToken}`);
+    store.setResourcesOpen(false);
+    store.setContextMode("files");
   });
 
   it("renders grouped canonical changes, side selection, numbered diffs, and explicit result states", async () => {
@@ -351,9 +375,9 @@ describe("Files pane", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Changes" }));
 
     const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
+      name: "Context panel",
     });
-    expect(within(pane).getByText("feature/git")).toBeInTheDocument();
+    expect(pane.querySelector(".ctx__branch")).toHaveTextContent("notes.md");
     expect(
       screen.getByRole("heading", { name: /Conflicts/ }),
     ).toBeInTheDocument();
@@ -361,9 +385,13 @@ describe("Files pane", () => {
     expect(
       screen.getByRole("heading", { name: /Unstaged/ }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /Untracked/ }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "notes.md, unstaged modified",
+        }),
+      ).toHaveAttribute("aria-current", "true"),
+    );
     expect(
       screen.getByLabelText("Untracked — not yet added to Git"),
     ).toHaveTextContent("U");
@@ -392,20 +420,21 @@ describe("Files pane", () => {
         name: "copied.ts, staged copied, copied from source.ts",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("renamed from old.ts")).toBeInTheDocument();
-    expect(screen.getByText("copied from source.ts")).toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole("button", { name: /both\.ts/ })[1]!);
+    fireEvent.click(
+      screen.getByRole("button", { name: "both.ts, unstaged modified" }),
+    );
     expect(
       await screen.findByLabelText("Diff for both.ts"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unstaged" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Working" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     expect(screen.getByLabelText("Old line 1")).toHaveTextContent("1");
     expect(screen.getByLabelText("New line 1")).toHaveTextContent("1");
-    expect(screen.getByText(/Truncated — complete lines/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Diff truncated at the safe preview limit."),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Staged" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Staged" })).toHaveAttribute(
@@ -422,59 +451,130 @@ describe("Files pane", () => {
     expect(await screen.findByText("Submodule change")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /bad\\xff/ }));
     expect(
-      await screen.findByText("Unsupported path encoding"),
+      await screen.findByText(/cannot be passed safely as UTF-8/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
     expect(
-      await screen.findByText("Untracked diff unavailable"),
+      await screen.findByText(
+        /Untracked content is available through File preview/,
+      ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Open File" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "File" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /outside\.ts/ }));
     expect(
-      await screen.findByText(/outside the session workspace/),
+      await screen.findByText(/outside the session workspace/i),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /gone\.ts/ }));
     expect(
-      await screen.findByText(/working-tree file is deleted/),
+      await screen.findByText(/working-tree file is deleted/i),
     ).toBeInTheDocument();
   });
 
-  it("refreshes files without requesting Git status", async () => {
+  it("browses, searches, previews, locates, and adds workspace files", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+
     const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
+      name: "Context panel",
     });
-    await waitFor(() =>
-      expect(
-        within(pane)
-          .getByLabelText("Referenced files")
-          .querySelectorAll(".res__row").length,
-      ).toBeGreaterThan(0),
+    expect(await within(pane).findByText("proj")).toBeInTheDocument();
+    fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
+    const browserScroller = pane.querySelector<HTMLElement>(
+      ".files-browser__scroll",
+    )!;
+    browserScroller.scrollTop = 137;
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: "long.ts" }),
     );
-    const callsBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-    const refresh = screen.getByRole("button", { name: "Refresh files" });
-    fireEvent.click(refresh);
-    await waitFor(() =>
-      expect(
-        (fetch as ReturnType<typeof vi.fn>).mock.calls.length,
-      ).toBeGreaterThan(callsBefore),
-    );
-    const refreshCalls = (fetch as ReturnType<typeof vi.fn>).mock.calls
-      .slice(callsBefore)
-      .map(([input]) => String(input));
+    expect(pane.querySelector(".files-browser")).toHaveAttribute("hidden");
+
     expect(
-      refreshCalls.some((url) => url.startsWith("/api/resources/list")),
-    ).toBe(true);
+      await within(pane).findByRole("region", { name: "File source" }),
+    ).toHaveAttribute("data-pane-scroll-active", "true");
+    const source = within(pane).getByRole("region", { name: "File source" });
+    const targetLine = source.querySelector<HTMLElement>(
+      '[data-source-line="80"]',
+    )!;
+    Object.defineProperty(source, "clientHeight", {
+      configurable: true,
+      value: 300,
+    });
+    Object.defineProperty(targetLine, "offsetTop", {
+      configurable: true,
+      value: 600,
+    });
+    const line = within(pane).getByRole("spinbutton", { name: "Go to line" });
+    fireEvent.change(line, { target: { value: "80" } });
+    fireEvent.submit(line.closest("form")!);
+    expect(source.scrollTop).toBe(500);
+
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Add to prompt" }),
+    );
+    expect(
+      await screen.findByRole("list", { name: "Referenced project files" }),
+    ).toHaveTextContent("src/long.ts");
+
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Back to files" }),
+    );
+    expect(pane.querySelector(".files-browser")).not.toHaveAttribute("hidden");
+    expect(pane.querySelector(".files-browser__scroll")).toBe(browserScroller);
+    expect(browserScroller.scrollTop).toBe(137);
+    expect(pane.querySelectorAll(".recent-files .recent-file")).toHaveLength(5);
+
+    await store.openResource("src/long.ts#L100");
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("spinbutton", { name: "Go to line" }),
+      ).toHaveValue(100),
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Back to files" }),
+    );
+    const search = within(pane).getByRole("searchbox", {
+      name: "Search workspace files",
+    });
+    fireEvent.change(search, { target: { value: "main" } });
+    expect(
+      await within(pane).findByRole("button", {
+        name: /main\.ts.*src\/main\.ts/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("refreshes the Files sources without coupling them to Git status", async () => {
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByText("README.md");
+
+    const callsBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const probesBefore = resourceProbeRequests;
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Refresh context pane" }),
+    );
     await waitFor(() =>
       expect(
         (fetch as ReturnType<typeof vi.fn>).mock.calls
           .slice(callsBefore)
           .map(([input]) => String(input))
-          .some((url) => url.startsWith("/api/resources/probe")),
+          .some(
+            (url) =>
+              url.startsWith("/api/files/list") && url.includes("refresh=1"),
+          ),
       ).toBe(true),
+    );
+    expect(resourceListRequests.length).toBeGreaterThan(1);
+    await waitFor(() =>
+      expect(resourceProbeRequests).toBeGreaterThan(probesBefore),
     );
     expect(
       (fetch as ReturnType<typeof vi.fn>).mock.calls
@@ -484,207 +584,49 @@ describe("Files pane", () => {
     ).toBe(false);
   });
 
-  it("loads earlier files one bounded page at a time and virtualizes the mounted rows", async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-    const list = within(pane).getByLabelText("Referenced files");
-    await waitFor(() =>
-      expect(list.querySelectorAll(".res__row")).toHaveLength(8),
-    );
-    fireEvent.click(
-      await within(pane).findByRole("button", { name: "Earlier files (142)" }),
-    );
-
-    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
-    expect(resourceListRequests).toEqual([
-      {},
-      { cursor: "cursor:8", limit: 64 },
-    ]);
-    expect(
-      within(pane).getByText("More files load as you scroll"),
-    ).toBeInTheDocument();
-    expect(list.querySelectorAll(".res__row").length).toBeLessThan(72);
-
-    scrollResourceListToEnd(list);
-    await waitFor(() => expect(resourceListRequests).toHaveLength(3));
-    expect(resourceListRequests.at(-1)).toEqual({
-      cursor: "cursor:72",
-      limit: 64,
-    });
-
-    fireEvent.click(within(pane).getByRole("button", { name: "Recent files" }));
-    expect(list.querySelectorAll(".res__row")).toHaveLength(8);
-    expect(
-      within(pane).getByRole("button", { name: "Earlier files (142)" }),
-    ).toBeInTheDocument();
-  });
-
-  it("keeps earlier files expanded when the current transcript revision advances", async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-    fireEvent.click(
-      await within(pane).findByRole("button", { name: "Earlier files (142)" }),
-    );
-    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
-    expect(
-      within(pane).getByRole("button", { name: "Recent files" }),
-    ).toHaveAttribute("aria-expanded", "true");
-
-    transcriptRevision = 2;
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
-          pageMessages: bootstrapMessages,
-          transcriptPage: {
-            sessionId: "s1",
-            revision: transcriptRevision,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            appendFromRevision: 1,
-            messages: bootstrapMessages,
-            hasOlder: true,
-            olderCursor: "older-s1",
-          },
-        }),
-      });
-    });
-
-    await waitFor(() => expect(resourceListRequests).toHaveLength(4));
-    expect(resourceListRequests.slice(-2)).toEqual([
-      {},
-      { cursor: "cursor:8", limit: 64 },
-    ]);
-    expect(
-      within(pane).getByRole("button", { name: "Recent files" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(
-      within(pane).queryByRole("button", { name: /Earlier files/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("retries one failed page without automatically draining the remaining cursor", async () => {
-    resourceListFailureCursor = "cursor:72";
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-    const list = within(pane).getByLabelText("Referenced files");
-    fireEvent.click(
-      await within(pane).findByRole("button", { name: "Earlier files (142)" }),
-    );
-    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
-    scrollResourceListToEnd(list);
-    const retry = await within(pane).findByRole("button", {
-      name: "Retry earlier files",
-    });
-    expect(list.querySelector(".res__virtual")).toHaveStyle({
-      height: "2304px",
-    });
-    expect(list.querySelectorAll(".res__row").length).toBeLessThan(72);
-
-    resourceListFailureCursor = null;
-    fireEvent.click(retry);
-    await waitFor(() =>
-      expect(
-        resourceListRequests.filter(({ cursor }) => cursor === "cursor:72"),
-      ).toHaveLength(2),
-    );
-    expect(
-      within(pane).queryByRole("button", { name: "Retry earlier files" }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(pane).getByText("More files load as you scroll"),
-    ).toBeInTheDocument();
-    expect(
-      resourceListRequests.some(({ cursor }) => cursor === "cursor:136"),
-    ).toBe(false);
-  });
-
-  it("offers retry when an older-file index fails with no references on the current page", async () => {
-    bootstrapMessages = [];
-    resourceListFails = true;
-    await store.init("token");
-    store.clearResourceSelection();
-    store.setResourcesOpen(true);
-    render(<App />);
-
-    const pane = await screen.findByRole("complementary", {
-      name: "Files and resources",
-    });
-    expect(
-      await within(pane).findByText("Earlier files unavailable"),
-    ).toBeInTheDocument();
-    expect(within(pane).queryByText("No files yet")).not.toBeInTheDocument();
-
-    resourceListFails = false;
-    fireEvent.click(within(pane).getByRole("button", { name: "Retry" }));
-    const list = await within(pane).findByLabelText("Referenced files");
-    await waitFor(() =>
-      expect(list.querySelectorAll(".res__row")).toHaveLength(8),
-    );
-  });
-
-  it("marks a missing reference from preflight before the row is selected", async () => {
+  it("marks missing recent references before selection", async () => {
     missingProbeReference = "demo.html";
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-
-    const missing = await screen.findByRole("button", {
-      name: /demo\.html.*missing/i,
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
     });
-    expect(missing).toHaveClass("res__row--unavailable");
+    await waitFor(() =>
+      expect(store.getState().resourceAvailability["demo.html"]).toMatchObject({
+        availability: "missing",
+      }),
+    );
+    const missing = within(pane).getByRole("button", {
+      name: /demo\.html.*unavailable/i,
+    });
+    expect(missing).toHaveClass("recent-file--unavailable");
     expect(missing).toHaveAttribute(
       "title",
       expect.stringContaining("not found"),
     );
-    expect(screen.queryByText("Preview failed")).not.toBeInTheDocument();
   });
 
-  it("opens conversation file references and isolates HTML without restoring session metadata", async () => {
+  it("opens transcript references and keeps HTML isolated", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-
-    expect(
-      await screen.findByRole("complementary", { name: "Files and resources" }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("heading", { name: "Previewed notes" }),
-    ).toBeInTheDocument();
-    const notesRow = screen.getByRole("button", {
-      name: /notes\.md.*unstaged modified/i,
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
     });
-    expect(notesRow).toBeInTheDocument();
-    expect(notesRow.querySelector(".res__row-name")).toHaveClass(
-      "git-deco--modified",
-    );
-    expect(within(notesRow).getByLabelText("unstaged modified")).toHaveClass(
-      "git-deco--modified",
-    );
-    expect(screen.queryByText("Session ID")).not.toBeInTheDocument();
+    expect(
+      await within(pane).findByRole("heading", { name: "Previewed notes" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Pi" })).toHaveAttribute(
       "target",
       "_blank",
     );
 
     fireEvent.click(screen.getByRole("link", { name: "page" }));
-    expect(
-      await screen.findByText("Open in sandboxed view"),
-    ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Open in sandboxed view" }),
+      await within(pane).findByRole("button", { name: "Sandbox" }),
     );
-    const frame = await screen.findByTitle("Sandboxed preview of demo.html");
+    const frame = await within(pane).findByTitle("Preview demo.html");
     expect(frame).toHaveAttribute("sandbox", "");
     expect(URL.createObjectURL).toHaveBeenCalled();
 
@@ -693,7 +635,7 @@ describe("Files pane", () => {
     );
     await waitFor(() =>
       expect(
-        screen.queryByRole("complementary", { name: "Files and resources" }),
+        screen.queryByRole("complementary", { name: "Context panel" }),
       ).not.toBeInTheDocument(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");

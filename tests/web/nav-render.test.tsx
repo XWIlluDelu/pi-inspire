@@ -596,20 +596,28 @@ describe("session navigation controls", () => {
         onSelectSession={() => undefined}
       />,
     );
+    const explorer = document.querySelector(".explorer") as HTMLElement;
     fireEvent.click(
-      document.querySelector(".explorer__header") as HTMLButtonElement,
+      explorer.querySelector(".explorer__header") as HTMLButtonElement,
     );
+    expect(
+      within(explorer).getByRole("button", { name: "alpha" }),
+    ).toHaveAttribute("title", "/work/alpha");
+    expect(
+      explorer.querySelector(".explorer__project"),
+    ).not.toBeInTheDocument();
+    expect(within(explorer).queryByRole("searchbox")).not.toBeInTheDocument();
     const rootFile = await screen.findByRole("button", { name: "changed.ts" });
     expect(
       within(rootFile).queryByLabelText(/unstaged/),
     ).not.toBeInTheDocument();
-    expect(rootFile.querySelector(".explorer__name")).not.toHaveClass(
+    expect(rootFile.querySelector(".workspace-tree__name")).not.toHaveClass(
       "git-deco--modified",
     );
     const dirtyDirectory = screen.getByRole("button", {
       name: /other.*contains modified files/i,
     });
-    expect(dirtyDirectory.querySelector(".explorer__name")).toHaveClass(
+    expect(dirtyDirectory.querySelector(".workspace-tree__name")).toHaveClass(
       "git-deco--modified",
     );
     expect(
@@ -629,7 +637,7 @@ describe("session navigation controls", () => {
     expect(within(nested).getByLabelText("unstaged modified")).toHaveClass(
       "git-deco--modified",
     );
-    expect(nested.querySelector(".explorer__name")).toHaveClass(
+    expect(nested.querySelector(".workspace-tree__name")).toHaveClass(
       "git-deco--modified",
     );
   });

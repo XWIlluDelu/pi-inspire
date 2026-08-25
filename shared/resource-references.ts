@@ -78,6 +78,28 @@ const DOMAIN_LIKE =
 const FILE_TAG = /<file\b[^>]*\bname\s*=\s*(["'])(.*?)\1/giu;
 const MARKDOWN_TARGET = /!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))/gu;
 const OSC8_TARGET = /\u001b\]8;[^;]*;([^\u0007\u001b]+)(?:\u0007|\u001b\\)/gu;
+const RESOURCE_LOCATION_FRAGMENT = /#L(\d+)(?:-L\d+)?$/i;
+const RESOURCE_LOCATION_SUFFIX = /:(\d+)(?::\d+)?$/;
+
+export function stripResourceLocation(reference: string): string {
+  return reference
+    .replace(RESOURCE_LOCATION_FRAGMENT, "")
+    .replace(/[?#].*$/u, "")
+    .replace(RESOURCE_LOCATION_SUFFIX, "");
+}
+
+/** First line named by the same suffix syntax stripped during resolution. */
+export function resourceReferenceLine(reference: string): number | null {
+  let value = reference.trim().replace(/^@/, "");
+  if (value.startsWith("<") && value.endsWith(">")) value = value.slice(1, -1);
+  const fragment = RESOURCE_LOCATION_FRAGMENT.exec(value);
+  const suffix = fragment
+    ? null
+    : RESOURCE_LOCATION_SUFFIX.exec(value.replace(/[?#].*$/u, ""));
+  const line = Number(fragment?.[1] ?? suffix?.[1]);
+  return Number.isSafeInteger(line) && line > 0 ? line : null;
+}
+
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/gu;
 const EXPLICIT_PATH =
   /(?:^|[\s([])((?:file:\/\/)?\/(?:[^\s`<>()[\]{}"']+\/)*[^\s`<>()[\]{}"']+|(?:\.\.?\/|~\/)[^\s`<>()[\]{}"']+)/gmu;
@@ -100,7 +122,6 @@ export interface SessionResourceReference {
 }
 
 export const RESOURCE_LIST_INITIAL_SIZE = 8;
-export const RESOURCE_LIST_PAGE_SIZE = 64;
 export const MAX_RESOURCE_LIST_PAGE_SIZE = 100;
 export const MAX_RESOURCE_PROBE_REFERENCES = 16;
 
@@ -128,7 +149,9 @@ export function isLocalResourceReference(value: string): boolean {
   if (
     !reference ||
     EXTERNAL_SCHEME.test(reference) ||
-    DOMAIN_LIKE.test(reference)
+    DOMAIN_LIKE.test(reference) ||
+    /[\\/]$/u.test(reference) ||
+    reference.includes("*")
   )
     return false;
   if (

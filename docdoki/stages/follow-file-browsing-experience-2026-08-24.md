@@ -4,9 +4,14 @@ scope:
   - docdoki/specs/workbench.md
   - src/components/Nav.tsx
   - src/components/ResourcesPane.tsx
+  - src/components/WorkspaceBrowser.tsx
+  - src/controllers/workspace-controller.ts
+  - src/controllers/resource-controller.ts
+  - src/controllers/git-controller.ts
   - src/styles.css
   - tests/web/nav-render.test.tsx
   - tests/web/resources-pane.test.tsx
+  - tests/web/workspace-controller.test.ts
   - tests/browser/workbench.spec.ts
 ---
 
@@ -18,31 +23,25 @@ Make workspace discovery and contextual file inspection feel like one coherent f
 
 ## Status
 
-Deferred after an assessment of the current `v0.2.0` interface on 2026-08-24. No interaction or visual design is selected yet.
+The selected functional subset is implemented and verified. Its visual redesign remains explicitly deferred.
 
-## Current strengths
+## Selected functional scope
 
-- The Host exposes a session-bound, bounded, lazy directory index rather than granting arbitrary browser filesystem access.
-- The workspace tree can open any indexed project file in the existing preview surface and shares Git decorations with Changes.
-- The contextual pane already handles conversation-referenced files, bounded historical paging, safe text/Markdown/HTML/media previews, errors, refresh, and independently resizable list and preview regions.
-- Desktop panes resize and narrow layouts become off-canvas drawers, so the underlying workbench structure does not need replacement.
+- One cwd-scoped `WorkspaceController` owns lazy levels, expansion, search, refresh, selection reveal, request cancellation, and transport/session acceptance. The compact navigation tree and right Files browser consume that same projection.
+- The compact lower-left surface keeps only the project basename, disclosure, and tree. Workspace search belongs to the right Files Browse page, which also presents at most five deduplicated recent conversation files.
+- Selecting any workspace, search, recent, transcript, or Git file opens one full-pane Preview with the resolved relative path and an explicit Back transition. Text/code previews add highlighting, line numbers, manual and reference-suffix line jumps, Copy, and workspace-authorized `Add to prompt`.
+- Exact workspace paths join resource and Git identity. Changed resources can switch between File and Diff, while Changes retains its own index and semantics.
+- On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Returning to Browse preserves the shared tree/query state and the browser's scroll position.
+- Files refresh renews recent-reference standing, the workspace index, and the selected preview. Directory failures remain distinct from an empty level, and stale asynchronous results cannot repopulate another workspace or transport.
 
-## Observed friction
+## Deferred visual follow-up
 
-Real-browser inspection at 1440×1000 and 820×900 confirmed that the weakness is information architecture and navigation continuity rather than preview correctness:
+Treat the Files surfaces as one later, holistic visual-design task rather than continuing local color and placement experiments:
 
-- The collapsed lower-left entry is labelled only with the project basename. Beside the session group carrying the same name, it does not clearly announce a workspace file browser.
-- Expanding it assigns a fixed lower half of the navigation column to a narrow tree. There is no file search or quick jump, no adjustable split from Sessions, and expanded directories turn keyboard or pointer traversal into a long list.
-- The left tree owns all workspace files while the right `Files` mode owns only files referenced by the conversation. Selecting an arbitrary tree file opens its preview on the right, but that file does not join or select a row in the referenced-file index. The preview heading shows only the basename, with the full path relegated to a tooltip, so selection and location lose continuity once the tree is out of view.
-- At 820px, selecting a workspace file while the Sessions drawer is open leaves that drawer visible and opens the Files drawer at the same time. The two modal surfaces occupy nearly the entire viewport instead of producing one clear navigation transition.
-- Tree disclosure state is component-local and can be lost when responsive drawer composition remounts the navigation surface.
-
-## Questions to settle before implementation
-
-1. Which surface should own authoritative full-workspace navigation: the left navigation region, the contextual pane, or one shared projection presented in both places?
-2. Should conversation-referenced files remain a distinct contextual index, and if so how should its label and relationship to workspace browsing be made explicit?
-3. What is the smallest useful discovery model for large repositories: filter/search, recent paths, directory tree, or a combination?
-4. On narrow screens, what exact transition should occur from workspace selection to preview so only one drawer is active and returning preserves context?
+- Reconsider whether a sufficiently wide desktop Files pane should place workspace search in the top mode bar to recover vertical space. Keep the full-width search row on narrow panes and phones; the current full-width row remains authoritative until a complete responsive treatment is accepted.
+- Find a quiet way to distinguish the lower-left project-file header from the Sessions region without relying on an arbitrary tinted background. The attempted context-surface color was rejected and removed.
+- Keep the lower-left header limited to the project basename and collapse control. Do not restore a dedicated “open right pane” icon: selecting a file already opens its preview, and the workbench has its own global pane control.
+- Evaluate these choices together against real-browser wide, resized, dark-theme, and phone states before changing the current design.
 
 ## Constraints
 
@@ -53,7 +52,7 @@ Real-browser inspection at 1440×1000 and 820×900 confirmed that the weakness i
 
 ## Acceptance direction
 
-- The entry point communicates `Files` without relying on a duplicate project label.
+- The compact entry point identifies the current project without duplicating search or full-workbench controls.
 - A user can locate a known path in a large workspace without manually expanding and traversing every ancestor.
 - Selection has one visible path identity and coherent active state from discovery through preview.
 - Switching between workspace files, referenced files, and Changes is understandable without conflating their meanings.
