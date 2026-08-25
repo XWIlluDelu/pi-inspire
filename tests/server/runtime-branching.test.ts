@@ -1055,7 +1055,7 @@ describe("stock RPC branch bridge", () => {
         `${JSON.stringify(entry("external", "a2", "assistant", "terminal divergence", 60))}\n`,
       );
       await expect(runtime.branchTree(SESSION_ID)).rejects.toThrow(
-        /changed on disk/,
+        /could not verify ownership/,
       );
       expect((await runtime.snapshot()).runState).toBe("conflict");
     } finally {

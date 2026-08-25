@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -245,6 +252,25 @@ describe("installed Pi compatibility boundary", () => {
         sessionFile: resolve(sessionFile),
         userMessages: 3,
         assistantMessages: 3,
+      });
+
+      if (!all.leafId) throw new Error("Expected a live worker leaf");
+      const externalEntry = {
+        type: "custom",
+        id: "external-live-append",
+        parentId: all.leafId,
+        timestamp: "2026-08-01T00:00:07.000Z",
+        customType: "compat-external",
+        data: { source: "filesystem" },
+      };
+      await appendFile(sessionFile, `${JSON.stringify(externalEntry)}\n`);
+      const afterExternalAppend = await rpc.request<{
+        entries: unknown[];
+        leafId: string | null;
+      }>({ type: "get_entries", since: all.leafId });
+      expect(afterExternalAppend).toEqual({
+        entries: [],
+        leafId: all.leafId,
       });
     } finally {
       await rpc.stop();

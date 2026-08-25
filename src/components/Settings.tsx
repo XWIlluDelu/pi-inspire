@@ -122,7 +122,10 @@ const LAUNCH_OPTIONS: Array<{ value: LaunchPreference; label: string }> = [
 ];
 
 export type SettingsCategoryId =
-  "display" | "conversation" | "behavior" | "updates";
+  | "display"
+  | "conversation"
+  | "behavior"
+  | "updates";
 type CategoryId = SettingsCategoryId;
 
 const CATEGORIES: Array<{
