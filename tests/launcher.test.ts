@@ -237,6 +237,21 @@ describe("production launcher", () => {
     expect(unit).toContain("TimeoutStartSec=5min");
   });
 
+  it("stops the readiness wait when the service process exits", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-ready-"));
+    temporaryDirectories.push(directory);
+    const statePath = join(directory, "instance.json");
+    const port = await freePort();
+    const environment = {
+      ...launcherEnv(statePath, port, join(directory, "home")),
+      MAINPID: "999999999",
+    };
+
+    expect(() => runLauncher(["wait-ready"], environment)).toThrow(
+      /Host process exited before becoming ready/u,
+    );
+  });
+
   it("rejects an installed host unit without the readiness gate", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-old-"));
     temporaryDirectories.push(directory);
