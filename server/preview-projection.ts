@@ -8,8 +8,8 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
-import type { ActiveSessionSnapshot } from "./session-preview.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
+import type { ActiveSessionSnapshot } from "./session-preview.js";
 import {
   boundedTranscriptValue,
   type InitialMaterializationAttestation,
@@ -29,6 +29,7 @@ export class PreviewProjection
   readonly path: string;
   readonly revision = 1;
   readonly fingerprint = "preview";
+  readonly incarnation: string | null;
   readonly health = { status: "ok" as const };
   readonly leafId = null;
   readonly tailEntryId = null;
@@ -44,6 +45,7 @@ export class PreviewProjection
   ) {
     super();
     this.path = preview.sessionFile ?? "";
+    this.incarnation = preview.transcriptPage.incarnation ?? null;
   }
 
   get messages(): readonly unknown[] {
@@ -200,6 +202,7 @@ export class PreviewProjection
     start = 0,
     effectiveLeafId: string | null = null,
     viewId = "preview",
+    cwd = this.preview.cwd,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
       this.preview.transcriptPage.messages,
@@ -207,9 +210,11 @@ export class PreviewProjection
         sessionId: this.sessionId,
         revision: this.revision,
         viewId,
+        ...(this.incarnation ? { incarnation: this.incarnation } : {}),
         effectiveLeafId,
       },
       start,
+      cwd,
     );
   }
 

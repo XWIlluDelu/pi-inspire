@@ -1,10 +1,10 @@
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import {
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { store } from "../store";
@@ -196,10 +196,12 @@ export function ImagePreview({
         onClick={() => src && setOpen(true)}
         aria-label={
           src
-            ? "Preview attached image"
+            ? alt === "Attached image"
+              ? "Preview attached image"
+              : `Preview ${alt}`
             : error
-              ? "Attached image unavailable"
-              : "Attached image loading"
+              ? `${alt} unavailable`
+              : `${alt} loading`
         }
         title={error ?? (src ? "Open image preview" : "Loading image")}
       >
@@ -227,10 +229,12 @@ export function PersistedImage({
   sessionId,
   viewId,
   reference,
+  className = "image-preview--message",
 }: {
   sessionId: string;
   viewId: string;
   reference: string;
+  className?: string;
 }) {
   const [src, setSrc] = useState<string>();
   const [error, setError] = useState<string | null>(null);
@@ -264,7 +268,7 @@ export function PersistedImage({
   return (
     <ImagePreview
       src={src}
-      className="image-preview--message"
+      className={className}
       loading={!src && !error}
       error={error}
     />

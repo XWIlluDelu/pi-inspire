@@ -17,7 +17,7 @@ function createHarness(sessionId = "session-a") {
   let activeSessionId: string | null = sessionId;
   const prompt = vi.fn();
   const uploadAttachments = vi.fn();
-  const deleteAttachment = vi.fn();
+  const deleteAttachment = vi.fn().mockResolvedValue(undefined);
   let generation = 0;
   let api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
   const patch = vi.fn();
@@ -74,7 +74,10 @@ describe("ComposerController", () => {
     ]);
     pending.resolve();
 
-    await expect(sending).resolves.toBe(true);
+    await expect(sending).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
     expect(harness.prompt).toHaveBeenCalledWith({
       sessionId: "session-a",
       message: "inspect this",
@@ -105,6 +108,124 @@ describe("ComposerController", () => {
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
+      sending: false,
+    });
+  });
+
+  it("temporarily replaces and restores complete recalled prompt artifacts", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [{ id: "draft-file", fileName: "draft.txt", kind: "file" }],
+    });
+    await harness.controller.addFiles([
+      new File(["draft"], "draft.txt", { type: "text/plain" }),
+    ]);
+    harness.controller.addProjectFile("/workspace/draft.ts");
+    const scope = {
+      sessionId: "session-a",
+      viewId: "view-a",
+      incarnation: "projection-a",
+      effectiveLeafId: "leaf-a",
+    };
+    const entry = {
+      text: "recalled",
+      images: [
+        {
+          reference: "pi-embedded://4/1",
+          mimeType: "image/png",
+          size: 12,
+        },
+      ],
+      files: [
+        {
+          reference: "pi-file://4/0",
+          fileName: "report.pdf",
+          kind: "attachment" as const,
+        },
+        {
+          reference: "pi-file://4/1",
+          fileName: "source.ts",
+          kind: "project" as const,
+        },
+      ],
+    };
+
+    harness.controller.previewHistoryEntry(scope, entry);
+    expect(harness.slice()).toMatchObject({
+      attachments: [
+        {
+          kind: "image",
+          recalledArtifact: {
+            type: "image",
+            reference: "pi-embedded://4/1",
+            preview: true,
+          },
+        },
+        {
+          fileName: "report.pdf",
+          recalledArtifact: {
+            type: "file",
+            reference: "pi-file://4/0",
+            fileKind: "attachment",
+          },
+        },
+        {
+          fileName: "source.ts",
+          recalledArtifact: {
+            type: "file",
+            reference: "pi-file://4/1",
+            fileKind: "project",
+          },
+        },
+      ],
+      projectFiles: [],
+    });
+    harness.controller.cancelHistoryPreview("session-a");
+    expect(harness.slice()).toMatchObject({
+      attachments: [{ uploadedId: "draft-file", kind: "file" }],
+      projectFiles: ["/workspace/draft.ts"],
+    });
+
+    harness.controller.previewHistoryEntry(scope, entry);
+    harness.prompt.mockRejectedValue(new Error("network lost"));
+    await expect(harness.controller.send("recalled")).resolves.toBe(false);
+    expect(harness.prompt).toHaveBeenCalledWith({
+      sessionId: "session-a",
+      message: "recalled",
+      historyArtifacts: {
+        viewId: "view-a",
+        incarnation: "projection-a",
+        effectiveLeafId: "leaf-a",
+        imageReferences: ["pi-embedded://4/1"],
+        fileReferences: ["pi-file://4/0", "pi-file://4/1"],
+      },
+    });
+    expect(harness.deleteAttachment).toHaveBeenCalledWith("draft-file");
+    expect(harness.slice()).toMatchObject({
+      attachments: [
+        {
+          recalledArtifact: {
+            type: "image",
+            reference: "pi-embedded://4/1",
+            preview: false,
+          },
+        },
+        {
+          recalledArtifact: {
+            type: "file",
+            reference: "pi-file://4/0",
+            preview: false,
+          },
+        },
+        {
+          recalledArtifact: {
+            type: "file",
+            reference: "pi-file://4/1",
+            preview: false,
+          },
+        },
+      ],
+      projectFiles: [],
       sending: false,
     });
   });

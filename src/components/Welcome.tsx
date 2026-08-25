@@ -9,17 +9,17 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PROJECT_FILES,
-  THINKING_LEVELS,
-  modelIdentityKey,
   type ModelOption,
+  modelIdentityKey,
+  THINKING_LEVELS,
   type ThinkingLevel,
 } from "../../shared/contracts";
 import type { ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
-import type { PiCommand } from "../composer-completion";
-import type { PendingAttachment } from "../controllers/composer-controller";
 import { clipboardFiles } from "../clipboard-files";
+import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import type { PendingAttachment } from "../controllers/composer-controller";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
 import { store, useAppState } from "../store";
@@ -380,6 +380,7 @@ export function Welcome({
           }}
         />
         <AttachmentList
+          sessionId={null}
           items={attachments}
           disabled={starting}
           onRemove={removeAttachment}

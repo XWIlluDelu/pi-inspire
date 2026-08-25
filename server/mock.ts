@@ -8,6 +8,7 @@ import type {
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeResponse,
+  ComposerHistoryEntry,
   ComposerHistoryPage,
   GitDiffResponse,
   GitDiffSide,
@@ -746,16 +747,17 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     });
   }
 
-  async prompt(request: PromptRequest): Promise<void> {
+  async prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null> {
     const active = this.requireSession(request.sessionId);
     // Same prompt boundary as the real host: a bare /compact compacts.
     if (
       parseCompactCommand(request.message) &&
       !request.attachmentIds?.length &&
+      !request.historyArtifacts &&
       !request.projectFiles?.length
     ) {
       await this.compact(request.sessionId);
-      return;
+      return null;
     }
     const pending = this.pendingFor(request.sessionId);
     if (active.isStreaming || pending.paused) {
@@ -766,7 +768,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         request,
         request.behavior === "steer" ? "steer" : "followUp",
       );
-      return;
+      return null;
     }
     const sessionId = active.sessionId;
     const timestamp = Date.now();
@@ -839,6 +841,8 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       this.emitSession(sessionId, { type: "agent_settled" });
     }, this.streamIntervalMs);
     this.timers.set(sessionId, timer);
+    const text = request.message.trim();
+    return text ? { text, images: [], files: [] } : null;
   }
 
   async managePending(
@@ -1154,6 +1158,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
           : {}),
       },
       start,
+      active.cwd,
     );
   }
 

@@ -77,16 +77,46 @@ const newSchema = z
   })
   .strict();
 const sessionIdField = z.string().min(1).max(200);
-const promptSchema = z.object({
-  sessionId: sessionIdField,
-  message: z.string().max(500_000),
-  attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
-  projectFiles: z
-    .array(z.string().max(4_096))
-    .max(MAX_PROJECT_FILES)
-    .optional(),
-  behavior: z.enum(["steer", "followUp"]).optional(),
-});
+const promptSchema = z
+  .object({
+    sessionId: sessionIdField,
+    message: z.string().max(500_000),
+    attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
+    historyArtifacts: z
+      .object({
+        viewId: z.string().min(1).max(240),
+        incarnation: z.string().min(1).max(240).nullable(),
+        effectiveLeafId: z.string().min(1).max(240).nullable(),
+        imageReferences: z
+          .array(
+            z
+              .string()
+              .max(80)
+              .regex(/^pi-embedded:\/\/\d+\/\d+$/),
+          )
+          .max(MAX_ATTACHMENTS),
+        fileReferences: z
+          .array(
+            z
+              .string()
+              .max(80)
+              .regex(/^pi-file:\/\/\d+\/\d+$/),
+          )
+          .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
+      })
+      .strict()
+      .refine(
+        ({ imageReferences, fileReferences }) =>
+          imageReferences.length + fileReferences.length > 0,
+      )
+      .optional(),
+    projectFiles: z
+      .array(z.string().max(4_096))
+      .max(MAX_PROJECT_FILES)
+      .optional(),
+    behavior: z.enum(["steer", "followUp"]).optional(),
+  })
+  .strict();
 const abortSchema = z.object({ sessionId: sessionIdField });
 const pendingManagementSchema = z.discriminatedUnion("action", [
   z
@@ -799,8 +829,10 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.post("/api/prompt", async (request, response) => {
-    await deps.runtime.prompt(promptSchema.parse(request.body));
-    response.status(202).json({ accepted: true });
+    const historyEntry = await deps.runtime.prompt(
+      promptSchema.parse(request.body),
+    );
+    response.status(202).json({ accepted: true, historyEntry });
   });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
