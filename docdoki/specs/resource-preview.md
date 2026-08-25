@@ -1,5 +1,5 @@
 ---
-purpose: Pi conversation references resolve into an authenticated, session-bound resource list and a defensive right-pane preview rather than unrestricted browser filesystem access.
+purpose: Workspace-indexed files and Pi conversation references share an authenticated, session-bound file workbench and defensive preview rather than unrestricted browser filesystem access.
 covers:
   - shared/contracts.ts
   - shared/resource-references.ts
@@ -10,8 +10,11 @@ covers:
   - src/api.ts
   - src/resources.ts
   - src/resource-preview.ts
+  - src/file-registry.ts
   - src/controllers/resource-controller.ts
+  - src/controllers/workspace-controller.ts
   - src/components/ResourcesPane.tsx
+  - src/components/WorkspaceBrowser.tsx
   - src/components/RichText.tsx
   - src/components/Transcript.tsx
   - src/App.tsx
@@ -22,6 +25,8 @@ covers:
   - tests/server/runtime.test.ts
   - tests/web/resources.test.ts
   - tests/web/resources-pane.test.tsx
+  - tests/web/file-registry.test.ts
+  - tests/web/workspace-controller.test.ts
   - tests/web/rich-text.test.tsx
   - tests/web/store.test.ts
   - tests/browser/workbench.spec.ts
@@ -31,11 +36,11 @@ covers:
 
 ## Goal
 
-Make files and artifacts referenced during Pi work inspectable beside the conversation without turning the browser into an unrestricted filesystem client.
+Make indexed workspace files and artifacts referenced during Pi work discoverable and inspectable beside the conversation without turning the browser into an unrestricted filesystem client or editor.
 
 ## Checks
 
-- The right contextual region presents files and resources referenced by the selected session, and selecting a reference opens its preview in that region. The list is recent-first: it presents the eight most recent references, then `Earlier files (N)` enters continuous history by requesting one cursor-bound 64-row page. Further pages load one at a time only as the same bounded scroll region nears its end; one request may be in flight, a failed page leaves confirmed rows in place with one cursor-specific retry, and a `Recent files` collapse cancels the request. The browser virtualizes a large loaded prefix instead of mounting one row per historical reference, and never drains the complete cursor from one disclosure. The host derives an ordered reference index from the selected branch projection independently of transcript pagination, caches that index by `{session, branch view, projection revision}`, and shares it across list, probe, resolve, and revalidation. The browser merges the current page ahead of the index so live references appear immediately, and accepts every response or cursor only while session, branch view, transcript revision, and the captured browser API/transport generation still match. Authorization continues to use the complete index regardless of which rows the browser has loaded.
+- The right contextual Files workbench presents one shared browser with All, Workspace, Referenced, and Recent projections; selecting an indexed path or conversation reference opens the same preview. Workspace discovery is a lazy project-index tree plus bounded path search, while the conversation-reference projection is recent-first: it presents the eight most recent references, then `Earlier files (N)` enters continuous history by requesting one cursor-bound 64-row page. Further pages load one at a time only as the same bounded scroll region nears its end; one request may be in flight, a failed page leaves confirmed rows in place with one cursor-specific retry, and a `Recent files` collapse cancels the request. The browser virtualizes a large loaded prefix instead of mounting one row per historical reference, and never drains the complete cursor from one disclosure. The host derives an ordered reference index from the selected branch projection independently of transcript pagination, caches that index by `{session, branch view, projection revision}`, and shares it across list, probe, resolve, and revalidation. The browser merges the current page ahead of the index so live references appear immediately, and accepts every response or cursor only while session, branch view, transcript revision, and the captured browser API/transport generation still match. Authorization continues to use the complete index regardless of which rows the browser has loaded.
 - Resource discovery understands Pi’s structured tool path arguments, embedded image content, CLI `<file name="…">` references, explicit local Markdown links and images, `file://` links, and credible inline local path references without treating remote web URLs as local files.
 - Relative references resolve against the owning session’s project directory. A local file becomes previewable through exactly two authorities: an exact reference in the owning session’s authoritative message projection, or membership in the session workspace’s project index (the same index behind composer file search and the navigation explorer). Index authority ends at the workspace realpath boundary — an indexed symlink never opens an outside file — and ignored trees such as `node_modules` are reachable only through an explicit transcript reference.
 - A bare name is shorthand, not a location claim: when no file sits where it literally points, the host recovers it through the owning workspace's project index only if exactly one indexed file carries that name, and answers with the location it actually opened. Several matches are returned as candidates for the user to choose between; a reference carrying a directory part of its own is never recovered, and index recovery never borrows a citation's authority to leave the workspace.
@@ -46,11 +51,11 @@ Make files and artifacts referenced during Pi work inspectable beside the conver
 - Git diff is a unified preview, not a merge editor. A single 40px contextual gutter shows the old line on deletion, the new line on addition, and the current line on context; `+`/`−` text, hunk headers, and row treatment provide the other reading cues. Full old/new coordinates remain in each gutter cell’s accessible label and tooltip.
 - HTML stays outside the conversation DOM and previews in a sandboxed frame without scripts, same-origin privilege, forms, top-level navigation, or unrestricted subresource loading. The mock-host Chromium gate opens an actual cited local HTML fixture that declares a remote image, then rejects any external HTTP(S) request while the sandboxed frame parses it.
 - External HTTP, HTTPS, and mail links preserve ordinary safe-link behavior rather than passing through the privileged local-file resolver.
-- Resource selection, availability standing, and loaded-object URLs are cleared when the visible session, same-session branch-view generation, or browser transport/API identity changes, so previews cannot leak across branch or pairing ownership. Selection replacement, pane close, and either switch also abort the obsolete resolve or content request; a filesystem response closes its exact opened handle even when cancellation lands while that handle is opening.
+- Resource authority, availability standing, and loaded-object URLs are cleared when the visible session, same-session branch-view generation, or browser transport/API identity changes, so previews cannot leak across branch or pairing ownership. Selection replacement, pane close, and either switch abort the obsolete resolve or content request; a filesystem response closes its exact opened handle even when cancellation lands while that handle is opening. A resolved indexed file also records its canonical workspace-relative path: that lightweight selection survives pane close, drives one active identity in both trees, and is reset with the workspace owner rather than retaining preview bytes or authority.
 - Indexed workspace resolution does not fetch the conversation transcript. Transcript messages load lazily only for citation or embedded-content authority. Ordinary same-branch append keeps the opaque view stable; explicit navigation or worker/projection reset changes it and invalidates outstanding conversation-derived authority.
 
 ## Non-goals
 
-- The first preview surface is not a full file explorer or editor.
+- The file workbench is read-only; editing, mutation, and arbitrary host-filesystem project management are not supported.
 - Active HTML execution, arbitrary remote URL fetching, and unrestricted absolute-path browsing are not supported.
 - Every path-like word in prose does not have to become a resource; structured and explicit references take priority over speculative matching.

@@ -23,6 +23,7 @@ interface ResourceControllerState {
   selectedResourceReference: string | null;
   resourcePreview: ResourcePreview | null;
   resourceAvailability: Record<string, ResourceProbeResult>;
+  resourceWorkspacePaths: Record<string, string>;
 }
 
 /** Resource-owned state only. AppStore retains cross-domain transactions; a
@@ -35,6 +36,7 @@ interface ResourceControllerPatch {
   selectedResourceReference?: string | null;
   resourcePreview?: ResourcePreview | null;
   resourceAvailability?: Record<string, ResourceProbeResult>;
+  resourceWorkspacePaths?: Record<string, string>;
 }
 
 interface ResourceControllerHost {
@@ -46,6 +48,7 @@ interface ResourceControllerHost {
   transportGeneration(): number;
   handleAuthFailure(): void;
   prepareGitForResourceOpen(contextMode: "files" | "changes"): void;
+  revealWorkspacePath(workspacePath: string): void;
 }
 
 /**
@@ -75,9 +78,13 @@ export class ResourceController {
     this.resourceProbedReferences.clear();
     if (
       clearStanding &&
-      Object.keys(this.host.state().resourceAvailability).length > 0
+      (Object.keys(this.host.state().resourceAvailability).length > 0 ||
+        Object.keys(this.host.state().resourceWorkspacePaths).length > 0)
     ) {
-      this.host.patch({ resourceAvailability: {} });
+      this.host.patch({
+        resourceAvailability: {},
+        resourceWorkspacePaths: {},
+      });
     }
   }
 
@@ -104,11 +111,19 @@ export class ResourceController {
   }
 
   private recordAvailability(result: ResourceProbeResult): void {
-    const resourceAvailability = { ...this.host.state().resourceAvailability };
-    if (result.availability === "available")
+    const state = this.host.state();
+    const resourceAvailability = { ...state.resourceAvailability };
+    const resourceWorkspacePaths = { ...state.resourceWorkspacePaths };
+    if (result.availability === "available") {
       delete resourceAvailability[result.reference];
-    else resourceAvailability[result.reference] = result;
-    this.host.patch({ resourceAvailability });
+      if (result.workspacePath)
+        resourceWorkspacePaths[result.reference] = result.workspacePath;
+      else delete resourceWorkspacePaths[result.reference];
+    } else {
+      resourceAvailability[result.reference] = result;
+      delete resourceWorkspacePaths[result.reference];
+    }
+    this.host.patch({ resourceAvailability, resourceWorkspacePaths });
   }
 
   /** Load one bounded page from the reference projection for the currently
@@ -162,8 +177,14 @@ export class ResourceController {
     if (this.resourceProbeKey !== generationKey) {
       this.cancelProbes();
       this.resourceProbeKey = generationKey;
-      if (Object.keys(this.host.state().resourceAvailability).length > 0) {
-        this.host.patch({ resourceAvailability: {} });
+      if (
+        Object.keys(this.host.state().resourceAvailability).length > 0 ||
+        Object.keys(this.host.state().resourceWorkspacePaths).length > 0
+      ) {
+        this.host.patch({
+          resourceAvailability: {},
+          resourceWorkspacePaths: {},
+        });
       }
     }
     if (unique.length === 0) return;
@@ -211,8 +232,10 @@ export class ResourceController {
             return;
           const expected = new Set(batch);
           const received = new Set<string>();
-          const resourceAvailability = {
-            ...this.host.state().resourceAvailability,
+          const current = this.host.state();
+          const resourceAvailability = { ...current.resourceAvailability };
+          const resourceWorkspacePaths = {
+            ...current.resourceWorkspacePaths,
           };
           for (const result of response.results) {
             if (
@@ -221,9 +244,15 @@ export class ResourceController {
             )
               continue;
             received.add(result.reference);
-            if (result.availability === "available")
+            if (result.availability === "available") {
               delete resourceAvailability[result.reference];
-            else resourceAvailability[result.reference] = result;
+              if (result.workspacePath)
+                resourceWorkspacePaths[result.reference] = result.workspacePath;
+              else delete resourceWorkspacePaths[result.reference];
+            } else {
+              resourceAvailability[result.reference] = result;
+              delete resourceWorkspacePaths[result.reference];
+            }
           }
           for (const reference of batch) {
             if (received.has(reference)) {
@@ -231,25 +260,35 @@ export class ResourceController {
             } else {
               resourceAvailability[reference] =
                 unknownResourceAvailability(reference);
+              delete resourceWorkspacePaths[reference];
             }
           }
-          this.host.patch({ resourceAvailability });
+          this.host.patch({
+            resourceAvailability,
+            resourceWorkspacePaths,
+          });
         } catch (error) {
           if (stale()) return;
           if (error instanceof ApiError && error.status === 401) {
             this.host.handleAuthFailure();
             return;
           }
-          const resourceAvailability = {
-            ...this.host.state().resourceAvailability,
+          const current = this.host.state();
+          const resourceAvailability = { ...current.resourceAvailability };
+          const resourceWorkspacePaths = {
+            ...current.resourceWorkspacePaths,
           };
           for (const reference of batch) {
             resourceAvailability[reference] = unknownResourceAvailability(
               reference,
               error,
             );
+            delete resourceWorkspacePaths[reference];
           }
-          this.host.patch({ resourceAvailability });
+          this.host.patch({
+            resourceAvailability,
+            resourceWorkspacePaths,
+          });
         }
       }
     } finally {
@@ -375,7 +414,15 @@ export class ResourceController {
       // Resolution confirms or corrects preflight standing. A later transfer
       // failure leaves this availability intact.
       resolvedReference = true;
-      this.recordAvailability({ reference, availability: "available" });
+      this.recordAvailability({
+        reference,
+        availability: "available",
+        ...(descriptor.workspacePath
+          ? { workspacePath: descriptor.workspacePath }
+          : {}),
+      });
+      if (descriptor.workspacePath)
+        this.host.revealWorkspacePath(descriptor.workspacePath);
       if (descriptor.kind === "binary") {
         this.host.patch({
           resourcePreview: { status: "ready", reference, descriptor },

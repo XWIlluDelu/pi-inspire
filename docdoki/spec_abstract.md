@@ -5,7 +5,7 @@
 | Area | Spec | Design |
 |---|---|---|
 | Product shell | [[workbench]] | A three-region workbench keeps collapsible, curated project navigation at the left — globally pinned sessions, pinned folders, and a reversible Hidden group — conversation dominant in the center, and contextual work available on demand at the right. |
-| Resource preview | [[resource-preview]] | Transcript references and workspace-indexed files open in a session-bound, defensive preview surface rather than an unrestricted browser file client. |
+| File workbench | [[resource-preview]] | One shared workspace browser joins indexed files and conversation references by canonical relative path, then opens them through the session-bound defensive preview rather than an unrestricted browser file client. |
 | Visual language | [[visual-language]] | An original scientific-workbench character: reference grammar without reference identity, Amber/Jade palettes tuned independently per light/dark theme plus semantic annotation hues, one type voice per role. |
 | Design tokens & components | [[design-system]] | The concrete contract — palette roles per theme, type scale, spacing, radii, elevation, motion, and per-component anatomy — that `src/styles.css` implements. |
 | Conversation | [[conversation]] | Compact user bubbles alternate with assistant answers presented as an open document flow containing typed Pi text and activity blocks. |

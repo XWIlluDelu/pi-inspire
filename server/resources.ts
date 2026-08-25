@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, relative, resolve } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type ResourceDescriptor,
@@ -500,8 +507,19 @@ export class ResourceStore {
     return Promise.all(
       references.map(async (reference) => {
         try {
-          await this.resolveUsingIndex(context, reference, false, getIndex);
-          return { reference, availability: "available" as const };
+          const descriptor = await this.resolveUsingIndex(
+            context,
+            reference,
+            false,
+            getIndex,
+          );
+          return {
+            reference,
+            availability: "available" as const,
+            ...(descriptor.workspacePath
+              ? { workspacePath: descriptor.workspacePath }
+              : {}),
+          };
         } catch (error) {
           const result = classifiedProbeFailure(reference, error);
           if (result) return result;
@@ -660,6 +678,12 @@ export class ResourceStore {
         );
       }
       const mimeType = mimeTypeFor(path);
+      const workspacePath =
+        within && !escapesBase(within)
+          ? sep === "\\"
+            ? within.split(sep).join("/")
+            : within
+          : undefined;
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
@@ -667,6 +691,7 @@ export class ResourceStore {
         // A recovery answers with the location it actually opened, so the
         // preview never claims the bare shorthand was a real path.
         reference: recovered ?? reference,
+        ...(workspacePath ? { workspacePath } : {}),
         name: basename(path),
         mimeType,
         size: Number(details.size),

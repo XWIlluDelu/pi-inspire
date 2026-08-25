@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
+  ArrowLeft,
   ChevronDown,
   File,
   FileCode,
@@ -20,6 +21,11 @@ import type {
   ResourceProbeResult,
 } from "../../shared/contracts";
 import { RESOURCE_LIST_PAGE_SIZE } from "../../shared/resource-references";
+import {
+  buildFileRegistry,
+  selectedWorkspacePath,
+  type FileRegistryEntry,
+} from "../file-registry";
 import { formatBytes } from "../format";
 import { useModalFocus } from "../use-modal-focus";
 import {
@@ -43,9 +49,11 @@ import {
 } from "../resource-preview";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
 import { BranchTree } from "./BranchTree";
+import { ImagePreview } from "./ImagePreview";
 import { PaneResizeHandle } from "./PaneResizeHandle";
 import { CodeBlock, RichText } from "./RichText";
 import { ScrollRail } from "./ScrollRail";
+import { WorkspaceFileSearch, WorkspaceTree } from "./WorkspaceBrowser";
 
 const RESOURCE_ROW_ESTIMATE = 32;
 const RESOURCE_VIRTUALIZE_THRESHOLD = 50;
@@ -103,7 +111,9 @@ function languageFor(name: string, kind: ResourceKind): string {
 function ResourceListRow({ row }: { row: ResourceRow }) {
   const state = useAppState();
   const reference = row.reference ?? row.label;
-  const selected = state.selectedResourceReference === reference;
+  const workspacePath = state.resourceWorkspacePaths[reference];
+  const selected =
+    selectedWorkspacePath(state) === (workspacePath ?? reference);
   const availability = state.resourceAvailability[reference];
   const availabilitySource = availabilityLabel(availability);
   const unavailable =
@@ -111,7 +121,10 @@ function ResourceListRow({ row }: { row: ResourceRow }) {
     availability?.availability === "unavailable" ||
     availability?.availability === "invalid";
   const Icon = ICONS[resourceIcon(row)];
-  const change = gitChangeForWorkspacePath(state.gitStatus, reference);
+  const change = gitChangeForWorkspacePath(
+    state.gitStatus,
+    workspacePath ?? reference,
+  );
   // An unresolvable reference keeps the missing style; git state is moot for
   // a file that cannot be opened.
   const decoration = unavailable ? null : gitDecorationForChange(change);
@@ -214,7 +227,11 @@ function PreviewBody({
     case "image":
       return objectUrl ? (
         <div className="res__preview-fill res__preview-media">
-          <img src={objectUrl} alt={descriptor.name} />
+          <ImagePreview
+            src={objectUrl}
+            alt={descriptor.name}
+            className="res__preview-image"
+          />
         </div>
       ) : (
         <Unsupported descriptorName={descriptor.name} size={descriptor.size} />
@@ -280,6 +297,7 @@ function PreviewBody({
           <CodeBlock
             language={languageFor(descriptor.name, descriptor.kind)}
             code={text ?? ""}
+            lineNumbers
           />
         </div>
       );
@@ -315,10 +333,12 @@ function ResourceIndex({
   resources,
   children,
   onNearEnd,
+  label = "Referenced files",
 }: {
   resources: ResourceRow[];
   children: React.ReactNode;
   onNearEnd?: () => void;
+  label?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualize = resources.length >= RESOURCE_VIRTUALIZE_THRESHOLD;
@@ -336,7 +356,7 @@ function ResourceIndex({
     <div
       className="res__list"
       role="region"
-      aria-label="Referenced files"
+      aria-label={label}
       ref={scrollRef}
       onScroll={(event) => {
         if (
@@ -377,7 +397,266 @@ function ResourceIndex({
   );
 }
 
-function PreviewRegion() {
+type FileSource = "all" | "workspace" | "referenced" | "recent";
+
+const FILE_SOURCES: readonly { value: FileSource; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "workspace", label: "Workspace" },
+  { value: "referenced", label: "Referenced" },
+  { value: "recent", label: "Recent" },
+];
+
+function RegistryFileRow({ entry }: { entry: FileRegistryEntry }) {
+  const state = useAppState();
+  const selected =
+    selectedWorkspacePath(state) === (entry.workspacePath ?? entry.reference);
+  const availability = entry.resource
+    ? state.resourceAvailability[
+        entry.resource.reference ?? entry.resource.label
+      ]
+    : undefined;
+  const unavailable =
+    availability?.availability === "missing" ||
+    availability?.availability === "unavailable" ||
+    availability?.availability === "invalid";
+  const change = entry.workspacePath
+    ? gitChangeForWorkspacePath(state.gitStatus, entry.workspacePath)
+    : undefined;
+  const Icon = entry.resource ? ICONS[resourceIcon(entry.resource)] : FileText;
+  const source = entry.workspace
+    ? entry.referenced
+      ? "Workspace · Ref"
+      : "Workspace"
+    : entry.referenced
+      ? "Referenced"
+      : "File";
+  return (
+    <button
+      type="button"
+      className={`res__row ${selected ? "res__row--active" : ""} ${unavailable ? "res__row--unavailable" : ""}`}
+      aria-current={selected || undefined}
+      title={entry.workspacePath ?? entry.reference}
+      onClick={() => void store.openResource(entry.reference)}
+    >
+      <Icon size={13} aria-hidden />
+      <span
+        className={`res__row-name ${unavailable ? "" : gitDecorationForChange(change) ? `git-deco--${gitDecorationForChange(change)}` : ""}`}
+      >
+        {entry.name}
+      </span>
+      <GitMark change={change} />
+      <span className="res__row-source">
+        {availabilityLabel(availability) ?? source}
+      </span>
+    </button>
+  );
+}
+
+function FilesIndex({
+  resources,
+  recentResources,
+  source,
+  onSourceChange,
+  pagination,
+  onNearEnd,
+  referenceEmpty,
+}: {
+  resources: ResourceRow[];
+  recentResources: ResourceRow[];
+  source: FileSource;
+  onSourceChange: (source: FileSource) => void;
+  pagination: React.ReactNode;
+  onNearEnd?: () => void;
+  referenceEmpty: React.ReactNode;
+}) {
+  const state = useAppState();
+  const query = state.workspaceQuery.trim().toLowerCase();
+  const referencePool = source === "recent" ? recentResources : resources;
+  const matchingReferences = query
+    ? referencePool.filter((row) => {
+        const reference = row.reference ?? row.label;
+        return `${row.name}\n${reference}`.toLowerCase().includes(query);
+      })
+    : referencePool;
+  const registry = buildFileRegistry(
+    source === "referenced" || source === "recent"
+      ? []
+      : state.workspaceMatches,
+    source === "workspace" ? [] : matchingReferences,
+    state.resourceWorkspacePaths,
+    MAX_RESOURCE_ROWS,
+  ).filter((entry) => {
+    if (source === "workspace") return entry.workspace;
+    if (source === "referenced") return entry.referenced;
+    if (source === "recent") return entry.recent;
+    return true;
+  });
+  const conversationOnly = buildFileRegistry(
+    [],
+    resources,
+    state.resourceWorkspacePaths,
+    MAX_RESOURCE_ROWS,
+  ).filter((entry) => !entry.workspace);
+
+  let content: React.ReactNode;
+  if (query) {
+    content = (
+      <div
+        className="res__list files__registry"
+        role="region"
+        aria-label="File search results"
+      >
+        {registry.map((entry) => (
+          <RegistryFileRow key={entry.key} entry={entry} />
+        ))}
+        {state.workspaceSearchLoading ? (
+          <div className="res__more res__more--status" role="status">
+            <Loader2 size={12} className="spin" aria-hidden /> Searching
+          </div>
+        ) : registry.length === 0 ? (
+          <div className="empty-state">
+            <FileSearch size={24} strokeWidth={1.5} aria-hidden />
+            <span className="empty-state__title">No matching files</span>
+            {state.workspaceSearchError ? (
+              <span className="empty-state__hint">
+                {state.workspaceSearchError}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  } else if (source === "referenced") {
+    content = resources.length ? (
+      <ResourceIndex resources={resources} onNearEnd={onNearEnd}>
+        {pagination}
+      </ResourceIndex>
+    ) : (
+      referenceEmpty
+    );
+  } else if (source === "recent") {
+    content = recentResources.length ? (
+      <ResourceIndex resources={recentResources} label="Recent files">
+        {null}
+      </ResourceIndex>
+    ) : (
+      referenceEmpty
+    );
+  } else {
+    content = (
+      <div
+        className="files__navigator-scroll"
+        role="region"
+        aria-label={source === "all" ? "All files" : "Workspace files"}
+      >
+        <div className="files__section-label">Workspace</div>
+        <WorkspaceTree />
+        {source === "all" && conversationOnly.length > 0 ? (
+          <section
+            className="files__collection"
+            aria-label="Conversation-only files"
+          >
+            <div className="files__section-label">Conversation-only</div>
+            {conversationOnly.map((entry) => (
+              <RegistryFileRow key={entry.key} entry={entry} />
+            ))}
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="files__toolbar">
+        <WorkspaceFileSearch />
+        <div className="files__sources" role="group" aria-label="File source">
+          {FILE_SOURCES.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              aria-pressed={source === option.value}
+              onClick={() => onSourceChange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {content}
+    </>
+  );
+}
+
+type PreviewTab = "preview" | "source" | "info";
+
+function SourcePreview({
+  preview,
+}: {
+  preview: Extract<ResourcePreview, { status: "ready" }>;
+}) {
+  if (preview.text === undefined)
+    return (
+      <Unsupported
+        descriptorName={preview.descriptor.name}
+        size={preview.descriptor.size}
+        reason="This format has no text source view"
+      />
+    );
+  return (
+    <div className="res__preview-fill">
+      {preview.truncated ? (
+        <div className="res__preview-note">
+          Truncated — first {formatBytes(TEXT_PREVIEW_BYTES)} shown.
+        </div>
+      ) : null}
+      <CodeBlock
+        language={languageFor(preview.descriptor.name, preview.descriptor.kind)}
+        code={preview.text}
+        lineNumbers
+      />
+    </div>
+  );
+}
+
+function ResourceMetadata({
+  preview,
+}: {
+  preview: Extract<ResourcePreview, { status: "ready" }>;
+}) {
+  const { descriptor } = preview;
+  const fields = [
+    ["Path", descriptor.workspacePath ?? descriptor.reference],
+    ...(descriptor.workspacePath &&
+    descriptor.reference !== descriptor.workspacePath
+      ? [["Reference", descriptor.reference]]
+      : []),
+    ["Source", descriptor.workspacePath ? "Workspace" : "Conversation"],
+    ["Type", descriptor.mimeType],
+    ["Kind", descriptor.kind],
+    ["Size", formatBytes(descriptor.size)],
+  ];
+  return (
+    <div className="res__preview-fill res__metadata">
+      <dl>
+        {fields.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd title={value}>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function PreviewRegion({
+  tab,
+  onTabChange,
+}: {
+  tab: PreviewTab;
+  onTabChange: (tab: PreviewTab) => void;
+}) {
   const state = useAppState();
   const preview = state.resourcePreview;
   if (!preview) {
@@ -437,15 +716,58 @@ function PreviewRegion() {
       </div>
     );
   }
+  const sourceAvailable = preview.text !== undefined;
+  const activeTab = tab === "source" && !sourceAvailable ? "preview" : tab;
+  const displayPath =
+    preview.descriptor.workspacePath ?? preview.descriptor.reference;
   return (
     <div className="res__preview" aria-live="polite">
-      <div className="res__preview-title" title={preview.descriptor.reference}>
-        {preview.descriptor.name}
-        <span className="res__preview-size">
-          {formatBytes(preview.descriptor.size)}
-        </span>
+      <div className="res__preview-heading">
+        <div className="res__preview-title" title={displayPath}>
+          <span className="res__preview-path">{displayPath}</span>
+          <span className="res__preview-size">
+            {formatBytes(preview.descriptor.size)}
+          </span>
+        </div>
+        <div
+          className="res__preview-tabs"
+          role="tablist"
+          aria-label="File view"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "preview"}
+            onClick={() => onTabChange("preview")}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "source"}
+            disabled={!sourceAvailable}
+            onClick={() => onTabChange("source")}
+          >
+            Source
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "info"}
+            onClick={() => onTabChange("info")}
+          >
+            Info
+          </button>
+        </div>
       </div>
-      <PreviewBody preview={preview} />
+      {activeTab === "source" ? (
+        <SourcePreview preview={preview} />
+      ) : activeTab === "info" ? (
+        <ResourceMetadata preview={preview} />
+      ) : (
+        <PreviewBody key={preview.descriptor.id} preview={preview} />
+      )}
     </div>
   );
 }
@@ -819,7 +1141,25 @@ function DiffRegion() {
   );
 }
 
-function DetailRegion() {
+function DetailBackButton() {
+  return (
+    <button
+      type="button"
+      className="res__detail-back"
+      onClick={() => store.clearContextDetail()}
+    >
+      <ArrowLeft size={14} aria-hidden /> Back to list
+    </button>
+  );
+}
+
+function DetailRegion({
+  previewTab,
+  onPreviewTabChange,
+}: {
+  previewTab: PreviewTab;
+  onPreviewTabChange: (tab: PreviewTab) => void;
+}) {
   const state = useAppState();
   const change = useSelectedChange();
   if (state.contextMode === "changes" && change) {
@@ -831,7 +1171,8 @@ function DetailRegion() {
           ? "The working-tree file is deleted."
           : null;
     return (
-      <div className="changes__detail">
+      <div className="changes__detail res__detail">
+        <DetailBackButton />
         <div className="res__preview-title" title={change.path.display}>
           {change.path.display}
         </div>
@@ -850,12 +1191,17 @@ function DetailRegion() {
             <p className="res__state-hint">{unavailableReason}</p>
           </div>
         ) : (
-          <PreviewRegion />
+          <PreviewRegion tab={previewTab} onTabChange={onPreviewTabChange} />
         )}
       </div>
     );
   }
-  return <PreviewRegion />;
+  return (
+    <div className="res__detail">
+      <DetailBackButton />
+      <PreviewRegion tab={previewTab} onTabChange={onPreviewTabChange} />
+    </div>
+  );
 }
 
 export function ResourcesPane({
@@ -896,6 +1242,13 @@ export function ResourcesPane({
   const [failedViewKey, setFailedViewKey] = useState<string | null>(null);
   const [listRetry, setListRetry] = useState(0);
   const [expandedViewKey, setExpandedViewKey] = useState<string | null>(null);
+  const [fileSource, setFileSource] = useState<FileSource>("all");
+  const [previewTab, setPreviewTab] = useState<PreviewTab>("preview");
+  const previewDescriptorId =
+    state.resourcePreview?.status === "ready"
+      ? state.resourcePreview.descriptor.id
+      : null;
+  useEffect(() => setPreviewTab("preview"), [previewDescriptorId]);
   const [pageLoading, setPageLoading] = useState(false);
   const [nextPageCursor, setNextPageCursor] = useState<string | null>(null);
   const [failedPageCursor, setFailedPageCursor] = useState<string | null>(null);
@@ -903,6 +1256,8 @@ export function ResourcesPane({
   const expandedViewKeyRef = useRef<string | null>(null);
   const disclosureKey = `${state.sessionId ?? ""}:${state.transcriptViewId ?? ""}`;
   const viewKey = `${disclosureKey}:${state.transcriptRevision}`;
+
+  useEffect(() => setFileSource("all"), [state.sessionId]);
 
   // Expansion belongs to the selected branch view, not to one transcript
   // revision. Live transcript settlement refreshes the revision-bound rows
@@ -1060,6 +1415,7 @@ export function ResourcesPane({
     store.cancelResourceProbes(true);
     setFailedViewKey(null);
     setListRetry((value) => value + 1);
+    void store.refreshWorkspaceBrowser();
   };
   useEffect(() => {
     void store.probeResources(resourceReferences);
@@ -1080,6 +1436,92 @@ export function ResourcesPane({
     event.preventDefault();
     void store.openResource(reference);
   };
+  const referenceEmpty =
+    failedViewKey === viewKey ? (
+      <div className="empty-state" role="alert">
+        <AlertTriangle size={24} strokeWidth={1.5} aria-hidden />
+        <span className="empty-state__title">Earlier files unavailable</span>
+        <button type="button" className="button" onClick={retryInitialList}>
+          <RefreshCw size={12} aria-hidden /> Retry
+        </button>
+      </div>
+    ) : !initialResponse && state.hasOlderMessages ? (
+      <div className="empty-state" role="status">
+        <Loader2 size={22} className="spin" strokeWidth={1.5} aria-hidden />
+        <span className="empty-state__title">Loading earlier files</span>
+      </div>
+    ) : (
+      <div className="empty-state">
+        <FileSearch size={26} strokeWidth={1.5} aria-hidden />
+        <span className="empty-state__title">No referenced files</span>
+        <span className="empty-state__hint">
+          Files used or mentioned in the conversation appear here
+        </span>
+      </div>
+    );
+  const pagination = (
+    <>
+      {expanded ? (
+        <button
+          type="button"
+          className="res__more"
+          aria-expanded="true"
+          onClick={collapseEarlierFiles}
+        >
+          <ChevronDown
+            size={12}
+            className="chev-flip chev-flip--open"
+            aria-hidden
+          />
+          Recent files
+        </button>
+      ) : null}
+      {pageLoading ? (
+        <div className="res__more res__more--status" role="status">
+          <Loader2 size={12} className="spin" aria-hidden />
+          Loading earlier files
+        </div>
+      ) : failedPageCursor ? (
+        <button
+          type="button"
+          className="res__more"
+          aria-expanded="true"
+          onClick={() => loadEarlierPage(failedPageCursor)}
+        >
+          <RefreshCw size={12} aria-hidden />
+          Retry earlier files
+        </button>
+      ) : !expanded && pageCursor ? (
+        <button
+          type="button"
+          className="res__more"
+          aria-expanded="false"
+          onClick={() => {
+            expandedViewKeyRef.current = disclosureKey;
+            setExpandedViewKey(disclosureKey);
+            loadEarlierPage(pageCursor);
+          }}
+        >
+          <ChevronDown size={12} aria-hidden />
+          {`Earlier files${remainingResources === null ? "" : ` (${remainingResources})`}`}
+        </button>
+      ) : expanded && pageCursor ? (
+        <div className="res__more res__more--status">
+          More files load as you scroll
+        </div>
+      ) : failedViewKey === viewKey ? (
+        <button type="button" className="res__more" onClick={retryInitialList}>
+          <RefreshCw size={12} aria-hidden />
+          Retry earlier files
+        </button>
+      ) : !initialResponse && state.hasOlderMessages ? (
+        <div className="res__more res__more--status" role="status">
+          <Loader2 size={12} className="spin" aria-hidden />
+          Earlier files
+        </div>
+      ) : null}
+    </>
+  );
   const contents = (
     <>
       <div className="ctx__header">
@@ -1142,9 +1584,13 @@ export function ResourcesPane({
               <RefreshCw
                 size={14}
                 className={
-                  state.gitStatusLoading || state.gitStatusRefreshing
-                    ? "spin"
-                    : ""
+                  state.contextMode === "files"
+                    ? state.workspaceLoadingDirs.length > 0
+                      ? "spin"
+                      : ""
+                    : state.gitStatusLoading || state.gitStatusRefreshing
+                      ? "spin"
+                      : ""
                 }
                 aria-hidden
               />
@@ -1189,6 +1635,13 @@ export function ResourcesPane({
       ) : null}
       <div
         className={`res__body ${state.contextMode === "changes" ? "res__body--changes" : ""}`}
+        data-detail-open={
+          state.contextMode === "files"
+            ? Boolean(state.selectedResourceReference)
+            : state.contextMode === "changes"
+              ? Boolean(state.selectedGitPathId)
+              : false
+        }
         ref={bodyRef}
       >
         {state.contextMode === "branches" ? (
@@ -1197,126 +1650,19 @@ export function ResourcesPane({
           <>
             <div className="res__index" ref={indexRef}>
               {state.contextMode === "files" ? (
-                resources.length === 0 ? (
-                  state.resourcePreview ? null : failedViewKey === viewKey ? (
-                    <div className="empty-state" role="alert">
-                      <AlertTriangle size={24} strokeWidth={1.5} aria-hidden />
-                      <span className="empty-state__title">
-                        Earlier files unavailable
-                      </span>
-                      <button
-                        type="button"
-                        className="button"
-                        onClick={retryInitialList}
-                      >
-                        <RefreshCw size={12} aria-hidden />
-                        Retry
-                      </button>
-                    </div>
-                  ) : !initialResponse && state.hasOlderMessages ? (
-                    <div className="empty-state" role="status">
-                      <Loader2
-                        size={22}
-                        className="spin"
-                        strokeWidth={1.5}
-                        aria-hidden
-                      />
-                      <span className="empty-state__title">
-                        Loading earlier files
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="empty-state">
-                      <FileSearch size={26} strokeWidth={1.5} aria-hidden />
-                      <span className="empty-state__title">No files yet</span>
-                      <span className="empty-state__hint">
-                        Files Pi reads, writes, or you mention appear here
-                      </span>
-                    </div>
-                  )
-                ) : (
-                  <ResourceIndex
-                    resources={resources}
-                    onNearEnd={
-                      expanded &&
-                      pageCursor &&
-                      !failedPageCursor &&
-                      !pageLoading
-                        ? () => loadEarlierPage(pageCursor)
-                        : undefined
-                    }
-                  >
-                    {expanded ? (
-                      <button
-                        type="button"
-                        className="res__more"
-                        aria-expanded="true"
-                        onClick={collapseEarlierFiles}
-                      >
-                        <ChevronDown
-                          size={12}
-                          className="chev-flip chev-flip--open"
-                          aria-hidden
-                        />
-                        Recent files
-                      </button>
-                    ) : null}
-                    {pageLoading ? (
-                      <div
-                        className="res__more res__more--status"
-                        role="status"
-                      >
-                        <Loader2 size={12} className="spin" aria-hidden />
-                        Loading earlier files
-                      </div>
-                    ) : failedPageCursor ? (
-                      <button
-                        type="button"
-                        className="res__more"
-                        aria-expanded="true"
-                        onClick={() => loadEarlierPage(failedPageCursor)}
-                      >
-                        <RefreshCw size={12} aria-hidden />
-                        Retry earlier files
-                      </button>
-                    ) : !expanded && pageCursor ? (
-                      <button
-                        type="button"
-                        className="res__more"
-                        aria-expanded="false"
-                        onClick={() => {
-                          expandedViewKeyRef.current = disclosureKey;
-                          setExpandedViewKey(disclosureKey);
-                          loadEarlierPage(pageCursor);
-                        }}
-                      >
-                        <ChevronDown size={12} aria-hidden />
-                        {`Earlier files${remainingResources === null ? "" : ` (${remainingResources})`}`}
-                      </button>
-                    ) : expanded && pageCursor ? (
-                      <div className="res__more res__more--status">
-                        More files load as you scroll
-                      </div>
-                    ) : failedViewKey === viewKey ? (
-                      <button
-                        type="button"
-                        className="res__more"
-                        onClick={retryInitialList}
-                      >
-                        <RefreshCw size={12} aria-hidden />
-                        Retry earlier files
-                      </button>
-                    ) : !initialResponse && state.hasOlderMessages ? (
-                      <div
-                        className="res__more res__more--status"
-                        role="status"
-                      >
-                        <Loader2 size={12} className="spin" aria-hidden />
-                        Earlier files
-                      </div>
-                    ) : null}
-                  </ResourceIndex>
-                )
+                <FilesIndex
+                  resources={resources}
+                  recentResources={allResources.slice(0, MAX_RESOURCE_ROWS)}
+                  source={fileSource}
+                  onSourceChange={setFileSource}
+                  pagination={pagination}
+                  referenceEmpty={referenceEmpty}
+                  onNearEnd={
+                    expanded && pageCursor && !failedPageCursor && !pageLoading
+                      ? () => loadEarlierPage(pageCursor)
+                      : undefined
+                  }
+                />
               ) : (
                 <ChangesIndex />
               )}
@@ -1332,7 +1678,10 @@ export function ResourcesPane({
               label="Resize file list and preview"
               variant="resources"
             />
-            <DetailRegion />
+            <DetailRegion
+              previewTab={previewTab}
+              onPreviewTabChange={setPreviewTab}
+            />
           </>
         )}
       </div>
