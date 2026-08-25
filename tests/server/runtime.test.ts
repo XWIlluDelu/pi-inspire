@@ -11,11 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AttachmentStore } from "../../server/attachments.js";
 import {
-  MAX_EXTENSION_KEY_CHARS,
-  MAX_EXTENSION_STATUS_CHARS,
-} from "../../shared/contracts.js";
+  AttachmentStore,
+  addAttachmentContext,
+} from "../../server/attachments.js";
 import {
   type PiRpcOptions,
   PiRpcOutcomeUnknownError,
@@ -32,6 +31,10 @@ import type {
   SessionRecord,
 } from "../../server/session-catalog.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
+import {
+  MAX_EXTENSION_KEY_CHARS,
+  MAX_EXTENSION_STATUS_CHARS,
+} from "../../shared/contracts.js";
 
 class FakeRpc extends EventEmitter {
   readonly commands: Array<Record<string, unknown>> = [];
@@ -756,6 +759,107 @@ describe("RuntimeController concurrent sessions", () => {
     expect(
       worker.commands.filter((command) => command.type === "get_messages"),
     ).toHaveLength(0);
+    await runtime.close();
+  });
+
+  it("resends all recalled prompt artifacts from the current branch view", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-history-artifacts-"));
+    workspaceDirectories.push(root);
+    const workspace = join(root, "project");
+    const projectFile = join(workspace, "source.ts");
+    const attachmentFile = join(root, "report.pdf");
+    await mkdir(workspace);
+    await writeFile(projectFile, "project");
+    await writeFile(attachmentFile, "attachment");
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const data = Buffer.from("historical pixels").toString("base64");
+    const historicalText = addAttachmentContext(
+      "original",
+      [{ kind: "file", path: attachmentFile }],
+      [projectFile],
+    );
+    const runtime = new RuntimeController(
+      catalog([record("a", workspace)]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      async (session) => {
+        const value = await preview(session);
+        return {
+          ...value,
+          transcriptPage: {
+            ...value.transcriptPage,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: historicalText },
+                  { type: "image", data, mimeType: "image/png" },
+                ],
+                timestamp: 1,
+              },
+            ],
+          },
+        };
+      },
+    );
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    const history = await runtime.composerHistory("a", 0);
+    const entry = history.entries[0]!;
+    expect(entry.images[0]?.reference).toBe("pi-embedded://0/1");
+    expect(entry.files).toEqual([
+      {
+        reference: "pi-file://0/0",
+        fileName: "source.ts",
+        kind: "project",
+      },
+      {
+        reference: "pi-file://0/1",
+        fileName: "report.pdf",
+        kind: "attachment",
+      },
+    ]);
+
+    await expect(
+      runtime.prompt({
+        sessionId: "a",
+        message: "forged",
+        historyArtifacts: {
+          viewId: "another-view",
+          incarnation: history.incarnation ?? null,
+          effectiveLeafId: history.effectiveLeafId ?? null,
+          imageReferences: entry.images.map((image) => image.reference),
+          fileReferences: entry.files.map((file) => file.reference),
+        },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await runtime.prompt({
+      sessionId: "a",
+      message: "again",
+      historyArtifacts: {
+        viewId: history.viewId,
+        incarnation: history.incarnation ?? null,
+        effectiveLeafId: history.effectiveLeafId ?? null,
+        imageReferences: entry.images.map((image) => image.reference),
+        fileReferences: entry.files.map((file) => file.reference),
+      },
+    });
+    expect(
+      worker.commands.find((command) => command.type === "prompt"),
+    ).toMatchObject({
+      message: addAttachmentContext(
+        "again",
+        [{ kind: "file", path: attachmentFile }],
+        [projectFile],
+      ),
+      images: [{ type: "image", data, mimeType: "image/png" }],
+    });
     await runtime.close();
   });
 

@@ -1171,6 +1171,7 @@ a {
   display: flex;
   align-items: stretch;
   border-bottom: 1px solid var(--hairline);
+  background: var(--bg-inset);
 }
 
 .explorer__header {

@@ -1,5 +1,12 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { parseCompactCommand } from "../../shared/commands";
 import {
   isAbortableRunState,
@@ -8,11 +15,11 @@ import {
 } from "../../shared/contracts";
 import { clipboardFiles } from "../clipboard-files";
 import {
+  type ComposerHistoryScope,
   composerHistory,
   composerHistoryScopeKey,
   hydrateComposerHistory,
   rememberComposerHistory,
-  type ComposerHistoryScope,
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
@@ -72,13 +79,31 @@ export function Composer() {
             sessionId,
             viewId: state.transcriptViewId,
             incarnation: state.transcriptIncarnation,
+            effectiveLeafId: state.transcriptEffectiveLeafId,
           }
         : null,
-    [sessionId, state.transcriptIncarnation, state.transcriptViewId],
+    [
+      sessionId,
+      state.transcriptEffectiveLeafId,
+      state.transcriptIncarnation,
+      state.transcriptViewId,
+    ],
   );
   const historyKey = historyScope
     ? composerHistoryScopeKey(historyScope)
     : null;
+  // A branch view remains the same while its effective leaf advances through
+  // persisted run activity. Keep the textarea instance alive across that
+  // append-only movement so streaming cannot take focus or selection.
+  const inputKey = useMemo(
+    () =>
+      JSON.stringify([
+        sessionId,
+        state.transcriptViewId,
+        state.transcriptIncarnation,
+      ]),
+    [sessionId, state.transcriptIncarnation, state.transcriptViewId],
+  );
   const [historyState, setHistoryState] = useState(() => ({
     key: historyKey,
     entries: historyScope ? composerHistory(historyScope) : [],
@@ -127,6 +152,20 @@ export function Composer() {
     if (sessionId) setSessionDraft(sessionId, text);
   };
 
+  const previewHistory = useCallback(
+    (text: string, entry: (typeof history)[number] | null) => {
+      setDraft(text);
+      if (historyScope) store.previewComposerHistoryEntry(historyScope, entry);
+    },
+    [historyScope],
+  );
+  const commitHistoryPreview = useCallback(() => {
+    if (historyScope) store.commitComposerHistoryPreview(historyScope);
+  }, [historyScope]);
+  const cancelHistoryPreview = useCallback(() => {
+    if (sessionId) store.cancelComposerHistoryPreview(sessionId);
+  }, [sessionId]);
+
   useLayoutEffect(() => {
     setHistoryState({
       key: historyKey,
@@ -142,6 +181,7 @@ export function Composer() {
         historyScope.sessionId,
         historyScope.viewId,
         historyScope.incarnation,
+        historyScope.effectiveLeafId,
       ),
     ).then((entries) => {
       if (!cancelled) setHistoryState({ key: historyKey, entries });
@@ -150,6 +190,13 @@ export function Composer() {
       cancelled = true;
     };
   }, [historyKey, historyScope]);
+
+  useEffect(() => {
+    const owner = sessionId;
+    return () => {
+      if (owner) store.cancelComposerHistoryPreview(owner);
+    };
+  }, [historyKey, sessionId]);
 
   const previousSessionRef = useRef(sessionId);
   // Restore the target draft before paint so immediate typing after navigation
@@ -210,7 +257,10 @@ export function Composer() {
       state.projectFiles.length === 0
     );
     if (recordsHistory && historyScope) {
-      const entries = rememberComposerHistory(historyScope, message);
+      const entries = rememberComposerHistory(
+        historyScope,
+        sent.historyEntry ?? message,
+      );
       setHistoryState((current) =>
         current.key === historyKey ? { key: historyKey, entries } : current,
       );
@@ -281,6 +331,7 @@ export function Composer() {
         }}
       />
       <AttachmentList
+        sessionId={sessionId}
         items={state.attachments}
         disabled={state.sending || sessionOpening}
         onRemove={store.removeAttachment}
@@ -291,10 +342,12 @@ export function Composer() {
         onRemove={store.removeProjectFile}
       />
       <ComposerInput
-        key={`input-${historyKey ?? sessionId ?? "none"}`}
+        key={`input-${inputKey}`}
         value={draft}
         onChange={updateDraft}
-        onHistoryPreview={setDraft}
+        onHistoryPreview={previewHistory}
+        onHistoryCommit={commitHistoryPreview}
+        onHistoryCancel={cancelHistoryPreview}
         history={history}
         commands={state.commands}
         completionDisabled={state.sending || sessionOpening}

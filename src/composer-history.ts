@@ -1,16 +1,20 @@
-import { MAX_COMPOSER_HISTORY_ENTRIES } from "../shared/contracts";
+import {
+  type ComposerHistoryEntry,
+  MAX_COMPOSER_HISTORY_ENTRIES,
+} from "../shared/contracts";
 
 export interface ComposerHistoryScope {
   sessionId: string;
   viewId: string;
   incarnation: string | null;
+  effectiveLeafId: string | null;
 }
 
 interface HistoryPartition {
-  entries: string[];
-  pending: string[];
+  entries: ComposerHistoryEntry[];
+  pending: ComposerHistoryEntry[];
   hydrated: boolean;
-  loading: Promise<string[]> | null;
+  loading: Promise<ComposerHistoryEntry[]> | null;
   discarded: boolean;
 }
 
@@ -18,7 +22,56 @@ const partitions = new Map<string, HistoryPartition>();
 const MAX_CACHED_SCOPES = 12;
 
 export function composerHistoryScopeKey(scope: ComposerHistoryScope): string {
-  return JSON.stringify([scope.sessionId, scope.viewId, scope.incarnation]);
+  return JSON.stringify([
+    scope.sessionId,
+    scope.viewId,
+    scope.incarnation,
+    scope.effectiveLeafId,
+  ]);
+}
+
+function copyEntries(
+  entries: readonly ComposerHistoryEntry[],
+): ComposerHistoryEntry[] {
+  return entries.map((entry) => ({
+    text: entry.text,
+    images: entry.images.map((image) => ({ ...image })),
+    files: entry.files.map((file) => ({ ...file })),
+  }));
+}
+
+function samePrompt(
+  left: ComposerHistoryEntry | undefined,
+  right: ComposerHistoryEntry,
+): boolean {
+  return Boolean(
+    left &&
+      left.text === right.text &&
+      left.images.length === right.images.length &&
+      left.images.every(
+        (image, index) => image.reference === right.images[index]?.reference,
+      ) &&
+      left.files.length === right.files.length &&
+      left.files.every(
+        (file, index) => file.reference === right.files[index]?.reference,
+      ),
+  );
+}
+
+function normalizedEntry(
+  value: string | ComposerHistoryEntry,
+): ComposerHistoryEntry | null {
+  const entry =
+    typeof value === "string"
+      ? { text: value.trim(), images: [], files: [] }
+      : {
+          text: value.text.trim(),
+          images: value.images.map((image) => ({ ...image })),
+          files: value.files.map((file) => ({ ...file })),
+        };
+  return entry.text || entry.images.length > 0 || entry.files.length > 0
+    ? entry
+    : null;
 }
 
 function touch(key: string, partition: HistoryPartition): void {
@@ -49,18 +102,23 @@ function partitionFor(scope: ComposerHistoryScope): HistoryPartition {
   return created;
 }
 
-function prependHistory(entries: readonly string[], value: string): string[] {
-  const text = value.trim();
-  if (!text || entries[0] === text) return [...entries];
-  return [text, ...entries].slice(0, MAX_COMPOSER_HISTORY_ENTRIES);
+function prependHistory(
+  entries: readonly ComposerHistoryEntry[],
+  value: ComposerHistoryEntry,
+): ComposerHistoryEntry[] {
+  if (samePrompt(entries[0], value)) return copyEntries(entries);
+  return [value, ...copyEntries(entries)].slice(
+    0,
+    MAX_COMPOSER_HISTORY_ENTRIES,
+  );
 }
 
 function mergePendingHistory(
-  loaded: readonly string[],
-  pending: readonly string[],
-): string[] {
-  let local: string[] = [];
-  for (const text of pending) local = prependHistory(local, text);
+  loaded: readonly ComposerHistoryEntry[],
+  pending: readonly ComposerHistoryEntry[],
+): ComposerHistoryEntry[] {
+  let local: ComposerHistoryEntry[] = [];
+  for (const entry of pending) local = prependHistory(local, entry);
   // A Host page may already include an initial prefix of prompts accepted while
   // the request was in flight. Its newest edge then matches a suffix of the
   // browser's local sequence; retain only the still-newer local prefix.
@@ -68,44 +126,47 @@ function mergePendingHistory(
     const suffix = local.slice(index);
     if (
       suffix.length <= loaded.length &&
-      suffix.every((entry, offset) => loaded[offset] === entry)
+      suffix.every((entry, offset) => samePrompt(loaded[offset], entry))
     )
-      return [...local.slice(0, index), ...loaded].slice(
+      return copyEntries([...local.slice(0, index), ...loaded]).slice(
         0,
         MAX_COMPOSER_HISTORY_ENTRIES,
       );
   }
-  let entries = loaded.slice(0, MAX_COMPOSER_HISTORY_ENTRIES);
-  for (const text of pending) entries = prependHistory(entries, text);
+  let entries = copyEntries(loaded).slice(0, MAX_COMPOSER_HISTORY_ENTRIES);
+  for (const entry of pending) entries = prependHistory(entries, entry);
   return entries;
 }
 
-export function composerHistory(scope: ComposerHistoryScope): string[] {
-  return [...partitionFor(scope).entries];
+export function composerHistory(
+  scope: ComposerHistoryScope,
+): ComposerHistoryEntry[] {
+  return copyEntries(partitionFor(scope).entries);
 }
 
 export function rememberComposerHistory(
   scope: ComposerHistoryScope,
-  value: string,
-): string[] {
+  value: string | ComposerHistoryEntry,
+): ComposerHistoryEntry[] {
   const partition = partitionFor(scope);
-  const text = value.trim();
-  if (!text || partition.entries[0] === text) return [...partition.entries];
-  partition.entries = prependHistory(partition.entries, text);
-  if (!partition.hydrated) partition.pending.push(text);
-  return [...partition.entries];
+  const entry = normalizedEntry(value);
+  if (!entry || samePrompt(partition.entries[0], entry))
+    return copyEntries(partition.entries);
+  partition.entries = prependHistory(partition.entries, entry);
+  if (!partition.hydrated) partition.pending.push(entry);
+  return copyEntries(partition.entries);
 }
 
 export async function hydrateComposerHistory(
   scope: ComposerHistoryScope,
-  load: () => Promise<string[] | null>,
-): Promise<string[]> {
+  load: () => Promise<ComposerHistoryEntry[] | null>,
+): Promise<ComposerHistoryEntry[]> {
   const key = composerHistoryScopeKey(scope);
   const partition = partitionFor(scope);
-  if (partition.hydrated) return [...partition.entries];
+  if (partition.hydrated) return copyEntries(partition.entries);
   if (partition.loading) return partition.loading;
 
-  let loading!: Promise<string[]>;
+  let loading!: Promise<ComposerHistoryEntry[]>;
   loading = load()
     .then((loaded) => {
       if (partition.discarded) return [];
@@ -115,7 +176,7 @@ export async function hydrateComposerHistory(
         partition.hydrated = true;
       }
       touch(key, partition);
-      return [...partition.entries];
+      return copyEntries(partition.entries);
     })
     .finally(() => {
       if (partition.loading === loading) partition.loading = null;

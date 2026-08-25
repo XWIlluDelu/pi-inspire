@@ -1,13 +1,15 @@
 import { AlertTriangle, FileText, Loader2, X } from "lucide-react";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { formatBytes } from "../format";
-import { ImagePreview } from "./ImagePreview";
+import { ImagePreview, PersistedImage } from "./ImagePreview";
 
 export function AttachmentList({
+  sessionId,
   items,
   disabled = false,
   onRemove,
 }: {
+  sessionId: string | null;
   items: readonly PendingAttachment[];
   disabled?: boolean;
   onRemove: (localId: string) => void;
@@ -24,18 +26,31 @@ export function AttachmentList({
             title={image ? item.error : (item.error ?? item.fileName)}
           >
             {image ? (
-              <ImagePreview
-                src={item.previewUrl}
-                className="image-preview--attachment"
-                loading={item.status === "uploading"}
-                error={item.error ?? null}
-              />
+              item.recalledArtifact?.type === "image" && sessionId ? (
+                <PersistedImage
+                  sessionId={sessionId}
+                  viewId={item.recalledArtifact.viewId}
+                  reference={item.recalledArtifact.reference}
+                  className="image-preview--attachment"
+                />
+              ) : (
+                <ImagePreview
+                  src={item.previewUrl}
+                  className="image-preview--attachment"
+                  loading={item.status === "uploading"}
+                  error={item.error ?? null}
+                />
+              )
             ) : (
               <>
                 <FileText size={13} aria-hidden />
                 <span className="attachment__name">{item.fileName}</span>
                 <span className="attachment__meta">
-                  {item.mimeType} · {formatBytes(item.size)}
+                  {item.recalledArtifact?.type === "file"
+                    ? item.recalledArtifact.fileKind === "project"
+                      ? "project file"
+                      : "recalled file"
+                    : `${item.mimeType} · ${formatBytes(item.size)}`}
                 </span>
               </>
             )}

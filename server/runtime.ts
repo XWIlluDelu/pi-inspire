@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
@@ -17,24 +17,31 @@ import {
 import { parseCompactCommand } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
-  boundedExtensionStatus,
   type BranchForkRequest,
   type BranchForkResponse,
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeResponse,
+  boundedExtensionStatus,
+  type ComposerHistoryEntry,
   type ComposerHistoryPage,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
   type HiddenClearResponse,
   isBusyRunState,
+  MAX_ATTACHMENT_FILE_BYTES,
+  MAX_ATTACHMENT_UPLOAD_BYTES,
+  MAX_ATTACHMENTS,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
   MAX_PENDING_MESSAGES,
   MAX_PENDING_PREVIEW_CHARS,
+  MAX_PROJECT_FILES,
+  MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type NewSessionOptions,
   type PendingMessageSummary,
   type PendingQueues,
@@ -53,8 +60,10 @@ import {
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
 import {
+  type AttachmentContextFile,
   AttachmentStore,
   addAttachmentContext,
+  parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
@@ -90,6 +99,7 @@ import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
 
 export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
 
+import { escapesBase } from "./paths.js";
 import { samePersistedJson } from "./persisted-json.js";
 import type { ResourceContext } from "./resources.js";
 import {
@@ -203,7 +213,7 @@ export interface RuntimeLike {
     hiddenSessionIds: readonly string[],
     hiddenProjectCwds: readonly string[],
   ): Promise<HiddenClearResponse>;
-  prompt(request: PromptRequest): Promise<void>;
+  prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null>;
   abort(sessionId: string): Promise<void>;
   managePending(
     sessionId: string,
@@ -900,6 +910,287 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return (
       slot.navigationLease?.effectiveLeafId ?? slot.projection?.leafId ?? null
     );
+  }
+
+  private async resolveComposerHistoryArtifacts(
+    slot: RuntimeSlot,
+    request: PromptRequest,
+  ): Promise<{
+    images: Array<{ type: "image"; data: string; mimeType: string }>;
+    files: AttachmentContextFile[];
+    fileBytes: number;
+    projectFiles: string[];
+  }> {
+    const selection = request.historyArtifacts;
+    if (!selection)
+      return { images: [], files: [], fileBytes: 0, projectFiles: [] };
+    const projection = slot.projection;
+    const effectiveLeafId = this.effectiveLeaf(slot);
+    if (
+      !projection ||
+      selection.viewId !== slot.viewId ||
+      selection.incarnation !== projection.incarnation ||
+      selection.effectiveLeafId !== effectiveLeafId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Recalled attachments belong to an earlier conversation view",
+        ),
+        { status: 409 },
+      );
+    }
+    if (
+      new Set(selection.imageReferences).size !==
+        selection.imageReferences.length ||
+      new Set(selection.fileReferences).size !== selection.fileReferences.length
+    ) {
+      throw Object.assign(new Error("A recalled attachment was repeated"), {
+        status: 400,
+      });
+    }
+
+    const messages = projection.viewMessages(effectiveLeafId);
+    const byPersistedIndex = new Map<number, unknown>();
+    messages.forEach((message, messageIndex) => {
+      if (!message || typeof message !== "object") return;
+      const record = message as Record<string, unknown>;
+      const persistedIndex = Number.isSafeInteger(record.__inspireMessageIndex)
+        ? Number(record.__inspireMessageIndex)
+        : messageIndex;
+      if (byPersistedIndex.has(persistedIndex)) {
+        throw Object.assign(
+          new Error(
+            "The conversation contains ambiguous attachment references",
+          ),
+          { status: 409 },
+        );
+      }
+      byPersistedIndex.set(persistedIndex, message);
+    });
+
+    const userMessage = (messageIndex: number): Record<string, unknown> => {
+      const message = byPersistedIndex.get(messageIndex);
+      if (
+        !message ||
+        typeof message !== "object" ||
+        (message as Record<string, unknown>).role !== "user"
+      ) {
+        throw Object.assign(
+          new Error("A recalled attachment is no longer available"),
+          { status: 409 },
+        );
+      }
+      return message as Record<string, unknown>;
+    };
+
+    const images = selection.imageReferences.map((reference) => {
+      const match = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
+      const messageIndex = match ? Number(match[1]) : -1;
+      const partIndex = match ? Number(match[2]) : -1;
+      if (
+        !Number.isSafeInteger(messageIndex) ||
+        messageIndex < 0 ||
+        !Number.isSafeInteger(partIndex) ||
+        partIndex < 0
+      ) {
+        throw Object.assign(
+          new Error("A recalled image reference is invalid"),
+          {
+            status: 400,
+          },
+        );
+      }
+      const record = userMessage(messageIndex);
+      const part = Array.isArray(record.content)
+        ? record.content[partIndex]
+        : null;
+      if (
+        !part ||
+        typeof part !== "object" ||
+        (part as Record<string, unknown>).type !== "image"
+      ) {
+        throw Object.assign(
+          new Error("A recalled image is not a user attachment"),
+          { status: 400 },
+        );
+      }
+      const image = part as Record<string, unknown>;
+      const data = image.data;
+      const mimeType = image.mimeType;
+      if (
+        typeof data !== "string" ||
+        typeof mimeType !== "string" ||
+        !/^image\/(png|jpe?g|gif|webp)$/i.test(mimeType)
+      ) {
+        throw Object.assign(new Error("A recalled image is invalid"), {
+          status: 422,
+        });
+      }
+      if (
+        Buffer.byteLength(data) >
+        4 * Math.ceil(MAX_ATTACHMENT_FILE_BYTES / 3)
+      ) {
+        throw Object.assign(
+          new Error(
+            `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+          ),
+          { status: 413 },
+        );
+      }
+      const normalized = data.replace(/=+$/u, "");
+      const decoded = Buffer.from(data, "base64");
+      if (
+        decoded.length === 0 ||
+        decoded.toString("base64").replace(/=+$/u, "") !== normalized
+      ) {
+        throw Object.assign(new Error("A recalled image is invalid"), {
+          status: 422,
+        });
+      }
+      return { type: "image" as const, data, mimeType };
+    });
+
+    const paths = selection.fileReferences.map((reference) => {
+      const match = /^pi-file:\/\/(\d+)\/(\d+)$/.exec(reference);
+      const messageIndex = match ? Number(match[1]) : -1;
+      const referenceIndex = match ? Number(match[2]) : -1;
+      if (
+        !Number.isSafeInteger(messageIndex) ||
+        messageIndex < 0 ||
+        !Number.isSafeInteger(referenceIndex) ||
+        referenceIndex < 0
+      ) {
+        throw Object.assign(new Error("A recalled file reference is invalid"), {
+          status: 400,
+        });
+      }
+      const record = userMessage(messageIndex);
+      const content =
+        typeof record.content === "string"
+          ? record.content
+          : Array.isArray(record.content)
+            ? record.content
+                .flatMap((part) =>
+                  part &&
+                  typeof part === "object" &&
+                  (part as Record<string, unknown>).type === "text" &&
+                  typeof (part as Record<string, unknown>).text === "string"
+                    ? [(part as Record<string, unknown>).text as string]
+                    : [],
+                )
+                .join("")
+            : "";
+      const path = parseAttachmentContext(content).references[referenceIndex];
+      if (!path) {
+        throw Object.assign(
+          new Error("A recalled file is not a persisted prompt attachment"),
+          { status: 400 },
+        );
+      }
+      return path;
+    });
+
+    const workspaceRoot = await realpath(slot.cwd).catch(() => null);
+    if (!workspaceRoot && paths.length > 0) {
+      throw Object.assign(
+        new Error("The project is unavailable for recalled files"),
+        { status: 409 },
+      );
+    }
+    const files: AttachmentContextFile[] = [];
+    let fileBytes = 0;
+    const projectFiles: string[] = [];
+    for (const path of paths) {
+      const candidate = resolve(path);
+      const actual = await realpath(candidate).catch(() => null);
+      if (!actual || actual !== candidate) {
+        throw Object.assign(
+          new Error("A recalled file is no longer available"),
+          { status: 409 },
+        );
+      }
+      const details = await stat(actual).catch(() => null);
+      if (!details?.isFile()) {
+        throw Object.assign(
+          new Error("A recalled file is no longer available"),
+          { status: 409 },
+        );
+      }
+      const within = relative(workspaceRoot!, actual);
+      if (!escapesBase(within)) {
+        projectFiles.push(actual);
+      } else {
+        if (details.size > MAX_ATTACHMENT_FILE_BYTES) {
+          throw Object.assign(
+            new Error(
+              `Each attachment must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+            ),
+            { status: 413 },
+          );
+        }
+        files.push({ kind: "file", path: actual });
+        fileBytes += details.size;
+      }
+    }
+    return {
+      images,
+      files,
+      fileBytes,
+      projectFiles: await resolveProjectFiles(slot.cwd, projectFiles),
+    };
+  }
+
+  private assertPromptArtifactBudget(
+    attachmentCount: number,
+    rawAttachmentBytes: number,
+    images: readonly { data: string }[],
+  ): void {
+    if (attachmentCount > MAX_ATTACHMENTS) {
+      throw Object.assign(
+        new Error(`At most ${MAX_ATTACHMENTS} attachments per message`),
+        { status: 413 },
+      );
+    }
+    if (rawAttachmentBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
+      throw Object.assign(
+        new Error(
+          `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
+        ),
+        { status: 413 },
+      );
+    }
+    const imageBytes = images.map((image) =>
+      Buffer.byteLength(image.data, "base64"),
+    );
+    if (imageBytes.some((bytes) => bytes > MAX_ATTACHMENT_FILE_BYTES)) {
+      throw Object.assign(
+        new Error(
+          `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+        ),
+        { status: 413 },
+      );
+    }
+    const rawBytes = imageBytes.reduce((sum, bytes) => sum + bytes, 0);
+    if (rawBytes > MAX_PROMPT_IMAGE_BYTES) {
+      throw Object.assign(
+        new Error(
+          `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
+        ),
+        { status: 413 },
+      );
+    }
+    const encodedBytes = images.reduce(
+      (sum, image) => sum + Buffer.byteLength(image.data),
+      0,
+    );
+    if (encodedBytes > MAX_PROMPT_IMAGE_ENCODED_BYTES) {
+      throw Object.assign(
+        new Error(
+          `Encoded images exceed the ${MAX_PROMPT_IMAGE_ENCODED_BYTES}-byte prompt budget`,
+        ),
+        { status: 413 },
+      );
+    }
   }
 
   private renewView(slot: RuntimeSlot): void {
@@ -3533,11 +3824,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  async prompt(request: PromptRequest): Promise<void> {
+  async prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null> {
     return this.withMaintenanceOperation(() => this.promptInside(request));
   }
 
-  private async promptInside(request: PromptRequest): Promise<void> {
+  private async promptInside(
+    request: PromptRequest,
+  ): Promise<ComposerHistoryEntry | null> {
     const slot = this.requireSlot(request.sessionId);
     const entered = request.message.trim();
     if (slot.bridge) {
@@ -3570,7 +3863,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       throw error;
     }
-    await this.mutateSlot(slot, async () => {
+    return this.mutateSlot(slot, async () => {
       const message = request.message.trim();
       // A bare typed /compact runs the compaction control. With attachments or
       // file references present the text is not a command and flows through as
@@ -3579,27 +3872,87 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (
         compact &&
         !request.attachmentIds?.length &&
+        !request.historyArtifacts &&
         !request.projectFiles?.length
       ) {
         await this.compactSlot(slot, compact.instructions);
-        return;
+        return null;
       }
       let accepted = false;
+      let acceptedHistoryEntry: ComposerHistoryEntry | null = null;
       try {
         const resolved = resolvedPrompt;
-        const projectFiles = resolvedProjectFiles;
+        let history = await this.resolveComposerHistoryArtifacts(slot, request);
         const readySlot = await this.ensureFreshWriterInsideGate(slot);
         if (!readySlot.process || !readySlot.ready) {
           throw Object.assign(new Error("Pi runtime failed to start"), {
             status: 503,
           });
         }
+        if (request.historyArtifacts) {
+          const refreshed = await this.resolveComposerHistoryArtifacts(
+            slot,
+            request,
+          );
+          const changed =
+            refreshed.images.length !== history.images.length ||
+            refreshed.images.some(
+              (image, index) =>
+                image.mimeType !== history.images[index]?.mimeType ||
+                image.data !== history.images[index]?.data,
+            ) ||
+            refreshed.fileBytes !== history.fileBytes ||
+            refreshed.files.length !== history.files.length ||
+            refreshed.files.some(
+              (file, index) => file.path !== history.files[index]?.path,
+            ) ||
+            refreshed.projectFiles.length !== history.projectFiles.length ||
+            refreshed.projectFiles.some(
+              (path, index) => path !== history.projectFiles[index],
+            );
+          if (changed) {
+            throw Object.assign(
+              new Error("A recalled attachment changed before prompt delivery"),
+              { status: 409 },
+            );
+          }
+          history = refreshed;
+        }
+        const images = [...resolved.images, ...history.images];
+        const contextFiles = [...resolved.files, ...history.files];
+        const ordinaryFiles = contextFiles.filter(
+          (file): file is AttachmentContextFile & { kind: "file" } =>
+            file.kind === "file",
+        );
+        const ordinaryFileBytes =
+          resolved.files
+            .filter((file) => file.kind === "file")
+            .reduce((sum, file) => sum + file.size, 0) + history.fileBytes;
+        const projectFiles = [
+          ...new Set([...resolvedProjectFiles, ...history.projectFiles]),
+        ];
+        if (projectFiles.length > MAX_PROJECT_FILES) {
+          throw Object.assign(
+            new Error(`At most ${MAX_PROJECT_FILES} project files per message`),
+            { status: 413 },
+          );
+        }
+        this.assertPromptArtifactBudget(
+          resolved.files.length + history.files.length + history.images.length,
+          resolved.files.reduce((sum, file) => sum + file.size, 0) +
+            history.fileBytes +
+            history.images.reduce(
+              (sum, image) => sum + Buffer.byteLength(image.data, "base64"),
+              0,
+            ),
+          images,
+        );
         const fullMessage = addAttachmentContext(
           message,
-          resolved.files,
+          contextFiles,
           projectFiles,
         );
-        if (!fullMessage && resolved.images.length === 0)
+        if (!fullMessage && images.length === 0)
           throw new Error("Message or attachment is required");
         const previousRunState = slot.runState;
         // Pi acknowledges ordinary prompt acceptance before agent_start can
@@ -3610,7 +3963,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           await this.requestPersistence(readySlot, readySlot.process, {
             type: "prompt",
             message: fullMessage,
-            ...(resolved.images.length > 0 ? { images: resolved.images } : {}),
+            ...(images.length > 0 ? { images } : {}),
             ...(request.behavior
               ? { streamingBehavior: request.behavior }
               : {}),
@@ -3618,6 +3971,59 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           accepted = true;
           await this.reconcileSlot(slot, true);
           this.throwIfConflicted(slot);
+          const newest = slot.projection?.composerHistoryPage(
+            0,
+            this.effectiveLeaf(slot),
+            slot.viewId,
+            slot.cwd,
+          ).entries[0];
+          if (
+            newest &&
+            newest.text === message &&
+            newest.images.length === images.length &&
+            newest.files.length === ordinaryFiles.length + projectFiles.length
+          ) {
+            try {
+              const projected = await this.resolveComposerHistoryArtifacts(
+                slot,
+                {
+                  sessionId: slot.id,
+                  message,
+                  historyArtifacts: {
+                    viewId: slot.viewId,
+                    incarnation: slot.projection?.incarnation ?? null,
+                    effectiveLeafId: this.effectiveLeaf(slot),
+                    imageReferences: newest.images.map(
+                      (image) => image.reference,
+                    ),
+                    fileReferences: newest.files.map((file) => file.reference),
+                  },
+                },
+              );
+              if (
+                projected.images.length === images.length &&
+                projected.images.every(
+                  (image, index) =>
+                    image.mimeType === images[index]?.mimeType &&
+                    image.data === images[index]?.data,
+                ) &&
+                projected.fileBytes === ordinaryFileBytes &&
+                projected.projectFiles.length === projectFiles.length &&
+                projected.projectFiles.every(
+                  (path, index) => path === projectFiles[index],
+                ) &&
+                projected.files.length === ordinaryFiles.length &&
+                projected.files.every(
+                  (file, index) => file.path === ordinaryFiles[index]?.path,
+                )
+              ) {
+                acceptedHistoryEntry = newest;
+              }
+            } catch {
+              // Prompt acceptance is authoritative. A later hydration can
+              // recover history if its optional immediate projection changed.
+            }
+          }
         } catch (error) {
           if (slot.runState === "queued") slot.runState = previousRunState;
           throw error;
@@ -3653,6 +4059,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // paths are part of the conversation text).
       if (request.attachmentIds?.length)
         await this.attachments.releaseConsumed(request.attachmentIds);
+      return acceptedHistoryEntry;
     });
   }
 
@@ -5002,6 +5409,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         start,
         this.effectiveLeaf(slot),
         slot.viewId,
+        slot.cwd,
       );
     });
   }

@@ -4146,7 +4146,10 @@ describe("prompt delivery freeze", () => {
     expect(store.getState().attachments).toHaveLength(2);
 
     releasePrompt();
-    await expect(send).resolves.toBe(true);
+    await expect(send).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
     expect(store.getState().sending).toBe(false);
     expect(store.getState().attachments.map((item) => item.fileName)).toEqual([
       "file-2.txt",
@@ -4255,7 +4258,10 @@ describe("composer session partitions", () => {
     expect(store.getState().attachments).toHaveLength(1);
 
     releasePrompt();
-    await expect(send).resolves.toBe(true);
+    await expect(send).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
     // The settled send cleared A's partition, never B's visible composer.
     expect(store.getState().attachments.map((item) => item.fileName)).toEqual([
       "file-2.txt",
@@ -4296,7 +4302,10 @@ describe("prompt result ownership", () => {
     });
     releasePrompt();
 
-    await expect(sending).resolves.toBe(true);
+    await expect(sending).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
     expect(store.getState().sessionId).toBe("s2");
     expect(store.getState().error).toBe("B's visible error");
   });

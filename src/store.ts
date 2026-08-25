@@ -6,6 +6,7 @@ import {
   type AvailableUpdate,
   type BranchTreeResponse,
   type CompletionAttentionPreference,
+  type ComposerHistoryEntry,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
   defaultInterfaceSettings,
@@ -30,6 +31,7 @@ import {
   type ProjectDisplayPreference,
   type ProjectionConflict,
   type ProjectionHealth,
+  type PromptAcceptedResponse,
   parseExtensionStatuses,
   projectionConflictSeverity,
   projectNameFromCwd,
@@ -57,6 +59,7 @@ import {
   type ProjectFileResult,
 } from "./api";
 import type { PiCommand } from "./composer-completion";
+import type { ComposerHistoryScope } from "./composer-history";
 import { BranchController } from "./controllers/branch-controller";
 import {
   ComposerController,
@@ -1598,11 +1601,11 @@ export class AppStore {
     sessionId: string,
     viewId: string,
     incarnation: string | null,
-  ): Promise<string[] | null> => {
+    effectiveLeafId: string | null,
+  ): Promise<ComposerHistoryEntry[] | null> => {
     const api = this.api;
     const generation = this.selectionGeneration;
     const transportGeneration = this.transportGeneration;
-    const effectiveLeafId = this.state.transcriptEffectiveLeafId;
     const ownsScope = () =>
       this.api === api &&
       this.transportGeneration === transportGeneration &&
@@ -1620,7 +1623,7 @@ export class AppStore {
         let start = 0;
         let historyId: string | null = null;
         let total: number | null = null;
-        const entries: string[] = [];
+        const entries: ComposerHistoryEntry[] = [];
         let changed = false;
         while (true) {
           const page = await api.composerHistory(sessionId, start);
@@ -1633,11 +1636,52 @@ export class AppStore {
           )
             return null;
           if (
+            page.entries.some(
+              (entry) =>
+                typeof entry === "string" ||
+                (entry &&
+                  typeof entry === "object" &&
+                  typeof entry.text === "string" &&
+                  Array.isArray(entry.images) &&
+                  !Array.isArray(entry.files)),
+            )
+          ) {
+            throw new Error(
+              "The Host is still running the previous prompt-history interface; restart INSΠRE",
+            );
+          }
+          if (
             page.start !== start ||
             !Number.isSafeInteger(page.total) ||
             page.total < 0 ||
             page.total > MAX_COMPOSER_HISTORY_ENTRIES ||
-            entries.length + page.entries.length > page.total
+            entries.length + page.entries.length > page.total ||
+            page.entries.some(
+              (entry) =>
+                !entry ||
+                typeof entry !== "object" ||
+                typeof entry.text !== "string" ||
+                !Array.isArray(entry.images) ||
+                entry.images.some(
+                  (image) =>
+                    !image ||
+                    typeof image !== "object" ||
+                    !/^pi-embedded:\/\/\d+\/\d+$/.test(image.reference) ||
+                    typeof image.mimeType !== "string" ||
+                    !Number.isSafeInteger(image.size) ||
+                    image.size < 0,
+                ) ||
+                !Array.isArray(entry.files) ||
+                entry.files.some(
+                  (file) =>
+                    !file ||
+                    typeof file !== "object" ||
+                    !/^pi-file:\/\/\d+\/\d+$/.test(file.reference) ||
+                    typeof file.fileName !== "string" ||
+                    file.fileName.length === 0 ||
+                    (file.kind !== "attachment" && file.kind !== "project"),
+                ),
+            )
           )
             throw new Error("The Host returned invalid composer history");
           if (historyId === null) {
@@ -2505,7 +2549,7 @@ export class AppStore {
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
-  ): Promise<boolean> => {
+  ): Promise<PromptAcceptedResponse | false> => {
     const accepted = await this.composer.send(message, behavior);
     if (accepted) this.updates.promptAccepted();
     return accepted;
@@ -2651,6 +2695,17 @@ export class AppStore {
   private discardSessionComposer(sessionId: string): void {
     this.composer.discard(sessionId);
   }
+
+  previewComposerHistoryEntry = (
+    scope: ComposerHistoryScope,
+    entry: ComposerHistoryEntry | null,
+  ): void => this.composer.previewHistoryEntry(scope, entry);
+
+  commitComposerHistoryPreview = (scope: ComposerHistoryScope): void =>
+    this.composer.commitHistoryPreview(scope);
+
+  cancelComposerHistoryPreview = (sessionId: string): void =>
+    this.composer.cancelHistoryPreview(sessionId);
 
   addFiles = (files: File[]): Promise<void> => this.composer.addFiles(files);
 

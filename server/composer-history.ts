@@ -1,50 +1,132 @@
 import { createHash } from "node:crypto";
+import { basename, relative, resolve } from "node:path";
 import {
+  type ComposerHistoryEntry,
+  type ComposerHistoryFile,
+  type ComposerHistoryImage,
+  type ComposerHistoryPage,
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_COMPOSER_HISTORY_PAGE_BYTES,
-  type ComposerHistoryPage,
 } from "../shared/contracts.js";
-import { promptTextWithoutAttachmentContext } from "./attachments.js";
+import { parseAttachmentContext } from "./attachments.js";
+import { escapesBase } from "./paths.js";
 
-function userMessageText(value: unknown): string | null {
+interface ComposerHistoryCandidate {
+  entry: ComposerHistoryEntry;
+  imageData: string[];
+  filePaths: string[];
+}
+
+function historyFile(
+  path: string,
+  persistedIndex: number,
+  referenceIndex: number,
+  cwd?: string,
+): ComposerHistoryFile {
+  const project = cwd
+    ? !escapesBase(relative(resolve(cwd), resolve(path)))
+    : false;
+  return {
+    reference: `pi-file://${persistedIndex}/${referenceIndex}`,
+    fileName: basename(path) || "file",
+    kind: project ? "project" : "attachment",
+  };
+}
+
+function userMessageEntry(
+  value: unknown,
+  messageIndex: number,
+  cwd?: string,
+): ComposerHistoryCandidate | null {
   if (!value || typeof value !== "object") return null;
   const message = value as Record<string, unknown>;
   if (message.role !== "user") return null;
-  if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content)) return null;
-  return message.content
-    .flatMap((part) => {
-      if (!part || typeof part !== "object") return [];
-      const content = part as Record<string, unknown>;
-      return content.type === "text" && typeof content.text === "string"
-        ? [content.text]
-        : [];
-    })
-    .join("");
-}
 
-/** Reproduce Pi's process-local editor history initialization. */
-export function composerHistoryEntries(messages: readonly unknown[]): string[] {
-  const history: string[] = [];
-  for (const message of messages) {
-    const content = userMessageText(message);
-    const text = content
-      ? promptTextWithoutAttachmentContext(content).trim()
-      : "";
-    if (!text || history[0] === text) continue;
-    history.unshift(text);
-    if (history.length > MAX_COMPOSER_HISTORY_ENTRIES) history.pop();
+  const persistedIndex = Number.isSafeInteger(message.__inspireMessageIndex)
+    ? Number(message.__inspireMessageIndex)
+    : messageIndex;
+  let content = "";
+  const images: ComposerHistoryImage[] = [];
+  const imageData: string[] = [];
+  if (typeof message.content === "string") {
+    content = message.content;
+  } else if (Array.isArray(message.content)) {
+    message.content.forEach((part, partIndex) => {
+      if (!part || typeof part !== "object") return;
+      const item = part as Record<string, unknown>;
+      if (item.type === "text" && typeof item.text === "string") {
+        content += item.text;
+        return;
+      }
+      if (
+        item.type === "image" &&
+        typeof item.data === "string" &&
+        typeof item.mimeType === "string"
+      ) {
+        images.push({
+          reference: `pi-embedded://${persistedIndex}/${partIndex}`,
+          mimeType: item.mimeType,
+          size: Buffer.byteLength(item.data, "base64"),
+        });
+        imageData.push(item.data);
+      }
+    });
   }
-  return history;
+
+  const parsed = parseAttachmentContext(content);
+  const text = parsed.text.trim();
+  const files = parsed.references.map((path, referenceIndex) =>
+    historyFile(path, persistedIndex, referenceIndex, cwd),
+  );
+  return text || images.length > 0 || files.length > 0
+    ? {
+        entry: { text, images, files },
+        imageData,
+        filePaths: parsed.references,
+      }
+    : null;
 }
 
-function historyIdentity(entries: readonly string[]): string {
+function samePrompt(
+  left: ComposerHistoryCandidate,
+  right: ComposerHistoryCandidate,
+): boolean {
+  return (
+    left.entry.text === right.entry.text &&
+    left.entry.images.length === right.entry.images.length &&
+    left.entry.images.every(
+      (image, index) =>
+        image.mimeType === right.entry.images[index]?.mimeType &&
+        left.imageData[index] === right.imageData[index],
+    ) &&
+    left.filePaths.length === right.filePaths.length &&
+    left.filePaths.every((path, index) => path === right.filePaths[index])
+  );
+}
+
+/** Reproduce Pi's newest-first editor history with persisted prompt artifacts. */
+export function composerHistoryEntries(
+  messages: readonly unknown[],
+  cwd?: string,
+): ComposerHistoryEntry[] {
+  const history: ComposerHistoryCandidate[] = [];
+  messages.forEach((message, messageIndex) => {
+    const candidate = userMessageEntry(message, messageIndex, cwd);
+    if (!candidate || (history[0] && samePrompt(history[0], candidate))) return;
+    history.unshift(candidate);
+    if (history.length > MAX_COMPOSER_HISTORY_ENTRIES) history.pop();
+  });
+  return history.map((candidate) => candidate.entry);
+}
+
+function historyIdentity(entries: readonly ComposerHistoryEntry[]): string {
   const hash = createHash("sha256");
   for (const entry of entries) {
-    const bytes = Buffer.byteLength(entry);
+    const serialized = JSON.stringify(entry);
+    const bytes = Buffer.byteLength(serialized);
     hash.update(String(bytes));
     hash.update(":");
-    hash.update(entry);
+    hash.update(serialized);
     hash.update("\0");
   }
   return hash.digest("base64url");
@@ -59,15 +141,16 @@ export function projectComposerHistoryPage(
   messages: readonly unknown[],
   owner: ComposerHistoryOwner,
   start = 0,
+  cwd?: string,
 ): ComposerHistoryPage {
-  const history = composerHistoryEntries(messages);
+  const history = composerHistoryEntries(messages, cwd);
   if (!Number.isSafeInteger(start) || start < 0 || start > history.length) {
     throw Object.assign(new Error("Composer history offset is invalid"), {
       status: 400,
     });
   }
 
-  const entries: string[] = [];
+  const entries: ComposerHistoryEntry[] = [];
   const base: ComposerHistoryPage = {
     ...owner,
     historyId: historyIdentity(history),
