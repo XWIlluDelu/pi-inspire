@@ -8,6 +8,9 @@ interface ResizeHandleCommonProps {
   label: string;
   /** Modifier for breakpoint-specific visibility or local styling. */
   variant: string;
+  /** Active native scroller(s) inside the adjacent pane. Wheel input over the
+   * resize hit band is forwarded to the target under the pointer. */
+  wheelTargetSelector?: string;
 }
 
 interface VerticalPaneResizeHandleProps extends ResizeHandleCommonProps {
@@ -239,6 +242,26 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     applyResponsiveSize();
   };
 
+  const forwardWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!props.wheelTargetSelector) return;
+    const targets = [
+      ...document.querySelectorAll<HTMLElement>(props.wheelTargetSelector),
+    ].filter(
+      (target) =>
+        target.scrollHeight > target.clientHeight ||
+        target.scrollWidth > target.clientWidth,
+    );
+    const target =
+      targets.find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return event.clientY >= rect.top && event.clientY <= rect.bottom;
+      }) ?? targets[0];
+    if (!target) return;
+    target.scrollTop += event.deltaY;
+    target.scrollLeft += event.deltaX;
+    event.preventDefault();
+  };
+
   return (
     <div
       className={`pane-resize pane-resize--${orientation} pane-resize--${props.variant}`}
@@ -291,6 +314,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           finishDrag(event.currentTarget, event.pointerId)
         }
         onDoubleClick={reset}
+        onWheel={forwardWheel}
         onKeyDown={(event) => {
           if (event.key !== negativeKey && event.key !== positiveKey) return;
           const measured = measure();

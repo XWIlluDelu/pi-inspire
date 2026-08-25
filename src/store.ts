@@ -27,7 +27,6 @@ import {
   type NewSessionOptions,
   type PalettePreference,
   type PiUpdateCheckResponse,
-  type ProjectDirEntry,
   type ProjectDisplayPreference,
   type ProjectionConflict,
   type ProjectionHealth,
@@ -74,6 +73,11 @@ import { ResourceController } from "./controllers/resource-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
 import { UpdateController } from "./controllers/update-controller";
+import {
+  emptyWorkspaceBrowserState,
+  WorkspaceController,
+  type WorkspaceBrowserState,
+} from "./controllers/workspace-controller";
 import {
   asMessage,
   type ChatMessage,
@@ -134,7 +138,7 @@ function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-interface AppState extends EventSlice {
+interface AppState extends EventSlice, WorkspaceBrowserState {
   needsToken: boolean;
   connection: ConnectionState;
   connectionProblem: ConnectionProblem;
@@ -240,6 +244,11 @@ interface AppState extends EventSlice {
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
   detailMode: "file" | "diff";
+  /** Browse and Preview are mutually exclusive full-pane Files surfaces. */
+  fileBrowserView: "browse" | "preview";
+  /** The compact nav disclosure is store-owned so drawer remounts and
+   * responsive transitions retain it. */
+  workspaceExplorerOpen: boolean;
   branchTree: BranchTreeResponse | null;
   branchTreeLoading: boolean;
   branchTreeError: string | null;
@@ -258,6 +267,8 @@ interface AppState extends EventSlice {
    * mention stays unverified until the host classifies it for this branch
    * view; only a successful resolve grants a separate content handle. */
   resourceAvailability: Record<string, ResourceProbeResult>;
+  /** Canonical workspace identity for successfully resolved references. */
+  resourceWorkspacePaths: Record<string, string>;
   error: string | null;
 }
 
@@ -266,6 +277,7 @@ const PROMPT_MAP_PAGE_SIZE = 100;
 
 const initialState: AppState = {
   ...emptyEventSlice(),
+  ...emptyWorkspaceBrowserState(),
   needsToken: false,
   connection: "connecting",
   connectionProblem: null,
@@ -334,6 +346,8 @@ const initialState: AppState = {
   resourcesOpen: false,
   contextMode: "files",
   detailMode: "file",
+  fileBrowserView: "browse",
+  workspaceExplorerOpen: false,
   branchTree: null,
   branchTreeLoading: false,
   branchTreeError: null,
@@ -348,6 +362,7 @@ const initialState: AppState = {
   selectedGitSide: null,
   gitDiff: null,
   resourceAvailability: {},
+  resourceWorkspacePaths: {},
   error: null,
 };
 
@@ -355,6 +370,14 @@ export class AppStore {
   private state: AppState = initialState;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  /** Both Files surfaces consume this one tree/search projection. */
+  private readonly workspace = new WorkspaceController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    handleAuthFailure: () => this.handleAuthFailure(),
+  });
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
   private readonly resources = new ResourceController({
@@ -365,6 +388,10 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     prepareGitForResourceOpen: (contextMode) =>
       this.git.prepareResourceOpen(contextMode),
+    selectWorkspacePath: (workspacePath) => {
+      this.workspace.revealPath(workspacePath);
+      this.git.selectWorkspacePath(workspacePath);
+    },
   });
   /** GitController owns polling, selection, and diff request lifecycles.
    * AppStore remains the sole state publisher and cross-domain transaction
@@ -380,6 +407,7 @@ export class AppStore {
     cancelResourcePreview: () => this.resources.cancelRequest(),
     openResourceFromGit: (workspacePath) =>
       this.resources.openResource(workspacePath, "changes"),
+    handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
    * snapshots and selection transfers at the controller's verified commit
@@ -740,6 +768,7 @@ export class AppStore {
     this.transportGeneration += 1;
     this.composer.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
+    this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.invalidateSessionListRequests();
@@ -802,6 +831,7 @@ export class AppStore {
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
+    this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.authToken = token;
@@ -889,6 +919,7 @@ export class AppStore {
   ): void {
     const active = snapshot.active;
     const nextSessionId = active?.sessionId ?? null;
+    const cwd = active?.cwd ?? null;
     const sessionChanged = nextSessionId !== this.state.sessionId;
     const page = active?.transcriptPage;
     const nextTranscriptRevision = page?.revision ?? 0;
@@ -922,6 +953,9 @@ export class AppStore {
     const projectionReplaced = Boolean(
       sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
     );
+    const nextWorkspaceState = sessionChanged
+      ? this.workspace.changeOwner(cwd)
+      : null;
     if (sessionChanged || viewChanged || projectionReplaced) {
       this.selectionGeneration += 1;
       if (sessionChanged) this.pendingActionRequest += 1;
@@ -996,7 +1030,6 @@ export class AppStore {
     this.settledKeys = new Set(
       messages.map(messageKey).filter((key): key is string => key !== null),
     );
-    const cwd = active?.cwd ?? null;
     const projectionHealth = active?.projectionHealth ?? {
       status: "ok" as const,
     };
@@ -1121,6 +1154,9 @@ export class AppStore {
             windowTitle: null,
             contextMode: "files",
             detailMode: "file",
+            fileBrowserView: "browse",
+            workspaceExplorerOpen: false,
+            ...(nextWorkspaceState ?? emptyWorkspaceBrowserState()),
             branchTree: null,
             branchTreeLoading: false,
             branchTreeError: null,
@@ -1135,6 +1171,7 @@ export class AppStore {
             selectedGitSide: null,
             gitDiff: null,
             resourceAvailability: {},
+            resourceWorkspacePaths: {},
             // Composer work belongs to its session; the switch swaps in the
             // destination's staged slice.
             ...this.composer.slice(nextSessionId),
@@ -1146,12 +1183,14 @@ export class AppStore {
                 ? "Branch history is stale — refresh to use branch actions"
                 : null,
               branchActionId: null,
+              fileBrowserView: "browse",
               selectedResourceReference: null,
               resourcePreview: null,
               resourceAvailability: {},
+              resourceWorkspacePaths: {},
             }
           : revisionChanged
-            ? { resourceAvailability: {} }
+            ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
             : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
@@ -2646,16 +2685,31 @@ export class AppStore {
     return result.files.map((file) => ({ ...file, workspaceCwd: result.cwd }));
   };
 
-  /** One level of the workspace explorer; failures read as an empty level. */
-  listProjectDirectory = async (dir: string): Promise<ProjectDirEntry[]> => {
-    const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return [];
-    try {
-      return (await this.api.listFiles(sessionId, dir)).entries;
-    } catch {
-      return [];
-    }
+  loadWorkspaceDirectory = (dir: string): Promise<void> =>
+    this.workspace.loadDirectory(dir);
+
+  toggleWorkspaceDirectory = (dir: string): void => {
+    this.workspace.toggleDirectory(dir);
   };
+
+  setWorkspaceQuery = (query: string): void => {
+    this.workspace.setQuery(query);
+  };
+
+  resumeWorkspaceSearch = (): void => {
+    this.workspace.resumeSearch();
+  };
+
+  setWorkspaceExplorerOpen = (open: boolean): void => {
+    this.set({ workspaceExplorerOpen: open });
+  };
+
+  openWorkspaceFile = (path: string): Promise<void> => {
+    this.workspace.revealPath(path);
+    return this.resources.openResource(path);
+  };
+
+  refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
@@ -3060,12 +3114,28 @@ export class AppStore {
     this.set({ resourcesOpen });
   };
 
+  showFileBrowser = (): void => {
+    this.resources.cancelRequest();
+    this.git.clearDiffSelection();
+    this.set({
+      resourcesOpen: true,
+      contextMode: "files",
+      detailMode: "file",
+      fileBrowserView: "browse",
+    });
+  };
+
   setContextMode = (contextMode: "files" | "changes" | "branches"): void => {
     this.set({
       contextMode,
       detailMode: contextMode === "changes" ? "diff" : "file",
     });
-    if (contextMode === "changes") void this.git.refreshStatus();
+    if (contextMode === "changes") {
+      const { selectedGitPathId, selectedGitSide, gitDiff } = this.state;
+      if (selectedGitPathId && selectedGitSide && !gitDiff)
+        void this.git.openDiff(selectedGitPathId, selectedGitSide);
+      else void this.git.refreshStatus();
+    }
     if (contextMode === "branches") void this.loadBranchTree();
   };
 
@@ -3094,6 +3164,15 @@ export class AppStore {
 
   openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
     this.git.openDiff(pathId, requestedSide);
+
+  openWorkspaceDiff = (
+    pathId: string,
+    requestedSide?: GitDiffSide,
+  ): Promise<void> => this.git.openDiff(pathId, requestedSide, "files");
+
+  showWorkspaceFile = (): void => {
+    this.git.showResourceFile();
+  };
 
   setGitDiffSide = (side: GitDiffSide): void => {
     this.git.setDiffSide(side);

@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, relative, resolve } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type ResourceDescriptor,
@@ -13,6 +20,7 @@ import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
   RESOURCE_LIST_INITIAL_SIZE,
   collectSessionResourceReferences,
+  stripResourceLocation,
   type SessionResourceListResponse,
   type SessionResourceReference,
 } from "../shared/resource-references.js";
@@ -78,8 +86,6 @@ const MAX_HANDLES = 256;
 const RESOURCE_OPEN_FLAGS =
   constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const MAX_CITATION_INDEXES = 32;
-const LOCATION_FRAGMENT = /#L\d+(?:-L\d+)?$/i;
-const LOCATION_SUFFIX = /:\d+(?::\d+)?$/;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   ".avif": "image/avif",
@@ -131,13 +137,6 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".yml": "application/yaml",
 };
 
-function stripLocation(reference: string): string {
-  return reference
-    .replace(LOCATION_FRAGMENT, "")
-    .replace(/[?#].*$/u, "")
-    .replace(LOCATION_SUFFIX, "");
-}
-
 function decoded(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -151,7 +150,7 @@ export function referencePath(referenceInput: string, cwd: string): string {
   let reference = referenceInput.trim().replace(/^@/, "");
   if (reference.startsWith("<") && reference.endsWith(">"))
     reference = reference.slice(1, -1);
-  reference = stripLocation(reference);
+  reference = stripResourceLocation(reference);
 
   if (/^vscode:\/\/file\//i.test(reference)) {
     const url = new URL(reference);
@@ -183,7 +182,7 @@ function mimeTypeFor(path: string): string {
 function bareName(reference: string): string | null {
   let value = reference.trim().replace(/^@/, "");
   if (value.startsWith("<") && value.endsWith(">")) value = value.slice(1, -1);
-  value = decoded(stripLocation(value));
+  value = decoded(stripResourceLocation(value));
   if (
     !value ||
     value === "~" ||
@@ -500,8 +499,19 @@ export class ResourceStore {
     return Promise.all(
       references.map(async (reference) => {
         try {
-          await this.resolveUsingIndex(context, reference, false, getIndex);
-          return { reference, availability: "available" as const };
+          const descriptor = await this.resolveUsingIndex(
+            context,
+            reference,
+            false,
+            getIndex,
+          );
+          return {
+            reference,
+            availability: "available" as const,
+            ...(descriptor.workspacePath
+              ? { workspacePath: descriptor.workspacePath }
+              : {}),
+          };
         } catch (error) {
           const result = classifiedProbeFailure(reference, error);
           if (result) return result;
@@ -660,6 +670,12 @@ export class ResourceStore {
         );
       }
       const mimeType = mimeTypeFor(path);
+      const workspacePath =
+        within && !escapesBase(within)
+          ? sep === "\\"
+            ? within.split(sep).join("/")
+            : within
+          : undefined;
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
@@ -667,6 +683,7 @@ export class ResourceStore {
         // A recovery answers with the location it actually opened, so the
         // preview never claims the bare shorthand was a real path.
         reference: recovered ?? reference,
+        ...(workspacePath ? { workspacePath } : {}),
         name: basename(path),
         mimeType,
         size: Number(details.size),

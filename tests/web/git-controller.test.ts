@@ -31,6 +31,7 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
   const api = { gitStatus, gitDiff } as unknown as Api;
   const cancelResourcePreview = vi.fn();
   const openResourceFromGit = vi.fn<(path: string) => Promise<void>>();
+  const handleAuthFailure = vi.fn();
   const controller = new GitController({
     state: () => state,
     patch: (patch: GitControllerPatch) => {
@@ -38,6 +39,7 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     },
     api: () => api,
     transportGeneration: () => 1,
+    handleAuthFailure,
     cancelResourcePreview,
     openResourceFromGit,
   });
@@ -49,6 +51,7 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     },
     gitStatus,
     gitDiff,
+    handleAuthFailure,
     cancelResourcePreview,
     openResourceFromGit,
   };
@@ -137,6 +140,42 @@ describe("GitController", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.gitStatus).toHaveBeenCalledTimes(2);
     harness.controller.setSurfaceVisible("test", false);
+  });
+
+  it("adopts a workspace selection when a later Git status identifies it", async () => {
+    const harness = createHarness();
+    harness.controller.selectWorkspacePath("src/main.ts");
+    harness.gitStatus.mockResolvedValue({
+      kind: "repository",
+      head: { kind: "branch", name: "main", oid: "abc" },
+      files: [
+        {
+          path: {
+            id: "main-path",
+            display: "src/main.ts",
+            utf8Path: "src/main.ts",
+            workspacePath: "src/main.ts",
+          },
+          unstaged: { kind: "modified" },
+          untracked: false,
+        },
+      ],
+      total: 1,
+      truncated: false,
+      groups: {
+        conflicted: [],
+        staged: [],
+        unstaged: ["main-path"],
+        untracked: [],
+      },
+    });
+
+    await harness.controller.refreshStatus();
+
+    expect(harness.state()).toMatchObject({
+      selectedGitPathId: "main-path",
+      selectedGitSide: "unstaged",
+    });
   });
 
   it("clears Git selection only when a Files resource replaces it", () => {

@@ -3,7 +3,7 @@ import type {
   GitDiffSide,
   GitStatusResponse,
 } from "../../shared/contracts";
-import type { Api } from "../api";
+import { ApiError, type Api } from "../api";
 
 const GIT_DETAIL_REFRESH_INTERVAL_MS = 4_000;
 const GIT_TOPBAR_REFRESH_INTERVAL_MS = 20_000;
@@ -49,6 +49,7 @@ interface GitControllerHost {
   transportGeneration(): number;
   cancelResourcePreview(): void;
   openResourceFromGit(workspacePath: string): Promise<void>;
+  handleAuthFailure(): void;
 }
 
 /**
@@ -64,6 +65,7 @@ export class GitController {
   private surfaces = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private observingVisibility = false;
+  private selectedWorkspacePath: string | null = null;
 
   constructor(private readonly host: GitControllerHost) {}
 
@@ -115,7 +117,11 @@ export class GitController {
 
   /** Replaces a diff only through the Git side of the facade. Resource opening
    * is cancelled first, so a late file preview cannot overwrite the diff. */
-  async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+  async openDiff(
+    pathId: string,
+    requestedSide?: GitDiffSide,
+    contextMode: "changes" | "files" = "changes",
+  ): Promise<void> {
     let state = this.host.state();
     if (!this.host.api() || !state.sessionId) return;
     let status = state.gitStatus;
@@ -131,20 +137,21 @@ export class GitController {
       (candidate) => candidate.path.id === pathId,
     );
     if (!change) return;
+    this.selectedWorkspacePath = change.path.workspacePath ?? null;
     const side =
       requestedSide ??
       (change.unstaged || change.untracked || change.conflict
         ? "unstaged"
         : "staged");
     this.cancelDiff();
-    this.host.cancelResourcePreview();
+    if (contextMode === "changes") this.host.cancelResourcePreview();
     const request = new AbortController();
     this.diffRequest = request;
     const selectionGeneration = state.selectionGeneration;
     const transportGeneration = this.host.transportGeneration();
     this.host.patch({
       resourcesOpen: true,
-      contextMode: "changes",
+      contextMode,
       detailMode: "diff",
       selectedGitPathId: pathId,
       selectedGitSide: side,
@@ -169,6 +176,10 @@ export class GitController {
       this.host.patch({ gitDiff: { status: "ready", result } });
     } catch (error) {
       if (!current()) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this.host.handleAuthFailure();
+        return;
+      }
       this.host.patch({
         gitDiff: {
           status: "error",
@@ -185,7 +196,37 @@ export class GitController {
   setDiffSide(side: GitDiffSide): void {
     const state = this.host.state();
     if (state.selectedGitPathId && side !== state.selectedGitSide)
-      void this.openDiff(state.selectedGitPathId, side);
+      void this.openDiff(
+        state.selectedGitPathId,
+        side,
+        state.contextMode === "files" ? "files" : "changes",
+      );
+  }
+
+  showResourceFile(): void {
+    this.cancelDiff();
+    if (this.host.state().detailMode !== "file")
+      this.host.patch({ detailMode: "file" });
+  }
+
+  /** Keep Changes aligned with a resource selected from either Files surface. */
+  selectWorkspacePath(workspacePath: string): void {
+    this.selectedWorkspacePath = workspacePath;
+    const status = this.host.state().gitStatus;
+    if (!status || status.kind !== "repository") return;
+    const change = status.files.find(
+      (candidate) => candidate.path.workspacePath === workspacePath,
+    );
+    if (!change) return;
+    const side =
+      change.unstaged || change.untracked || change.conflict
+        ? "unstaged"
+        : "staged";
+    this.host.patch({
+      selectedGitPathId: change.path.id,
+      selectedGitSide: side,
+      gitDiff: null,
+    });
   }
 
   /** A resource selection hides any active diff, but ResourceController never
@@ -197,6 +238,7 @@ export class GitController {
 
   clearDiffSelection(): void {
     this.cancelDiff();
+    this.selectedWorkspacePath = null;
     const state = this.host.state();
     if (
       state.selectedGitPathId !== null ||
@@ -233,6 +275,7 @@ export class GitController {
 
   cancelAll(): void {
     this.refreshQueued = false;
+    this.selectedWorkspacePath = null;
     this.statusRequest?.abort();
     this.statusRequest = null;
     this.cancelDiff();
@@ -268,37 +311,89 @@ export class GitController {
         const status = await api.gitStatus(sessionId, request.signal);
         if (!current()) continue;
         const currentState = this.host.state();
+        const workspaceChange =
+          status.kind === "repository" && this.selectedWorkspacePath
+            ? status.files.find(
+                (file) =>
+                  file.path.workspacePath === this.selectedWorkspacePath,
+              )
+            : undefined;
+        let selectedPathId = currentState.selectedGitPathId;
+        let selectedSide = currentState.selectedGitSide;
+        if (this.selectedWorkspacePath) {
+          if (workspaceChange) {
+            const retainedSide =
+              currentState.selectedGitPathId === workspaceChange.path.id &&
+              ((currentState.selectedGitSide === "staged" &&
+                workspaceChange.staged) ||
+                (currentState.selectedGitSide === "unstaged" &&
+                  (workspaceChange.unstaged ||
+                    workspaceChange.untracked ||
+                    workspaceChange.conflict)))
+                ? currentState.selectedGitSide
+                : null;
+            selectedPathId = workspaceChange.path.id;
+            selectedSide =
+              retainedSide ??
+              (workspaceChange.unstaged ||
+              workspaceChange.untracked ||
+              workspaceChange.conflict
+                ? "unstaged"
+                : "staged");
+          } else {
+            selectedPathId = null;
+            selectedSide = null;
+          }
+        }
         const selectedExists =
           status.kind === "repository" &&
           status.files.some(
             (file) =>
-              file.path.id === currentState.selectedGitPathId &&
+              file.path.id === selectedPathId &&
               (file.conflict ||
-                (currentState.selectedGitSide === "staged"
+                (selectedSide === "staged"
                   ? file.staged
                   : file.unstaged || file.untracked)),
           );
-        const selectedPathId = currentState.selectedGitPathId;
-        const selectedSide = currentState.selectedGitSide;
+        if (!selectedExists) {
+          selectedPathId = null;
+          selectedSide = null;
+        }
+        const selectionChanged =
+          selectedPathId !== currentState.selectedGitPathId ||
+          selectedSide !== currentState.selectedGitSide;
         const refreshSelectedDiff = Boolean(
           selectedExists &&
             selectedPathId &&
             selectedSide &&
             currentState.resourcesOpen &&
-            currentState.contextMode === "changes" &&
+            (currentState.contextMode === "changes" ||
+              currentState.contextMode === "files") &&
             currentState.detailMode === "diff",
         );
         this.host.patch({
           gitStatus: status,
           gitStatusError: null,
-          ...(!selectedExists && selectedPathId
-            ? { selectedGitPathId: null, selectedGitSide: null, gitDiff: null }
+          ...(selectionChanged
+            ? {
+                selectedGitPathId: selectedPathId,
+                selectedGitSide: selectedSide,
+                gitDiff: null,
+              }
             : {}),
         });
         if (refreshSelectedDiff)
-          void this.openDiff(selectedPathId!, selectedSide!);
+          void this.openDiff(
+            selectedPathId!,
+            selectedSide!,
+            currentState.contextMode === "files" ? "files" : "changes",
+          );
       } catch (error) {
         if (!current()) continue;
+        if (error instanceof ApiError && error.status === 401) {
+          this.host.handleAuthFailure();
+          return;
+        }
         this.host.patch({
           gitStatusError:
             error instanceof Error

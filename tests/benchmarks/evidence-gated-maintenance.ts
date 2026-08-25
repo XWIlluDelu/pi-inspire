@@ -1548,7 +1548,7 @@ async function browserIteration(
     })()`);
     await waitFor(
       client,
-      `document.querySelector('[aria-label="Files and resources"]') && document.querySelector('.ctx__branch')?.textContent.includes('benchmark/maintenance')`,
+      `document.querySelector('[aria-label="Context panel"]') && document.querySelector('.ctx__branch')?.textContent.includes('benchmark/maintenance')`,
     );
     const chromeAssertions = await client.evaluate<string[]>(`(() => {
       const result = [];
