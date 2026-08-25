@@ -204,6 +204,10 @@ wait_for_host_ready() {
       echo "The system service started in the wrong INSΠRE runtime mode." >&2
       return 1
     fi
+    if [[ -n "${MAINPID:-}" ]] && ! kill -0 "$MAINPID" 2>/dev/null; then
+      echo "The INSΠRE Host process exited before becoming ready." >&2
+      return 1
+    fi
     sleep 0.1
   done
 }
