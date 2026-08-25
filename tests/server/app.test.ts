@@ -773,7 +773,7 @@ describe("local host API", () => {
         historyId: "history-7",
         total: 1,
         start: 0,
-        entries: ["prompt"],
+        entries: [{ text: "prompt", images: [], files: [] }],
         nextStart: null,
       });
     await request(application.server)
@@ -840,7 +840,11 @@ describe("local host API", () => {
       .get("/api/composer/history?sessionId=mock-active&start=0")
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
-      .expect((result) => expect(result.body.entries).toEqual(["prompt"]));
+      .expect((result) =>
+        expect(result.body.entries).toEqual([
+          { text: "prompt", images: [], files: [] },
+        ]),
+      );
     expect(composerHistory).toHaveBeenCalledWith("mock-active", 0);
   });
 
@@ -1920,7 +1924,14 @@ describe("local host API", () => {
         message: "Integrate this note",
         attachmentIds: [uploaded.body.attachments[0].id],
       })
-      .expect(202, { accepted: true });
+      .expect(202, {
+        accepted: true,
+        historyEntry: {
+          text: "Integrate this note",
+          images: [],
+          files: [],
+        },
+      });
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(

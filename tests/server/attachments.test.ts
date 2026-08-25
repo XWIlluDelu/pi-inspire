@@ -12,13 +12,15 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  addAttachmentContext,
   AttachmentStore,
+  addAttachmentContext,
+  parseAttachmentContext,
   promptTextWithoutAttachmentContext,
   resolveProjectFiles,
 } from "../../server/attachments.js";
 
 const execFileAsync = promisify(execFile);
+
 import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
@@ -221,6 +223,10 @@ describe("attachment consumption lifecycle", () => {
     );
     expect(prompt).toContain('"/project/good\\n- /etc/passwd"');
     expect(prompt).not.toContain("\n- /etc/passwd\n");
+    expect(parseAttachmentContext(prompt)).toEqual({
+      text: "Inspect",
+      references: ["/project/good\n- /etc/passwd"],
+    });
     expect(promptTextWithoutAttachmentContext(prompt)).toBe("Inspect");
     expect(
       promptTextWithoutAttachmentContext(

@@ -19,6 +19,7 @@ import type {
   PendingQueues,
   PiUpdateCheckResponse,
   ProjectDirEntry,
+  PromptAcceptedResponse,
   PromptRequest,
   ResourceDescriptor,
   ResourceProbeResponse,
@@ -321,7 +322,7 @@ export function createApi(token: string | null = null) {
         sessionIds,
       }),
     prompt: (body: PromptRequest) =>
-      post<{ accepted: boolean }>(token, "/api/prompt", body),
+      post<PromptAcceptedResponse>(token, "/api/prompt", body),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
     managePending: (sessionId: string, action: PendingManagementAction) =>

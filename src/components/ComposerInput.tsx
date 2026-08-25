@@ -1,24 +1,25 @@
 import {
+  type ClipboardEventHandler,
+  type KeyboardEventHandler,
   useCallback,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
-  type ClipboardEventHandler,
-  type KeyboardEventHandler,
 } from "react";
+import type { ComposerHistoryEntry } from "../../shared/contracts";
 import type { ProjectFileResult } from "../api";
-import { isTextareaCaretOnVisualEdge } from "../composer-history";
 import {
+  type CaretCompletion,
+  type PiCommand,
   parseCaretCompletion,
   rankCommands,
   rankProjectFiles,
   replaceCompletionToken,
   resolveCommandInventory,
-  type CaretCompletion,
-  type PiCommand,
 } from "../composer-completion";
+import { isTextareaCaretOnVisualEdge } from "../composer-history";
 
 interface CompletionItem {
   key: string;
@@ -115,6 +116,8 @@ export function ComposerInput({
   value,
   onChange,
   onHistoryPreview,
+  onHistoryCommit,
+  onHistoryCancel,
   history = [],
   commands,
   completionDisabled = false,
@@ -133,8 +136,13 @@ export function ComposerInput({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onHistoryPreview?: (value: string) => void;
-  history?: readonly string[];
+  onHistoryPreview?: (
+    value: string,
+    entry: ComposerHistoryEntry | null,
+  ) => void;
+  onHistoryCommit?: () => void;
+  onHistoryCancel?: () => void;
+  history?: readonly ComposerHistoryEntry[];
   commands: readonly PiCommand[];
   completionDisabled?: boolean;
   disabled?: boolean;
@@ -190,16 +198,19 @@ export function ComposerInput({
     if (
       historyIndexRef.current >= 0 &&
       value !== historyPreviewValueRef.current
-    )
+    ) {
+      onHistoryCancel?.();
       exitHistoryBrowsing();
+    }
     if (value !== inputValueRef.current) setCompletion(null);
     inputValueRef.current = value;
-  }, [value, exitHistoryBrowsing]);
+  }, [value, exitHistoryBrowsing, onHistoryCancel]);
 
   useEffect(() => {
     setCompletion(null);
+    onHistoryCancel?.();
     exitHistoryBrowsing();
-  }, [completionScope, exitHistoryBrowsing]);
+  }, [completionScope, exitHistoryBrowsing, onHistoryCancel]);
 
   useEffect(() => {
     if (completionDisabled) exitHistoryBrowsing();
@@ -324,6 +335,7 @@ export function ComposerInput({
 
   const previewHistory = (
     nextValue: string,
+    entry: ComposerHistoryEntry | null,
     start: number,
     end: number,
     direction: "forward" | "backward" | "none",
@@ -332,7 +344,8 @@ export function ComposerInput({
     const nonce = ++pendingSelectionRef.current;
     historyPreviewValueRef.current = nextValue;
     inputValueRef.current = nextValue;
-    (onHistoryPreview ?? onChange)(nextValue);
+    if (onHistoryPreview) onHistoryPreview(nextValue, entry);
+    else onChange(nextValue);
     setCompletion(null);
     requestAnimationFrame(() => {
       const element = textareaRef.current;
@@ -368,8 +381,9 @@ export function ComposerInput({
         };
       }
       historyIndexRef.current = next;
-      const nextValue = history[next] ?? "";
-      previewHistory(nextValue, 0, 0, "none", "start");
+      const entry = history[next];
+      const nextValue = entry?.text ?? "";
+      previewHistory(nextValue, entry ?? null, 0, 0, "none", "start");
       return;
     }
     if (current < 0) return;
@@ -379,6 +393,7 @@ export function ComposerInput({
       const nextValue = draft?.value ?? "";
       previewHistory(
         nextValue,
+        null,
         draft?.start ?? nextValue.length,
         draft?.end ?? nextValue.length,
         draft?.direction ?? "none",
@@ -389,9 +404,11 @@ export function ComposerInput({
     }
     const next = current - 1;
     historyIndexRef.current = next;
-    const nextValue = history[next] ?? "";
+    const entry = history[next];
+    const nextValue = entry?.text ?? "";
     previewHistory(
       nextValue,
+      entry ?? null,
       nextValue.length,
       nextValue.length,
       "none",
@@ -500,6 +517,7 @@ export function ComposerInput({
           placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => {
+            if (historyIndexRef.current >= 0) onHistoryCommit?.();
             exitHistoryBrowsing();
             inputValueRef.current = event.target.value;
             onChange(event.target.value);

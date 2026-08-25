@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
   chmod,
   mkdir,
-  readFile,
   readdir,
+  readFile,
   realpath,
   rename,
   rm,
@@ -11,13 +12,12 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { Request } from "express";
 import type { StorageEngine } from "multer";
 import {
-  MAX_ATTACHMENTS,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
+  MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   MAX_PROMPT_IMAGE_BYTES,
   MAX_PROMPT_IMAGE_ENCODED_BYTES,
@@ -28,6 +28,11 @@ import {
   invalidateProjectIndex,
   isIndexedProjectFile,
 } from "./project-files.js";
+
+export interface AttachmentContextFile {
+  kind: "image" | "file";
+  path: string;
+}
 
 interface StoredAttachment extends UploadedAttachment {
   path: string;
@@ -432,8 +437,8 @@ const REFERENCE_CONTEXT_HEADING =
 
 export function addAttachmentContext(
   message: string,
-  files: StoredAttachment[],
-  projectFiles: string[],
+  files: readonly AttachmentContextFile[],
+  projectFiles: readonly string[],
 ): string {
   const ordinary = files
     .filter((item) => item.kind === "file")
@@ -446,8 +451,15 @@ export function addAttachmentContext(
   return `${message.trim()}\n\n${REFERENCE_CONTEXT_HEADING}\n${lines.join("\n")}`.trim();
 }
 
-/** Recover the editor-owned text from INSΠRE's deterministic file context. */
-export function promptTextWithoutAttachmentContext(prompt: string): string {
+export interface ParsedAttachmentContext {
+  text: string;
+  references: string[];
+}
+
+/** Recover editor text and exact file paths from INSΠRE's deterministic context. */
+export function parseAttachmentContext(
+  prompt: string,
+): ParsedAttachmentContext {
   const heading = `${REFERENCE_CONTEXT_HEADING}\n`;
   const marker = `\n\n${heading}`;
   const trailingContext = prompt.lastIndexOf(marker);
@@ -457,9 +469,10 @@ export function promptTextWithoutAttachmentContext(prompt: string): string {
       : prompt.startsWith(heading)
         ? 0
         : -1;
-  if (contextStart < 0) return prompt;
+  if (contextStart < 0) return { text: prompt, references: [] };
   const referenceStart =
     contextStart === 0 ? heading.length : contextStart + marker.length;
+  const references: string[] = [];
   const lines = prompt.slice(referenceStart).split("\n");
   if (
     lines.length === 0 ||
@@ -467,12 +480,22 @@ export function promptTextWithoutAttachmentContext(prompt: string): string {
       if (!line.startsWith("- ")) return true;
       try {
         const path = JSON.parse(line.slice(2));
-        return typeof path !== "string" || !isAbsolute(path);
+        if (typeof path !== "string" || !isAbsolute(path)) return true;
+        references.push(path);
+        return false;
       } catch {
         return true;
       }
     })
   )
-    return prompt;
-  return (contextStart === 0 ? "" : prompt.slice(0, contextStart)).trim();
+    return { text: prompt, references: [] };
+  return {
+    text: (contextStart === 0 ? "" : prompt.slice(0, contextStart)).trim(),
+    references,
+  };
+}
+
+/** Recover only the editor-owned text from INSΠRE's deterministic file context. */
+export function promptTextWithoutAttachmentContext(prompt: string): string {
+  return parseAttachmentContext(prompt).text;
 }

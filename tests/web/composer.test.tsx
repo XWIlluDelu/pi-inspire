@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
+import type { ComposerHistoryEntry } from "../../shared/contracts";
 import { clipboardFiles } from "../../src/clipboard-files";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
@@ -28,7 +29,7 @@ let abortBodies: Record<string, unknown>[];
 let promptFails: boolean;
 let fileSearchFails: boolean;
 let slowSearchGate: Promise<void> | null;
-let historyEntries: string[];
+let historyEntries: ComposerHistoryEntry[];
 let historyRequests: number;
 
 beforeAll(async () => {
@@ -57,7 +58,7 @@ beforeAll(async () => {
           viewId: state.transcriptViewId,
           incarnation: state.transcriptIncarnation,
           effectiveLeafId: state.transcriptEffectiveLeafId,
-          historyId: `history-${historyEntries.join("|")}`,
+          historyId: `history-${JSON.stringify(historyEntries)}`,
           total: historyEntries.length,
           start,
           entries: historyEntries.slice(start),
@@ -235,9 +236,65 @@ describe("composer attachments", () => {
 });
 
 describe("composer keyboard submission", () => {
+  it("preserves focus and selection while streamed activity advances the branch leaf", () => {
+    clearLeftovers();
+    historyEntries = [];
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          isStreaming: true,
+          durableLeafId: "leaf-a",
+          effectiveLeafId: "leaf-a",
+          transcriptPage: {
+            revision: 10,
+            appendFromRevision: 10,
+            viewId: "streaming-view",
+            incarnation: "streaming-projection",
+            effectiveLeafId: "leaf-a",
+          },
+        }),
+      }),
+    );
+
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    typeDraft("compose while the session runs");
+    textarea.focus();
+    textarea.setSelectionRange(8, 13);
+
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          isStreaming: true,
+          durableLeafId: "leaf-b",
+          effectiveLeafId: "leaf-b",
+          transcriptPage: {
+            revision: 11,
+            appendFromRevision: 10,
+            viewId: "streaming-view",
+            incarnation: "streaming-projection",
+            effectiveLeafId: "leaf-b",
+          },
+        }),
+      }),
+    );
+
+    const current = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    expect(current).toBe(textarea);
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(8);
+    expect(textarea.selectionEnd).toBe(13);
+  });
+
   it("browses Pi prompt history at visual-line boundaries and restores the draft", async () => {
     clearLeftovers();
-    historyEntries = ["latest prompt", "older prompt"];
+    historyEntries = [
+      { text: "latest prompt", images: [], files: [] },
+      { text: "older prompt", images: [], files: [] },
+    ];
     const requestsBefore = historyRequests;
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() =>
@@ -277,6 +334,89 @@ describe("composer keyboard submission", () => {
     await waitFor(() => expect(textarea).toHaveValue(""));
     fireEvent.keyDown(textarea, { key: "ArrowUp" });
     await waitFor(() => expect(textarea).toHaveValue("newly sent prompt"));
+  });
+
+  it("recalls persisted prompt artifacts and sends their branch-scoped references", async () => {
+    clearLeftovers();
+    historyEntries = [
+      {
+        text: "",
+        images: [
+          {
+            reference: "pi-embedded://4/1",
+            mimeType: "image/png",
+            size: 7,
+          },
+        ],
+        files: [
+          {
+            reference: "pi-file://4/0",
+            fileName: "report.pdf",
+            kind: "attachment",
+          },
+          {
+            reference: "pi-file://4/1",
+            fileName: "source.ts",
+            kind: "project",
+          },
+        ],
+      },
+    ];
+    const requestsBefore = historyRequests;
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          transcriptPage: {
+            viewId: "image-history-view",
+            incarnation: "image-history-projection",
+            effectiveLeafId: "image-history-leaf",
+          },
+        }),
+      }),
+    );
+
+    render(<Composer />);
+    await waitFor(() =>
+      expect(historyRequests).toBeGreaterThan(requestsBefore),
+    );
+    await attachFile();
+    expect(await screen.findByText("notes.txt")).toBeInTheDocument();
+    const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(
+      await screen.findByRole("button", { name: "Remove attached image" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByText("source.ts")).toBeInTheDocument();
+    expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    await waitFor(() => expect(textarea).toHaveValue(""));
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove attached image" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(
+      await screen.findByRole("button", { name: "Remove attached image" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(promptBodies.at(-1)).toMatchObject({
+        sessionId: "s1",
+        message: "",
+        historyArtifacts: {
+          viewId: "image-history-view",
+          incarnation: "image-history-projection",
+          effectiveLeafId: "image-history-leaf",
+          imageReferences: ["pi-embedded://4/1"],
+          fileReferences: ["pi-file://4/0", "pi-file://4/1"],
+        },
+      }),
+    );
   });
 
   it("keeps software-keyboard Return as a line break on touch-first devices", async () => {

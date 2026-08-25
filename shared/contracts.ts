@@ -765,6 +765,26 @@ export interface UserTurnTranscriptPage extends TranscriptPage {
   continuationCursor: string | null;
 }
 
+export interface ComposerHistoryImage {
+  /** Branch-view-scoped reference to the image persisted in Pi's JSONL. */
+  reference: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface ComposerHistoryFile {
+  /** Branch-view-scoped reference to one path persisted with the prompt. */
+  reference: string;
+  fileName: string;
+  kind: "attachment" | "project";
+}
+
+export interface ComposerHistoryEntry {
+  text: string;
+  images: ComposerHistoryImage[];
+  files: ComposerHistoryFile[];
+}
+
 /** Pi-compatible, newest-first prompt history for one branch view. */
 export interface ComposerHistoryPage {
   sessionId: string;
@@ -776,7 +796,7 @@ export interface ComposerHistoryPage {
   historyId: string;
   total: number;
   start: number;
-  entries: string[];
+  entries: ComposerHistoryEntry[];
   nextStart: number | null;
 }
 
@@ -946,12 +966,26 @@ export interface UploadedAttachment {
   previewDataUrl?: string;
 }
 
+export interface ComposerHistoryArtifactsRequest {
+  viewId: string;
+  incarnation: string | null;
+  effectiveLeafId: string | null;
+  imageReferences: string[];
+  fileReferences: string[];
+}
+
 export interface PromptRequest {
   /** Target session: writes never fall back to the host's current selection,
    * so a concurrent navigation cannot redirect a prompt. */
   sessionId: string;
   message: string;
   attachmentIds?: string[];
+  historyArtifacts?: ComposerHistoryArtifactsRequest;
   projectFiles?: string[];
   behavior?: "steer" | "followUp";
+}
+
+export interface PromptAcceptedResponse {
+  accepted: true;
+  historyEntry: ComposerHistoryEntry | null;
 }

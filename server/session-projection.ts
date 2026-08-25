@@ -1,25 +1,18 @@
 import {
   createHash,
   createHmac,
+  type Hash,
   randomBytes,
   timingSafeEqual,
-  type Hash,
 } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
+import { EventEmitter } from "node:events";
+import { type FSWatcher, watch } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { EventEmitter } from "node:events";
 import type {
   SessionEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
-import {
-  buildContextEntries,
-  buildSessionContext,
-  CURRENT_SESSION_VERSION,
-  migrateSessionEntries,
-  sessionEntryToContextMessages,
-} from "./pi-runtime.js";
 import type {
   BranchTreeResponse,
   ComposerHistoryPage,
@@ -34,15 +27,22 @@ import type {
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
+import { samePersistedJson } from "./persisted-json.js";
+import {
+  buildContextEntries,
+  buildSessionContext,
+  CURRENT_SESSION_VERSION,
+  migrateSessionEntries,
+  sessionEntryToContextMessages,
+} from "./pi-runtime.js";
+import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
+import { JsonlObjectDecoder } from "./session-jsonl.js";
 import {
   BRANCH_TREE_MAX_BYTES,
   boundedUserText,
   projectSessionTree,
 } from "./session-tree.js";
-import { samePersistedJson } from "./persisted-json.js";
-import { projectSafeValue } from "./safe-projection.js";
-import { JsonlObjectDecoder } from "./session-jsonl.js";
 
 export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
 /** Includes the complete JSON representation of a TranscriptPage. */
@@ -129,6 +129,7 @@ export interface SessionProjectionView {
   readonly path: string;
   readonly revision: number;
   readonly fingerprint: string;
+  readonly incarnation: string | null;
   readonly health: ProjectionHealth;
   readonly messages: readonly unknown[];
   readonly model: unknown;
@@ -187,6 +188,7 @@ export interface SessionProjectionView {
     start?: number,
     effectiveLeafId?: string | null,
     viewId?: string,
+    cwd?: string,
   ): ComposerHistoryPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
@@ -769,7 +771,7 @@ export class SessionProjection
   readonly sessionId: string;
   readonly path: string;
   private currentRevision = 0;
-  private readonly incarnation = randomBytes(18).toString("base64url");
+  readonly incarnation = randomBytes(18).toString("base64url");
   private appendFromRevision = 0;
   private readonly revisionFingerprints = new Map<number, string>();
   private currentHealth: ProjectionHealth = { status: "ok" };
@@ -1865,6 +1867,7 @@ export class SessionProjection
     start = 0,
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
+    cwd?: string,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
       this.viewMessages(effectiveLeafId),
@@ -1876,6 +1879,7 @@ export class SessionProjection
         effectiveLeafId,
       },
       start,
+      cwd,
     );
   }
 
