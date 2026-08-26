@@ -639,6 +639,29 @@ describe("bounded diff contract", () => {
         await delay(700);
         await expect(access(marker)).rejects.toThrow();
 
+        let registrationAborted = false;
+        const registrationRaceSignal = {
+          get aborted() {
+            return registrationAborted;
+          },
+          addEventListener() {
+            registrationAborted = true;
+          },
+          removeEventListener() {},
+        } as unknown as AbortSignal;
+        await expect(
+          spawnGit(["abort"], {
+            stdoutLimit: 32,
+            signal: registrationRaceSignal,
+            timeoutMs: 250,
+          }),
+        ).rejects.toMatchObject({
+          status: 499,
+          message: "Git inspection was cancelled",
+        });
+        await delay(700);
+        await expect(access(marker)).rejects.toThrow();
+
         await expect(
           spawnGit(["slow"], { stdoutLimit: 32 }),
         ).rejects.toMatchObject({

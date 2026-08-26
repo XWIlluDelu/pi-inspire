@@ -194,6 +194,59 @@ process.stdin.on("data", chunk => {
     expect(exits[0]?.message ?? "").not.toContain("super-secret-credential");
   });
 
+  it("times out a backpressured extension response and retires the worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-ui-stall-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+const consume = chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
+    process.stdin.off("data", consume);
+    process.stdin.pause();
+    setInterval(() => undefined, 1_000);
+  }
+};
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", consume);
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const exited = new Promise<Error>((resolveExit) =>
+      rpc.once("exit", resolveExit),
+    );
+
+    let failure: unknown;
+    try {
+      await rpc.sendExtensionUiResponse(
+        { id: "blocked", value: "x".repeat(8 * 1024 * 1024) },
+        80,
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
+    if (!(failure instanceof PiRpcOutcomeUnknownError)) {
+      throw new Error("Expected the extension response outcome to be unknown");
+    }
+    expect(failure.message).toMatch(/stdin write timed out/);
+    await failure.stopped;
+    expect(await exited).toBe(failure);
+    await expect(rpc.request({ type: "second" })).rejects.toThrow(
+      /not available/,
+    );
+  });
+
   it("marks a written timeout acceptance-unknown, hard-stops, and preserves late disk evidence", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-unknown-"));
     directories.push(directory);

@@ -26,7 +26,10 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
-import { projectComposerHistoryPage } from "./composer-history.js";
+import {
+  type ComposerHistoryFileNameResolver,
+  projectComposerHistoryPage,
+} from "./composer-history.js";
 import { samePersistedJson } from "./persisted-json.js";
 import {
   buildContextEntries,
@@ -189,6 +192,7 @@ export interface SessionProjectionView {
     effectiveLeafId?: string | null,
     viewId?: string,
     cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
@@ -1868,6 +1872,7 @@ export class SessionProjection
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
     cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
       this.viewMessages(effectiveLeafId),
@@ -1880,6 +1885,7 @@ export class SessionProjection
       },
       start,
       cwd,
+      fileNameForPath,
     );
   }
 

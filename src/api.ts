@@ -16,6 +16,8 @@ import type {
   InspirePreferences,
   NewSessionDefaults,
   NewSessionOptions,
+  PendingManagementAction,
+  PendingManagementIntent,
   PendingQueues,
   PiUpdateCheckResponse,
   ProjectDirEntry,
@@ -34,23 +36,7 @@ import type {
 } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 
-export type PendingManagementAction =
-  | { action: "pause"; expectedRevision: number }
-  | { action: "resume"; expectedRevision: number }
-  | { action: "delete"; expectedRevision: number; messageId: string }
-  | { action: "clear"; expectedRevision: number }
-  | {
-      action: "convert";
-      expectedRevision: number;
-      messageId: string;
-      target: "steer" | "followUp";
-    };
-
-export type PendingManagementIntent = PendingManagementAction extends infer T
-  ? T extends PendingManagementAction
-    ? Omit<T, "expectedRevision">
-    : never
-  : never;
+export type { PendingManagementAction, PendingManagementIntent };
 
 export interface ProjectFileResult {
   path: string;

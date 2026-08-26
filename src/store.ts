@@ -1760,7 +1760,8 @@ export class AppStore {
         ],
         promptMapError: null,
       });
-    const pending = (async (): Promise<UserTurnAnchor[]> => {
+    let pending!: Promise<UserTurnAnchor[]>;
+    pending = (async (): Promise<UserTurnAnchor[]> => {
       try {
         const page = await this.api!.transcriptUserTurns(
           sessionId,
@@ -1827,7 +1828,8 @@ export class AppStore {
       } finally {
         if (this.userTurnIndexRequests.get(requestKey) === request)
           this.userTurnIndexRequests.delete(requestKey);
-        this.userTurnIndexPromises.delete(requestKey);
+        if (this.userTurnIndexPromises.get(requestKey) === pending)
+          this.userTurnIndexPromises.delete(requestKey);
         if (
           this.state.sessionId === sessionId &&
           this.selectionGeneration === generation &&

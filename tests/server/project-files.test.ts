@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   directoryEntries,
   invalidateProjectIndex,
+  isIndexedProjectFile,
   searchProjectFiles,
 } from "../../server/project-files.js";
 
@@ -126,6 +127,33 @@ describe("project index authority", () => {
       "one.txt",
       "two.txt",
     ]);
+  });
+
+  it("accepts tracked names beginning with two dots without weakening containment", async () => {
+    const root = await scratch();
+    await execFileAsync("git", ["-C", root, "init", "-q"]);
+    await mkdir(join(root, "..notes"));
+    await writeFile(join(root, "..notes.txt"), "root note\n");
+    await writeFile(join(root, "..notes", "nested.txt"), "nested note\n");
+    await execFileAsync("git", [
+      "-C",
+      root,
+      "add",
+      "--",
+      "..notes.txt",
+      "..notes/nested.txt",
+    ]);
+
+    expect((await searchProjectFiles(root)).map((item) => item.path)).toEqual([
+      "..notes.txt",
+      "..notes/nested.txt",
+    ]);
+    await expect(
+      isIndexedProjectFile(root, join(root, "..notes.txt")),
+    ).resolves.toBe(true);
+    await expect(
+      isIndexedProjectFile(root, join(root, "..", "outside.txt")),
+    ).resolves.toBe(false);
   });
 
   it("uses real git output without shell path quoting", async () => {
