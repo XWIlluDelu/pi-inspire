@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 const token = "inspire-browser-test-token";
+const mockWorkspaceName = basename(process.cwd());
 
 async function pairedPage(page: import("@playwright/test").Page) {
   await page.goto("/");
@@ -358,7 +359,7 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   const workspaceHeading = resources.locator(
     ".files-browser__section--workspace > h2",
   );
-  await expect(workspaceHeading).toHaveText("inspire");
+  await expect(workspaceHeading).toHaveText(mockWorkspaceName);
   const browseWorkspaceTop = (await workspaceHeading.boundingBox())!.y;
 
   const localOrigin = new URL(page.url()).origin;
@@ -377,9 +378,9 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   });
   await recent.getByRole("button", { name: /page\.html/ }).click();
   const workspaceBack = resources.getByRole("button", {
-    name: "Back to file browser for inspire",
+    name: `Back to file browser for ${mockWorkspaceName}`,
   });
-  await expect(workspaceBack).toHaveText("inspire");
+  await expect(workspaceBack).toHaveText(mockWorkspaceName);
   const selectedLayout = await resources
     .locator(".res__body--files:not([hidden])")
     .evaluate((body) => {

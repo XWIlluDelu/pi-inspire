@@ -363,6 +363,32 @@ export class AttachmentStore {
     await rm(value.path, { force: true });
   }
 
+  private promptFile(path: string): StoredAttachment | null {
+    const candidate = resolve(path);
+    for (const value of this.values.values()) {
+      if (
+        value.kind === "file" &&
+        value.path === candidate &&
+        value.state !== "staged"
+      )
+        return value;
+    }
+    return null;
+  }
+
+  /** A persisted prompt may recall an ordinary attachment only while this
+   * Host still owns the file as part of an accepted or in-flight message.
+   * The path trailer stored in session text is descriptive, not authority. */
+  ownsPromptFile(path: string): boolean {
+    return this.promptFile(path) !== null;
+  }
+
+  /** Recover the user-facing name without leaking the UUID-prefixed private
+   * cache basename into composer history. */
+  promptFileName(path: string): string | null {
+    return this.promptFile(path)?.fileName ?? null;
+  }
+
   /** A prompt that failed before delivery hands its leased files back:
    * they become withdrawable (and resendable) again. */
   restage(ids: string[] = []): void {

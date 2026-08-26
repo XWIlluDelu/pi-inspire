@@ -170,6 +170,35 @@ describe("composer history projection", () => {
     ]);
   });
 
+  it("uses Host-owned display names without changing project-file names", () => {
+    const stored = "/cache/uploads/00000000-0000-4000-8000-report.pdf";
+    const message = {
+      role: "user",
+      content: addAttachmentContext(
+        "review",
+        [{ kind: "file", path: stored }],
+        ["/workspace/src/source.ts"],
+      ),
+    };
+
+    expect(
+      composerHistoryEntries([message], "/workspace", (path) =>
+        path === stored ? "report.pdf" : null,
+      )[0]?.files,
+    ).toEqual([
+      {
+        reference: "pi-file://0/0",
+        fileName: "source.ts",
+        kind: "project",
+      },
+      {
+        reference: "pi-file://0/1",
+        fileName: "report.pdf",
+        kind: "attachment",
+      },
+    ]);
+  });
+
   it("pages exact entries under the serialized response bound", () => {
     const messages = Array.from({ length: 100 }, (_, index) => ({
       role: "user",

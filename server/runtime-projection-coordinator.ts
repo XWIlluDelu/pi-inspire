@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   isBusyRunState,
   type ProjectionConflict,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
+import { describeSessionEntry } from "./runtime-entry-descriptor.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
@@ -38,17 +38,6 @@ interface RuntimeProjectionCoordinatorHost {
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
-}
-
-function entryDescriptor(entry: SessionEntry): Record<string, unknown> {
-  const encoded = JSON.stringify(entry);
-  return {
-    entryType: entry.type,
-    entryId: entry.id,
-    parentId: entry.parentId,
-    entryBytes: Buffer.byteLength(encoded),
-    entryHash: createHash("sha256").update(encoded).digest("base64url"),
-  };
 }
 
 export class RuntimeProjectionCoordinator {
@@ -255,7 +244,7 @@ export class RuntimeProjectionCoordinator {
       ownershipRejection: lastOwnership?.reason,
       workerWitness: lastOwnership?.workerWitness,
       appendedEntries: Array.isArray(result.appendedEntries)
-        ? result.appendedEntries.map((entry) => entryDescriptor(entry))
+        ? result.appendedEntries.map((entry) => describeSessionEntry(entry))
         : [],
       previousRevision: result.previousRevision,
       revision: result.revision,

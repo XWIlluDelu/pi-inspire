@@ -125,6 +125,10 @@ export const spawnGit: GitRunner = (args, options) =>
       kill();
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
+    // AbortSignal does not replay an abort that races between the initial
+    // check and listener registration. Recheck after subscribing so that
+    // every cancellation either reaches the listener or is observed here.
+    if (options.signal?.aborted) onAbort();
     const timer = setTimeout(() => {
       timedOut = true;
       kill();

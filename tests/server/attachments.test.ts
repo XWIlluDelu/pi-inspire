@@ -59,10 +59,13 @@ describe("attachment consumption lifecycle", () => {
     const image = await store.add(upload("shot.png", "image/png"));
     expect(doc).not.toHaveProperty("state");
     expect(doc).not.toHaveProperty("path");
+    expect(store.ownsPromptFile("/not-owned")).toBe(false);
     const resolved = await store.resolveForPrompt([doc.id, image.id]);
     const paths = new Map(resolved.files.map((item) => [item.id, item.path]));
+    expect(store.ownsPromptFile(paths.get(doc.id)!)).toBe(true);
 
     await store.releaseConsumed([doc.id, image.id]);
+    expect(store.ownsPromptFile(paths.get(doc.id)!)).toBe(true);
     // Image bytes travelled inside the prompt; the cache copy is gone.
     await expect(access(paths.get(image.id)!)).rejects.toThrow();
     // The conversation references the ordinary file by host path; a late

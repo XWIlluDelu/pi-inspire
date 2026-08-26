@@ -13,7 +13,11 @@ import { resolvePiInstallation } from "../../server/pi-installation.js";
 
 const directories: string[] = [];
 
-async function fakePi(parent: string, version: string) {
+async function fakePi(
+  parent: string,
+  version: string,
+  entryDirectory = "dist",
+) {
   const packageRoot = join(
     parent,
     "node_modules",
@@ -22,7 +26,7 @@ async function fakePi(parent: string, version: string) {
   );
   const binDirectory = join(parent, "bin");
   await Promise.all([
-    mkdir(join(packageRoot, "dist"), { recursive: true }),
+    mkdir(join(packageRoot, entryDirectory), { recursive: true }),
     mkdir(binDirectory, { recursive: true }),
   ]);
   await writeFile(
@@ -31,19 +35,21 @@ async function fakePi(parent: string, version: string) {
       name: "@earendil-works/pi-coding-agent",
       version,
       type: "module",
-      bin: { pi: "dist/cli.js" },
-      exports: { ".": { import: "./dist/index.js" } },
+      bin: { pi: `${entryDirectory}/cli.js` },
+      exports: { ".": { import: `./${entryDirectory}/index.js` } },
     })}\n`,
   );
   await writeFile(
-    join(packageRoot, "dist/index.js"),
+    join(packageRoot, entryDirectory, "index.js"),
     "export const marker = true;\n",
   );
-  await writeFile(join(packageRoot, "dist/cli.js"), "#!/usr/bin/env node\n", {
-    mode: 0o755,
-  });
+  await writeFile(
+    join(packageRoot, entryDirectory, "cli.js"),
+    "#!/usr/bin/env node\n",
+    { mode: 0o755 },
+  );
   const commandPath = join(binDirectory, "pi");
-  await symlink(join(packageRoot, "dist/cli.js"), commandPath);
+  await symlink(join(packageRoot, entryDirectory, "cli.js"), commandPath);
   await chmod(commandPath, 0o755);
   return { packageRoot, binDirectory, commandPath };
 }
@@ -73,6 +79,27 @@ describe("Pi installation authority", () => {
       version: "99.0.0",
     });
     expect(installation.cliPath).toBe(join(pi.packageRoot, "dist/cli.js"));
+    expect((installation.sdk as unknown as { marker: boolean }).marker).toBe(
+      true,
+    );
+  });
+
+  it("accepts valid package entries whose names begin with two dots", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pi-dot-entry-"));
+    directories.push(directory);
+    const pi = await fakePi(directory, "99.0.0", "..runtime");
+
+    const installation = await resolvePiInstallation({
+      command: pi.commandPath,
+      installationRoot: join(directory, "inspire"),
+    });
+
+    expect(installation.cliPath).toBe(
+      join(pi.packageRoot, "..runtime", "cli.js"),
+    );
+    expect(installation.sdkEntryPath).toBe(
+      join(pi.packageRoot, "..runtime", "index.js"),
+    );
     expect((installation.sdk as unknown as { marker: boolean }).marker).toBe(
       true,
     );

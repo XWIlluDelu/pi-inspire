@@ -7,6 +7,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -351,7 +352,7 @@ export function Transcript({
     };
     type ActivityRun = {
       memberKeys: string[];
-      nodes: React.ReactNode[];
+      nodes: { key: string; node: React.ReactNode }[];
       deferredRanges: TranscriptActivityRangeState[];
       telemetry: ActivityTelemetryItem[];
       live: boolean;
@@ -423,7 +424,7 @@ export function Transcript({
           turnId: currentTurnId,
         };
       activityRun.memberKeys.push(key, ...aliases);
-      activityRun.nodes.push(node);
+      activityRun.nodes.push({ key, node });
       if (deferredRange) activityRun.deferredRanges.push(deferredRange);
       if (telemetryItems.length > 0)
         activityRun.telemetry.push(...telemetryItems);
@@ -465,7 +466,9 @@ export function Transcript({
               preserveActivityAnchorRef.current(element, alignment)
             }
           >
-            {run.nodes}
+            {run.nodes.map(({ key, node }) => (
+              <Fragment key={key}>{node}</Fragment>
+            ))}
           </ResponseActivityFold>
         ),
         searchText: "",

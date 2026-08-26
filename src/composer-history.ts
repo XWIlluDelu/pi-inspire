@@ -74,13 +74,21 @@ function normalizedEntry(
     : null;
 }
 
+function discardPartition(partition: HistoryPartition): void {
+  partition.discarded = true;
+  partition.entries = [];
+  partition.pending = [];
+}
+
 function touch(key: string, partition: HistoryPartition): void {
   partitions.delete(key);
   partitions.set(key, partition);
   while (partitions.size > MAX_CACHED_SCOPES) {
     const oldest = partitions.keys().next().value as string | undefined;
     if (oldest === undefined) break;
+    const evicted = partitions.get(oldest);
     partitions.delete(oldest);
+    if (evicted) discardPartition(evicted);
   }
 }
 
@@ -189,8 +197,7 @@ export function discardComposerHistory(sessionId: string): void {
   for (const [key, partition] of partitions) {
     if (JSON.parse(key)[0] !== sessionId) continue;
     partitions.delete(key);
-    partition.discarded = true;
-    partition.pending = [];
+    discardPartition(partition);
   }
 }
 
