@@ -4271,6 +4271,7 @@ button.pending-group__mark:disabled,
 }
 
 .resource-path {
+  position: relative;
   display: block;
   width: 100%;
   min-width: 0;
