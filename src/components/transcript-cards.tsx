@@ -773,7 +773,9 @@ function ToolPresentationBlockView({
                 <section className="tool-search-group" key={group.path}>
                   <header>
                     <FileSearch size={14} aria-hidden />
-                    <code>{group.path}</code>
+                    <code title={group.path}>
+                      <ResourcePathLabel path={group.path} />
+                    </code>
                     <span>{formatCount(group.matches.length, "line")}</span>
                   </header>
                   <div className="tool-search-group__lines">

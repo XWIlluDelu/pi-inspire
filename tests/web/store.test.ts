@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
+  NOTEBOOK_PREVIEW_BYTES,
 } from "../../src/resource-preview";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { AppStore } from "../../src/store";
@@ -3617,6 +3618,57 @@ describe("resource previews", () => {
     );
   });
 
+  it("loads a complete notebook within the bounded document-preview range", async () => {
+    let range: string | null = null;
+    const notebook = JSON.stringify({
+      cells: [{ cell_type: "markdown", source: ["# Result"] }],
+      metadata: {},
+      nbformat: 4,
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        return {
+          body: {
+            id: "notebook",
+            sessionId: "s1",
+            reference: "analysis.ipynb",
+            workspacePath: "analysis.ipynb",
+            name: "analysis.ipynb",
+            mimeType: "application/x-ipynb+json",
+            size: notebook.length,
+            kind: "notebook",
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const inner = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/resources/notebook/content")) {
+          range = new Headers(init?.headers).get("Range");
+          return new Response(notebook, {
+            headers: { "Content-Type": "application/x-ipynb+json" },
+          });
+        }
+        return (inner as typeof fetch)(input as RequestInfo | URL, init);
+      }),
+    );
+    const { store } = await initStore();
+
+    await store.openResource("analysis.ipynb");
+
+    expect(range).toBe(`bytes=0-${NOTEBOOK_PREVIEW_BYTES - 1}`);
+    expect(store.getState().resourcePreview).toMatchObject({
+      status: "ready",
+      truncated: false,
+      text: notebook,
+      descriptor: { kind: "notebook" },
+    });
+  });
+
   it("clears conversation-derived resource selection on a same-session branch-view boundary", async () => {
     installFetch(resourceRoutes());
     stubContent("# Notes body");
@@ -4065,6 +4117,38 @@ describe("resource previews", () => {
     expect(store.getState().selectedResourceReference).toBeNull();
     expect(store.getState().resourcePreview).toBeNull();
     expect(revoked).toEqual(["blob:preview-0"]);
+  });
+
+  it("clears a selected resource when the same view projection is replaced", async () => {
+    installFetch(resourceRoutes());
+    stubContent("# Notes body");
+    const { store, socket } = await initStore();
+
+    await store.openResource("notes/result.md");
+    expect(store.getState()).toMatchObject({
+      fileBrowserView: "preview",
+      selectedResourceReference: "notes/result.md",
+      resourcePreview: { status: "ready" },
+    });
+
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        transcriptPage: {
+          revision: 2,
+          appendFromRevision: 2,
+          incarnation: "projection-2",
+        },
+      }),
+    });
+
+    expect(store.getState()).toMatchObject({
+      fileBrowserView: "browse",
+      selectedResourceReference: null,
+      resourcePreview: null,
+      resourceAvailability: {},
+      resourceWorkspacePaths: {},
+    });
   });
 
   it("closing the pane clears the loaded preview", async () => {

@@ -16,7 +16,6 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     selectionGeneration: 1,
     resourcesOpen: false,
     contextMode: "files",
-    detailMode: "file",
     gitStatus: null,
     gitStatusError: null,
     gitStatusLoading: false,
@@ -29,7 +28,6 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
   const gitStatus = vi.fn();
   const gitDiff = vi.fn();
   const api = { gitStatus, gitDiff } as unknown as Api;
-  const cancelResourcePreview = vi.fn();
   const openResourceFromGit = vi.fn<(path: string) => Promise<void>>();
   const handleAuthFailure = vi.fn();
   const controller = new GitController({
@@ -40,7 +38,6 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     api: () => api,
     transportGeneration: () => 1,
     handleAuthFailure,
-    cancelResourcePreview,
     openResourceFromGit,
   });
   return {
@@ -52,7 +49,6 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     gitStatus,
     gitDiff,
     handleAuthFailure,
-    cancelResourcePreview,
     openResourceFromGit,
   };
 }
@@ -178,13 +174,104 @@ describe("GitController", () => {
     });
   });
 
+  it("preserves an explicit staged selection when the resource resolves", () => {
+    const path = {
+      id: "dual-path",
+      display: "src/dual.ts",
+      utf8Path: "src/dual.ts",
+      workspacePath: "src/dual.ts",
+    };
+    const gitDiff = {
+      status: "loading" as const,
+      pathId: path.id,
+      side: "staged" as const,
+    };
+    const harness = createHarness({
+      gitStatus: {
+        kind: "repository",
+        head: { kind: "branch", name: "main", oid: "abc" },
+        files: [
+          {
+            path,
+            staged: { kind: "modified" },
+            unstaged: { kind: "modified" },
+            untracked: false,
+          },
+        ],
+        total: 1,
+        truncated: false,
+        groups: {
+          conflicted: [],
+          staged: [path.id],
+          unstaged: [path.id],
+          untracked: [],
+        },
+      },
+      selectedGitPathId: path.id,
+      selectedGitSide: "staged",
+      gitDiff,
+    });
+
+    harness.controller.selectWorkspacePath(path.workspacePath);
+
+    expect(harness.state()).toMatchObject({
+      selectedGitPathId: path.id,
+      selectedGitSide: "staged",
+      gitDiff,
+    });
+  });
+
+  it("keeps an unmodified workspace file while clearing a previous diff", () => {
+    const changedPath = {
+      id: "changed-path",
+      display: "src/changed.ts",
+      utf8Path: "src/changed.ts",
+      workspacePath: "src/changed.ts",
+    };
+    const harness = createHarness({
+      gitStatus: {
+        kind: "repository",
+        head: { kind: "branch", name: "main", oid: "abc" },
+        files: [
+          {
+            path: changedPath,
+            unstaged: { kind: "modified" },
+            untracked: false,
+          },
+        ],
+        total: 1,
+        truncated: false,
+        groups: {
+          conflicted: [],
+          staged: [],
+          unstaged: [changedPath.id],
+          untracked: [],
+        },
+      },
+      selectedGitPathId: changedPath.id,
+      selectedGitSide: "unstaged",
+      gitDiff: {
+        status: "loading",
+        pathId: changedPath.id,
+        side: "unstaged",
+      },
+    });
+
+    harness.controller.selectWorkspacePath("src/clean.ts");
+
+    expect(harness.state()).toMatchObject({
+      selectedGitPathId: null,
+      selectedGitSide: null,
+      gitDiff: null,
+    });
+  });
+
   it("clears Git selection only when a Files resource replaces it", () => {
     const selected: GitControllerState = {
       sessionId: "s1",
       selectionGeneration: 1,
       resourcesOpen: true,
       contextMode: "changes",
-      detailMode: "diff",
       gitStatus: null,
       gitStatusError: null,
       gitStatusLoading: false,

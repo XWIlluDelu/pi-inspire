@@ -3,13 +3,14 @@ import {
   MAX_RESOURCE_PROBE_REFERENCES,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import {
   classifiedResourceFailure,
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
-  TEXT_PREVIEW_BYTES,
+  NOTEBOOK_PREVIEW_BYTES,
   type ResourcePreview,
+  TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
 
@@ -19,7 +20,6 @@ interface ResourceControllerState {
   transcriptRevision: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
-  detailMode: "file" | "diff";
   fileBrowserView: "browse" | "preview";
   selectedResourceReference: string | null;
   resourcePreview: ResourcePreview | null;
@@ -33,7 +33,6 @@ interface ResourceControllerState {
 interface ResourceControllerPatch {
   resourcesOpen?: boolean;
   contextMode?: "files" | "changes" | "branches";
-  detailMode?: "file" | "diff";
   fileBrowserView?: "browse" | "preview";
   selectedResourceReference?: string | null;
   resourcePreview?: ResourcePreview | null;
@@ -50,7 +49,7 @@ interface ResourceControllerHost {
   transportGeneration(): number;
   handleAuthFailure(): void;
   prepareGitForResourceOpen(contextMode: "files" | "changes"): void;
-  selectWorkspacePath(workspacePath: string): void;
+  selectWorkspacePath(workspacePath: string, reveal?: boolean): void;
 }
 
 /**
@@ -65,6 +64,7 @@ export class ResourceController {
   private resourceProbeRequest: AbortController | null = null;
   private resourceProbeKey: string | null = null;
   private resourceProbedReferences = new Set<string>();
+  private referenceGenerations = new Map<string, number>();
 
   constructor(private readonly host: ResourceControllerHost) {}
 
@@ -78,6 +78,7 @@ export class ResourceController {
     this.resourceProbeRequest = null;
     this.resourceProbeKey = null;
     this.resourceProbedReferences.clear();
+    this.referenceGenerations.clear();
     if (
       clearStanding &&
       (Object.keys(this.host.state().resourceAvailability).length > 0 ||
@@ -109,6 +110,17 @@ export class ResourceController {
   private ownsTransport(api: Api, generation: number): boolean {
     return (
       this.host.api() === api && this.host.transportGeneration() === generation
+    );
+  }
+
+  private referenceGeneration(reference: string): number {
+    return this.referenceGenerations.get(reference) ?? 0;
+  }
+
+  private advanceReferenceGeneration(reference: string): void {
+    this.referenceGenerations.set(
+      reference,
+      this.referenceGeneration(reference) + 1,
     );
   }
 
@@ -183,15 +195,6 @@ export class ResourceController {
     if (this.resourceProbeKey !== generationKey) {
       this.cancelProbes();
       this.resourceProbeKey = generationKey;
-      if (
-        Object.keys(this.host.state().resourceAvailability).length > 0 ||
-        Object.keys(this.host.state().resourceWorkspacePaths).length > 0
-      ) {
-        this.host.patch({
-          resourceAvailability: {},
-          resourceWorkspacePaths: {},
-        });
-      }
     }
     if (unique.length === 0) return;
     const pending = unique.filter(
@@ -223,6 +226,14 @@ export class ResourceController {
           offset,
           offset + MAX_RESOURCE_PROBE_REFERENCES,
         );
+        const generations = new Map(
+          batch.map((reference) => [
+            reference,
+            this.referenceGeneration(reference),
+          ]),
+        );
+        const generationIsCurrent = (reference: string): boolean =>
+          generations.get(reference) === this.referenceGeneration(reference);
         try {
           const response = await api.probeResources(
             sessionId,
@@ -246,7 +257,8 @@ export class ResourceController {
           for (const result of response.results) {
             if (
               !expected.has(result.reference) ||
-              received.has(result.reference)
+              received.has(result.reference) ||
+              !generationIsCurrent(result.reference)
             )
               continue;
             received.add(result.reference);
@@ -261,6 +273,7 @@ export class ResourceController {
             }
           }
           for (const reference of batch) {
+            if (!generationIsCurrent(reference)) continue;
             if (received.has(reference)) {
               this.resourceProbedReferences.add(reference);
             } else {
@@ -285,6 +298,7 @@ export class ResourceController {
             ...current.resourceWorkspacePaths,
           };
           for (const reference of batch) {
+            if (!generationIsCurrent(reference)) continue;
             resourceAvailability[reference] = unknownResourceAvailability(
               reference,
               error,
@@ -396,6 +410,7 @@ export class ResourceController {
   async openResource(
     reference: string,
     contextMode: "files" | "changes" = "files",
+    knownWorkspacePath?: string,
   ): Promise<void> {
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
@@ -409,7 +424,6 @@ export class ResourceController {
     this.host.patch({
       resourcesOpen: true,
       contextMode,
-      detailMode: "file",
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       resourcePreview: { status: "loading", reference },
@@ -432,9 +446,10 @@ export class ResourceController {
         request.signal,
       );
       if (stale() || (descriptor.viewId ?? viewId) !== viewId) return;
-      // Resolution confirms or corrects preflight standing. A later transfer
-      // failure leaves this availability intact.
+      // Resolution confirms or corrects preflight standing. Advance first so
+      // an older probe cannot overwrite this result when it arrives later.
       resolvedReference = true;
+      this.advanceReferenceGeneration(reference);
       this.recordAvailability({
         reference,
         availability: "available",
@@ -443,7 +458,10 @@ export class ResourceController {
           : {}),
       });
       if (descriptor.workspacePath)
-        this.host.selectWorkspacePath(descriptor.workspacePath);
+        this.host.selectWorkspacePath(
+          descriptor.workspacePath,
+          descriptor.workspacePath !== knownWorkspacePath,
+        );
       if (descriptor.kind === "binary") {
         this.host.patch({
           resourcePreview: { status: "ready", reference, descriptor },
@@ -453,8 +471,10 @@ export class ResourceController {
       const textLike =
         descriptor.kind === "text" ||
         descriptor.kind === "markdown" ||
+        descriptor.kind === "notebook" ||
         descriptor.kind === "html";
-      if (!textLike && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
+      const svg = descriptor.mimeType === "image/svg+xml";
+      if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
         this.host.patch({
           resourcePreview: {
             status: "ready",
@@ -466,7 +486,12 @@ export class ResourceController {
         return;
       }
       const content = await api.resourceContent(descriptor.id, sessionId, {
-        byteLimit: textLike ? TEXT_PREVIEW_BYTES : MAX_MEDIA_PREVIEW_BYTES + 1,
+        byteLimit:
+          descriptor.kind === "notebook"
+            ? NOTEBOOK_PREVIEW_BYTES
+            : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+              ? TEXT_PREVIEW_BYTES
+              : MAX_MEDIA_PREVIEW_BYTES + 1,
         signal: request.signal,
       });
       if (stale()) return;
@@ -505,6 +530,10 @@ export class ResourceController {
         });
         return;
       }
+      const svgText = svg
+        ? await blob.slice(0, TEXT_PREVIEW_BYTES).text()
+        : undefined;
+      if (stale()) return;
       if (
         content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
         blob.size > MAX_MEDIA_PREVIEW_BYTES
@@ -514,6 +543,9 @@ export class ResourceController {
             status: "ready",
             reference,
             descriptor: currentDescriptor,
+            ...(svgText !== undefined
+              ? { text: svgText, truncated: true }
+              : {}),
             contentUnavailable: "too-large",
           },
         });
@@ -527,6 +559,12 @@ export class ResourceController {
           status: "ready",
           reference,
           descriptor: currentDescriptor,
+          ...(svgText !== undefined
+            ? {
+                text: svgText,
+                truncated: content.totalSize > TEXT_PREVIEW_BYTES,
+              }
+            : {}),
           ...(this.previewObjectUrl
             ? { objectUrl: this.previewObjectUrl }
             : {}),
@@ -541,7 +579,10 @@ export class ResourceController {
       const availability = resolvedReference
         ? null
         : classifiedResourceFailure(reference, error);
-      if (availability) this.recordAvailability(availability);
+      if (availability) {
+        this.advanceReferenceGeneration(reference);
+        this.recordAvailability(availability);
+      }
       if (
         error instanceof ApiError &&
         error.matches &&

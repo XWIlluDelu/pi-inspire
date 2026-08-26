@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, type Api } from "../../src/api";
+import { type Api, ApiError } from "../../src/api";
 import {
   emptyWorkspaceBrowserState,
-  WorkspaceController,
   type WorkspaceBrowserState,
+  WorkspaceController,
 } from "../../src/controllers/workspace-controller";
 
 function deferred<T>() {
@@ -110,6 +110,22 @@ describe("WorkspaceController", () => {
     });
   });
 
+  it("restores an oldest cached workspace before saving into a full LRU", () => {
+    const harness = createHarness();
+    let next = harness.controller.changeOwner("/target");
+    harness.patch({ sessionId: "target", cwd: "/target", ...next });
+    harness.patch({ workspaceQuery: "remember me" });
+
+    for (let index = 1; index <= 8; index += 1) {
+      const cwd = `/project-${index}`;
+      next = harness.controller.changeOwner(cwd);
+      harness.patch({ sessionId: `s-${index}`, cwd, ...next });
+    }
+
+    next = harness.controller.changeOwner("/target");
+    expect(next.workspaceQuery).toBe("remember me");
+  });
+
   it("publishes only the newest search", async () => {
     const first = deferred<{ files: Array<{ name: string; path: string }> }>();
     const second = deferred<{ files: Array<{ name: string; path: string }> }>();
@@ -146,6 +162,15 @@ describe("WorkspaceController", () => {
       "src",
       "src/components",
     ]);
+    expect(harness.state().workspaceRevealRequest).toEqual({
+      path: "src/components/App.tsx",
+      nonce: 1,
+    });
+    expect(harness.controller.consumeRevealRequest(0)).toBe(false);
+    expect(harness.state().workspaceRevealRequest).not.toBeNull();
+    expect(harness.controller.consumeRevealRequest(1)).toBe(true);
+    expect(harness.controller.consumeRevealRequest(1)).toBe(false);
+    expect(harness.state().workspaceRevealRequest).toBeNull();
     expect(harness.listFiles.mock.calls.map((call) => call[1])).toEqual([
       "",
       "src",

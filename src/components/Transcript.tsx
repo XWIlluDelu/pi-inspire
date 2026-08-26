@@ -17,8 +17,8 @@ import {
 import {
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
-  emptyPendingQueues,
   type ExtensionDisplay,
+  emptyPendingQueues,
   type GenericExtensionDisplay,
   isBusyRunState,
   type PendingQueues,
@@ -38,6 +38,7 @@ import {
   messageText,
   type ToolCallContent,
 } from "../events";
+import { resourceReferenceFromEventTarget } from "../resources";
 import {
   type ActivityMaterializationMode,
   store,
@@ -1317,11 +1318,7 @@ export function Transcript({
   // rows. Elements that must not bubble (tool-card summaries) stop propagation
   // and call store.openResource themselves.
   const onClick = (event: React.MouseEvent) => {
-    const origin =
-      event.target instanceof Element
-        ? event.target.closest("[data-file-path]")
-        : null;
-    const reference = origin?.getAttribute("data-file-path");
+    const reference = resourceReferenceFromEventTarget(event.target);
     if (!reference) return;
     event.preventDefault();
     void store.openResource(reference);

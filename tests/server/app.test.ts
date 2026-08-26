@@ -1601,6 +1601,20 @@ describe("local host API", () => {
       .expect(200);
     expect(content.text).toBe("# Host preview\n");
     expect(content.headers["accept-ranges"]).toBe("bytes");
+    expect(content.headers["content-disposition"]).toBe(
+      "inline; filename*=UTF-8''preview.md",
+    );
+
+    const download = await request(application.server)
+      .get(
+        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}&download=1`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(download.text).toBe("# Host preview\n");
+    expect(download.headers["content-disposition"]).toBe(
+      "attachment; filename*=UTF-8''preview.md",
+    );
 
     // A head-slice Range (how the client caps text previews) yields 206.
     const ranged = await request(application.server)

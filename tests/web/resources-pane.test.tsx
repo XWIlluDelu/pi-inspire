@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -10,10 +11,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitPathIdentity } from "../../shared/contracts";
 import { stripResourceLocation } from "../../shared/resource-references";
 import { App } from "../../src/App";
+import { MAX_MEDIA_PREVIEW_BYTES } from "../../src/resource-preview";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  FakeWebSocket,
   installFakeWebSocket,
 } from "./helpers";
 
@@ -21,16 +24,24 @@ describe("Files pane", () => {
   let testToken = 0;
   let gitStatusFails = false;
   let missingProbeReference: string | null = null;
+  let invalidProbeReference: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let resourceProbeRequests = 0;
+  let resourceResolveRequests = 0;
+  let resourceListGate: Promise<void> | null = null;
+  let resourceProbeGate: Promise<void> | null = null;
   let bootstrapMessages: unknown[] = [];
   let transcriptRevision = 1;
 
   beforeEach(async () => {
     gitStatusFails = false;
     missingProbeReference = null;
+    invalidProbeReference = null;
     resourceListRequests = [];
     resourceProbeRequests = 0;
+    resourceResolveRequests = 0;
+    resourceListGate = null;
+    resourceProbeGate = null;
     transcriptRevision = 1;
     bootstrapMessages = [
       {
@@ -253,6 +264,8 @@ describe("Files pane", () => {
           return Response.json({
             ...base,
             kind: "text",
+            additions: 2,
+            deletions: 1,
             truncated: body.pathId === "both",
             encodingLossy: false,
             lines: [
@@ -264,10 +277,20 @@ describe("Files pane", () => {
               },
               { kind: "delete", text: "-old", oldLine: 1, newLine: null },
               { kind: "add", text: "+new", oldLine: null, newLine: 1 },
+              {
+                kind: "hunk",
+                text: "@@ -10,0 +11 @@",
+                oldLine: null,
+                newLine: null,
+              },
+              { kind: "add", text: "+later", oldLine: null, newLine: 11 },
             ],
           });
         }
         if (url.startsWith("/api/resources/list")) {
+          const responseRevision = transcriptRevision;
+          const gate = resourceListGate;
+          resourceListGate = null;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             cursor?: string;
             limit?: number;
@@ -276,8 +299,9 @@ describe("Files pane", () => {
             ...(body.cursor ? { cursor: body.cursor } : {}),
             ...(body.limit ? { limit: body.limit } : {}),
           });
+          if (gate) await gate;
           const resources = [
-            "notes.md",
+            responseRevision === 1 ? "notes.md" : "fresh.md",
             "demo.html",
             ...Array.from({ length: 148 }, (_, index) => `old-${index + 1}.md`),
           ].map((reference) => ({
@@ -294,7 +318,7 @@ describe("Files pane", () => {
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
-            revision: transcriptRevision,
+            revision: responseRevision,
             offset,
             total: resources.length,
             nextCursor: end < resources.length ? `cursor:${end}` : null,
@@ -303,9 +327,12 @@ describe("Files pane", () => {
         }
         if (url.startsWith("/api/resources/probe")) {
           resourceProbeRequests += 1;
+          const gate = resourceProbeGate;
+          resourceProbeGate = null;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             references: string[];
           };
+          if (gate) await gate;
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
@@ -317,38 +344,140 @@ describe("Files pane", () => {
                     availability: "missing",
                     message: "The referenced file was not found",
                   }
-                : {
-                    reference,
-                    availability: "available",
-                    workspacePath: reference,
-                  },
+                : reference === invalidProbeReference
+                  ? {
+                      reference,
+                      availability: "invalid",
+                      message: "The reference is not a file",
+                    }
+                  : {
+                      reference,
+                      availability: "available",
+                      workspacePath: reference,
+                    },
             ),
           });
         }
         if (url.startsWith("/api/resources/resolve")) {
+          resourceResolveRequests += 1;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
           };
           const resolvedPath = stripResourceLocation(body.reference);
+          if (resolvedPath === "./folder")
+            return Response.json(
+              { error: "The reference is not a file" },
+              { status: 400 },
+            );
+          if (resolvedPath.endsWith(".pdf"))
+            return Response.json({
+              id: "pdf",
+              sessionId: "s1",
+              reference: body.reference,
+              workspacePath: resolvedPath,
+              name: resolvedPath.split("/").at(-1) ?? resolvedPath,
+              mimeType: "application/pdf",
+              size: 64,
+              kind: "pdf",
+            });
           const html = resolvedPath.endsWith(".html");
+          const truncatedHtml = resolvedPath.endsWith("truncated.html");
+          const truncatedMarkdown = resolvedPath.endsWith("truncated.md");
+          const notebook = resolvedPath.endsWith(".ipynb");
+          const svg = resolvedPath.endsWith(".svg");
+          const largeSvg = resolvedPath.endsWith("large.svg");
           const text = resolvedPath.endsWith(".ts");
+          const id = truncatedHtml
+            ? "truncated-html"
+            : html
+              ? "html"
+              : truncatedMarkdown
+                ? "truncated-markdown"
+                : notebook
+                  ? "notebook"
+                  : largeSvg
+                    ? "large-svg"
+                    : svg
+                      ? "svg"
+                      : text
+                        ? "text"
+                        : "markdown";
           return Response.json({
-            id: html ? "html" : text ? "text" : "markdown",
+            id,
             sessionId: "s1",
             reference: body.reference,
             workspacePath: resolvedPath,
             name: resolvedPath.split("/").at(-1) ?? resolvedPath,
             mimeType: html
               ? "text/html"
-              : text
-                ? "text/typescript"
-                : "text/markdown",
-            size: text ? 2_048 : 64,
-            kind: html ? "html" : text ? "text" : "markdown",
+              : notebook
+                ? "application/x-ipynb+json"
+                : svg
+                  ? "image/svg+xml"
+                  : text
+                    ? "text/typescript"
+                    : "text/markdown",
+            size: largeSvg ? MAX_MEDIA_PREVIEW_BYTES + 1 : text ? 2_048 : 64,
+            kind: html
+              ? "html"
+              : notebook
+                ? "notebook"
+                : svg
+                  ? "image"
+                  : text
+                    ? "text"
+                    : "markdown",
           });
         }
+        if (url.includes("/api/resources/truncated-markdown/content"))
+          return new Response("# Previewed notes", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-16/4096" },
+          });
+        if (url.includes("/api/resources/truncated-html/content"))
+          return new Response("<h1>Partial page</h1>", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-20/4096" },
+          });
         if (url.includes("/api/resources/markdown/content"))
-          return new Response("# Previewed notes");
+          return new Response("# Previewed notes\n\n[Open main](src/main.ts)");
+        if (url.includes("/api/resources/notebook/content"))
+          return new Response(
+            JSON.stringify({
+              cells: [
+                { cell_type: "markdown", source: ["# Notebook title"] },
+                {
+                  cell_type: "code",
+                  execution_count: 3,
+                  source: ["print('hello')"],
+                  outputs: [{ output_type: "stream", text: ["hello\n"] }],
+                },
+              ],
+              metadata: { language_info: { name: "python" } },
+              nbformat: 4,
+              nbformat_minor: 5,
+            }),
+            { headers: { "Content-Type": "application/x-ipynb+json" } },
+          );
+        if (url.includes("/api/resources/large-svg/content")) {
+          const source = '<svg xmlns="http://www.w3.org/2000/svg">';
+          return new Response(source, {
+            status: 206,
+            headers: {
+              "Content-Range": `bytes 0-${source.length - 1}/${MAX_MEDIA_PREVIEW_BYTES + 1}`,
+              "Content-Type": "image/svg+xml",
+            },
+          });
+        }
+        if (url.includes("/api/resources/pdf/content"))
+          return new Response("%PDF-1.7", {
+            headers: { "Content-Type": "application/pdf" },
+          });
+        if (url.includes("/api/resources/svg/content"))
+          return new Response(
+            '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4" /></svg>',
+            { headers: { "Content-Type": "image/svg+xml" } },
+          );
         if (url.includes("/api/resources/text/content"))
           return new Response(
             Array.from(
@@ -369,7 +498,8 @@ describe("Files pane", () => {
     store.setContextMode("files");
   });
 
-  it("renders grouped canonical changes, side selection, numbered diffs, and explicit result states", async () => {
+  it("renders grouped changes over a stable source view with change navigation", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
     fireEvent.click(await screen.findByRole("button", { name: "Changes" }));
@@ -377,7 +507,9 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Context panel",
     });
-    expect(pane.querySelector(".ctx__branch")).toHaveTextContent("notes.md");
+    expect(pane.querySelector(".res__index-header")).toHaveTextContent(
+      "feature/git4 staged · 7 working · 1 conflict",
+    );
     expect(
       screen.getByRole("heading", { name: /Conflicts/ }),
     ).toBeInTheDocument();
@@ -387,29 +519,18 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", {
-          name: "notes.md, unstaged modified",
-        }),
+        screen.getByRole("button", { name: "notes.md, unstaged modified" }),
       ).toHaveAttribute("aria-current", "true"),
     );
     expect(
-      screen.getByLabelText("Untracked — not yet added to Git"),
-    ).toHaveTextContent("U");
-    expect(
-      screen.getByLabelText("Untracked — not yet added to Git"),
-    ).toHaveClass("git-deco--untracked");
+      await screen.findByLabelText("Source changes for notes.md"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Showing first 11 of 1005 changed paths."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "both.ts, staged modified" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "both.ts, unstaged modified" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "conflict.ts, conflict UU" }),
-    ).toBeInTheDocument();
+      screen.getByLabelText("Untracked — not yet added to Git"),
+    ).toHaveClass("git-deco--untracked");
     expect(
       screen.getByRole("button", {
         name: "renamed.ts, staged renamed, renamed from old.ts",
@@ -420,27 +541,31 @@ describe("Files pane", () => {
         name: "copied.ts, staged copied, copied from source.ts",
       }),
     ).toBeInTheDocument();
+
     fireEvent.click(
       screen.getByRole("button", { name: "both.ts, unstaged modified" }),
     );
-    expect(
-      await screen.findByLabelText("Diff for both.ts"),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Working" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    const source = await screen.findByLabelText("Source changes for both.ts");
+    expect(source).toHaveAttribute("data-pane-scroll-active", "true");
+    expect(within(pane).getByTitle("Line changes")).toHaveTextContent("+2−1");
+    expect(screen.getByText("Source truncated")).toBeInTheDocument();
+    const next = screen.getByRole("button", { name: "Next change" });
+    fireEvent.click(next);
+    expect(source.querySelector('[data-change-index="0"]')).toHaveClass(
+      "source-diff__line--active",
     );
-    expect(screen.getByLabelText("Old line 1")).toHaveTextContent("1");
-    expect(screen.getByLabelText("New line 1")).toHaveTextContent("1");
-    expect(
-      screen.getByText("Diff truncated at the safe preview limit."),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Staged" }));
+    fireEvent.click(next);
+    expect(source.querySelector('[data-change-index="1"]')).toHaveClass(
+      "source-diff__line--active",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "both.ts, staged modified" }),
+    );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Staged" })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      ),
+      expect(
+        screen.getByRole("button", { name: "both.ts, staged modified" }),
+      ).toHaveAttribute("aria-current", "true"),
     );
 
     fireEvent.click(screen.getByRole("button", { name: /image\.bin/ }));
@@ -450,28 +575,22 @@ describe("Files pane", () => {
     fireEvent.click(screen.getByRole("button", { name: /vendor\/module/ }));
     expect(await screen.findByText("Submodule change")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /bad\\xff/ }));
+    expect(await screen.findByText("Source unavailable")).toBeInTheDocument();
     expect(
-      await screen.findByText(/cannot be passed safely as UTF-8/),
+      screen.getByText(/cannot be represented as UTF-8/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
     expect(
-      await screen.findByText(
-        /Untracked content is available through File preview/,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "File" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /outside\.ts/ }));
-    expect(
-      await screen.findByText(/outside the session workspace/i),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /gone\.ts/ }));
-    expect(
-      await screen.findByText(/working-tree file is deleted/i),
+      await screen.findByRole("region", { name: "File source" }),
     ).toBeInTheDocument();
   });
 
-  it("browses, searches, previews, locates, and adds workspace files", async () => {
-    Element.prototype.scrollIntoView = vi.fn();
+  it("browses, searches, and keeps only the essential file actions", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     render(<App />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Toggle resources panel" }),
@@ -480,7 +599,12 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Context panel",
     });
-    expect(await within(pane).findByText("proj")).toBeInTheDocument();
+    expect(
+      await within(pane).findByRole("button", { name: "README.md" }),
+    ).toBeInTheDocument();
+    expect(
+      within(pane).getByRole("heading", { name: "proj" }),
+    ).toBeInTheDocument();
     fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
     const browserScroller = pane.querySelector<HTMLElement>(
       ".files-browser__scroll",
@@ -489,52 +613,47 @@ describe("Files pane", () => {
     fireEvent.click(
       await within(pane).findByRole("button", { name: "long.ts" }),
     );
-    expect(pane.querySelector(".files-browser")).toHaveAttribute("hidden");
+    expect(pane.querySelector(".files-browser")).toBeNull();
+    expect(
+      within(pane).getByRole("button", {
+        name: "Back to file browser for proj",
+      }),
+    ).toHaveTextContent("proj");
 
     expect(
       await within(pane).findByRole("region", { name: "File source" }),
     ).toHaveAttribute("data-pane-scroll-active", "true");
-    const source = within(pane).getByRole("region", { name: "File source" });
-    const targetLine = source.querySelector<HTMLElement>(
-      '[data-source-line="80"]',
-    )!;
-    Object.defineProperty(source, "clientHeight", {
-      configurable: true,
-      value: 300,
-    });
-    Object.defineProperty(targetLine, "offsetTop", {
-      configurable: true,
-      value: 600,
-    });
-    const line = within(pane).getByRole("spinbutton", { name: "Go to line" });
-    fireEvent.change(line, { target: { value: "80" } });
-    fireEvent.submit(line.closest("form")!);
-    expect(source.scrollTop).toBe(500);
-
-    fireEvent.click(
-      within(pane).getByRole("button", { name: "Add to prompt" }),
+    expect(
+      within(pane).getByRole("button", { name: "Preview" }),
+    ).toBeDisabled();
+    expect(
+      within(pane).getByRole("link", { name: "Download long.ts" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/resources/text/content?sessionId=s1&download=1",
     );
     expect(
-      await screen.findByRole("list", { name: "Referenced project files" }),
-    ).toHaveTextContent("src/long.ts");
+      within(pane).queryByRole("button", { name: "Add to prompt" }),
+    ).toBeNull();
+    expect(within(pane).queryByRole("button", { name: "Copy all" })).toBeNull();
+    expect(
+      within(pane).queryByRole("spinbutton", { name: "Go to line" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Copy path src/long.ts" }),
+    );
+    expect(writeText).toHaveBeenCalledWith("src/long.ts");
 
     fireEvent.click(
-      within(pane).getByRole("button", { name: "Back to files" }),
+      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
     );
-    expect(pane.querySelector(".files-browser")).not.toHaveAttribute("hidden");
-    expect(pane.querySelector(".files-browser__scroll")).toBe(browserScroller);
-    expect(browserScroller.scrollTop).toBe(137);
+    const restoredScroller = pane.querySelector<HTMLElement>(
+      ".files-browser__scroll",
+    )!;
+    expect(restoredScroller).not.toBe(browserScroller);
+    expect(restoredScroller.scrollTop).toBe(137);
     expect(pane.querySelectorAll(".recent-files .recent-file")).toHaveLength(5);
 
-    await store.openResource("src/long.ts#L100");
-    await waitFor(() =>
-      expect(
-        within(pane).getByRole("spinbutton", { name: "Go to line" }),
-      ).toHaveValue(100),
-    );
-    fireEvent.click(
-      within(pane).getByRole("button", { name: "Back to files" }),
-    );
     const search = within(pane).getByRole("searchbox", {
       name: "Search workspace files",
     });
@@ -546,6 +665,199 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals an opened workspace file once without chasing later tree updates", async () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(<App />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Toggle resources panel" }),
+      );
+      const pane = await screen.findByRole("complementary", {
+        name: "Context panel",
+      });
+      fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
+      fireEvent.click(
+        await within(pane).findByRole("button", { name: "long.ts" }),
+      );
+      await within(pane).findByRole("region", { name: "File source" });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
+      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it("keeps a changed-file selection when returning to Browse", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("heading", { name: "Previewed notes" });
+    await waitFor(() =>
+      expect(store.getState().selectedGitPathId).toBe("notes"),
+    );
+
+    fireEvent.click(
+      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
+    );
+    expect(store.getState().selectedGitPathId).toBe("notes");
+    fireEvent.click(within(pane).getByRole("button", { name: "Changes" }));
+    expect(
+      await within(pane).findByRole("button", {
+        name: "notes.md, unstaged modified",
+      }),
+    ).toHaveAttribute("aria-current", "true");
+  });
+
+  it("refreshes Recent in place when the visible transcript revision changes", async () => {
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("button", { name: /notes\.md/ });
+    await waitFor(() =>
+      expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+        "notes.md",
+      ),
+    );
+
+    let releaseList: (() => void) | undefined;
+    resourceListGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    let releaseProbe: (() => void) | undefined;
+    resourceProbeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const probesBefore = resourceProbeRequests;
+    transcriptRevision = 2;
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          pageMessages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: 2,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+            hasOlder: true,
+            olderCursor: "older-s1",
+          },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
+    await waitFor(() => expect(resourceProbeRequests).toBe(probesBefore + 1));
+    expect(
+      within(pane).getByRole("button", { name: /notes\.md/ }),
+    ).toBeVisible();
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
+    expect(within(pane).queryByText("Loading recent files…")).toBeNull();
+    expect(
+      within(pane).queryByRole("button", { name: /fresh\.md/ }),
+    ).toBeNull();
+
+    act(() => {
+      releaseProbe?.();
+      releaseList?.();
+    });
+    expect(
+      await within(pane).findByRole("button", { name: /fresh\.md/ }),
+    ).toBeVisible();
+    expect(
+      within(pane).queryByRole("button", { name: /notes\.md/ }),
+    ).toBeNull();
+  });
+
+  it("keeps a scrolled code preview without loading hidden Recent rows", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("src/long.ts");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const source = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    source.scrollTop = 137;
+    const listRequestsBefore = resourceListRequests.length;
+    const resolvesBefore = resourceResolveRequests;
+
+    transcriptRevision = 2;
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          pageMessages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: 2,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+          },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(store.getState().transcriptRevision).toBe(2));
+    expect(resourceResolveRequests).toBe(resolvesBefore);
+    expect(resourceListRequests).toHaveLength(listRequestsBefore);
+    expect(within(pane).getByRole("region", { name: "File source" })).toBe(
+      source,
+    );
+    expect(source.scrollTop).toBe(137);
+    expect(within(pane).queryByText("Loading preview")).toBeNull();
+  });
+
+  it("does not let an older probe overwrite a successful resolve", async () => {
+    missingProbeReference = "notes.md";
+    let releaseProbe: (() => void) | undefined;
+    resourceProbeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    await waitFor(() => expect(resourceProbeRequests).toBe(1));
+
+    await act(async () => {
+      await store.openResource("notes.md");
+    });
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
+
+    act(() => releaseProbe?.());
+    await waitFor(() =>
+      expect(store.getState().resourceWorkspacePaths["demo.html"]).toBe(
+        "demo.html",
+      ),
+    );
+    expect(store.getState().resourceAvailability["notes.md"]).toBeUndefined();
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
+  });
+
   it("refreshes the Files sources without coupling them to Git status", async () => {
     render(<App />);
     fireEvent.click(
@@ -554,7 +866,7 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Context panel",
     });
-    await within(pane).findByText("README.md");
+    await within(pane).findByRole("button", { name: "README.md" });
 
     const callsBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
     const probesBefore = resourceProbeRequests;
@@ -601,14 +913,45 @@ describe("Files pane", () => {
     const missing = within(pane).getByRole("button", {
       name: /demo\.html.*unavailable/i,
     });
-    expect(missing).toHaveClass("recent-file--unavailable");
+    expect(missing).toHaveClass(
+      "recent-file--unavailable",
+      "recent-file--missing",
+    );
     expect(missing).toHaveAttribute(
       "title",
       expect.stringContaining("not found"),
     );
   });
 
-  it("opens transcript references and keeps HTML isolated", async () => {
+  it("omits non-file recent references and presents direct failures without retry", async () => {
+    invalidProbeReference = "old-1.md";
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await waitFor(() =>
+      expect(store.getState().resourceAvailability["old-1.md"]).toMatchObject({
+        availability: "invalid",
+      }),
+    );
+    expect(
+      within(pane).queryByRole("button", { name: /old-1\.md/ }),
+    ).not.toBeInTheDocument();
+
+    await store.openResource("./folder");
+    expect(
+      await within(pane).findByText("The reference is not a file"),
+    ).toBeInTheDocument();
+    expect(within(pane).getByText("Not a file")).toBeInTheDocument();
+    expect(
+      within(pane).queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens transcript and preview references and keeps HTML isolated", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "notes" }));
     const pane = await screen.findByRole("complementary", {
@@ -617,18 +960,46 @@ describe("Files pane", () => {
     expect(
       await within(pane).findByRole("heading", { name: "Previewed notes" }),
     ).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "Preview" }));
+    fireEvent.click(within(pane).getByRole("link", { name: "Open main" }));
+    expect(
+      await within(pane).findByRole("button", {
+        name: "Copy path src/main.ts",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Pi" })).toHaveAttribute(
       "target",
       "_blank",
     );
 
     fireEvent.click(screen.getByRole("link", { name: "page" }));
-    fireEvent.click(
-      await within(pane).findByRole("button", { name: "Sandbox" }),
-    );
+    const sourceMode = await within(pane).findByRole("button", {
+      name: "Source",
+    });
+    expect(sourceMode).toBeEnabled();
+    expect(
+      within(pane).queryByText("Scripts and network access blocked."),
+    ).not.toBeInTheDocument();
+    expect(
+      within(pane).getByRole("link", { name: "Download demo.html" }),
+    ).toBeInTheDocument();
     const frame = await within(pane).findByTitle("Preview demo.html");
     expect(frame).toHaveAttribute("sandbox", "");
     expect(URL.createObjectURL).toHaveBeenCalled();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toBeInTheDocument();
+    expect(
+      within(pane).queryByTitle("Preview demo.html"),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Toggle resources panel" }),
@@ -639,5 +1010,94 @@ describe("Files pane", () => {
       ).not.toBeInTheDocument(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+  });
+
+  it("uses the same empty sandbox for PDF frames", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("document.pdf");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(
+      await within(pane).findByTitle("Preview document.pdf"),
+    ).toHaveAttribute("sandbox", "");
+  });
+
+  it("marks a truncated rendered preview and preserves the source boundary", async () => {
+    render(<App />);
+    await store.openResource("truncated.md");
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(
+      await within(pane).findByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeVisible();
+
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(within(pane).getByText("Preview ends here")).toBeVisible();
+    expect(
+      within(pane).queryByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeNull();
+
+    await act(async () => {
+      await store.openResource("truncated.html");
+    });
+    expect(
+      await within(pane).findByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeVisible();
+    expect(within(pane).getByTitle("Preview truncated.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+  });
+
+  it("previews SVG and notebook files before offering their source", async () => {
+    render(<App />);
+    await store.openResource("diagram.svg");
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(within(pane).getByRole("button", { name: "Source" })).toBeEnabled();
+    expect(within(pane).getByAltText("diagram.svg")).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toHaveTextContent("<svg");
+
+    await store.openResource("analysis.ipynb");
+    expect(
+      await within(pane).findByRole("document", { name: "Notebook preview" }),
+    ).toBeInTheDocument();
+    expect(
+      within(pane).getByRole("heading", { name: "Notebook title" }),
+    ).toBeInTheDocument();
+    expect(within(pane).getByText("print('hello')")).toBeInTheDocument();
+    expect(within(pane).getByText("hello")).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps bounded SVG source available when the rendered file is too large", async () => {
+    render(<App />);
+    await store.openResource("large.svg");
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(within(pane).getByText("File too large to preview")).toBeVisible();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }),
+    ).toHaveTextContent("<svg");
+    expect(within(pane).getByText("Preview ends here")).toBeVisible();
   });
 });

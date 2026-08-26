@@ -908,7 +908,7 @@ describe("stock RPC branch bridge", () => {
       expect(worker.stops).toBe(1);
       await expect(
         runtime.prompt({ sessionId: SESSION_ID, message: "recover source" }),
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ text: "recover source" });
       expect(
         JSON.stringify(
           (await runtime.snapshot()).active?.transcriptPage.messages,

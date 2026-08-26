@@ -28,6 +28,7 @@ export const GIT_STATUS_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const GIT_DIFF_OUTPUT_BYTES = 1024 * 1024;
 const MAX_GIT_STATUS_FILES = 1_000;
 const MAX_GIT_DIFF_LINES = 2_000;
+const FULL_SOURCE_CONTEXT_LINES = 2_147_483_647;
 const MAX_PATH_ID_LENGTH = 16 * 1024;
 
 const fatalDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -464,6 +465,32 @@ function decodePatchLines(
   return { lines, encodingLossy, truncated };
 }
 
+function parseNumstat(
+  output: Buffer,
+):
+  | { kind: "empty" }
+  | { kind: "binary" }
+  | { kind: "text"; additions: number; deletions: number } {
+  if (output.length === 0) return { kind: "empty" };
+  const firstTab = output.indexOf(0x09);
+  const secondTab = output.indexOf(0x09, firstTab + 1);
+  if (firstTab < 1 || secondTab < firstTab + 2)
+    throw new GitInspectionError("Git returned malformed numstat data");
+  const added = output.subarray(0, firstTab).toString("ascii");
+  const deleted = output.subarray(firstTab + 1, secondTab).toString("ascii");
+  if (added === "-" && deleted === "-") return { kind: "binary" };
+  const additions = Number(added);
+  const deletions = Number(deleted);
+  if (
+    !/^\d+$/.test(added) ||
+    !/^\d+$/.test(deleted) ||
+    !Number.isSafeInteger(additions) ||
+    !Number.isSafeInteger(deletions)
+  )
+    throw new GitInspectionError("Git returned malformed numstat data");
+  return { kind: "text", additions, deletions };
+}
+
 export function parseUnifiedDiff(
   output: Buffer,
   outputTruncated = false,
@@ -698,10 +725,18 @@ export class GitInspectionService implements GitInspectionLike {
       [...common, "--numstat", "-z", ...cached, "--", change.path.utf8Path],
       { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
     );
-    if (numstat.stdout.subarray(0, 4).toString("ascii") === "-\t-\t")
-      return { ...base, kind: "binary" };
+    const stats = parseNumstat(numstat.stdout);
+    if (stats.kind === "empty")
+      return { ...base, kind: "empty", reason: "no-changes" };
+    if (stats.kind === "binary") return { ...base, kind: "binary" };
     const patch = await this.runner(
-      [...common, "--unified=3", ...cached, "--", change.path.utf8Path],
+      [
+        ...common,
+        `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
+        ...cached,
+        "--",
+        change.path.utf8Path,
+      ],
       {
         stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
         allowStdoutTruncation: true,
@@ -713,6 +748,8 @@ export class GitInspectionService implements GitInspectionLike {
     return {
       ...base,
       kind: "text",
+      additions: stats.additions,
+      deletions: stats.deletions,
       ...parseUnifiedDiff(patch.stdout, patch.truncated),
     };
   }

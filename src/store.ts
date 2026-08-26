@@ -78,8 +78,8 @@ import { SessionSelectionController } from "./controllers/session-selection-cont
 import { UpdateController } from "./controllers/update-controller";
 import {
   emptyWorkspaceBrowserState,
-  WorkspaceController,
   type WorkspaceBrowserState,
+  WorkspaceController,
 } from "./controllers/workspace-controller";
 import {
   asMessage,
@@ -246,8 +246,7 @@ interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
-  detailMode: "file" | "diff";
-  /** Browse and Preview are mutually exclusive full-pane Files surfaces. */
+  /** Full browsing or the shared workspace/detail split. */
   fileBrowserView: "browse" | "preview";
   /** The compact nav disclosure is store-owned so drawer remounts and
    * responsive transitions retain it. */
@@ -348,7 +347,6 @@ const initialState: AppState = {
   pendingAction: null,
   resourcesOpen: false,
   contextMode: "files",
-  detailMode: "file",
   fileBrowserView: "browse",
   workspaceExplorerOpen: false,
   branchTree: null,
@@ -391,8 +389,8 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     prepareGitForResourceOpen: (contextMode) =>
       this.git.prepareResourceOpen(contextMode),
-    selectWorkspacePath: (workspacePath) => {
-      this.workspace.revealPath(workspacePath);
+    selectWorkspacePath: (workspacePath, reveal = true) => {
+      if (reveal) this.workspace.revealPath(workspacePath);
       this.git.selectWorkspacePath(workspacePath);
     },
   });
@@ -407,7 +405,6 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     transportGeneration: () => this.transportGeneration,
-    cancelResourcePreview: () => this.resources.cancelRequest(),
     openResourceFromGit: (workspacePath) =>
       this.resources.openResource(workspacePath, "changes"),
     handleAuthFailure: () => this.handleAuthFailure(),
@@ -980,8 +977,8 @@ export class AppStore {
       this.userTurnTranscriptRequest = null;
       if (sessionChanged) this.git.cancelAll();
     } else if (revisionChanged) {
-      // Availability is a filesystem observation made against one transcript
-      // generation; do not expose its old standing during the next render.
+      // Cancel observations owned by the old transcript generation. Keep the
+      // last known standing visible until Browse produces current observations.
       this.resources.cancelProbes();
     }
     const newestMessages = (page?.messages ?? []).map(asMessage);
@@ -1156,7 +1153,6 @@ export class AppStore {
             pendingAction: null,
             windowTitle: null,
             contextMode: "files",
-            detailMode: "file",
             fileBrowserView: "browse",
             workspaceExplorerOpen: false,
             ...(nextWorkspaceState ?? emptyWorkspaceBrowserState()),
@@ -1192,8 +1188,14 @@ export class AppStore {
               resourceAvailability: {},
               resourceWorkspacePaths: {},
             }
-          : revisionChanged
-            ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
+          : projectionReplaced
+            ? {
+                fileBrowserView: "browse",
+                selectedResourceReference: null,
+                resourcePreview: null,
+                resourceAvailability: {},
+                resourceWorkspacePaths: {},
+              }
             : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
@@ -2747,6 +2749,9 @@ export class AppStore {
     this.workspace.toggleDirectory(dir);
   };
 
+  consumeWorkspaceRevealRequest = (nonce: number): boolean =>
+    this.workspace.consumeRevealRequest(nonce);
+
   setWorkspaceQuery = (query: string): void => {
     this.workspace.setQuery(query);
   };
@@ -2761,7 +2766,7 @@ export class AppStore {
 
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
-    return this.resources.openResource(path);
+    return this.resources.openResource(path, "files", path);
   };
 
   refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
@@ -3171,20 +3176,15 @@ export class AppStore {
 
   showFileBrowser = (): void => {
     this.resources.cancelRequest();
-    this.git.clearDiffSelection();
     this.set({
       resourcesOpen: true,
       contextMode: "files",
-      detailMode: "file",
       fileBrowserView: "browse",
     });
   };
 
   setContextMode = (contextMode: "files" | "changes" | "branches"): void => {
-    this.set({
-      contextMode,
-      detailMode: contextMode === "changes" ? "diff" : "file",
-    });
+    this.set({ contextMode });
     if (contextMode === "changes") {
       const { selectedGitPathId, selectedGitSide, gitDiff } = this.state;
       if (selectedGitPathId && selectedGitSide && !gitDiff)
@@ -3217,17 +3217,21 @@ export class AppStore {
 
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
-  openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
-    this.git.openDiff(pathId, requestedSide);
-
-  openWorkspaceDiff = (
-    pathId: string,
-    requestedSide?: GitDiffSide,
-  ): Promise<void> => this.git.openDiff(pathId, requestedSide, "files");
-
-  showWorkspaceFile = (): void => {
-    this.git.showResourceFile();
+  refreshGitInspection = async (): Promise<void> => {
+    const { selectedGitPathId: pathId, selectedGitSide: side } = this.state;
+    await this.git.refreshStatus();
+    const current = this.state;
+    if (
+      pathId &&
+      side &&
+      current.selectedGitPathId === pathId &&
+      current.selectedGitSide === side
+    )
+      await this.git.openDiff(pathId, side);
   };
+
+  openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
+    this.git.openChange(pathId, requestedSide);
 
   setGitDiffSide = (side: GitDiffSide): void => {
     this.git.setDiffSide(side);
@@ -3260,8 +3264,6 @@ export class AppStore {
     reference: string,
     contextMode: "files" | "changes" = "files",
   ): Promise<void> => this.resources.openResource(reference, contextMode);
-
-  openGitFile = (pathId: string): Promise<void> => this.git.openFile(pathId);
 }
 
 export function gitChangeForWorkspacePath(
