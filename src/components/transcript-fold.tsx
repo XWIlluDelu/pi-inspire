@@ -174,9 +174,10 @@ export function ResponseActivityFold({
       return telemetry;
     }
     const sampled: ActivityTelemetryItem[] = [];
+    const lastIndex = telemetry.length - 1;
     for (let i = 0; i < COMPACT_ACTIVITY_CARD_LIMIT; i++) {
-      const index = Math.floor(
-        (i * telemetry.length) / COMPACT_ACTIVITY_CARD_LIMIT,
+      const index = Math.round(
+        (i * lastIndex) / (COMPACT_ACTIVITY_CARD_LIMIT - 1),
       );
       sampled.push(telemetry[index]!);
     }

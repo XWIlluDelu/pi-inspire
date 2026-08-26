@@ -128,4 +128,69 @@ describe("PreferencesStore validation", () => {
       theme: "dark",
     });
   });
+
+  it("installs a complete owner record as the lock authority", async () => {
+    const { path, store } = await fixture();
+    const lock = `${path}.lock`;
+    const mutable = store as unknown as {
+      persist: (
+        preferences: typeof defaultPreferences,
+        assertOwned: () => Promise<void>,
+      ) => Promise<void>;
+    };
+    const persist = mutable.persist.bind(store);
+    mutable.persist = async (preferences, assertOwned) => {
+      const owner = JSON.parse(await readFile(lock, "utf8")) as {
+        pid: number;
+        token: string;
+      };
+      expect(owner).toMatchObject({ pid: process.pid });
+      expect(owner.token).toEqual(expect.any(String));
+      await assertOwned();
+      await persist(preferences, assertOwned);
+    };
+
+    await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
+      theme: "dark",
+    });
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("fails closed without releasing a replacement write lock", async () => {
+    const { path, store } = await fixture();
+    const lock = `${path}.lock`;
+    const replacementToken = "replacement-owner";
+    const mutable = store as unknown as {
+      persist: (
+        preferences: typeof defaultPreferences,
+        assertOwned: () => Promise<void>,
+      ) => Promise<void>;
+    };
+    const persist = mutable.persist.bind(store);
+    mutable.persist = async (preferences, assertOwned) => {
+      await rm(lock, { recursive: true, force: true });
+      await mkdir(lock, { mode: 0o700 });
+      await writeFile(
+        join(lock, "owner.json"),
+        JSON.stringify({
+          pid: process.pid,
+          token: replacementToken,
+          acquiredAt: Date.now(),
+        }),
+      );
+      await persist(preferences, assertOwned);
+    };
+
+    await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
+      status: 503,
+    });
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(join(lock, "owner.json"), "utf8")).resolves.toContain(
+      replacementToken,
+    );
+  });
 });

@@ -352,6 +352,61 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("revalidates project-file authority after gated worker startup", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "inspire-runtime-project-revalidate-"),
+    );
+    workspaceDirectories.push(workspace);
+    const selected = join(workspace, "selected.txt");
+    await writeFile(selected, "selected");
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", workspace)]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.startGate = gate;
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(worker.starts).toBe(1));
+      const prompting = runtime.prompt({
+        sessionId: "a",
+        message: "use the selected file",
+        projectFiles: ["selected.txt"],
+      });
+      const slots = (
+        runtime as unknown as {
+          slots: Map<string, { mutationPending: number }>;
+        }
+      ).slots;
+      await vi.waitFor(() => expect(slots.get("a")?.mutationPending).toBe(2));
+
+      await rm(selected);
+      release();
+      await expect(prompting).rejects.toMatchObject({
+        status: 409,
+        message: "A selected project file changed before prompt delivery",
+      });
+      expect(worker.commands.some((command) => command.type === "prompt")).toBe(
+        false,
+      );
+    } finally {
+      release();
+      await runtime.close();
+    }
+  });
+
   it("shields prompt attachments from a DELETE racing the gated delivery", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -767,12 +822,14 @@ describe("RuntimeController concurrent sessions", () => {
     workspaceDirectories.push(root);
     const workspace = join(root, "project");
     const projectFile = join(workspace, "source.ts");
-    const attachmentFile = join(root, "report.pdf");
     await mkdir(workspace);
     await writeFile(projectFile, "project");
-    await writeFile(attachmentFile, "attachment");
     const store = new AttachmentStore();
     attachments.push(store);
+    const uploaded = await store.add(upload("report.pdf", "application/pdf"));
+    const leased = await store.resolveForPrompt([uploaded.id]);
+    const attachmentFile = leased.files[0]!.path;
+    await store.releaseConsumed([uploaded.id]);
     let worker!: FakeRpc;
     const data = Buffer.from("historical pixels").toString("base64");
     const historicalText = addAttachmentContext(
@@ -860,6 +917,70 @@ describe("RuntimeController concurrent sessions", () => {
       ),
       images: [{ type: "image", data, mimeType: "image/png" }],
     });
+    await runtime.close();
+  });
+
+  it("rejects a forged recalled attachment path outside the active workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-forged-history-"));
+    workspaceDirectories.push(root);
+    const workspace = join(root, "project");
+    const forgedFile = join(root, "host-secret.txt");
+    await mkdir(workspace);
+    await writeFile(forgedFile, "not an uploaded attachment");
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const historicalText = addAttachmentContext(
+      "open the report",
+      [{ kind: "file", path: forgedFile }],
+      [],
+    );
+    const runtime = new RuntimeController(
+      catalog([record("a", workspace)]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      async (session) => {
+        const value = await preview(session);
+        return {
+          ...value,
+          transcriptPage: {
+            ...value.transcriptPage,
+            messages: [{ role: "user", content: historicalText, timestamp: 1 }],
+          },
+        };
+      },
+    );
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    const history = await runtime.composerHistory("a", 0);
+    const entry = history.entries[0]!;
+    expect(entry.files).toEqual([
+      {
+        reference: "pi-file://0/0",
+        fileName: "host-secret.txt",
+        kind: "attachment",
+      },
+    ]);
+
+    await expect(
+      runtime.prompt({
+        sessionId: "a",
+        message: "send it again",
+        historyArtifacts: {
+          viewId: history.viewId,
+          incarnation: history.incarnation ?? null,
+          effectiveLeafId: history.effectiveLeafId ?? null,
+          imageReferences: [],
+          fileReferences: entry.files.map((file) => file.reference),
+        },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(
+      worker.commands.filter((command) => command.type === "prompt"),
+    ).toHaveLength(0);
     await runtime.close();
   });
 

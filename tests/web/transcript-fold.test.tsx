@@ -28,6 +28,9 @@ afterEach(() => {
 
 describe("response activity folds", () => {
   it("keeps the unchanged card state between two interactive rails", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     const messages = [
       {
         role: "assistant",
@@ -91,6 +94,63 @@ describe("response activity folds", () => {
     );
     expect(toolFold).toHaveAttribute("data-activity-fold", "open");
     expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+      "Each child in a list should have a unique",
+    );
+  });
+
+  it("keeps disclosure state attached to an activity when history is prepended", () => {
+    const recent = [
+      {
+        role: "toolResult",
+        toolCallId: "alpha-call",
+        toolName: "alpha",
+        content: "alpha result",
+        timestamp: 2,
+        __inspireMessageId: "alpha-result",
+      },
+      {
+        role: "toolResult",
+        toolCallId: "beta-call",
+        toolName: "beta",
+        content: "beta result",
+        timestamp: 3,
+        __inspireMessageId: "beta-result",
+      },
+      {
+        role: "assistant",
+        content: "visible response",
+        timestamp: 4,
+        __inspireMessageId: "response",
+      },
+    ];
+    const { rerender } = render(transcript(recent, "expanded"));
+    const beta = screen.getByRole("button", {
+      name: "Expand Tool Result beta",
+    });
+    fireEvent.click(beta);
+    expect(beta).toHaveAttribute("aria-expanded", "true");
+
+    rerender(
+      transcript(
+        [
+          {
+            role: "toolResult",
+            toolCallId: "earlier-call",
+            toolName: "earlier",
+            content: "earlier result",
+            timestamp: 1,
+            __inspireMessageId: "earlier-result",
+          },
+          ...recent,
+        ],
+        "expanded",
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Collapse Tool Result beta" }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps the latest 24 cards in Compact and expands the omitted prefix", () => {
@@ -271,6 +331,32 @@ describe("response activity folds", () => {
     expect(
       container.querySelectorAll(".activity-fold__segment--live"),
     ).toHaveLength(0);
+  });
+
+  it("keeps the final settled activity in bounded rail telemetry", () => {
+    const content = [
+      ...Array.from({ length: 24 }, (_, index) => ({
+        type: "toolCall",
+        id: `sampled-tool-${index + 1}`,
+        name: `tool-${index + 1}`,
+        arguments: {},
+      })),
+      { type: "thinking", thinking: "final synthesis" },
+    ];
+    const { container } = render(
+      transcript([{ role: "assistant", timestamp: 1, content }], "collapsed", {
+        toolVisibility: "expanded",
+      }),
+    );
+
+    const rails = container.querySelectorAll(".activity-fold__rail");
+    expect(rails).toHaveLength(2);
+    for (const rail of rails) {
+      expect(rail.querySelectorAll(".activity-fold__segment")).toHaveLength(24);
+      expect(
+        rail.querySelectorAll(".activity-fold__segment--thinking"),
+      ).toHaveLength(1);
+    }
   });
 
   it("opens a collapsed lazy range through Compact before Expanded", async () => {

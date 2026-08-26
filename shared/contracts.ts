@@ -577,6 +577,25 @@ export interface PendingMessageSummary {
   nonTextContentCount: number;
 }
 
+export type PendingManagementAction =
+  | { action: "pause"; expectedRevision: number }
+  | { action: "resume"; expectedRevision: number }
+  | { action: "delete"; expectedRevision: number; messageId: string }
+  | { action: "clear"; expectedRevision: number }
+  | {
+      action: "convert";
+      expectedRevision: number;
+      messageId: string;
+      target: "steer" | "followUp";
+    };
+
+export type PendingManagementIntent =
+  PendingManagementAction extends infer Action
+    ? Action extends PendingManagementAction
+      ? Omit<Action, "expectedRevision">
+      : never
+    : never;
+
 export interface PendingQueues {
   managementAvailable: boolean;
   paused: boolean;

@@ -410,6 +410,7 @@ export class PiRpcProcess extends EventEmitter {
 
   async sendExtensionUiResponse(
     response: Record<string, unknown>,
+    timeoutMs = 30_000,
   ): Promise<void> {
     const child = this.child;
     if (!child || child.exitCode !== null || !child.stdin.writable) {
@@ -419,27 +420,56 @@ export class PiRpcProcess extends EventEmitter {
       type: "extension_ui_response",
       ...response,
     });
+    const requestId = typeof response.id === "string" ? response.id : undefined;
     this.diagnostic("debug", "rpc_extension_response", {
-      requestId: typeof response.id === "string" ? response.id : undefined,
+      requestId,
       command: "extension_ui_response",
     });
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: NodeJS.Timeout;
+      const failUnknown = (message: string): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const unknown = this.withStderr(
+          new PiRpcOutcomeUnknownError("extension_ui_response", message),
+        ) as PiRpcOutcomeUnknownError;
+        unknown.stopped = this.stopForUnknown(unknown);
+        reject(unknown);
+      };
+      timer = setTimeout(() => {
+        this.diagnostic("error", "rpc_extension_response_timeout", {
+          requestId,
+          command: "extension_ui_response",
+          timeoutMs,
+        });
+        failUnknown(
+          "Pi extension response outcome is unknown after its stdin write timed out",
+        );
+      }, timeoutMs);
+      timer.unref?.();
       try {
         child.stdin.write(frame, (error) => {
-          if (!error) {
-            resolve();
+          if (settled) return;
+          if (error) {
+            this.diagnostic("error", "rpc_extension_response_write_failed", {
+              requestId,
+              command: "extension_ui_response",
+            });
+            failUnknown(
+              "Pi extension response outcome is unknown after its stdin write failed",
+            );
             return;
           }
-          const unknown = this.withStderr(
-            new PiRpcOutcomeUnknownError(
-              "extension_ui_response",
-              "Pi extension response outcome is unknown after its stdin write failed",
-            ),
-          ) as PiRpcOutcomeUnknownError;
-          unknown.stopped = this.stopForUnknown(unknown);
-          reject(unknown);
+          settled = true;
+          clearTimeout(timer);
+          resolve();
         });
       } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });

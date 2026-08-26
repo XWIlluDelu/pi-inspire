@@ -8,7 +8,10 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
-import { projectComposerHistoryPage } from "./composer-history.js";
+import {
+  type ComposerHistoryFileNameResolver,
+  projectComposerHistoryPage,
+} from "./composer-history.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import {
   boundedTranscriptValue,
@@ -203,6 +206,7 @@ export class PreviewProjection
     effectiveLeafId: string | null = null,
     viewId = "preview",
     cwd = this.preview.cwd,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
       this.preview.transcriptPage.messages,
@@ -215,6 +219,7 @@ export class PreviewProjection
       },
       start,
       cwd,
+      fileNameForPath,
     );
   }
 
