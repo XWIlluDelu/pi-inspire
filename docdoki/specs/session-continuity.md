@@ -13,6 +13,7 @@ covers:
   - server/runtime.ts
   - server/runtime-slot.ts
   - server/runtime-entry-chain.ts
+  - server/runtime-entry-descriptor.ts
   - server/runtime-process-registry.ts
   - server/runtime-projection-coordinator.ts
   - server/runtime-startup-attestor.ts

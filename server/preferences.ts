@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
-  link,
+  type FileHandle,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -10,7 +12,6 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   CONTENT_TEXT_SIZES,
@@ -81,171 +82,83 @@ interface PreferencesInspection {
   warning?: string;
 }
 
-const LOCK_RETRY_MS = 20;
-const LOCK_WAIT_MS = 5_000;
-const STALE_LOCK_MS = 30_000;
-const LOCK_OWNER_FILE = "owner.json";
-
-interface LockOwner {
-  pid: number;
-  token: string | null;
-}
+const LOCK_WAIT_SECONDS = 5;
 
 interface LockIdentity {
   dev: number;
   ino: number;
 }
 
-async function readLockOwner(lock: string): Promise<LockOwner | null> {
-  try {
-    const lockStat = await stat(lock);
-    const ownerPath = lockStat.isDirectory()
-      ? join(lock, LOCK_OWNER_FILE)
-      : lock;
-    const owner = JSON.parse(await readFile(ownerPath, "utf8")) as {
-      pid?: unknown;
-      token?: unknown;
-    };
-    if (!Number.isInteger(owner.pid) || Number(owner.pid) <= 0) return null;
-    return {
-      pid: Number(owner.pid),
-      token:
-        typeof owner.token === "string" && owner.token.length > 0
-          ? owner.token
-          : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function tryAcquireWriteLock(lock: string): Promise<string | null> {
-  const token = randomUUID();
-  const candidate = `${lock}.candidate-${process.pid}-${token}`;
-  try {
-    await writeFile(
-      candidate,
-      `${JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() })}\n`,
-      { mode: 0o600, flag: "wx" },
-    );
-    try {
-      // A hard link installs the fully written owner record atomically and
-      // never replaces an existing file or legacy directory lock.
-      await link(candidate, lock);
-      return token;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
-      throw error;
-    }
-  } finally {
-    await rm(candidate, { force: true }).catch(() => undefined);
-  }
-}
-
-function lockOwnerAlive(owner: LockOwner | null): boolean | null {
-  if (!owner) return null;
-  try {
-    process.kill(owner.pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : true;
-  }
-}
-
 function sameLockIdentity(left: LockIdentity, right: LockIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function sameLockOwner(
-  left: LockOwner | null,
-  right: LockOwner | null,
-): boolean {
-  return left?.pid === right?.pid && left?.token === right?.token;
-}
-
-async function restoreClaimedLock(
-  lock: string,
-  claimed: string,
-): Promise<void> {
-  try {
-    await rename(claimed, lock);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "EEXIST") throw error;
-  }
-}
-
-async function claimLockDirectory(
-  lock: string,
-  expectedIdentity: LockIdentity,
-  purpose: "release" | "stale",
-): Promise<string | null> {
-  const claimed = `${lock}.${purpose}-${process.pid}-${randomUUID()}`;
-  try {
-    await rename(lock, claimed);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-
-  const claimedStat = await stat(claimed).catch(() => null);
-  if (
-    claimedStat &&
-    sameLockIdentity(expectedIdentity, {
-      dev: claimedStat.dev,
-      ino: claimedStat.ino,
-    })
-  ) {
-    return claimed;
-  }
-
-  await restoreClaimedLock(lock, claimed);
-  return null;
-}
-
 function compromisedLockError(): Error {
   return Object.assign(
-    new Error("Saved preferences changed ownership while being updated"),
+    new Error("Saved preferences lock changed while being updated"),
     { status: 503 },
   );
 }
 
-async function assertOwnedLock(lock: string, token: string): Promise<void> {
-  if ((await readLockOwner(lock))?.token !== token)
-    throw compromisedLockError();
+async function acquireKernelLock(fd: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const child = spawn("flock", ["-x", "-w", String(LOCK_WAIT_SECONDS), "3"], {
+      stdio: ["ignore", "ignore", "ignore", fd],
+      windowsHide: true,
+    });
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
+      reject(
+        Object.assign(
+          new Error(
+            error.code === "ENOENT"
+              ? "flock is required to update saved preferences"
+              : "Could not acquire the saved preferences lock",
+          ),
+          { status: 503 },
+        ),
+      );
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        Object.assign(
+          new Error(
+            code === 1
+              ? "Timed out waiting to update saved preferences"
+              : "Could not acquire the saved preferences lock",
+          ),
+          { status: 503 },
+        ),
+      );
+    });
+  });
 }
 
-async function releaseOwnedLock(lock: string, token: string): Promise<void> {
-  const owner = await readLockOwner(lock);
-  if (owner?.token !== token) return;
-  const lockStat = await stat(lock).catch(() => null);
-  if (!lockStat || (await readLockOwner(lock))?.token !== token) return;
-  const claimed = await claimLockDirectory(
-    lock,
-    { dev: lockStat.dev, ino: lockStat.ino },
-    "release",
-  );
-  if (!claimed) return;
-  if ((await readLockOwner(claimed))?.token !== token) {
-    await restoreClaimedLock(lock, claimed);
-    return;
-  }
-  await rm(claimed, { recursive: true, force: true });
-}
-
-async function reclaimObservedLock(
+async function assertOwnedLock(
   lock: string,
+  handle: FileHandle,
   identity: LockIdentity,
-  owner: LockOwner | null,
-): Promise<boolean> {
-  const claimed = await claimLockDirectory(lock, identity, "stale");
-  if (!claimed) return false;
-  if (!sameLockOwner(owner, await readLockOwner(claimed))) {
-    await restoreClaimedLock(lock, claimed);
-    return false;
+): Promise<void> {
+  const [pathStat, handleStat] = await Promise.all([
+    stat(lock).catch(() => null),
+    handle.stat().catch(() => null),
+  ]);
+  if (
+    !pathStat ||
+    !handleStat ||
+    !sameLockIdentity(identity, { dev: pathStat.dev, ino: pathStat.ino }) ||
+    !sameLockIdentity(identity, { dev: handleStat.dev, ino: handleStat.ino })
+  ) {
+    throw compromisedLockError();
   }
-  await rm(claimed, { recursive: true, force: true });
-  return true;
 }
 
 function projectPreferences(value: unknown): {
@@ -357,43 +270,22 @@ export class PreferencesStore {
   private async withWriteLock<T>(
     operation: (assertOwned: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
-    const parent = dirname(this.path);
-    const lock = `${this.path}.lock`;
-    await mkdir(parent, { recursive: true, mode: 0o700 });
-    const startedAt = Date.now();
-    let ownerToken: string | null = null;
-    while (ownerToken === null) {
-      ownerToken = await tryAcquireWriteLock(lock);
-      if (ownerToken !== null) break;
-      const lockStat = await stat(lock).catch(() => null);
-      if (!lockStat) continue;
-      const lockAge = Date.now() - lockStat.mtimeMs;
-      const owner = await readLockOwner(lock);
-      const ownerAlive = lockOwnerAlive(owner);
-      if (
-        ownerAlive === false ||
-        (ownerAlive === null && lockAge > STALE_LOCK_MS)
-      ) {
-        const reclaimed = await reclaimObservedLock(
-          lock,
-          { dev: lockStat.dev, ino: lockStat.ino },
-          owner,
-        );
-        if (reclaimed) continue;
-      }
-      if (Date.now() - startedAt >= LOCK_WAIT_MS) {
-        throw Object.assign(
-          new Error("Timed out waiting to update saved preferences"),
-          { status: 503 },
-        );
-      }
-      await delay(LOCK_RETRY_MS);
-    }
-    const token = ownerToken;
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    // The launcher already requires Linux `flock`; use the same kernel-owned
+    // primitive here instead of reconstructing conditional rename/unlink in
+    // userspace. The persistent inode is harmless after a crash because the
+    // kernel releases its lease with the final open file description.
+    const lock = `${this.path}.flock`;
+    const handle = await open(lock, "a", 0o600);
     try {
-      return await operation(() => assertOwnedLock(lock, token));
+      await acquireKernelLock(handle.fd);
+      const lockStat = await handle.stat();
+      const identity = { dev: lockStat.dev, ino: lockStat.ino };
+      const assertOwned = () => assertOwnedLock(lock, handle, identity);
+      await assertOwned();
+      return await operation(assertOwned);
     } finally {
-      await releaseOwnedLock(lock, token);
+      await handle.close();
     }
   }
 
