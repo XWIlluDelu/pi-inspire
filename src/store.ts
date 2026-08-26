@@ -246,8 +246,7 @@ interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
-  detailMode: "file" | "diff";
-  /** Browse and Preview are mutually exclusive full-pane Files surfaces. */
+  /** Full browsing or the shared workspace/detail split. */
   fileBrowserView: "browse" | "preview";
   /** The compact nav disclosure is store-owned so drawer remounts and
    * responsive transitions retain it. */
@@ -348,7 +347,6 @@ const initialState: AppState = {
   pendingAction: null,
   resourcesOpen: false,
   contextMode: "files",
-  detailMode: "file",
   fileBrowserView: "browse",
   workspaceExplorerOpen: false,
   branchTree: null,
@@ -407,7 +405,6 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     transportGeneration: () => this.transportGeneration,
-    cancelResourcePreview: () => this.resources.cancelRequest(),
     openResourceFromGit: (workspacePath) =>
       this.resources.openResource(workspacePath, "changes"),
     handleAuthFailure: () => this.handleAuthFailure(),
@@ -1156,7 +1153,6 @@ export class AppStore {
             pendingAction: null,
             windowTitle: null,
             contextMode: "files",
-            detailMode: "file",
             fileBrowserView: "browse",
             workspaceExplorerOpen: false,
             ...(nextWorkspaceState ?? emptyWorkspaceBrowserState()),
@@ -1192,9 +1188,17 @@ export class AppStore {
               resourceAvailability: {},
               resourceWorkspacePaths: {},
             }
-          : revisionChanged
-            ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
-            : {}),
+          : projectionReplaced
+            ? {
+                fileBrowserView: "browse",
+                selectedResourceReference: null,
+                resourcePreview: null,
+                resourceAvailability: {},
+                resourceWorkspacePaths: {},
+              }
+            : revisionChanged
+              ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
+              : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
@@ -3171,20 +3175,15 @@ export class AppStore {
 
   showFileBrowser = (): void => {
     this.resources.cancelRequest();
-    this.git.clearDiffSelection();
     this.set({
       resourcesOpen: true,
       contextMode: "files",
-      detailMode: "file",
       fileBrowserView: "browse",
     });
   };
 
   setContextMode = (contextMode: "files" | "changes" | "branches"): void => {
-    this.set({
-      contextMode,
-      detailMode: contextMode === "changes" ? "diff" : "file",
-    });
+    this.set({ contextMode });
     if (contextMode === "changes") {
       const { selectedGitPathId, selectedGitSide, gitDiff } = this.state;
       if (selectedGitPathId && selectedGitSide && !gitDiff)
@@ -3218,16 +3217,7 @@ export class AppStore {
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
   openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
-    this.git.openDiff(pathId, requestedSide);
-
-  openWorkspaceDiff = (
-    pathId: string,
-    requestedSide?: GitDiffSide,
-  ): Promise<void> => this.git.openDiff(pathId, requestedSide, "files");
-
-  showWorkspaceFile = (): void => {
-    this.git.showResourceFile();
-  };
+    this.git.openChange(pathId, requestedSide);
 
   setGitDiffSide = (side: GitDiffSide): void => {
     this.git.setDiffSide(side);
@@ -3261,7 +3251,29 @@ export class AppStore {
     contextMode: "files" | "changes" = "files",
   ): Promise<void> => this.resources.openResource(reference, contextMode);
 
-  openGitFile = (pathId: string): Promise<void> => this.git.openFile(pathId);
+  downloadResource = async (id: string, name: string): Promise<void> => {
+    const api = this.api;
+    const sessionId = this.state.sessionId;
+    if (!api || !sessionId) return;
+    try {
+      const { blob } = await api.resourceContent(id, sessionId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+      } else {
+        this.notify(
+          "error",
+          error instanceof Error ? error.message : "Download failed",
+        );
+      }
+    }
+  };
 }
 
 export function gitChangeForWorkspacePath(

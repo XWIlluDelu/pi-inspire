@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,20 +32,25 @@ describe("Pane resize handles", () => {
     setViewport(1_600);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
-        const width = this.classList.contains("ctx")
-          ? Number.parseFloat(
-              document.documentElement.style.getPropertyValue("--ctx-w"),
-            ) || 500
-          : 500;
-        const height = this.classList.contains("split-primary")
-          ? Number.parseFloat(
-              this.parentElement?.style.getPropertyValue(
-                "--pane-resize-primary-size",
-              ) ?? "",
-            ) || 240
-          : this.classList.contains("split-container")
-            ? 600
-            : 800;
+        const hidden = this.classList.contains("wheel-target--hidden");
+        const width = hidden
+          ? 0
+          : this.classList.contains("ctx")
+            ? Number.parseFloat(
+                document.documentElement.style.getPropertyValue("--ctx-w"),
+              ) || 500
+            : 500;
+        const height = hidden
+          ? 0
+          : this.classList.contains("split-primary")
+            ? Number.parseFloat(
+                this.parentElement?.style.getPropertyValue(
+                  "--pane-resize-primary-size",
+                ) ?? "",
+              ) || 240
+            : this.classList.contains("split-container")
+              ? 600
+              : 800;
         return {
           x: 0,
           y: 0,
@@ -117,6 +128,89 @@ describe("Pane resize handles", () => {
     expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe("");
     expect(split).not.toHaveAttribute("data-pane-resize-sized");
     expect(window.localStorage.getItem("inspire.resources-split")).toBeNull();
+  });
+
+  it("forwards normalized wheel input without swallowing zoom or boundary gestures", async () => {
+    const { PaneResizeHandle } = await import(
+      "../../src/components/PaneResizeHandle"
+    );
+    function SplitHarness() {
+      const containerRef = useRef<HTMLDivElement>(null);
+      const primaryRef = useRef<HTMLDivElement>(null);
+      return (
+        <div className="split-container" ref={containerRef}>
+          <div className="split-primary" ref={primaryRef} />
+          <PaneResizeHandle
+            orientation="horizontal"
+            container={containerRef}
+            pane={primaryRef}
+            cssVar="--pane-resize-primary-size"
+            storageKey="inspire.resources-wheel"
+            min={96}
+            minRemainder={160}
+            label="Resize file list and preview"
+            variant="resources"
+            wheelTargetSelector=".wheel-target[data-pane-scroll-active='true']"
+          />
+          <div
+            className="wheel-target wheel-target--hidden"
+            data-pane-scroll-active="true"
+          />
+          <div className="wheel-target" data-pane-scroll-active="true" />
+        </div>
+      );
+    }
+    const view = render(<SplitHarness />);
+    const target = view.container.querySelector<HTMLElement>(
+      ".wheel-target:not(.wheel-target--hidden)",
+    )!;
+    const hiddenTarget = view.container.querySelector<HTMLElement>(
+      ".wheel-target--hidden",
+    )!;
+    for (const element of [hiddenTarget, target])
+      Object.defineProperties(element, {
+        clientHeight: { configurable: true, value: 100 },
+        scrollHeight: { configurable: true, value: 1_000 },
+        clientWidth: { configurable: true, value: 100 },
+        scrollWidth: { configurable: true, value: 100 },
+      });
+    const handle = view.getByRole("separator", {
+      name: "Resize file list and preview",
+    });
+
+    const lineWheel = createEvent.wheel(handle, {
+      clientY: 50,
+      deltaY: 3,
+      deltaMode: 1,
+      cancelable: true,
+    });
+    const preventLineWheel = vi.spyOn(lineWheel, "preventDefault");
+    fireEvent(handle, lineWheel);
+    expect(target.scrollTop).toBe(48);
+    expect(hiddenTarget.scrollTop).toBe(0);
+    expect(preventLineWheel).toHaveBeenCalledOnce();
+
+    const zoomWheel = createEvent.wheel(handle, {
+      clientY: 50,
+      deltaY: 100,
+      ctrlKey: true,
+      cancelable: true,
+    });
+    const preventZoomWheel = vi.spyOn(zoomWheel, "preventDefault");
+    fireEvent(handle, zoomWheel);
+    expect(preventZoomWheel).not.toHaveBeenCalled();
+    expect(target.scrollTop).toBe(48);
+
+    target.scrollTop = 900;
+    const boundaryWheel = createEvent.wheel(handle, {
+      clientY: 50,
+      deltaY: 1,
+      cancelable: true,
+    });
+    const preventBoundaryWheel = vi.spyOn(boundaryWheel, "preventDefault");
+    fireEvent(handle, boundaryWheel);
+    expect(preventBoundaryWheel).not.toHaveBeenCalled();
+    expect(target.scrollTop).toBe(900);
   });
 
   it("temporarily clamps a saved pane width when the window narrows and restores it when expanded", async () => {

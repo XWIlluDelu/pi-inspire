@@ -10,7 +10,6 @@ const FILE_ARGUMENT_KEYS = new Set([
   "outputPath",
   "path",
   "referencedImagePaths",
-  "saveDir",
 ]);
 
 export function isToolResourceArgumentKey(key: string): boolean {
@@ -195,23 +194,35 @@ function valuesForArgument(value: unknown): string[] {
 function textReferences(
   text: string,
 ): Array<{ reference: string; source: ResourceReferenceSource }> {
-  const found: Array<{ reference: string; source: ResourceReferenceSource }> =
-    [];
-  const add = (value: string, source: ResourceReferenceSource) => {
+  const found: Array<{
+    reference: string;
+    source: ResourceReferenceSource;
+    position: number;
+  }> = [];
+  const add = (
+    value: string,
+    source: ResourceReferenceSource,
+    position: number,
+  ) => {
     const reference = trimReference(value);
-    if (isLocalResourceReference(reference)) found.push({ reference, source });
+    if (isLocalResourceReference(reference))
+      found.push({ reference, source, position });
   };
   for (const match of text.matchAll(FILE_TAG))
-    add(match[2] ?? "", "attachment");
+    add(match[2] ?? "", "attachment", match.index ?? 0);
   for (const match of text.matchAll(MARKDOWN_TARGET))
-    add(match[1] ?? match[2] ?? "", "link");
-  for (const match of text.matchAll(OSC8_TARGET)) add(match[1] ?? "", "link");
+    add(match[1] ?? match[2] ?? "", "link", match.index ?? 0);
+  for (const match of text.matchAll(OSC8_TARGET))
+    add(match[1] ?? "", "link", match.index ?? 0);
   for (const match of text.matchAll(INLINE_CODE))
-    add(match[1] ?? "", "mention");
+    add(match[1] ?? "", "mention", match.index ?? 0);
   for (const match of text.matchAll(EXPLICIT_PATH))
-    add(match[1] ?? "", "mention");
-  for (const match of text.matchAll(AT_PATH)) add(match[1] ?? "", "mention");
-  return found;
+    add(match[1] ?? "", "mention", match.index ?? 0);
+  for (const match of text.matchAll(AT_PATH))
+    add(match[1] ?? "", "mention", match.index ?? 0);
+  return found
+    .sort((left, right) => right.position - left.position)
+    .map(({ reference, source }) => ({ reference, source }));
 }
 
 /**

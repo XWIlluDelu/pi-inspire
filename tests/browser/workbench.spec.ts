@@ -325,8 +325,41 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   });
   const recent = resources
     .locator(".files-browser__section")
-    .filter({ hasText: "Recent in this chat" });
+    .filter({ hasText: "Recent" });
   await expect(recent.locator(".recent-file")).toHaveCount(5);
+  await expect(
+    recent.locator(".recent-file > svg.lucide-file-text"),
+  ).toHaveCount(5);
+  const recentLayout = await recent
+    .locator(".recent-file")
+    .evaluateAll((rows) =>
+      rows.map((row) => {
+        const name = row.querySelector<HTMLElement>(".recent-file__name")!;
+        const path = row.querySelector<HTMLElement>(
+          ".recent-file__path .resource-path__visible",
+        );
+        const rowBox = row.getBoundingClientRect();
+        const nameBox = name.getBoundingClientRect();
+        const pathBox = path?.getBoundingClientRect();
+        return {
+          height: rowBox.height,
+          centerDelta: pathBox
+            ? Math.abs(
+                nameBox.top +
+                  nameBox.height / 2 -
+                  (pathBox.top + pathBox.height / 2),
+              )
+            : 0,
+        };
+      }),
+    );
+  expect(recentLayout.every(({ height }) => height === 28)).toBe(true);
+  expect(recentLayout.every(({ centerDelta }) => centerDelta <= 1)).toBe(true);
+  const workspaceHeading = resources.locator(
+    ".files-browser__section--workspace > h2",
+  );
+  await expect(workspaceHeading).toHaveText("inspire");
+  const browseWorkspaceTop = (await workspaceHeading.boundingBox())!.y;
 
   const localOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
@@ -342,18 +375,126 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
     }
     await route.continue();
   });
-  await recent.getByRole("button", { name: /sandbox-resource\.html/ }).click();
-  await resources.getByRole("button", { name: "Sandbox", exact: true }).click();
-  const frame = page.frameLocator(
-    "iframe[title='Preview sandbox-resource.html']",
+  await recent.getByRole("button", { name: /page\.html/ }).click();
+  const workspaceBack = resources.getByRole("button", {
+    name: "Back to file browser for inspire",
+  });
+  await expect(workspaceBack).toHaveText("inspire");
+  const selectedLayout = await resources
+    .locator(".res__body--files:not([hidden])")
+    .evaluate((body) => {
+      const header = body.querySelector<HTMLElement>(".res__index-header")!;
+      const detail = body.querySelector<HTMLElement>(".file-detail-header")!;
+      const title = header.querySelector<HTMLElement>(".res__index-title")!;
+      return {
+        detailTop: detail.getBoundingClientRect().top,
+        headingHeight: header.getBoundingClientRect().height,
+        headingFontSize: getComputedStyle(title).fontSize,
+      };
+    });
+  expect(
+    Math.abs(selectedLayout.detailTop - browseWorkspaceTop),
+  ).toBeLessThanOrEqual(1);
+  expect(selectedLayout.headingHeight).toBe(30);
+  await expect(
+    resources.getByRole("button", { name: "Source", exact: true }),
+  ).toBeEnabled();
+  const frame = page.frameLocator("iframe[title='Preview page.html']");
+  await expect(frame.locator("h1")).toHaveText(
+    "Quiet systems, legible signals.",
   );
-  await expect(frame.locator("h1")).toHaveText("Sandbox fixture");
+  await expect(frame.locator("#status")).not.toHaveText("SCRIPT EXECUTED");
   expect(externalRequests).toEqual([]);
 
-  await resources.getByRole("button", { name: "Back to files" }).click();
+  await resources.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(resources.locator(".res__index-title")).toHaveText(
+    "mock/analysis",
+  );
+  await expect(resources.locator(".res__index-summary")).toHaveText(
+    "1 working",
+  );
+  const changesHeading = await resources
+    .locator(".res__body--changes .res__index-header")
+    .evaluate((header) => ({
+      height: header.getBoundingClientRect().height,
+      fontSize: getComputedStyle(
+        header.querySelector<HTMLElement>(".res__index-title")!,
+      ).fontSize,
+    }));
+  expect(changesHeading).toEqual({
+    height: selectedLayout.headingHeight,
+    fontSize: selectedLayout.headingFontSize,
+  });
+  await expect(resources.locator(".changes__additions")).toHaveText("+1");
+  await expect(resources.locator(".changes__deletions")).toHaveText("−1");
+  await expect(
+    resources.getByRole("region", {
+      name: /Source changes for .*page\.html/,
+    }),
+  ).toBeVisible();
+  await resources.getByRole("button", { name: "Next change" }).click();
+  await expect(resources.locator(".source-diff__line--active")).toHaveCount(2);
+  await resources.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(frame.locator("h1")).toHaveText(
+    "Quiet systems, legible signals.",
+  );
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  const search = resources.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  await search.fill("file-previews/notebook.ipynb");
   await resources
-    .getByRole("searchbox", { name: "Search workspace files" })
-    .fill("ResourcesPane.tsx");
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/notebook.ipynb"]',
+    )
+    .click();
+  await expect(
+    resources.getByRole("document", { name: "Notebook preview" }),
+  ).toBeVisible();
+  await expect(
+    resources.getByRole("heading", { name: "Observation window" }),
+  ).toBeVisible();
+  await expect(
+    resources.getByText("24/24 samples passed continuity checks", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText('"nbformat": 4');
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("file-previews/vector.svg");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/vector.svg"]',
+    )
+    .click();
+  await expect(resources.getByAltText("vector.svg")).toBeVisible();
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText("<svg");
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("file-previews/document.md");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/document.md"]',
+    )
+    .click();
+  await expect(
+    resources.getByRole("heading", { name: "Observation log · Station 07" }),
+  ).toBeVisible();
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText("Working reading");
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("ResourcesPane.tsx");
   await resources
     .locator('[data-workspace-path="src/components/ResourcesPane.tsx"]')
     .click();
@@ -365,14 +506,6 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
     ),
   ).toBe(true);
 
-  await resources.getByRole("spinbutton", { name: "Go to line" }).fill("900");
-  await resources
-    .getByRole("spinbutton", { name: "Go to line" })
-    .press("Enter");
-  await expect
-    .poll(() => source.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
-
   await source.evaluate((element) => {
     element.scrollTop = 0;
   });
@@ -383,7 +516,7 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
     .toBeGreaterThan(0);
 });
 
-test("files navigation preserves context across desktop and narrow drawers", async ({
+test("files navigation preserves context across desktop and narrow workspaces", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -400,12 +533,20 @@ test("files navigation preserves context across desktop and narrow drawers", asy
     .locator('[data-workspace-path="src/components/WorkspaceBrowser.tsx"]')
     .click();
   await expect(
-    pane.getByRole("button", { name: "Back to files" }),
+    pane.getByRole("button", { name: "Back to file browser" }),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const drawer = page.getByRole("dialog", { name: "Context panel" });
-  await drawer.getByRole("button", { name: "Back to files" }).click();
+  await expect
+    .poll(() =>
+      drawer.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, width: bounds.width };
+      }),
+    )
+    .toEqual({ left: 0, width: 390 });
+  await drawer.getByRole("button", { name: "Back to file browser" }).click();
   await expect(
     drawer.getByRole("searchbox", { name: "Search workspace files" }),
   ).toHaveValue("WorkspaceBrowser.tsx");
@@ -422,7 +563,7 @@ test("files navigation preserves context across desktop and narrow drawers", asy
   await expect(
     page
       .getByRole("dialog", { name: "Context panel" })
-      .getByRole("button", { name: "Back to files" }),
+      .getByRole("button", { name: "Back to file browser" }),
   ).toBeVisible();
 });
 

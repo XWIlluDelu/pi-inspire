@@ -1,5 +1,5 @@
 import type { ProjectDirEntry } from "../../shared/contracts";
-import { ApiError, type Api, type ProjectFileResult } from "../api";
+import { type Api, ApiError, type ProjectFileResult } from "../api";
 
 export interface WorkspaceBrowserState {
   workspaceLevels: Record<string, ProjectDirEntry[]>;
@@ -89,6 +89,15 @@ export class WorkspaceController {
 
   changeOwner(nextCwd: string | null): WorkspaceBrowserState {
     const current = this.host.state();
+    // Touch the destination before saving the departing workspace. Otherwise,
+    // inserting into a full LRU can evict the very projection being restored.
+    if (nextCwd && nextCwd !== current.cwd) {
+      const destination = this.statesByCwd.get(nextCwd);
+      if (destination) {
+        this.statesByCwd.delete(nextCwd);
+        this.statesByCwd.set(nextCwd, destination);
+      }
+    }
     if (current.cwd) {
       const cached: WorkspaceBrowserState = {
         workspaceLevels: { ...current.workspaceLevels },

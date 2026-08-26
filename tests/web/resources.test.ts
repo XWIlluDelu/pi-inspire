@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   collectSessionResourceReferences,
   isLocalResourceReference,
+  RESOURCE_LIST_INITIAL_SIZE,
   resourceReferenceLine,
   stripResourceLocation,
 } from "../../shared/resource-references";
-import { collectResources, MAX_RESOURCE_ROWS } from "../../src/resources";
 
 describe("Pi resource references", () => {
   it("collects structured tool paths, local Markdown targets, attachment tags, and embedded images", () => {
@@ -28,7 +28,10 @@ describe("Pi resource references", () => {
             type: "toolCall",
             id: "read-1",
             name: "read",
-            arguments: { path: "/tmp/input one.png" },
+            arguments: {
+              path: "/tmp/input one.png",
+              saveDir: "/tmp/generated-output",
+            },
           },
         ],
       },
@@ -47,6 +50,9 @@ describe("Pi resource references", () => {
     expect(resources.some((item) => item.reference === "https://pi.dev")).toBe(
       false,
     );
+    expect(
+      resources.some((item) => item.reference === "/tmp/generated-output"),
+    ).toBe(false);
   });
 
   it("understands file URLs, OSC 8 targets, inline-code paths, and @ mentions", () => {
@@ -63,9 +69,27 @@ describe("Pi resource references", () => {
       },
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
-      "file:///tmp/chart.png",
-      "src/view.tsx",
       "notes/result.md",
+      "src/view.tsx",
+      "file:///tmp/chart.png",
+    ]);
+  });
+
+  it("keeps references within one text part in recent-first order", () => {
+    const resources = collectSessionResourceReferences([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "First `old.md`, then [new](src/new.ts).",
+          },
+        ],
+      },
+    ]);
+    expect(resources.map((item) => item.reference)).toEqual([
+      "src/new.ts",
+      "old.md",
     ]);
   });
 
@@ -140,16 +164,15 @@ describe("Pi resource references", () => {
 
     const bounded = collectSessionResourceReferences(
       messages,
-      MAX_RESOURCE_ROWS,
+      RESOURCE_LIST_INITIAL_SIZE,
     );
-    expect(bounded).toHaveLength(MAX_RESOURCE_ROWS);
+    expect(bounded).toHaveLength(RESOURCE_LIST_INITIAL_SIZE);
     // Newest first: the bound keeps the most recent references, not the first.
     expect(bounded[0]?.reference).toBe("file-19.md");
-    expect(bounded.at(-1)?.reference).toBe(`file-${20 - MAX_RESOURCE_ROWS}.md`);
+    expect(bounded.at(-1)?.reference).toBe(
+      `file-${20 - RESOURCE_LIST_INITIAL_SIZE}.md`,
+    );
     // No limit means no truncation — the authorization path sees everything.
     expect(collectSessionResourceReferences(messages)).toHaveLength(20);
-    expect(collectResources(messages, MAX_RESOURCE_ROWS)).toHaveLength(
-      MAX_RESOURCE_ROWS,
-    );
   });
 });

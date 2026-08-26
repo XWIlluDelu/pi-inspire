@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { constants, type BigIntStats } from "node:fs";
-import { open, realpath, stat, type FileHandle } from "node:fs/promises";
+import { type BigIntStats, constants } from "node:fs";
+import { type FileHandle, open, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   basename,
@@ -17,12 +17,12 @@ import {
   type ResourceProbeResult,
 } from "../shared/contracts.js";
 import {
+  collectSessionResourceReferences,
   MAX_RESOURCE_LIST_PAGE_SIZE,
   RESOURCE_LIST_INITIAL_SIZE,
-  collectSessionResourceReferences,
-  stripResourceLocation,
   type SessionResourceListResponse,
   type SessionResourceReference,
+  stripResourceLocation,
 } from "../shared/resource-references.js";
 import { escapesBase } from "./paths.js";
 import {
@@ -78,7 +78,6 @@ interface ResolvedResource {
    * server shutdown. A separately opened serving handle can still observe a
    * legitimate in-place rewrite of this same filesystem object. */
   anchor?: FileHandle;
-  embedded?: { messageIndex: number; partIndex: number };
   authority: "embedded" | "index" | "citation";
 }
 
@@ -101,7 +100,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".hpp": "text/x-c++",
   ".htm": "text/html",
   ".html": "text/html",
-  ".ipynb": "application/json",
+  ".ipynb": "application/x-ipynb+json",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".js": "text/javascript",
@@ -197,6 +196,7 @@ function kindFor(mimeType: string): ResourceKind {
   if (mimeType === "text/html") return "html";
   if (mimeType === "application/pdf") return "pdf";
   if (mimeType === "text/markdown") return "markdown";
+  if (mimeType === "application/x-ipynb+json") return "notebook";
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";
@@ -336,22 +336,7 @@ function resourceCursorOffset(
   return Number(record.offset);
 }
 
-function buildCitationIndex(
-  context: ResourceContext,
-  messages: unknown[],
-): ResourceCitationIndex {
-  const resources = collectSessionResourceReferences(messages);
-  const citedPaths = new Set<string>();
-  for (const resource of resources) {
-    if (!resource.reference || resource.reference.startsWith("pi-embedded://"))
-      continue;
-    try {
-      citedPaths.add(referencePath(resource.reference, context.cwd));
-    } catch {
-      // Invalid references remain visible but confer no path authority.
-    }
-  }
-
+function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
   const embedded = new Map<string, EmbeddedCitation>();
   messages.forEach((message, messageIndex) => {
     if (!message || typeof message !== "object") return;
@@ -377,6 +362,24 @@ function buildCitationIndex(
       });
     });
   });
+  return embedded;
+}
+
+function buildCitationIndex(
+  context: ResourceContext,
+  messages: unknown[],
+): ResourceCitationIndex {
+  const resources = collectSessionResourceReferences(messages);
+  const citedPaths = new Set<string>();
+  for (const resource of resources) {
+    if (!resource.reference || resource.reference.startsWith("pi-embedded://"))
+      continue;
+    try {
+      citedPaths.add(referencePath(resource.reference, context.cwd));
+    } catch {
+      // Invalid references remain visible but confer no path authority.
+    }
+  }
 
   return {
     sessionId: context.sessionId,
@@ -384,7 +387,7 @@ function buildCitationIndex(
     revision: context.revision,
     resources,
     citedPaths,
-    embedded,
+    embedded: embeddedCitations(messages),
   };
 }
 
@@ -561,14 +564,7 @@ export class ResourceStore {
         kind: "image",
       };
       if (retainHandle) {
-        this.remember({
-          descriptor,
-          embedded: {
-            messageIndex: embedded.messageIndex,
-            partIndex: embedded.partIndex,
-          },
-          authority: "embedded",
-        });
+        this.remember({ descriptor, authority: "embedded" });
       }
       return descriptor;
     }
@@ -833,6 +829,8 @@ export class ResourceStore {
         { status: 409 },
       );
     }
+    // embeddedData revalidates an embedded reference against the same message
+    // load from which it reads bytes, avoiding a second full transcript load.
     if (resource.authority === "embedded") return;
     if (resource.authority === "index") {
       let lexicalPath: string;
@@ -863,8 +861,10 @@ export class ResourceStore {
     resource: ResolvedResource,
     context: ResourceContext,
   ): Promise<Buffer> {
-    const embedded = resource.embedded;
     const messages = await contextMessages(context);
+    const embedded = embeddedCitations(messages).get(
+      resource.descriptor.reference,
+    );
     const message = embedded ? messages[embedded.messageIndex] : undefined;
     const content =
       message && typeof message === "object"

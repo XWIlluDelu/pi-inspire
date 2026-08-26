@@ -4,6 +4,7 @@ import { TextDecoder } from "node:util";
 import type { ProjectDirEntry } from "../shared/contracts.js";
 import { GIT_CONFIG_ARGS, GitInspectionError, spawnGit } from "./git-runner.js";
 import { escapesBase } from "./paths.js";
+
 const ignored = new Set([
   ".git",
   "node_modules",
@@ -120,6 +121,7 @@ async function fromFilesystem(cwd: string): Promise<string[]> {
       continue;
     }
     for await (const entry of entries) {
+      if (Date.now() >= deadline) break;
       if (
         entry.isSymbolicLink() ||
         ignored.has(entry.name) ||
@@ -127,7 +129,11 @@ async function fromFilesystem(cwd: string): Promise<string[]> {
       )
         continue;
       const absolute = join(directory, entry.name);
-      if (entry.isDirectory()) pending.push(absolute);
+      if (
+        entry.isDirectory() &&
+        directories + pending.length < MAX_PROJECT_INDEX_DIRECTORIES
+      )
+        pending.push(absolute);
       else if (entry.isFile()) values.push(relative(cwd, absolute));
       if (values.length >= MAX_PROJECT_INDEX_FILES) break;
     }
@@ -168,18 +174,23 @@ async function projectPaths(cwd: string): Promise<string[]> {
       if (await isNonGitDirectory(root)) return fromFilesystem(root);
       throw error;
     });
-  const entry = { expiresAt: Date.now() + CACHE_MS, paths };
+  // Keep one in-flight build shareable, then start the freshness window only
+  // when its result is usable. A slow scan must not expire while it runs.
+  const entry = { expiresAt: Number.POSITIVE_INFINITY, paths };
   cache.set(root, entry);
+  void paths.then(
+    () => {
+      if (cache.get(root) === entry) entry.expiresAt = Date.now() + CACHE_MS;
+    },
+    () => {
+      if (cache.get(root) === entry) removeCacheEntry(root);
+    },
+  );
   while (cache.size > MAX_PROJECT_INDEX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value as string | undefined;
     if (!oldest) break;
     removeCacheEntry(oldest);
   }
-  // A failure is not an index: evict it so the next request retries instead
-  // of serving the cached rejection for the whole cache window.
-  paths.catch(() => {
-    if (cache.get(root)?.paths === paths) removeCacheEntry(root);
-  });
   return paths;
 }
 
@@ -190,9 +201,7 @@ export async function searchProjectFiles(
 ): Promise<ProjectFileResult[]> {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return (await projectPaths(cwd))
-    .filter((path) =>
-      words.every((word) => path.toLocaleLowerCase().includes(word)),
-    )
+    .filter((path) => words.every((word) => path.toLowerCase().includes(word)))
     .slice(0, Math.min(100, Math.max(1, limit)))
     .map((path) => ({ path, name: basename(path) }));
 }

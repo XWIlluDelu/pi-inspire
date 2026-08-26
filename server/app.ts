@@ -992,7 +992,7 @@ export function createInspireServer(deps: AppDependencies): {
       "Content-Type": resource.descriptor.mimeType,
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
     });
-    if (resource.embedded) {
+    if (resource.authority === "embedded") {
       const data = await deps.resources.embeddedData(resource, context);
       if (closed || response.destroyed) return;
       const range = resourceByteRange(request, data.length);

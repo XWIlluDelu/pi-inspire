@@ -21,6 +21,7 @@ covers:
   - tests/web/styles-contract.test.ts
   - tests/web/app.test.tsx
   - tests/web/overlay-and-palette.test.tsx
+  - tests/web/resource-path-label.test.tsx
   - tests/web/theme-init.test.ts
   - tests/browser/workbench.spec.ts
 ---
@@ -61,6 +62,11 @@ anatomy that must remain stable rather than duplicating every declaration.
   paper/carbon neutrals; Jade uses its own cool neutral ladder. Components use
   roles such as `--bg-surface`, `--hairline`, `--accent`, `--accent-fill`, and
   `--accent-tint`, never locally invented palette values.
+- File inspection is the deliberate exception: its host-owned Preview, Source,
+  and Changes canvases use the luminosity-aware `--bg-file-*` neutral ladder,
+  which is identical across Amber and Jade. Product chrome remains
+  palette-aware, rendered artifacts retain their authored backgrounds, and
+  source syntax or Diff additions/deletions retain semantic color.
 - Success, warning, error, tool-info, and thinking-violet are semantic roles,
   not alternate brands. Navigation state combines its positioned status mark
   and accessible state with color: working spins in the warning role,
@@ -113,8 +119,17 @@ anatomy that must remain stable rather than duplicating every declaration.
   controls. The detailed input, delivery, and ownership contract lives in
   [[composer]].
 - Files, Changes, and History share the contextual pane rather than creating a
-  fourth workbench column. File/resource safety and diff semantics belong to
+  fourth workbench column. File/resource safety and change semantics belong to
   [[resource-preview]]; branch behavior belongs to [[session-continuity]].
+- `ResourcePathLabel` owns semantic path elision throughout the product. It
+  measures the actual available inline width and selects the richest projection
+  that fits: preserve the filename and extension, then its nearest parent and
+  useful root context, while collapsing interior segments. Only an extreme
+  width may elide the filename itself, at grapheme boundaries. The visual label
+  stays one line while the component exposes the complete original path to
+  assistive technology and its tooltip; containing controls retain that same
+  value for copying and navigation. Ordinary titles and bare filenames do not
+  enter this path-specific treatment.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: a 6px surface, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short

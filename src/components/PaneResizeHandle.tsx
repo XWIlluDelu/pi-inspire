@@ -49,6 +49,7 @@ interface ActiveDrag {
 
 const KEYBOARD_STEP = 24;
 const SPLITTER_SIZE = 1;
+const WHEEL_LINE_PX = 16;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.round(Math.min(max, Math.max(min, value)));
@@ -243,22 +244,40 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
   };
 
   const forwardWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!props.wheelTargetSelector) return;
+    if (!props.wheelTargetSelector || event.ctrlKey) return;
     const targets = [
       ...document.querySelectorAll<HTMLElement>(props.wheelTargetSelector),
-    ].filter(
-      (target) =>
-        target.scrollHeight > target.clientHeight ||
-        target.scrollWidth > target.clientWidth,
-    );
+    ].filter((target) => {
+      const rect = target.getBoundingClientRect();
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        (target.scrollHeight > target.clientHeight ||
+          target.scrollWidth > target.clientWidth)
+      );
+    });
     const target =
       targets.find((candidate) => {
         const rect = candidate.getBoundingClientRect();
         return event.clientY >= rect.top && event.clientY <= rect.bottom;
       }) ?? targets[0];
     if (!target) return;
-    target.scrollTop += event.deltaY;
-    target.scrollLeft += event.deltaX;
+    const lineScale = event.deltaMode === 1 ? WHEEL_LINE_PX : 1;
+    const verticalScale =
+      event.deltaMode === 2 ? target.clientHeight : lineScale;
+    const horizontalScale =
+      event.deltaMode === 2 ? target.clientWidth : lineScale;
+    const nextTop = Math.min(
+      Math.max(0, target.scrollHeight - target.clientHeight),
+      Math.max(0, target.scrollTop + event.deltaY * verticalScale),
+    );
+    const nextLeft = Math.min(
+      Math.max(0, target.scrollWidth - target.clientWidth),
+      Math.max(0, target.scrollLeft + event.deltaX * horizontalScale),
+    );
+    if (nextTop === target.scrollTop && nextLeft === target.scrollLeft) return;
+    target.scrollTop = nextTop;
+    target.scrollLeft = nextLeft;
     event.preventDefault();
   };
 

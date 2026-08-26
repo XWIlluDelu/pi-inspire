@@ -3,13 +3,14 @@ import {
   MAX_RESOURCE_PROBE_REFERENCES,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import {
   classifiedResourceFailure,
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
-  TEXT_PREVIEW_BYTES,
+  NOTEBOOK_PREVIEW_BYTES,
   type ResourcePreview,
+  TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
 
@@ -19,7 +20,6 @@ interface ResourceControllerState {
   transcriptRevision: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
-  detailMode: "file" | "diff";
   fileBrowserView: "browse" | "preview";
   selectedResourceReference: string | null;
   resourcePreview: ResourcePreview | null;
@@ -33,7 +33,6 @@ interface ResourceControllerState {
 interface ResourceControllerPatch {
   resourcesOpen?: boolean;
   contextMode?: "files" | "changes" | "branches";
-  detailMode?: "file" | "diff";
   fileBrowserView?: "browse" | "preview";
   selectedResourceReference?: string | null;
   resourcePreview?: ResourcePreview | null;
@@ -409,7 +408,6 @@ export class ResourceController {
     this.host.patch({
       resourcesOpen: true,
       contextMode,
-      detailMode: "file",
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       resourcePreview: { status: "loading", reference },
@@ -453,8 +451,10 @@ export class ResourceController {
       const textLike =
         descriptor.kind === "text" ||
         descriptor.kind === "markdown" ||
+        descriptor.kind === "notebook" ||
         descriptor.kind === "html";
-      if (!textLike && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
+      const svg = descriptor.mimeType === "image/svg+xml";
+      if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
         this.host.patch({
           resourcePreview: {
             status: "ready",
@@ -466,7 +466,12 @@ export class ResourceController {
         return;
       }
       const content = await api.resourceContent(descriptor.id, sessionId, {
-        byteLimit: textLike ? TEXT_PREVIEW_BYTES : MAX_MEDIA_PREVIEW_BYTES + 1,
+        byteLimit:
+          descriptor.kind === "notebook"
+            ? NOTEBOOK_PREVIEW_BYTES
+            : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+              ? TEXT_PREVIEW_BYTES
+              : MAX_MEDIA_PREVIEW_BYTES + 1,
         signal: request.signal,
       });
       if (stale()) return;
@@ -505,6 +510,10 @@ export class ResourceController {
         });
         return;
       }
+      const svgText = svg
+        ? await blob.slice(0, TEXT_PREVIEW_BYTES).text()
+        : undefined;
+      if (stale()) return;
       if (
         content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
         blob.size > MAX_MEDIA_PREVIEW_BYTES
@@ -514,6 +523,9 @@ export class ResourceController {
             status: "ready",
             reference,
             descriptor: currentDescriptor,
+            ...(svgText !== undefined
+              ? { text: svgText, truncated: true }
+              : {}),
             contentUnavailable: "too-large",
           },
         });
@@ -527,6 +539,12 @@ export class ResourceController {
           status: "ready",
           reference,
           descriptor: currentDescriptor,
+          ...(svgText !== undefined
+            ? {
+                text: svgText,
+                truncated: content.totalSize > TEXT_PREVIEW_BYTES,
+              }
+            : {}),
           ...(this.previewObjectUrl
             ? { objectUrl: this.previewObjectUrl }
             : {}),

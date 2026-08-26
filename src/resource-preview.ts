@@ -7,6 +7,9 @@ import { ApiError } from "./api";
 /** Text-like previews are range-capped; a body shorter than the file's
  * size marks the preview truncated. */
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
+/** Complete notebooks are parsed for their static document view up to this
+ * bound; larger notebooks retain the ordinary bounded JSON source view. */
+export const NOTEBOOK_PREVIEW_BYTES = 4 * 1024 * 1024;
 /** Blob-backed image/PDF/audio/video previews must fit in browser memory.
  * Fetch one sentinel byte beyond the limit so a same-inode file growth cannot
  * masquerade as a complete preview. */
@@ -32,10 +35,10 @@ export type ResourcePreview =
       status: "ready";
       reference: string;
       descriptor: ResourceDescriptor;
-      /** Decoded text for text/markdown/html previews. */
+      /** Decoded text for source-capable text, HTML, Markdown, notebook, and SVG previews. */
       text?: string;
       truncated?: boolean;
-      /** Object URL for binary-backed previews (image/pdf/audio/video/html). */
+      /** Object URL for binary-backed previews (image/PDF/audio/video/HTML). */
       objectUrl?: string;
       /** The descriptor remains inspectable even when its bytes are withheld. */
       contentUnavailable?: "too-large";

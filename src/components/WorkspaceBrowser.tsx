@@ -15,6 +15,7 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 
 export function selectedWorkspacePath(
   state: ReturnType<typeof store.getState>,
@@ -87,13 +88,14 @@ function WorkspaceFileRow({
     <button
       type="button"
       className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""} ${selected ? "workspace-tree__row--active" : ""}`}
-      style={{ paddingLeft: `${10 + depth * 14}px` }}
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
       title={path}
+      aria-label={showPath ? `${name}, ${path}` : undefined}
       aria-current={selected || undefined}
       data-workspace-path={path}
       onClick={() => void store.openWorkspaceFile(path)}
     >
-      <FileText size={12} aria-hidden />
+      <FileText size={13} aria-hidden />
       <span className="workspace-tree__file-label">
         <span
           className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}
@@ -101,7 +103,7 @@ function WorkspaceFileRow({
           {name}
         </span>
         {showPath && path !== name ? (
-          <span className="workspace-tree__path">{path}</span>
+          <ResourcePathLabel path={path} className="workspace-tree__path" />
         ) : null}
       </span>
       {facet ? (
@@ -162,7 +164,7 @@ export function WorkspaceTree({ className = "" }: { className?: string }) {
     const entries = state.workspaceLevels[dir];
     const loading = state.workspaceLoadingDirs.includes(dir);
     const error = state.workspaceDirectoryErrors[dir];
-    const indent = { paddingLeft: `${10 + depth * 14}px` };
+    const indent = { paddingLeft: `${8 + depth * 14}px` };
     if (error)
       return (
         <button
@@ -211,7 +213,7 @@ export function WorkspaceTree({ className = "" }: { className?: string }) {
         <Fragment key={path}>
           <button
             type="button"
-            className="workspace-tree__row"
+            className="workspace-tree__row workspace-tree__row--folder"
             style={indent}
             aria-expanded={open}
             title={path}
@@ -222,7 +224,7 @@ export function WorkspaceTree({ className = "" }: { className?: string }) {
               className={`chev ${open ? "chev--open" : ""}`}
               aria-hidden
             />
-            <Folder size={12} aria-hidden />
+            <Folder size={13} aria-hidden />
             <span
               className={`workspace-tree__name ${rollup ? `git-deco--${rollup}` : ""}`}
             >

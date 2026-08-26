@@ -3,20 +3,20 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  Copy,
+  ChevronDown,
+  ChevronUp,
   Download,
   FileText,
   GitBranch,
   History,
   Loader2,
-  Plus,
   RefreshCw,
   RotateCw,
   X,
 } from "lucide-react";
 import {
-  type FormEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 import type {
+  GitDiffLine,
   GitDiffResponse,
   GitDiffSide,
   GitFileChange,
@@ -31,6 +32,7 @@ import type {
   ResourceDescriptor,
 } from "../../shared/contracts";
 import {
+  RESOURCE_LIST_INITIAL_SIZE,
   resourceReferenceLine,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
@@ -40,8 +42,8 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import {
-  mergeResourceRows,
   type ResourceRow,
+  resourceReferenceFromEventTarget,
   resourceRows as toResourceRows,
 } from "../resources";
 import { gitChangeForWorkspacePath, store, useAppState } from "../store";
@@ -49,7 +51,9 @@ import { useCopied } from "../use-copied";
 import { useModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ImagePreview } from "./ImagePreview";
+import { NotebookPreview } from "./NotebookPreview";
 import { PaneResizeHandle } from "./PaneResizeHandle";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 import { RichText } from "./RichText";
 import {
   selectedWorkspacePath,
@@ -76,30 +80,22 @@ function languageFor(name: string): string {
   return /\.([A-Za-z0-9]{1,12})$/.exec(name)?.[1]?.toLowerCase() ?? "plaintext";
 }
 
-function ClipboardButton({
-  text,
-  label,
-  className = "",
-}: {
-  text: string;
-  label: string;
-  className?: string;
-}) {
+function PathCopyButton({ path }: { path: string }) {
   const { copied, copy } = useCopied();
   return (
     <button
       type="button"
-      className={`file-action ${className}`}
-      onClick={() => void copy(text)}
-      aria-label={copied ? `${label} copied` : label}
-      title={copied ? "Copied" : label}
+      className={`file-path-action ${copied ? "file-path-action--copied" : ""}`}
+      onClick={() => void copy(path)}
+      aria-label={copied ? "Path copied" : `Copy path ${path}`}
+      title={copied ? "Copied" : `Click to copy — ${path}`}
     >
+      <span className="file-path-action__text">
+        <ResourcePathLabel path={path} />
+      </span>
       {copied ? (
-        <Check size={13} aria-hidden />
-      ) : (
-        <Copy size={13} aria-hidden />
-      )}
-      <span>{copied ? "Copied" : label}</span>
+        <Check size={11} className="file-path-action__check" aria-hidden />
+      ) : null}
     </button>
   );
 }
@@ -117,7 +113,7 @@ function ResourceState({
 }) {
   return (
     <div className="res__state" role="status">
-      {icon}
+      <div className="res__state-icon">{icon}</div>
       <p className="res__state-title">{title}</p>
       <p className="res__state-hint">{hint}</p>
       {children}
@@ -137,103 +133,106 @@ function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
 }
 
-function sideAvailable(change: GitFileChange, side: GitDiffSide): boolean {
-  return side === "staged"
-    ? Boolean(change.staged)
-    : Boolean(change.unstaged || change.untracked || change.conflict);
+interface SourceDiffRow {
+  line: GitDiffLine;
+  changeIndex: number | null;
+  startsChange: boolean;
 }
 
-function DiffView({
+interface SourceDiffProjection {
+  rows: SourceDiffRow[];
+  changes: number;
+}
+
+function sourceDiffRows(
+  diff: Extract<GitDiffResponse, { kind: "text" }>,
+): SourceDiffProjection {
+  const rows: SourceDiffRow[] = [];
+  let changeIndex = -1;
+  let insideChange = false;
+  for (const line of diff.lines) {
+    if (
+      line.kind !== "context" &&
+      line.kind !== "add" &&
+      line.kind !== "delete"
+    ) {
+      insideChange = false;
+      continue;
+    }
+    const changed = line.kind === "add" || line.kind === "delete";
+    const startsChange = changed && !insideChange;
+    if (startsChange) changeIndex += 1;
+    rows.push({
+      line,
+      changeIndex: changed ? changeIndex : null,
+      startsChange,
+    });
+    insideChange = changed;
+  }
+  return { rows, changes: changeIndex + 1 };
+}
+
+function SourceDiffView({
   diff,
+  projection,
+  activeChange,
+  containerRef,
 }: {
   diff: Extract<GitDiffResponse, { kind: "text" }>;
+  projection: SourceDiffProjection;
+  activeChange: number | null;
+  containerRef: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
-      className="diff-view"
+      className="source-diff"
       role="region"
-      aria-label={`Diff for ${diff.path.display}`}
+      aria-label={`Source changes for ${diff.path.display}`}
+      tabIndex={0}
+      ref={containerRef}
+      data-pane-scroll-active="true"
     >
-      <div className="diff-view__lines">
-        {diff.lines.map((line, index) => {
-          const coordinateLabel =
-            line.oldLine !== null && line.newLine !== null
-              ? line.oldLine === line.newLine
-                ? `Line ${line.newLine}`
-                : `Old line ${line.oldLine}, new line ${line.newLine}`
-              : line.oldLine !== null
-                ? `Old line ${line.oldLine}`
-                : line.newLine !== null
-                  ? `New line ${line.newLine}`
-                  : "No line number";
-          return (
-            <div
-              key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
-              className={`diff-view__line diff-view__line--${line.kind}`}
-            >
-              <span
-                className="diff-view__number"
-                role="img"
-                aria-label={coordinateLabel}
-                title={coordinateLabel}
-              >
-                {line.newLine ?? line.oldLine ?? ""}
-              </span>
-              <code>{line.text}</code>
-            </div>
-          );
-        })}
+      <div className="source-diff__lines">
+        {projection.rows.map(({ line, changeIndex, startsChange }, index) => (
+          <div
+            key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
+            className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
+            {...(startsChange ? { "data-change-index": changeIndex } : {})}
+          >
+            <span className="source-diff__number" aria-hidden>
+              {line.oldLine ?? ""}
+            </span>
+            <span className="source-diff__number" aria-hidden>
+              {line.newLine ?? ""}
+            </span>
+            <span className="source-diff__mark" aria-hidden>
+              {line.kind === "add" ? "+" : line.kind === "delete" ? "−" : ""}
+            </span>
+            <code>{line.text.slice(1)}</code>
+          </div>
+        ))}
       </div>
+      {diff.truncated ? (
+        <div className="source-diff__boundary" role="status">
+          Source truncated
+        </div>
+      ) : null}
+      {diff.encodingLossy ? (
+        <div className="source-diff__boundary" role="status">
+          Invalid UTF-8 replaced
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function DiffBody() {
-  const state = useAppState();
-  const diff = state.gitDiff;
-  if (!diff)
-    return (
-      <ResourceState
-        icon={<History size={17} aria-hidden />}
-        title="Select a change"
-        hint="Choose a changed file to inspect its diff."
-      />
-    );
-  if (diff.status === "loading")
-    return (
-      <ResourceState
-        icon={<Loader2 className="spin" size={17} aria-hidden />}
-        title="Loading diff"
-        hint="Reading the selected Git side…"
-      />
-    );
-  if (diff.status === "error")
-    return (
-      <ResourceState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Diff unavailable"
-        hint={diff.message}
-      >
-        <button
-          type="button"
-          className="res__more"
-          onClick={() =>
-            void (state.contextMode === "files"
-              ? store.openWorkspaceDiff(diff.pathId, diff.side)
-              : store.openGitDiff(diff.pathId, diff.side))
-          }
-        >
-          <RotateCw size={12} aria-hidden /> Retry
-        </button>
-      </ResourceState>
-    );
-  const result = diff.result;
+function GitResultState({ result }: { result: GitDiffResponse }) {
   if (result.kind === "binary")
     return (
       <ResourceState
         icon={<FileText size={17} aria-hidden />}
         title="Binary change"
-        hint="A line diff is not available for this binary file."
+        hint="This file has no line-based source view."
       />
     );
   if (result.kind === "submodule")
@@ -257,122 +256,18 @@ function DiffBody() {
       <ResourceState
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Unresolved conflict"
-        hint={`Conflict state ${result.code}; resolve it outside Inspire.`}
+        hint={`Conflict state ${result.code}`}
       />
     );
-  if (result.kind === "unsupported")
+  if (result.kind === "unsupported" && result.reason === "path-encoding")
     return (
       <ResourceState
         icon={<AlertTriangle size={17} aria-hidden />}
-        title="Diff unavailable"
-        hint={
-          result.reason === "untracked-content"
-            ? "Untracked content is available through File preview, not Git diff."
-            : "This Git pathname cannot be passed safely as UTF-8."
-        }
+        title="Source unavailable"
+        hint="This Git path cannot be represented as UTF-8."
       />
     );
-  if (result.kind === "empty")
-    return (
-      <ResourceState
-        icon={<FileText size={17} aria-hidden />}
-        title="No diff content"
-        hint="Git reports no line changes for this side."
-      />
-    );
-  return (
-    <div className="res__preview-fill" data-pane-scroll-active="true">
-      {result.truncated ? (
-        <div className="changes__truncated" role="status">
-          Diff truncated at the safe preview limit.
-        </div>
-      ) : null}
-      {result.encodingLossy ? (
-        <div className="res__preview-note" role="status">
-          Some diff text was not valid UTF-8 and uses replacement characters.
-        </div>
-      ) : null}
-      <DiffView diff={result} />
-    </div>
-  );
-}
-
-function DiffSideControl({ change }: { change: GitFileChange }) {
-  const state = useAppState();
-  if (!(sideAvailable(change, "unstaged") && sideAvailable(change, "staged")))
-    return null;
-  return (
-    <div className="segmented" role="group" aria-label="Diff side">
-      {(["unstaged", "staged"] as const).map((side) => (
-        <button
-          type="button"
-          key={side}
-          className={
-            state.selectedGitSide === side ? "segmented__item--active" : ""
-          }
-          aria-pressed={state.selectedGitSide === side}
-          onClick={() => store.setGitDiffSide(side)}
-        >
-          {side === "unstaged" ? "Working" : "Staged"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function DetailControls({ change }: { change: GitFileChange }) {
-  const state = useAppState();
-  const workingTreeDeleted =
-    change.unstaged?.kind === "deleted" ||
-    (change.staged?.kind === "deleted" &&
-      !change.unstaged &&
-      !change.untracked);
-  const canPreviewFile = Boolean(
-    change.path.workspacePath && change.path.utf8Path && !workingTreeDeleted,
-  );
-  const filePreviewUnavailable = workingTreeDeleted
-    ? "Working-tree file is deleted; only its Git diff is available."
-    : !change.path.utf8Path
-      ? "File preview is unavailable because this Git path is not valid UTF-8."
-      : !change.path.workspacePath
-        ? "File preview is unavailable because this path is outside the session workspace."
-        : null;
-  return (
-    <div className="changes__detail-controls">
-      <div className="segmented" role="group" aria-label="Change detail mode">
-        <button
-          type="button"
-          disabled={!canPreviewFile}
-          className={
-            state.detailMode === "file" ? "segmented__item--active" : ""
-          }
-          aria-pressed={state.detailMode === "file"}
-          title={
-            canPreviewFile
-              ? "Preview the working-tree file"
-              : "This file has no previewable working-tree path"
-          }
-          onClick={() => void store.openGitFile(change.path.id)}
-        >
-          File
-        </button>
-        <button
-          type="button"
-          className={
-            state.detailMode === "diff" ? "segmented__item--active" : ""
-          }
-          aria-pressed={state.detailMode === "diff"}
-          onClick={() => void store.openGitDiff(change.path.id)}
-        >
-          Diff
-        </button>
-      </div>
-      {state.detailMode === "diff" ? <DiffSideControl change={change} /> : null}
-      {filePreviewUnavailable ? (
-        <span className="changes__control-note">{filePreviewUnavailable}</span>
-      ) : null}
-    </div>
-  );
+  return <ResourcePreviewContent viewMode="source" />;
 }
 
 function ChangeRow({
@@ -415,11 +310,12 @@ function ChangeRow({
       <span
         className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}
       >
-        {pathName(change)}
+        <ResourcePathLabel path={pathName(change)} />
       </span>
       {originalPath ? (
         <span className="changes__source" title={originalPath.display}>
-          from {originalPath.display}
+          <span>from</span>
+          <ResourcePathLabel path={originalPath.display} />
         </span>
       ) : null}
       {facet ? (
@@ -521,14 +417,200 @@ function ChangesIndex() {
   );
 }
 
+function ChangesIndexHeader() {
+  const state = useAppState();
+  const status = state.gitStatus;
+  if (!status || status.kind !== "repository")
+    return (
+      <div className="res__index-header">
+        <GitBranch size={13} aria-hidden />
+        <span className="res__index-title">Workspace</span>
+      </div>
+    );
+  const summary = [
+    status.groups.staged.length > 0 && `${status.groups.staged.length} staged`,
+    status.groups.unstaged.length + status.groups.untracked.length > 0 &&
+      `${status.groups.unstaged.length + status.groups.untracked.length} working`,
+    status.groups.conflicted.length > 0 &&
+      `${status.groups.conflicted.length} conflict`,
+  ].filter(Boolean);
+  const isClean = summary.length === 0;
+  const hasConflict = status.groups.conflicted.length > 0;
+  const summaryTone = hasConflict
+    ? "res__index-summary--conflict"
+    : isClean
+      ? "res__index-summary--clean"
+      : "res__index-summary--dirty";
+  return (
+    <div className="res__index-header">
+      <GitBranch size={13} className="res__index-branch-icon" aria-hidden />
+      <span className="res__index-title">{gitHeadLabel(status)}</span>
+      <span className={`res__index-summary ${summaryTone}`}>
+        {summary.length > 0 ? summary.join(" · ") : "Clean"}
+      </span>
+    </div>
+  );
+}
+
+function hasSourceAndPreview(
+  descriptor: ResourceDescriptor,
+  text: string | undefined,
+): boolean {
+  return (
+    text !== undefined &&
+    (descriptor.kind === "html" ||
+      descriptor.kind === "markdown" ||
+      descriptor.kind === "notebook" ||
+      descriptor.mimeType === "image/svg+xml")
+  );
+}
+
 function ChangesDetail() {
   const state = useAppState();
+  const sourceRef = useRef<HTMLDivElement>(null);
+  const [activeChange, setActiveChange] = useState<number | null>(null);
   const change = selectedChange(state.gitStatus, state.selectedGitPathId);
-  if (!change) return <DiffBody />;
+  const diffView = state.gitDiff;
+  const result = diffView?.status === "ready" ? diffView.result : null;
+  const textResult = result?.kind === "text" ? result : null;
+  const projection = useMemo(
+    () => (textResult ? sourceDiffRows(textResult) : null),
+    [textResult],
+  );
+  const preview = state.resourcePreview;
+  const path =
+    result?.path.workspacePath ??
+    result?.path.utf8Path ??
+    result?.path.display ??
+    change?.path.workspacePath ??
+    change?.path.utf8Path ??
+    change?.path.display ??
+    (preview?.status === "ready"
+      ? (preview.descriptor.workspacePath ?? preview.descriptor.reference)
+      : state.selectedResourceReference);
+
+  useEffect(() => {
+    setActiveChange(null);
+  }, [result?.path.id, result?.side]);
+
+  const moveChange = (direction: -1 | 1) => {
+    if (!projection || projection.changes === 0) return;
+    const next =
+      activeChange === null
+        ? direction > 0
+          ? 0
+          : projection.changes - 1
+        : Math.min(
+            projection.changes - 1,
+            Math.max(0, activeChange + direction),
+          );
+    setActiveChange(next);
+    requestAnimationFrame(() => {
+      sourceRef.current
+        ?.querySelector<HTMLElement>(`[data-change-index="${next}"]`)
+        ?.scrollIntoView({ block: "center" });
+    });
+  };
+
+  const previousDisabled =
+    !projection || projection.changes === 0 || activeChange === 0;
+  const nextDisabled =
+    !projection ||
+    projection.changes === 0 ||
+    activeChange === projection.changes - 1;
+
+  let content: ReactNode;
+  if (!change) {
+    content = preview ? (
+      <ResourcePreviewContent viewMode="source" />
+    ) : (
+      <ResourceState
+        icon={<History size={17} aria-hidden />}
+        title="Select a change"
+        hint="Choose a changed file to inspect its source."
+      />
+    );
+  } else if (!diffView || diffView.status === "loading") {
+    content = (
+      <ResourceState
+        icon={<Loader2 className="spin" size={17} aria-hidden />}
+        title="Loading source"
+        hint={path ?? "Reading Git changes…"}
+      />
+    );
+  } else if (diffView.status === "error") {
+    content = (
+      <ResourceState
+        icon={<AlertTriangle size={17} aria-hidden />}
+        title="Source unavailable"
+        hint={diffView.message}
+      >
+        <button
+          type="button"
+          className="res__more"
+          onClick={() => void store.openGitDiff(diffView.pathId, diffView.side)}
+        >
+          <RotateCw size={12} aria-hidden /> Retry
+        </button>
+      </ResourceState>
+    );
+  } else if (textResult && projection?.rows.length) {
+    content = (
+      <SourceDiffView
+        diff={textResult}
+        projection={projection}
+        activeChange={activeChange}
+        containerRef={sourceRef}
+      />
+    );
+  } else if (result) {
+    content = <GitResultState result={result} />;
+  } else {
+    content = null;
+  }
+
   return (
     <div className="changes__detail">
-      <DetailControls change={change} />
-      {state.detailMode === "file" ? <ResourcePreviewContent /> : <DiffBody />}
+      <div className="file-detail-header">
+        <div className="file-detail-header__path">
+          {path ? <PathCopyButton path={path} /> : <span>Source</span>}
+        </div>
+        <div className="changes__stats" title="Line changes">
+          <span className="changes__additions">
+            +{textResult?.additions ?? (change ? "—" : 0)}
+          </span>
+          <span className="changes__deletions">
+            −{textResult?.deletions ?? (change ? "—" : 0)}
+          </span>
+        </div>
+        <div
+          className="changes__jump"
+          role="group"
+          aria-label="Change navigation"
+        >
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Previous change"
+            title="Previous change"
+            disabled={previousDisabled}
+            onClick={() => moveChange(-1)}
+          >
+            <ChevronUp size={14} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Next change"
+            title="Next change"
+            disabled={nextDisabled}
+            onClick={() => moveChange(1)}
+          >
+            <ChevronDown size={14} aria-hidden />
+          </button>
+        </div>
+      </div>
+      <div className="changes__content">{content}</div>
     </div>
   );
 }
@@ -538,33 +620,47 @@ interface LineJump {
   request: number;
 }
 
+const MAX_HIGHLIGHTED_SOURCE_CHARACTERS = 512 * 1024;
+
 function SourceCodePreview({
   text,
   language,
   jump,
+  truncated = false,
 }: {
   text: string;
   language: string;
   jump: LineJump | null;
+  truncated?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const lines = useMemo(() => text.split("\n"), [text]);
+  const lineNumbers = useMemo(
+    () => lines.map((_, index) => index + 1).join("\n"),
+    [lines],
+  );
   const highlighted = useMemo(
     () =>
+      text.length <= MAX_HIGHLIGHTED_SOURCE_CHARACTERS &&
       hljs.getLanguage(language)
         ? hljs.highlight(text, { language }).value
         : escapeHtml(text),
     [language, text],
   );
   useEffect(() => {
-    if (!jump || !rootRef.current) return;
-    const target = rootRef.current.querySelector<HTMLElement>(
-      `[data-source-line="${jump.line}"]`,
-    );
-    if (!target) return;
-    rootRef.current.scrollTop = Math.max(
+    const root = rootRef.current;
+    if (!jump || !root) return;
+    const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight);
+    const source = root.querySelector<HTMLElement>(".source-view__pre");
+    const paddingTop = source
+      ? Number.parseFloat(getComputedStyle(source).paddingTop)
+      : 0;
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    root.scrollTop = Math.max(
       0,
-      target.offsetTop - rootRef.current.clientHeight / 3,
+      (jump.line - 1) * lineHeight +
+        (Number.isFinite(paddingTop) ? paddingTop : 0) -
+        root.clientHeight / 3,
     );
   }, [jump]);
   return (
@@ -577,11 +673,7 @@ function SourceCodePreview({
       aria-label="File source"
     >
       <div className="source-view__gutter" aria-hidden>
-        {lines.map((_, index) => (
-          <span key={index} data-source-line={index + 1}>
-            {index + 1}
-          </span>
-        ))}
+        <pre>{lineNumbers}</pre>
       </div>
       <pre className="source-view__pre">
         <code
@@ -590,70 +682,71 @@ function SourceCodePreview({
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       </pre>
+      {truncated ? (
+        <div className="source-view__boundary">Preview ends here</div>
+      ) : null}
     </div>
   );
 }
 
-function HtmlPreview({
-  descriptor,
-  objectUrl,
-  text,
+type FileViewMode = "preview" | "source";
+
+function FileViewControl({
+  mode,
+  canToggle,
+  onChange,
 }: {
-  descriptor: ResourceDescriptor;
-  objectUrl?: string;
-  text: string;
+  mode: FileViewMode;
+  canToggle: boolean;
+  onChange: (mode: FileViewMode) => void;
 }) {
-  const [mode, setMode] = useState<"sandbox" | "source">("source");
+  const target = mode === "preview" ? "source" : "preview";
   return (
-    <div className="res__preview-fill res__preview-html">
-      <div className="res__preview-bar">
-        <span className="res__preview-note">
-          Scripts and network access blocked.
-        </span>
-        <div className="segmented" role="group" aria-label="HTML preview mode">
-          <button
-            type="button"
-            className={mode === "source" ? "segmented__item--active" : ""}
-            aria-pressed={mode === "source"}
-            onClick={() => setMode("source")}
-          >
-            Source
-          </button>
-          <button
-            type="button"
-            className={mode === "sandbox" ? "segmented__item--active" : ""}
-            aria-pressed={mode === "sandbox"}
-            onClick={() => setMode("sandbox")}
-          >
-            Sandbox
-          </button>
-        </div>
-      </div>
-      {mode === "sandbox" && objectUrl ? (
-        <iframe
-          className="res__frame"
-          title={`Preview ${descriptor.name}`}
-          sandbox=""
-          src={objectUrl}
-        />
-      ) : (
-        <SourceCodePreview text={text} language="html" jump={null} />
-      )}
-    </div>
+    <button
+      type="button"
+      className="file-detail-header__view"
+      disabled={!canToggle}
+      onClick={() => onChange(target)}
+    >
+      {target === "source" ? "Source" : "Preview"}
+    </button>
   );
 }
 
-function ReadyResource({ jump }: { jump: LineJump | null }) {
+function sourceLanguage(descriptor: ResourceDescriptor): string {
+  if (descriptor.kind === "html") return "html";
+  if (descriptor.kind === "markdown") return "markdown";
+  if (descriptor.kind === "notebook") return "json";
+  if (descriptor.mimeType === "image/svg+xml") return "xml";
+  return languageFor(descriptor.name);
+}
+
+function ReadyResource({
+  jump,
+  viewMode,
+}: {
+  jump: LineJump | null;
+  viewMode: FileViewMode;
+}) {
   const state = useAppState();
   const preview = state.resourcePreview;
   if (!preview || preview.status !== "ready") return null;
   const { descriptor } = preview;
+  if (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text))
+    return (
+      <SourceCodePreview
+        text={preview.text!}
+        language={sourceLanguage(descriptor)}
+        jump={jump}
+        truncated={preview.truncated}
+      />
+    );
   if (preview.contentUnavailable === "too-large")
     return (
       <ResourceState
         icon={<FileText size={17} aria-hidden />}
-        title="Preview not loaded"
-        hint={`This ${formatBytes(descriptor.size)} file exceeds the safe preview limit.`}
+        title="File too large to preview"
+        hint={formatBytes(descriptor.size)}
       />
     );
   if (descriptor.kind === "text" && preview.text !== undefined)
@@ -662,23 +755,51 @@ function ReadyResource({ jump }: { jump: LineJump | null }) {
         text={preview.text}
         language={languageFor(descriptor.name)}
         jump={jump}
+        truncated={preview.truncated}
       />
+    );
+  if (descriptor.kind === "notebook" && preview.text !== undefined)
+    return preview.truncated ? (
+      <ResourceState
+        icon={<FileText size={17} aria-hidden />}
+        title="Notebook preview not loaded"
+        hint="Open Source to inspect this large notebook."
+      />
+    ) : (
+      <div
+        className="res__preview-fill"
+        onClick={(event) => {
+          const reference = resourceReferenceFromEventTarget(event.target);
+          if (!reference) return;
+          event.preventDefault();
+          void store.openResource(reference);
+        }}
+      >
+        <NotebookPreview text={preview.text} />
+      </div>
     );
   if (descriptor.kind === "markdown" && preview.text !== undefined)
     return (
       <div
         className="res__preview-fill res__preview-document"
         data-pane-scroll-active="true"
+        onClick={(event) => {
+          const reference = resourceReferenceFromEventTarget(event.target);
+          if (!reference) return;
+          event.preventDefault();
+          void store.openResource(reference);
+        }}
       >
         <RichText text={preview.text} variant="assistant" />
       </div>
     );
-  if (descriptor.kind === "html" && preview.text !== undefined)
+  if (descriptor.kind === "html" && preview.objectUrl)
     return (
-      <HtmlPreview
-        descriptor={descriptor}
-        objectUrl={preview.objectUrl}
-        text={preview.text}
+      <iframe
+        className="res__frame"
+        title={`Preview ${descriptor.name}`}
+        sandbox=""
+        src={preview.objectUrl}
       />
     );
   if (descriptor.kind === "image" && preview.objectUrl)
@@ -718,7 +839,13 @@ function ReadyResource({ jump }: { jump: LineJump | null }) {
   );
 }
 
-function ResourcePreviewContent({ jump = null }: { jump?: LineJump | null }) {
+function ResourcePreviewContent({
+  jump = null,
+  viewMode = "preview",
+}: {
+  jump?: LineJump | null;
+  viewMode?: FileViewMode;
+}) {
   const state = useAppState();
   const preview = state.resourcePreview;
   if (!preview)
@@ -759,40 +886,59 @@ function ResourcePreviewContent({ jump = null }: { jump?: LineJump | null }) {
         </div>
       </ResourceState>
     );
-  if (preview.status === "error")
+  if (preview.status === "error") {
+    const invalid =
+      state.resourceAvailability[preview.reference]?.availability === "invalid";
     return (
       <ResourceState
         icon={<AlertTriangle size={17} aria-hidden />}
-        title="Preview unavailable"
+        title={invalid ? "Not a file" : "Preview unavailable"}
         hint={preview.message}
       >
-        <button
-          type="button"
-          className="res__more"
-          onClick={() => void store.openResource(preview.reference)}
-        >
-          <RotateCw size={12} aria-hidden /> Retry
-        </button>
+        {!invalid ? (
+          <button
+            type="button"
+            className="res__more res__state-action"
+            onClick={() => void store.openResource(preview.reference)}
+          >
+            <RotateCw size={12} aria-hidden /> Retry
+          </button>
+        ) : null}
       </ResourceState>
     );
-  return <ReadyResource jump={jump} />;
+  }
+  return <ReadyResource jump={jump} viewMode={viewMode} />;
 }
 
 function FilePreview({ hidden = false }: { hidden?: boolean }) {
   const state = useAppState();
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
-  const workspacePath = descriptor?.workspacePath;
   const displayPath =
     descriptor?.workspacePath ??
     descriptor?.reference ??
     state.selectedResourceReference ??
-    "File preview";
-  const change = workspacePath
-    ? gitChangeForWorkspacePath(state.gitStatus, workspacePath)
-    : undefined;
-  const [lineValue, setLineValue] = useState("");
+    "File";
   const [jump, setJump] = useState<LineJump | null>(null);
+  const [fileView, setFileView] = useState<{
+    resourceId: string;
+    mode: FileViewMode;
+  } | null>(null);
+  const canToggle = Boolean(
+    descriptor &&
+      preview?.status === "ready" &&
+      hasSourceAndPreview(descriptor, preview.text),
+  );
+  const sourceOnly = Boolean(
+    descriptor?.kind === "text" &&
+      preview?.status === "ready" &&
+      preview.text !== undefined,
+  );
+  const defaultView: FileViewMode = sourceOnly ? "source" : "preview";
+  const viewMode =
+    descriptor && fileView?.resourceId === descriptor.id
+      ? fileView.mode
+      : defaultView;
   const lineCount =
     preview?.status === "ready" && preview.text !== undefined
       ? preview.text.split("\n").length
@@ -802,14 +948,11 @@ function FilePreview({ hidden = false }: { hidden?: boolean }) {
       preview?.reference ?? state.selectedResourceReference ?? "",
     );
     if (!referencedLine || lineCount === 0) {
-      setLineValue("");
       setJump(null);
       return;
     }
-    const line = Math.min(lineCount, referencedLine);
-    setLineValue(String(line));
     setJump((previous) => ({
-      line,
+      line: Math.min(lineCount, referencedLine),
       request: (previous?.request ?? 0) + 1,
     }));
   }, [
@@ -818,149 +961,54 @@ function FilePreview({ hidden = false }: { hidden?: boolean }) {
     preview?.reference,
     state.selectedResourceReference,
   ]);
-  const jumpToLine = (event: FormEvent) => {
-    event.preventDefault();
-    const requested = Number.parseInt(lineValue, 10);
-    if (!Number.isFinite(requested) || lineCount === 0) return;
-    const line = Math.min(lineCount, Math.max(1, requested));
-    setLineValue(String(line));
-    setJump((previous) => ({ line, request: (previous?.request ?? 0) + 1 }));
-  };
-  const alreadyAdded = Boolean(
-    workspacePath && state.projectFiles.includes(workspacePath),
-  );
   return (
     <div className="file-preview" hidden={hidden}>
-      <div className="file-preview__head">
-        <button
-          type="button"
-          className="file-preview__back"
-          aria-label="Back to files"
-          onClick={() => store.showFileBrowser()}
-        >
-          <ArrowLeft size={14} aria-hidden /> Files
-        </button>
-        <div className="file-preview__path-row">
-          <code className="file-preview__path" title={displayPath}>
-            {displayPath}
-          </code>
-          {descriptor ? (
-            <ClipboardButton
-              text={displayPath}
-              label="Copy path"
-              className="file-action--icon-label"
-            />
-          ) : null}
-        </div>
-        {descriptor ? (
-          <div className="file-preview__meta">
-            <span>{formatBytes(descriptor.size)}</span>
-            {preview?.status === "ready" && preview.truncated ? (
-              <span className="file-preview__truncated" role="status">
-                Preview truncated
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {descriptor ? (
-        <div className="file-preview__toolbar">
-          <div className="file-preview__toolbar-group">
-            {change ? (
-              <div
-                className="segmented"
-                role="group"
-                aria-label="File preview mode"
+      {hidden ? null : (
+        <>
+          <div className="file-detail-header">
+            <div className="file-detail-header__path">
+              <PathCopyButton path={displayPath} />
+            </div>
+            <div className="file-detail-header__actions">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={
+                  descriptor
+                    ? `Download ${descriptor.name}`
+                    : "Download unavailable"
+                }
+                title={descriptor ? "Download" : "Download unavailable"}
+                disabled={!descriptor}
+                onClick={() => {
+                  if (descriptor)
+                    void store.downloadResource(descriptor.id, descriptor.name);
+                }}
               >
-                <button
-                  type="button"
-                  className={
-                    state.detailMode === "file" ? "segmented__item--active" : ""
-                  }
-                  aria-pressed={state.detailMode === "file"}
-                  onClick={() => store.showWorkspaceFile()}
-                >
-                  File
-                </button>
-                <button
-                  type="button"
-                  className={
-                    state.detailMode === "diff" ? "segmented__item--active" : ""
-                  }
-                  aria-pressed={state.detailMode === "diff"}
-                  onClick={() => void store.openWorkspaceDiff(change.path.id)}
-                >
-                  Diff
-                </button>
-              </div>
-            ) : null}
-            {state.detailMode === "diff" && change ? (
-              <DiffSideControl change={change} />
-            ) : null}
-            {descriptor.kind === "text" && lineCount > 0 ? (
-              <form className="file-preview__line" onSubmit={jumpToLine}>
-                <input
-                  type="number"
-                  min={1}
-                  max={lineCount}
-                  value={lineValue}
-                  onChange={(event) => setLineValue(event.target.value)}
-                  aria-label="Go to line"
-                  placeholder="Line"
-                />
-              </form>
-            ) : null}
-          </div>
-          <div className="file-preview__toolbar-group file-preview__toolbar-group--actions">
-            {preview?.status === "ready" && preview.text !== undefined ? (
-              <ClipboardButton
-                text={preview.text}
-                label={preview.truncated ? "Copy shown" : "Copy all"}
+                <Download size={14} aria-hidden />
+              </button>
+              <FileViewControl
+                mode={viewMode}
+                canToggle={canToggle}
+                onChange={(mode) => {
+                  if (descriptor)
+                    setFileView({ resourceId: descriptor.id, mode });
+                }}
               />
-            ) : null}
-            {preview?.status === "ready" && preview.objectUrl ? (
-              <a
-                className="file-action"
-                href={preview.objectUrl}
-                download={preview.descriptor.name}
-              >
-                <Download size={13} aria-hidden /> Download
-              </a>
-            ) : null}
-            <button
-              type="button"
-              className="file-action file-action--primary"
-              disabled={!workspacePath || alreadyAdded}
-              title={
-                !workspacePath
-                  ? "Only workspace files can be added to the prompt"
-                  : alreadyAdded
-                    ? "Already added to the prompt"
-                    : "Add this file to the next prompt"
-              }
-              onClick={() => {
-                if (workspacePath) store.addProjectFile(workspacePath);
-              }}
-            >
-              {alreadyAdded ? (
-                <Check size={13} aria-hidden />
-              ) : (
-                <Plus size={13} aria-hidden />
-              )}
-              {alreadyAdded ? "Added" : "Add to prompt"}
-            </button>
+            </div>
           </div>
-        </div>
-      ) : null}
-      <div className="file-preview__content">
-        {state.detailMode === "diff" && change ? (
-          <DiffBody />
-        ) : (
-          <ResourcePreviewContent jump={jump} />
-        )}
-      </div>
+          <div className="file-preview__content">
+            <ResourcePreviewContent jump={jump} viewMode={viewMode} />
+          </div>
+        </>
+      )}
     </div>
   );
+}
+
+function parentPath(path: string): string | null {
+  const end = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return end > 0 ? path.slice(0, end) : null;
 }
 
 function RecentFileRow({ row }: { row: ResourceRow }) {
@@ -968,12 +1016,14 @@ function RecentFileRow({ row }: { row: ResourceRow }) {
   const reference = row.reference ?? row.label;
   const workspacePath = state.resourceWorkspacePaths[reference];
   const displayPath = workspacePath ?? reference;
+  const parent = parentPath(displayPath);
   const selectedPath = selectedWorkspacePath(state);
   const selected = workspacePath
     ? selectedPath === workspacePath
     : state.selectedResourceReference === reference;
   const availability = state.resourceAvailability[reference];
   const unavailable = availability && availability.availability !== "available";
+  const missing = availability?.availability === "missing";
   const change = workspacePath
     ? gitChangeForWorkspacePath(state.gitStatus, workspacePath)
     : undefined;
@@ -982,22 +1032,31 @@ function RecentFileRow({ row }: { row: ResourceRow }) {
   return (
     <button
       type="button"
-      className={`recent-file ${selected ? "recent-file--active" : ""} ${unavailable ? "recent-file--unavailable" : ""}`}
+      className={`recent-file ${selected ? "recent-file--active" : ""} ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
       aria-current={selected || undefined}
+      aria-label={[
+        displayPath,
+        facet?.label,
+        unavailable
+          ? `File unavailable: ${availability?.message ?? availability?.availability}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(", ")}
       title={availability?.message ?? displayPath}
       onClick={() => void store.openResource(reference)}
     >
       <FileText size={13} aria-hidden />
-      <span className="recent-file__labels">
-        <span
-          className={`recent-file__name ${decoration ? `git-deco--${decoration}` : ""}`}
-        >
-          {row.name}
-        </span>
-        {displayPath !== row.name ? (
-          <span className="recent-file__path">{displayPath}</span>
-        ) : null}
+      <span
+        className={`recent-file__name ${decoration ? `git-deco--${decoration}` : ""}`}
+      >
+        {row.name}
       </span>
+      {parent ? (
+        <span className="recent-file__path">
+          <ResourcePathLabel path={parent} />
+        </span>
+      ) : null}
       {facet ? (
         <span
           className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
@@ -1008,7 +1067,14 @@ function RecentFileRow({ row }: { row: ResourceRow }) {
           {facet.mark}
         </span>
       ) : unavailable ? (
-        <AlertTriangle size={12} aria-label="File unavailable" />
+        <AlertTriangle
+          size={12}
+          aria-label={
+            availability.availability === "ambiguous"
+              ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
+              : `File unavailable: ${availability.message ?? availability.availability}`
+          }
+        />
       ) : null}
     </button>
   );
@@ -1032,13 +1098,16 @@ function FileBrowser({
     const seen = new Set<string>();
     return rows.filter((row) => {
       const reference = row.reference ?? row.label;
+      if (state.resourceAvailability[reference]?.availability === "invalid")
+        return false;
       const key = state.resourceWorkspacePaths[reference] ?? reference;
       if (seen.has(key) || seen.size >= 5) return false;
       seen.add(key);
       return true;
     });
-  }, [rows, state.resourceWorkspacePaths]);
+  }, [rows, state.resourceAvailability, state.resourceWorkspacePaths]);
   const searching = Boolean(state.workspaceQuery.trim());
+  const projectLabel = state.project ?? "Project files";
   return (
     <div className="files-browser" hidden={hidden}>
       <div className="files-browser__search">
@@ -1047,13 +1116,13 @@ function FileBrowser({
       <div className="files-browser__scroll" data-pane-scroll-active="true">
         {searching ? (
           <section className="files-browser__section files-browser__section--results">
-            <h2>Workspace results</h2>
+            <h2>Search results</h2>
             <WorkspaceSearchResults />
           </section>
         ) : (
           <>
             <section className="files-browser__section">
-              <h2>Recent in this chat</h2>
+              <h2>Recent</h2>
               <div className="recent-files">
                 {recent.map((row) => (
                   <RecentFileRow key={row.reference ?? row.label} row={row} />
@@ -1078,7 +1147,7 @@ function FileBrowser({
               </div>
             </section>
             <section className="files-browser__section files-browser__section--workspace">
-              <h2>Workspace</h2>
+              <h2 title={state.cwd ?? projectLabel}>{projectLabel}</h2>
               <WorkspaceTree />
             </section>
           </>
@@ -1088,12 +1157,31 @@ function FileBrowser({
   );
 }
 
+function WorkspaceIndexHeader() {
+  const state = useAppState();
+  const projectLabel = state.project ?? "Project files";
+  return (
+    <button
+      type="button"
+      className="res__index-header res__index-header--back"
+      aria-label={`Back to file browser for ${projectLabel}`}
+      title={state.cwd ?? projectLabel}
+      onClick={() => store.showFileBrowser()}
+    >
+      <ArrowLeft size={14} aria-hidden />
+      <span className="res__index-title">{projectLabel}</span>
+    </button>
+  );
+}
+
 function SplitBody({
   mode,
+  header,
   index,
   detail,
 }: {
-  mode: "changes";
+  mode: "files" | "changes";
+  header: ReactNode;
   index: ReactNode;
   detail: ReactNode;
 }) {
@@ -1102,6 +1190,7 @@ function SplitBody({
   return (
     <div className={`res__body res__body--${mode}`} ref={bodyRef}>
       <div className="res__index" ref={indexRef}>
+        {header}
         <div className="res__list" data-pane-scroll-active="true">
           {index}
         </div>
@@ -1111,10 +1200,10 @@ function SplitBody({
         container={bodyRef}
         pane={indexRef}
         cssVar="--pane-resize-primary-size"
-        storageKey={`inspire.context-split.${mode}`}
-        min={96}
-        minRemainder={144}
-        label="Resize changed-files list and detail"
+        storageKey="inspire.context-split.workspace"
+        min={112}
+        minRemainder={160}
+        label="Resize file list and content"
         variant="resources"
       />
       {detail}
@@ -1136,9 +1225,8 @@ export function ResourcesPane({
     undefined,
     onClose,
   );
-  const [resourcePages, setResourcePages] = useState<
-    SessionResourceListResponse[]
-  >([]);
+  const [resourcePage, setResourcePage] =
+    useState<SessionResourceListResponse | null>(null);
   const [resourceStatus, setResourceStatus] = useState<
     "idle" | "loading" | "error"
   >("idle");
@@ -1146,51 +1234,51 @@ export function ResourcesPane({
   const resourceRequest = useRef<AbortController | null>(null);
   const recentRows = useMemo(
     () =>
-      resourcePages.reduce<ResourceRow[]>(
-        (rows, page) => mergeResourceRows(rows, toResourceRows(page.resources)),
-        [],
-      ),
-    [resourcePages],
+      resourcePage?.sessionId === state.sessionId &&
+      resourcePage.viewId === state.transcriptViewId &&
+      resourcePage.revision === state.transcriptRevision
+        ? toResourceRows(resourcePage.resources)
+        : [],
+    [
+      resourcePage,
+      state.sessionId,
+      state.transcriptRevision,
+      state.transcriptViewId,
+    ],
   );
 
-  const loadResources = useCallback(
-    async (refresh = false) => {
-      if (!state.sessionId || !state.transcriptViewId) {
-        setResourcePages([]);
-        setResourceStatus("idle");
-        return;
-      }
-      resourceRequest.current?.abort();
-      const request = new AbortController();
-      resourceRequest.current = request;
-      setResourceStatus("loading");
-      setResourceError(null);
-      try {
-        const response = await store.loadSessionResources({
-          limit: 16,
-          signal: request.signal,
-        });
-        if (request.signal.aborted || !response) return;
-        setResourcePages([response]);
-        setResourceStatus("idle");
-      } catch (error) {
-        if (request.signal.aborted) return;
-        setResourceStatus("error");
-        setResourceError(
-          error instanceof Error
-            ? error.message
-            : "Recent files failed to load",
-        );
-        if (refresh) setResourcePages([]);
-      } finally {
-        if (resourceRequest.current === request) resourceRequest.current = null;
-      }
-    },
-    [state.sessionId, state.transcriptViewId],
-  );
+  const loadResources = useCallback(async () => {
+    if (!state.sessionId || !state.transcriptViewId) {
+      setResourcePage(null);
+      setResourceStatus("idle");
+      return;
+    }
+    resourceRequest.current?.abort();
+    const request = new AbortController();
+    resourceRequest.current = request;
+    setResourceStatus("loading");
+    setResourceError(null);
+    try {
+      const response = await store.loadSessionResources({
+        limit: RESOURCE_LIST_INITIAL_SIZE,
+        signal: request.signal,
+      });
+      if (request.signal.aborted || !response) return;
+      setResourcePage(response);
+      setResourceStatus("idle");
+    } catch (error) {
+      if (request.signal.aborted) return;
+      setResourceStatus("error");
+      setResourceError(
+        error instanceof Error ? error.message : "Recent files failed to load",
+      );
+    } finally {
+      if (resourceRequest.current === request) resourceRequest.current = null;
+    }
+  }, [state.sessionId, state.transcriptViewId]);
 
   useEffect(() => {
-    setResourcePages([]);
+    setResourcePage(null);
     void loadResources();
     return () => {
       resourceRequest.current?.abort();
@@ -1216,7 +1304,7 @@ export function ResourcesPane({
     if (state.contextMode === "files") {
       store.cancelResourceProbes(true);
       void Promise.all([
-        loadResources(true),
+        loadResources(),
         store.refreshWorkspaceBrowser(),
         state.fileBrowserView === "preview" && state.selectedResourceReference
           ? store.openResource(state.selectedResourceReference)
@@ -1238,9 +1326,6 @@ export function ResourcesPane({
       : state.contextMode === "changes"
         ? state.gitStatusLoading || state.gitStatusRefreshing
         : state.branchTreeLoading;
-  const change = selectedChange(state.gitStatus, state.selectedGitPathId);
-  const headLabel = gitHeadLabel(state.gitStatus);
-
   const contents = (
     <>
       <div className="ctx__header">
@@ -1260,62 +1345,60 @@ export function ResourcesPane({
             </button>
           ))}
         </div>
-        {state.contextMode === "changes" ? (
-          <span
-            className="ctx__branch"
-            title={change ? pathName(change) : (headLabel ?? "Changes")}
-          >
-            {change ? pathName(change) : (headLabel ?? "Changes")}
-          </span>
-        ) : state.contextMode === "branches" ? (
-          <span className="ctx__branch" title={state.sessionName || "History"}>
-            {state.sessionName || "History"}
-          </span>
-        ) : (
-          <span className="ctx__branch" title={state.cwd ?? undefined}>
-            {state.project}
-          </span>
-        )}
-        <button
-          type="button"
-          className="icon-button"
-          title="Refresh"
-          aria-label="Refresh context pane"
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          <RefreshCw
-            size={14}
-            className={refreshing ? "spin" : ""}
-            aria-hidden
-          />
-        </button>
-        {onClose ? (
+        <div className="ctx__header-actions">
           <button
             type="button"
-            className="icon-button ctx__close"
-            title="Close"
-            aria-label="Close context pane"
-            onClick={onClose}
+            className="icon-button"
+            title="Refresh"
+            aria-label="Refresh context pane"
+            onClick={handleRefresh}
+            disabled={refreshing}
           >
-            <X size={15} aria-hidden />
+            <RefreshCw
+              size={14}
+              className={refreshing ? "spin" : ""}
+              aria-hidden
+            />
           </button>
-        ) : null}
+          {onClose ? (
+            <button
+              type="button"
+              className="icon-button ctx__close"
+              title="Close"
+              aria-label="Close context pane"
+              onClick={onClose}
+            >
+              <X size={15} aria-hidden />
+            </button>
+          ) : null}
+        </div>
       </div>
       {state.contextMode === "files" ? (
-        <div className="res__body res__body--files">
-          <FileBrowser
-            rows={recentRows}
-            loading={resourceStatus === "loading"}
-            error={resourceError}
-            onRetry={() => void loadResources(true)}
+        <>
+          <div
+            className="res__body res__body--files"
             hidden={state.fileBrowserView !== "browse"}
-          />
-          <FilePreview hidden={state.fileBrowserView !== "preview"} />
-        </div>
+          >
+            <FileBrowser
+              rows={recentRows}
+              loading={resourceStatus === "loading"}
+              error={resourceError}
+              onRetry={() => void loadResources()}
+            />
+          </div>
+          {state.fileBrowserView === "preview" ? (
+            <SplitBody
+              mode="files"
+              header={<WorkspaceIndexHeader />}
+              index={<WorkspaceTree />}
+              detail={<FilePreview />}
+            />
+          ) : null}
+        </>
       ) : state.contextMode === "changes" ? (
         <SplitBody
           mode="changes"
+          header={<ChangesIndexHeader />}
           index={<ChangesIndex />}
           detail={<ChangesDetail />}
         />

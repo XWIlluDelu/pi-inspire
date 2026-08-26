@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseCompactCommand } from "../shared/commands.js";
 import type {
@@ -10,6 +11,7 @@ import type {
   BranchTreeResponse,
   ComposerHistoryEntry,
   ComposerHistoryPage,
+  GitDiffLine,
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
@@ -287,7 +289,7 @@ const resourceFixtureReferences = [
     (_value, index) =>
       `tests/browser/fixtures/unavailable-resource-${String(index + 1).padStart(3, "0")}.txt`,
   ),
-  "tests/browser/fixtures/sandbox-resource.html",
+  "tests/browser/fixtures/file-previews/page.html",
 ];
 
 /** A large, deterministic citation set exercises the same list/probe/preview
@@ -315,11 +317,12 @@ function messagesForFixture(id: string): unknown[] {
   return initialMessages;
 }
 
+const mockGitWorkspacePath = "tests/browser/fixtures/file-previews/page.html";
 const mockGitPath = {
-  id: Buffer.from("analysis/spectrum.py").toString("base64url"),
-  display: "analysis/spectrum.py",
-  utf8Path: "analysis/spectrum.py",
-  workspacePath: "analysis/spectrum.py",
+  id: Buffer.from(mockGitWorkspacePath).toString("base64url"),
+  display: mockGitWorkspacePath,
+  utf8Path: mockGitWorkspacePath,
+  workspacePath: mockGitWorkspacePath,
 };
 
 export class MockGitInspection implements GitInspectionLike {
@@ -356,38 +359,68 @@ export class MockGitInspection implements GitInspectionLike {
         { status: 409 },
       );
     }
+    const source = await readFile(
+      resolve(mockWorkspace, mockGitWorkspacePath),
+      "utf8",
+    );
+    const sourceLines = source.split("\n");
+    const changedLine = sourceLines.findIndex((line) =>
+      line.includes("Quiet systems, legible signals."),
+    );
+    const lines = sourceLines.flatMap<GitDiffLine>((line, index) => {
+      const lineNumber = index + 1;
+      if (index !== changedLine)
+        return [
+          {
+            kind: "context" as const,
+            text: ` ${line}`,
+            oldLine: lineNumber,
+            newLine: lineNumber,
+          },
+        ];
+      return [
+        {
+          kind: "delete" as const,
+          text: "-<h1>Quiet systems, readable signals.</h1>",
+          oldLine: lineNumber,
+          newLine: null,
+        },
+        {
+          kind: "add" as const,
+          text: `+${line}`,
+          oldLine: null,
+          newLine: lineNumber,
+        },
+      ];
+    });
     return {
       kind: "text",
       path: mockGitPath,
       side,
+      additions: 1,
+      deletions: 1,
       truncated: false,
       encodingLossy: false,
       lines: [
         {
           kind: "meta",
-          text: "--- a/analysis/spectrum.py",
+          text: `--- a/${mockGitWorkspacePath}`,
           oldLine: null,
           newLine: null,
         },
         {
           kind: "meta",
-          text: "+++ b/analysis/spectrum.py",
+          text: `+++ b/${mockGitWorkspacePath}`,
           oldLine: null,
           newLine: null,
         },
-        { kind: "hunk", text: "@@ -12 +12 @@", oldLine: null, newLine: null },
         {
-          kind: "delete",
-          text: "-scale = 1.0 / len(samples)",
-          oldLine: 12,
+          kind: "hunk",
+          text: `@@ -1,${sourceLines.length} +1,${sourceLines.length} @@`,
+          oldLine: null,
           newLine: null,
         },
-        {
-          kind: "add",
-          text: "+scale = 1.0 / max(1, len(samples))",
-          oldLine: null,
-          newLine: 12,
-        },
+        ...lines,
       ],
     };
   }

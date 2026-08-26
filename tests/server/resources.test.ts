@@ -164,6 +164,25 @@ describe("ResourceStore", () => {
     );
   });
 
+  it("classifies Jupyter notebooks as renderable documents", async () => {
+    const { project } = await workspace();
+    await writeFile(
+      join(project, "analysis.ipynb"),
+      JSON.stringify({ cells: [], metadata: {}, nbformat: 4 }),
+    );
+
+    const descriptor = await resources.resolve(
+      { ...resourceIdentity(), cwd: project, messages: [] },
+      "analysis.ipynb",
+    );
+
+    expect(descriptor).toMatchObject({
+      name: "analysis.ipynb",
+      mimeType: "application/x-ipynb+json",
+      kind: "notebook",
+    });
+  });
+
   it("binds citation handles to one branch view while allowing same-view append revalidation", async () => {
     const { project } = await workspace();
     await mkdir(join(project, "node_modules"));
@@ -415,6 +434,51 @@ describe("ResourceStore", () => {
         })
       ).toString(),
     ).toBe("image-bytes");
+  });
+
+  it("revalidates embedded handles against the current projection before serving", async () => {
+    const { project } = await workspace();
+    const original = [
+      {
+        role: "toolResult",
+        __inspireMessageIndex: 3,
+        content: [
+          { type: "image", data: "b2xkLWltYWdl", mimeType: "image/png" },
+        ],
+      },
+    ];
+    const descriptor = await resources.resolve(
+      { ...resourceIdentity("view-s1", 1), cwd: project, messages: original },
+      "pi-embedded://3/0",
+    );
+    const resolved = resources.get(descriptor.id, "s1", "view-s1");
+    const rewritten = [
+      { role: "assistant", content: [{ type: "text", text: "replacement" }] },
+      {
+        role: "toolResult",
+        __inspireMessageIndex: 3,
+        content: [
+          { type: "image", data: "bmV3LWltYWdl", mimeType: "image/png" },
+        ],
+      },
+    ];
+
+    expect(
+      (
+        await resources.embeddedData(resolved, {
+          ...resourceIdentity("view-s1", 2),
+          cwd: project,
+          messages: rewritten,
+        })
+      ).toString(),
+    ).toBe("new-image");
+    await expect(
+      resources.embeddedData(resolved, {
+        ...resourceIdentity("view-s1", 3),
+        cwd: project,
+        messages: [],
+      }),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("does not treat a project symlink as authority for an outside file", async () => {

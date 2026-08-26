@@ -69,8 +69,27 @@ describe("design token contract", () => {
     expect(css).toMatch(/--bg-activity\s*:/);
     expect(css).toMatch(/--bg-code\s*:/);
     expect(css).toMatch(/--bg-control\s*:/);
+    expect(css).toMatch(/--bg-file-canvas\s*:/);
+    expect(css).toMatch(/--bg-file-surface\s*:/);
+    expect(css).toMatch(/--bg-file-inset\s*:/);
     expect(css).toMatch(/--activity-tool\s*:/);
     expect(css).toMatch(/--activity-think\s*:/);
+  });
+
+  it("keeps file content canvases neutral across palettes", async () => {
+    const css = await readFile(stylesheet, "utf8");
+    for (const token of [
+      "bg-file-canvas",
+      "bg-file-surface",
+      "bg-file-inset",
+    ]) {
+      expect([
+        ...css.matchAll(new RegExp(`--${token}\\s*:`, "g")),
+      ]).toHaveLength(2);
+    }
+    expect(css).toMatch(
+      /\.file-preview__content,\s*\.changes__content\s*{[^}]*--bg-context:\s*var\(--bg-file-canvas\)[^}]*--bg-surface:\s*var\(--bg-file-surface\)[^}]*--bg-inset:\s*var\(--bg-file-inset\)[^}]*background:\s*var\(--bg-file-canvas\)/s,
+    );
   });
 
   it("keeps card controls separate while summaries use the remaining header width", async () => {
@@ -87,16 +106,16 @@ describe("design token contract", () => {
     );
   });
 
-  it("keeps the resource tail adjacent while block paths use the remaining row", async () => {
+  it("fits measured resource paths while block paths use the remaining row", async () => {
     const css = await readFile(stylesheet, "utf8");
     expect(css).toMatch(
-      /\.resource-path\s*{[^}]*display:\s*inline-flex[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/s,
+      /\.resource-path\s*{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/s,
     );
     expect(css).toMatch(
-      /\.resource-path__leading\s*{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s,
+      /\.resource-path__visible\s*{[^}]*display:\s*block[^}]*overflow:\s*hidden[^}]*white-space:\s*nowrap/s,
     );
     expect(css).toMatch(
-      /\.resource-path__tail\s*{[^}]*flex:\s*0 0 auto[^}]*min-width:\s*3ch[^}]*max-width:\s*100%[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/s,
+      /\.resource-path__measure\s*{[^}]*position:\s*absolute[^}]*width:\s*max-content[^}]*visibility:\s*hidden/s,
     );
     expect(css).toMatch(
       /\.tool-block__heading\s*{[^}]*justify-content:\s*flex-start[^}]*gap:\s*var\(--space-2\)/s,
@@ -131,7 +150,7 @@ describe("design token contract", () => {
       /\.tool-code,\s*\.tool-terminal,\s*\.tool-text\s*{[^}]*font-size:\s*var\(--text-reading-code\)/s,
     );
     expect(css).toMatch(
-      /\.diff-view\s*{[^}]*font-size:\s*var\(--text-reading-code\)/s,
+      /\.source-diff\s*{[^}]*font:\s*var\(--text-reading-code\)\/var\(--leading-mono\) var\(--font-mono\)/s,
     );
     expect(css).toMatch(
       /:root\[data-reading-width="narrow"\]\s*{[^}]*--reading-width-max:\s*680px/s,
