@@ -6,8 +6,8 @@ import {
   render,
   waitFor,
 } from "@testing-library/react";
-import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PaneResizeHandle } from "../../src/components/PaneResizeHandle";
 
 function setViewport(width: number): void {
   Object.defineProperty(window, "innerWidth", {
@@ -40,17 +40,7 @@ describe("Pane resize handles", () => {
                 document.documentElement.style.getPropertyValue("--ctx-w"),
               ) || 500
             : 500;
-        const height = hidden
-          ? 0
-          : this.classList.contains("split-primary")
-            ? Number.parseFloat(
-                this.parentElement?.style.getPropertyValue(
-                  "--pane-resize-primary-size",
-                ) ?? "",
-              ) || 240
-            : this.classList.contains("split-container")
-              ? 600
-              : 800;
+        const height = hidden ? 0 : 800;
         return {
           x: 0,
           y: 0,
@@ -72,95 +62,73 @@ describe("Pane resize handles", () => {
     document.documentElement.style.removeProperty("--ctx-w");
   });
 
-  it("drags the horizontal boundary, supports the keyboard, and restores its saved size", async () => {
-    window.localStorage.setItem("inspire.resources-split", "300");
-    const { PaneResizeHandle } = await import(
-      "../../src/components/PaneResizeHandle"
+  it("drags, keyboard-resizes, persists, and resets an outer boundary", async () => {
+    window.localStorage.setItem("inspire.ctx-width", "600");
+    const view = render(
+      <>
+        <aside className="ctx" />
+        <PaneResizeHandle
+          cssVar="--ctx-w"
+          storageKey="inspire.ctx-width"
+          paneSelector=".ctx"
+          edge="start"
+          min={320}
+          max={() => 920}
+          label="Resize files panel"
+          variant="ctx"
+        />
+      </>,
     );
-    function SplitHarness() {
-      const containerRef = useRef<HTMLDivElement>(null);
-      const primaryRef = useRef<HTMLDivElement>(null);
-      return (
-        <div className="split-container" ref={containerRef}>
-          <div className="split-primary" ref={primaryRef} />
-          <PaneResizeHandle
-            orientation="horizontal"
-            container={containerRef}
-            pane={primaryRef}
-            cssVar="--pane-resize-primary-size"
-            storageKey="inspire.resources-split"
-            min={96}
-            minRemainder={160}
-            label="Resize file list and preview"
-            variant="resources"
-          />
-          <div />
-        </div>
-      );
-    }
-    const view = render(<SplitHarness />);
-    const split =
-      view.container.querySelector<HTMLElement>(".split-container")!;
     const handle = view.getByRole("separator", {
-      name: "Resize file list and preview",
+      name: "Resize files panel",
     });
 
     await waitFor(() =>
-      expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
-        "300px",
+      expect(document.documentElement.style.getPropertyValue("--ctx-w")).toBe(
+        "600px",
       ),
     );
-    expect(handle).toHaveAttribute("aria-orientation", "horizontal");
+    expect(handle).toHaveAttribute("aria-orientation", "vertical");
 
-    fireEvent.pointerDown(handle, { button: 0, clientY: 300, pointerId: 1 });
-    fireEvent.pointerMove(handle, { clientY: 400, pointerId: 1 });
-    fireEvent.pointerUp(handle, { clientY: 400, pointerId: 1 });
-    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
-      "400px",
+    fireEvent.pointerDown(handle, { button: 0, clientX: 600, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 500, pointerId: 1 });
+    expect(document.documentElement.style.getPropertyValue("--ctx-w")).toBe(
+      "700px",
     );
-    expect(window.localStorage.getItem("inspire.resources-split")).toBe("400");
+    expect(window.localStorage.getItem("inspire.ctx-width")).toBe("700");
 
-    fireEvent.keyDown(handle, { key: "ArrowUp" });
-    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe(
-      "376px",
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(document.documentElement.style.getPropertyValue("--ctx-w")).toBe(
+      "676px",
     );
     fireEvent.doubleClick(handle);
-    expect(split.style.getPropertyValue("--pane-resize-primary-size")).toBe("");
-    expect(split).not.toHaveAttribute("data-pane-resize-sized");
-    expect(window.localStorage.getItem("inspire.resources-split")).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--ctx-w")).toBe("");
+    expect(window.localStorage.getItem("inspire.ctx-width")).toBeNull();
   });
 
-  it("forwards normalized wheel input without swallowing zoom or boundary gestures", async () => {
-    const { PaneResizeHandle } = await import(
-      "../../src/components/PaneResizeHandle"
+  it("forwards normalized wheel input without swallowing zoom or boundary gestures", () => {
+    const view = render(
+      <>
+        <aside className="ctx" />
+        <PaneResizeHandle
+          cssVar="--ctx-w"
+          storageKey="inspire.ctx-wheel"
+          paneSelector=".ctx"
+          edge="start"
+          min={320}
+          max={() => 920}
+          label="Resize files panel"
+          variant="ctx"
+          wheelTargetSelector=".wheel-target[data-pane-scroll-active='true']"
+        />
+        <div
+          className="wheel-target wheel-target--hidden"
+          data-pane-scroll-active="true"
+        />
+        <div className="wheel-target" data-pane-scroll-active="true" />
+      </>,
     );
-    function SplitHarness() {
-      const containerRef = useRef<HTMLDivElement>(null);
-      const primaryRef = useRef<HTMLDivElement>(null);
-      return (
-        <div className="split-container" ref={containerRef}>
-          <div className="split-primary" ref={primaryRef} />
-          <PaneResizeHandle
-            orientation="horizontal"
-            container={containerRef}
-            pane={primaryRef}
-            cssVar="--pane-resize-primary-size"
-            storageKey="inspire.resources-wheel"
-            min={96}
-            minRemainder={160}
-            label="Resize file list and preview"
-            variant="resources"
-            wheelTargetSelector=".wheel-target[data-pane-scroll-active='true']"
-          />
-          <div
-            className="wheel-target wheel-target--hidden"
-            data-pane-scroll-active="true"
-          />
-          <div className="wheel-target" data-pane-scroll-active="true" />
-        </div>
-      );
-    }
-    const view = render(<SplitHarness />);
     const target = view.container.querySelector<HTMLElement>(
       ".wheel-target:not(.wheel-target--hidden)",
     )!;
@@ -175,7 +143,7 @@ describe("Pane resize handles", () => {
         scrollWidth: { configurable: true, value: 100 },
       });
     const handle = view.getByRole("separator", {
-      name: "Resize file list and preview",
+      name: "Resize files panel",
     });
 
     const lineWheel = createEvent.wheel(handle, {
@@ -196,9 +164,8 @@ describe("Pane resize handles", () => {
       ctrlKey: true,
       cancelable: true,
     });
-    const preventZoomWheel = vi.spyOn(zoomWheel, "preventDefault");
     fireEvent(handle, zoomWheel);
-    expect(preventZoomWheel).not.toHaveBeenCalled();
+    expect(zoomWheel.defaultPrevented).toBe(false);
     expect(target.scrollTop).toBe(48);
 
     target.scrollTop = 900;
@@ -213,11 +180,8 @@ describe("Pane resize handles", () => {
     expect(target.scrollTop).toBe(900);
   });
 
-  it("temporarily clamps a saved pane width when the window narrows and restores it when expanded", async () => {
+  it("temporarily clamps a saved pane width when the window narrows and restores it when expanded", () => {
     window.localStorage.setItem("inspire.ctx-width", "700");
-    const { PaneResizeHandle } = await import(
-      "../../src/components/PaneResizeHandle"
-    );
     render(
       <>
         <aside className="ctx" />

@@ -10,6 +10,8 @@ export interface WorkspaceBrowserState {
   workspaceMatches: ProjectFileResult[];
   workspaceSearchLoading: boolean;
   workspaceSearchError: string | null;
+  /** Explicit one-shot request for the full Files tree to locate a path. */
+  workspaceRevealRequest: { path: string; nonce: number } | null;
 }
 
 export function emptyWorkspaceBrowserState(): WorkspaceBrowserState {
@@ -22,6 +24,7 @@ export function emptyWorkspaceBrowserState(): WorkspaceBrowserState {
     workspaceMatches: [],
     workspaceSearchLoading: false,
     workspaceSearchError: null,
+    workspaceRevealRequest: null,
   };
 }
 
@@ -60,6 +63,7 @@ export class WorkspaceController {
   private directoryRequests = new Map<string, AbortController>();
   private searchRequest: AbortController | null = null;
   private refreshGeneration = 0;
+  private revealNonce = 0;
   private statesByCwd = new Map<string, WorkspaceBrowserState>();
 
   constructor(private readonly host: WorkspaceControllerHost) {}
@@ -108,6 +112,7 @@ export class WorkspaceController {
         workspaceMatches: [...current.workspaceMatches],
         workspaceSearchLoading: current.workspaceSearchLoading,
         workspaceSearchError: current.workspaceSearchError,
+        workspaceRevealRequest: null,
       };
       this.statesByCwd.delete(current.cwd);
       this.statesByCwd.set(current.cwd, cached);
@@ -251,11 +256,20 @@ export class WorkspaceController {
     const state = this.host.state();
     const expanded = new Set(state.workspaceExpandedDirs);
     for (const parent of parents) expanded.add(parent);
-    this.host.patch({ workspaceExpandedDirs: [...expanded] });
+    this.host.patch({
+      workspaceExpandedDirs: [...expanded],
+      workspaceRevealRequest: { path, nonce: ++this.revealNonce },
+    });
     for (const dir of ["", ...parents]) {
       if (!Object.prototype.hasOwnProperty.call(state.workspaceLevels, dir))
         void this.loadDirectory(dir);
     }
+  }
+
+  consumeRevealRequest(nonce: number): boolean {
+    if (this.host.state().workspaceRevealRequest?.nonce !== nonce) return false;
+    this.host.patch({ workspaceRevealRequest: null });
+    return true;
   }
 
   setQuery(query: string): void {

@@ -1,5 +1,4 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { resourcePathCandidates } from "../../src/components/ResourcePathLabel.js";
 
 function escapeHtml(value: string): string {
   return value
@@ -10,10 +9,10 @@ function escapeHtml(value: string): string {
 }
 
 function resourcePathLabel(path: string): string {
-  const candidates = escapeHtml(JSON.stringify(resourcePathCandidates(path)));
-  return `<span class="resource-path" data-candidates="${candidates}" aria-hidden="true">
-    <span class="resource-path__visible">${escapeHtml(path)}</span>
-    <span class="resource-path__measure" aria-hidden="true"></span>
+  const escaped = escapeHtml(path);
+  return `<span class="resource-path" title="${escaped}">
+    <span class="resource-path__visible" aria-hidden="true">${escaped}</span>
+    <span class="visually-hidden">${escaped}</span>
   </span>`;
 }
 
@@ -57,42 +56,6 @@ async function currentStylesheet(page: Page): Promise<string> {
   return href;
 }
 
-async function fitResourcePaths(page: Page): Promise<void> {
-  await page.waitForFunction(() =>
-    Array.from(document.styleSheets).some((sheet) =>
-      Array.from(sheet.cssRules).some(
-        (rule) =>
-          rule instanceof CSSStyleRule &&
-          rule.selectorText === ".resource-path__measure",
-      ),
-    ),
-  );
-  await page.evaluate(async () => {
-    await document.fonts.ready;
-    for (const root of document.querySelectorAll<HTMLElement>(
-      ".resource-path",
-    )) {
-      const visible = root.querySelector<HTMLElement>(
-        ".resource-path__visible",
-      )!;
-      const measure = root.querySelector<HTMLElement>(
-        ".resource-path__measure",
-      )!;
-      const candidates = JSON.parse(root.dataset.candidates!) as string[];
-      let selected = candidates.at(-1)!;
-      for (const candidate of candidates) {
-        measure.textContent = candidate;
-        if (measure.scrollWidth <= root.clientWidth) {
-          selected = candidate;
-          break;
-        }
-      }
-      measure.textContent = "";
-      visible.textContent = selected;
-    }
-  });
-}
-
 async function setCards(page: Page, cards: string): Promise<void> {
   const stylesheet = await currentStylesheet(page);
   await page.setContent(`
@@ -101,30 +64,37 @@ async function setCards(page: Page, cards: string): Promise<void> {
       <head><link rel="stylesheet" href="${stylesheet}"></head>
       <body><section style="margin: 16px; display: grid; gap: 10px">${cards}</section></body>
     </html>`);
-  await fitResourcePaths(page);
+  await page.evaluate(() => document.fonts.ready);
 }
 
 async function pathMetrics(resource: Locator) {
   return resource.evaluate((button) => {
     const path = button.querySelector<HTMLElement>(".resource-path")!;
     const visible = path.querySelector<HTMLElement>(".resource-path__visible")!;
-    const text = document.createRange();
-    text.selectNodeContents(visible);
+    const style = getComputedStyle(visible);
     return {
       text: visible.textContent,
-      clientWidth: path.clientWidth,
-      textWidth: text.getBoundingClientRect().width,
+      title: path.title,
+      clientWidth: visible.clientWidth,
+      scrollWidth: visible.scrollWidth,
       lines: Math.round(
         visible.getBoundingClientRect().height /
-          Number.parseFloat(getComputedStyle(visible).lineHeight),
+          Number.parseFloat(style.lineHeight),
       ),
+      overflow: style.overflow,
+      textOverflow: style.textOverflow,
+      whiteSpace: style.whiteSpace,
     };
   });
 }
 
-function expectFits(metrics: Awaited<ReturnType<typeof pathMetrics>>) {
-  expect(metrics.textWidth).toBeLessThanOrEqual(metrics.clientWidth + 0.5);
+function expectNativeEllipsis(
+  metrics: Awaited<ReturnType<typeof pathMetrics>>,
+) {
   expect(metrics.lines).toBe(1);
+  expect(metrics.overflow).toBe("hidden");
+  expect(metrics.textOverflow).toBe("ellipsis");
+  expect(metrics.whiteSpace).toBe("nowrap");
 }
 
 test("fitting mobile resource paths remain complete", async ({ page }) => {
@@ -141,11 +111,13 @@ test("fitting mobile resource paths remain complete", async ({ page }) => {
   for (const { path } of paths) {
     const metrics = await pathMetrics(page.getByRole("button", { name: path }));
     expect(metrics.text).toBe(path);
-    expectFits(metrics);
+    expect(metrics.title).toBe(path);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+    expectNativeEllipsis(metrics);
   }
 });
 
-test("constrained paths preserve informative hierarchy before the filename", async ({
+test("constrained paths keep their exact value behind native ellipsis", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 480, height: 600 });
@@ -153,11 +125,13 @@ test("constrained paths preserve informative hierarchy before the filename", asy
   await setCards(page, summaryCard(path, "L1–40", 300));
 
   const metrics = await pathMetrics(page.getByRole("button", { name: path }));
-  expect(metrics.text).toBe("…/file-previews/notebook.ipynb");
-  expectFits(metrics);
+  expect(metrics.text).toBe(path);
+  expect(metrics.title).toBe(path);
+  expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
+  expectNativeEllipsis(metrics);
 });
 
-test("extreme widths elide the filename without losing its extension", async ({
+test("extreme widths still clip one exact path with native ellipsis", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 600 });
@@ -165,7 +139,8 @@ test("extreme widths elide the filename without losing its extension", async ({
   await setCards(page, summaryCard(path, "L1–40", 90));
 
   const metrics = await pathMetrics(page.getByRole("button", { name: path }));
-  expect(metrics.text).toContain("…");
-  expect(metrics.text).toMatch(/\.tsx$/);
-  expectFits(metrics);
+  expect(metrics.text).toBe(path);
+  expect(metrics.title).toBe(path);
+  expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
+  expectNativeEllipsis(metrics);
 });

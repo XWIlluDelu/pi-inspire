@@ -8,7 +8,15 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
+import type { GitFileChange } from "../../shared/contracts";
 import {
   gitDecorationForChange,
   gitDecorationForDirectory,
@@ -68,20 +76,22 @@ export function WorkspaceFileSearch() {
   );
 }
 
-function WorkspaceFileRow({
+const WorkspaceFileRow = memo(function WorkspaceFileRow({
   path,
   name,
+  selectedPath,
+  change,
   depth = 0,
   showPath = false,
 }: {
   path: string;
   name: string;
+  selectedPath: string | null;
+  change?: GitFileChange;
   depth?: number;
   showPath?: boolean;
 }) {
-  const state = useAppState();
-  const selected = selectedWorkspacePath(state) === path;
-  const change = gitChangeForWorkspacePath(state.gitStatus, path);
+  const selected = selectedPath === path;
   const decoration = gitDecorationForChange(change);
   const facet = presentGitFacet(change);
   return (
@@ -118,10 +128,16 @@ function WorkspaceFileRow({
       ) : null}
     </button>
   );
-}
+});
 
 /** The shared lazy tree rendered by both Files surfaces. */
-export function WorkspaceTree({ className = "" }: { className?: string }) {
+export function WorkspaceTree({
+  className = "",
+  revealRequests = false,
+}: {
+  className?: string;
+  revealRequests?: boolean;
+}) {
   const state = useAppState();
   const rootRef = useRef<HTMLDivElement>(null);
   const expanded = useMemo(
@@ -150,15 +166,18 @@ export function WorkspaceTree({ className = "" }: { className?: string }) {
   ]);
 
   useLayoutEffect(() => {
-    if (!selectedPath) return;
+    const request = state.workspaceRevealRequest;
+    if (!revealRequests || !request) return;
     const escaped =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(selectedPath)
-        : selectedPath.replace(/["\\]/g, "\\$&");
-    rootRef.current
-      ?.querySelector<HTMLElement>(`[data-workspace-path="${escaped}"]`)
-      ?.scrollIntoView?.({ block: "nearest" });
-  }, [selectedPath, state.workspaceExpandedDirs, state.workspaceLevels]);
+        ? CSS.escape(request.path)
+        : request.path.replace(/["\\]/g, "\\$&");
+    const target = rootRef.current?.querySelector<HTMLElement>(
+      `[data-workspace-path="${escaped}"]`,
+    );
+    if (!target || !store.consumeWorkspaceRevealRequest(request.nonce)) return;
+    target.scrollIntoView?.({ block: "nearest" });
+  }, [revealRequests, state.workspaceLevels, state.workspaceRevealRequest]);
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
     const entries = state.workspaceLevels[dir];
@@ -199,6 +218,8 @@ export function WorkspaceTree({ className = "" }: { className?: string }) {
             key={path}
             path={path}
             name={entry.name}
+            selectedPath={selectedPath}
+            change={gitChangeForWorkspacePath(state.gitStatus, path)}
             depth={depth}
           />
         );
@@ -268,6 +289,7 @@ export function WorkspaceSearchResults({
 }) {
   const state = useAppState();
   const normalized = state.workspaceQuery.trim();
+  const selectedPath = selectedWorkspacePath(state);
   return (
     <div
       className={`workspace-tree workspace-tree--results ${className}`}
@@ -299,6 +321,8 @@ export function WorkspaceSearchResults({
             key={file.path}
             path={file.path}
             name={file.name}
+            selectedPath={selectedPath}
+            change={gitChangeForWorkspacePath(state.gitStatus, file.path)}
             showPath
           />
         ))

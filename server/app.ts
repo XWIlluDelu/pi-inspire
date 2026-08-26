@@ -271,7 +271,10 @@ const resourceProbeSchema = z.object({
     .array(z.string().min(1).max(8_192))
     .max(MAX_RESOURCE_PROBE_REFERENCES),
 });
-const resourceContentSchema = z.object({ sessionId: sessionIdField });
+const resourceContentSchema = z.object({
+  sessionId: sessionIdField,
+  download: z.literal("1").optional(),
+});
 const transcriptPageSchema = z.object({
   sessionId: sessionIdField,
   cursor: z.string().min(1).max(2_048),
@@ -977,7 +980,7 @@ export function createInspireServer(deps: AppDependencies): {
     response.once("close", () => {
       closed = true;
     });
-    const { sessionId } = resourceContentSchema.parse(request.query);
+    const { sessionId, download } = resourceContentSchema.parse(request.query);
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
@@ -990,7 +993,7 @@ export function createInspireServer(deps: AppDependencies): {
     if (closed || response.destroyed) return;
     response.set({
       "Content-Type": resource.descriptor.mimeType,
-      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
     });
     if (resource.authority === "embedded") {
       const data = await deps.resources.embeddedData(resource, context);

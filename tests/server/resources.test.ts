@@ -164,6 +164,42 @@ describe("ResourceStore", () => {
     );
   });
 
+  it("classifies common source and extensionless project files as text", async () => {
+    const { project } = await workspace();
+    const names = [
+      "query.sql",
+      "Main.java",
+      "task.rb",
+      "index.php",
+      "Panel.vue",
+      "Widget.svelte",
+      "Dockerfile",
+      "Makefile",
+      "LICENSE",
+      ".env.local",
+    ];
+    await Promise.all(
+      names.map((name) => writeFile(join(project, name), "plain source\n")),
+    );
+
+    for (const name of names) {
+      const descriptor = await resources.resolve(
+        {
+          ...resourceIdentity(),
+          cwd: project,
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text: `[file](${name})` }],
+            },
+          ],
+        },
+        name,
+      );
+      expect(descriptor.kind, name).toBe("text");
+    }
+  });
+
   it("classifies Jupyter notebooks as renderable documents", async () => {
     const { project } = await workspace();
     await writeFile(

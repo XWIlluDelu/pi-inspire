@@ -106,7 +106,7 @@ describe("design token contract", () => {
     );
   });
 
-  it("fits measured resource paths while block paths use the remaining row", async () => {
+  it("truncates resource paths in CSS while block paths use the remaining row", async () => {
     const css = await readFile(stylesheet, "utf8");
     expect(css).toMatch(
       /\.resource-path\s*{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/s,
@@ -114,9 +114,7 @@ describe("design token contract", () => {
     expect(css).toMatch(
       /\.resource-path__visible\s*{[^}]*display:\s*block[^}]*overflow:\s*hidden[^}]*white-space:\s*nowrap/s,
     );
-    expect(css).toMatch(
-      /\.resource-path__measure\s*{[^}]*position:\s*absolute[^}]*width:\s*max-content[^}]*visibility:\s*hidden/s,
-    );
+    expect(css).not.toMatch(/\.resource-path__measure\b/);
     expect(css).toMatch(
       /\.tool-block__heading\s*{[^}]*justify-content:\s*flex-start[^}]*gap:\s*var\(--space-2\)/s,
     );

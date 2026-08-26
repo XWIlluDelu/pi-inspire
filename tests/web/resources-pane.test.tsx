@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -15,6 +16,7 @@ import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  FakeWebSocket,
   installFakeWebSocket,
 } from "./helpers";
 
@@ -25,6 +27,9 @@ describe("Files pane", () => {
   let invalidProbeReference: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let resourceProbeRequests = 0;
+  let resourceResolveRequests = 0;
+  let resourceListGate: Promise<void> | null = null;
+  let resourceProbeGate: Promise<void> | null = null;
   let bootstrapMessages: unknown[] = [];
   let transcriptRevision = 1;
 
@@ -34,6 +39,9 @@ describe("Files pane", () => {
     invalidProbeReference = null;
     resourceListRequests = [];
     resourceProbeRequests = 0;
+    resourceResolveRequests = 0;
+    resourceListGate = null;
+    resourceProbeGate = null;
     transcriptRevision = 1;
     bootstrapMessages = [
       {
@@ -280,6 +288,9 @@ describe("Files pane", () => {
           });
         }
         if (url.startsWith("/api/resources/list")) {
+          const responseRevision = transcriptRevision;
+          const gate = resourceListGate;
+          resourceListGate = null;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             cursor?: string;
             limit?: number;
@@ -288,8 +299,9 @@ describe("Files pane", () => {
             ...(body.cursor ? { cursor: body.cursor } : {}),
             ...(body.limit ? { limit: body.limit } : {}),
           });
+          if (gate) await gate;
           const resources = [
-            "notes.md",
+            responseRevision === 1 ? "notes.md" : "fresh.md",
             "demo.html",
             ...Array.from({ length: 148 }, (_, index) => `old-${index + 1}.md`),
           ].map((reference) => ({
@@ -306,7 +318,7 @@ describe("Files pane", () => {
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
-            revision: transcriptRevision,
+            revision: responseRevision,
             offset,
             total: resources.length,
             nextCursor: end < resources.length ? `cursor:${end}` : null,
@@ -315,9 +327,12 @@ describe("Files pane", () => {
         }
         if (url.startsWith("/api/resources/probe")) {
           resourceProbeRequests += 1;
+          const gate = resourceProbeGate;
+          resourceProbeGate = null;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             references: string[];
           };
+          if (gate) await gate;
           return Response.json({
             sessionId: "s1",
             viewId: "view-s1",
@@ -344,6 +359,7 @@ describe("Files pane", () => {
           });
         }
         if (url.startsWith("/api/resources/resolve")) {
+          resourceResolveRequests += 1;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
           };
@@ -353,22 +369,39 @@ describe("Files pane", () => {
               { error: "The reference is not a file" },
               { status: 400 },
             );
+          if (resolvedPath.endsWith(".pdf"))
+            return Response.json({
+              id: "pdf",
+              sessionId: "s1",
+              reference: body.reference,
+              workspacePath: resolvedPath,
+              name: resolvedPath.split("/").at(-1) ?? resolvedPath,
+              mimeType: "application/pdf",
+              size: 64,
+              kind: "pdf",
+            });
           const html = resolvedPath.endsWith(".html");
+          const truncatedHtml = resolvedPath.endsWith("truncated.html");
+          const truncatedMarkdown = resolvedPath.endsWith("truncated.md");
           const notebook = resolvedPath.endsWith(".ipynb");
           const svg = resolvedPath.endsWith(".svg");
           const largeSvg = resolvedPath.endsWith("large.svg");
           const text = resolvedPath.endsWith(".ts");
-          const id = html
-            ? "html"
-            : notebook
-              ? "notebook"
-              : largeSvg
-                ? "large-svg"
-                : svg
-                  ? "svg"
-                  : text
-                    ? "text"
-                    : "markdown";
+          const id = truncatedHtml
+            ? "truncated-html"
+            : html
+              ? "html"
+              : truncatedMarkdown
+                ? "truncated-markdown"
+                : notebook
+                  ? "notebook"
+                  : largeSvg
+                    ? "large-svg"
+                    : svg
+                      ? "svg"
+                      : text
+                        ? "text"
+                        : "markdown";
           return Response.json({
             id,
             sessionId: "s1",
@@ -396,6 +429,16 @@ describe("Files pane", () => {
                     : "markdown",
           });
         }
+        if (url.includes("/api/resources/truncated-markdown/content"))
+          return new Response("# Previewed notes", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-16/4096" },
+          });
+        if (url.includes("/api/resources/truncated-html/content"))
+          return new Response("<h1>Partial page</h1>", {
+            status: 206,
+            headers: { "Content-Range": "bytes 0-20/4096" },
+          });
         if (url.includes("/api/resources/markdown/content"))
           return new Response("# Previewed notes\n\n[Open main](src/main.ts)");
         if (url.includes("/api/resources/notebook/content"))
@@ -426,6 +469,10 @@ describe("Files pane", () => {
             },
           });
         }
+        if (url.includes("/api/resources/pdf/content"))
+          return new Response("%PDF-1.7", {
+            headers: { "Content-Type": "application/pdf" },
+          });
         if (url.includes("/api/resources/svg/content"))
           return new Response(
             '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4" /></svg>',
@@ -566,9 +613,7 @@ describe("Files pane", () => {
     fireEvent.click(
       await within(pane).findByRole("button", { name: "long.ts" }),
     );
-    expect(
-      pane.querySelector(".files-browser")?.closest(".res__body"),
-    ).toHaveAttribute("hidden");
+    expect(pane.querySelector(".files-browser")).toBeNull();
     expect(
       within(pane).getByRole("button", {
         name: "Back to file browser for proj",
@@ -582,8 +627,11 @@ describe("Files pane", () => {
       within(pane).getByRole("button", { name: "Preview" }),
     ).toBeDisabled();
     expect(
-      within(pane).getByRole("button", { name: "Download long.ts" }),
-    ).toBeInTheDocument();
+      within(pane).getByRole("link", { name: "Download long.ts" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/resources/text/content?sessionId=s1&download=1",
+    );
     expect(
       within(pane).queryByRole("button", { name: "Add to prompt" }),
     ).toBeNull();
@@ -599,11 +647,11 @@ describe("Files pane", () => {
     fireEvent.click(
       pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
     );
-    expect(
-      pane.querySelector(".files-browser")?.closest(".res__body"),
-    ).not.toHaveAttribute("hidden");
-    expect(pane.querySelector(".files-browser__scroll")).toBe(browserScroller);
-    expect(browserScroller.scrollTop).toBe(137);
+    const restoredScroller = pane.querySelector<HTMLElement>(
+      ".files-browser__scroll",
+    )!;
+    expect(restoredScroller).not.toBe(browserScroller);
+    expect(restoredScroller.scrollTop).toBe(137);
     expect(pane.querySelectorAll(".recent-files .recent-file")).toHaveLength(5);
 
     const search = within(pane).getByRole("searchbox", {
@@ -615,6 +663,33 @@ describe("Files pane", () => {
         name: /main\.ts.*src\/main\.ts/,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("reveals an opened workspace file once without chasing later tree updates", async () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(<App />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Toggle resources panel" }),
+      );
+      const pane = await screen.findByRole("complementary", {
+        name: "Context panel",
+      });
+      fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
+      fireEvent.click(
+        await within(pane).findByRole("button", { name: "long.ts" }),
+      );
+      await within(pane).findByRole("region", { name: "File source" });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
+      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
   });
 
   it("keeps a changed-file selection when returning to Browse", async () => {
@@ -638,6 +713,149 @@ describe("Files pane", () => {
         name: "notes.md, unstaged modified",
       }),
     ).toHaveAttribute("aria-current", "true");
+  });
+
+  it("refreshes Recent in place when the visible transcript revision changes", async () => {
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("button", { name: /notes\.md/ });
+    await waitFor(() =>
+      expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+        "notes.md",
+      ),
+    );
+
+    let releaseList: (() => void) | undefined;
+    resourceListGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    let releaseProbe: (() => void) | undefined;
+    resourceProbeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const probesBefore = resourceProbeRequests;
+    transcriptRevision = 2;
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          pageMessages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: 2,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+            hasOlder: true,
+            olderCursor: "older-s1",
+          },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(resourceListRequests).toHaveLength(2));
+    await waitFor(() => expect(resourceProbeRequests).toBe(probesBefore + 1));
+    expect(
+      within(pane).getByRole("button", { name: /notes\.md/ }),
+    ).toBeVisible();
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
+    expect(within(pane).queryByText("Loading recent files…")).toBeNull();
+    expect(
+      within(pane).queryByRole("button", { name: /fresh\.md/ }),
+    ).toBeNull();
+
+    act(() => {
+      releaseProbe?.();
+      releaseList?.();
+    });
+    expect(
+      await within(pane).findByRole("button", { name: /fresh\.md/ }),
+    ).toBeVisible();
+    expect(
+      within(pane).queryByRole("button", { name: /notes\.md/ }),
+    ).toBeNull();
+  });
+
+  it("keeps a scrolled code preview without loading hidden Recent rows", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("src/long.ts");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const source = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    source.scrollTop = 137;
+    const listRequestsBefore = resourceListRequests.length;
+    const resolvesBefore = resourceResolveRequests;
+
+    transcriptRevision = 2;
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          pageMessages: bootstrapMessages,
+          transcriptPage: {
+            sessionId: "s1",
+            revision: 2,
+            viewId: "view-s1",
+            incarnation: "projection-1",
+            appendFromRevision: 1,
+            messages: bootstrapMessages,
+          },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(store.getState().transcriptRevision).toBe(2));
+    expect(resourceResolveRequests).toBe(resolvesBefore);
+    expect(resourceListRequests).toHaveLength(listRequestsBefore);
+    expect(within(pane).getByRole("region", { name: "File source" })).toBe(
+      source,
+    );
+    expect(source.scrollTop).toBe(137);
+    expect(within(pane).queryByText("Loading preview")).toBeNull();
+  });
+
+  it("does not let an older probe overwrite a successful resolve", async () => {
+    missingProbeReference = "notes.md";
+    let releaseProbe: (() => void) | undefined;
+    resourceProbeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    await waitFor(() => expect(resourceProbeRequests).toBe(1));
+
+    await act(async () => {
+      await store.openResource("notes.md");
+    });
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
+
+    act(() => releaseProbe?.());
+    await waitFor(() =>
+      expect(store.getState().resourceWorkspacePaths["demo.html"]).toBe(
+        "demo.html",
+      ),
+    );
+    expect(store.getState().resourceAvailability["notes.md"]).toBeUndefined();
+    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      "notes.md",
+    );
   });
 
   it("refreshes the Files sources without coupling them to Git status", async () => {
@@ -770,7 +988,7 @@ describe("Files pane", () => {
       within(pane).queryByText("Scripts and network access blocked."),
     ).not.toBeInTheDocument();
     expect(
-      within(pane).getByRole("button", { name: "Download demo.html" }),
+      within(pane).getByRole("link", { name: "Download demo.html" }),
     ).toBeInTheDocument();
     const frame = await within(pane).findByTitle("Preview demo.html");
     expect(frame).toHaveAttribute("sandbox", "");
@@ -792,6 +1010,53 @@ describe("Files pane", () => {
       ).not.toBeInTheDocument(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+  });
+
+  it("uses the same empty sandbox for PDF frames", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("document.pdf");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(
+      await within(pane).findByTitle("Preview document.pdf"),
+    ).toHaveAttribute("sandbox", "");
+  });
+
+  it("marks a truncated rendered preview and preserves the source boundary", async () => {
+    render(<App />);
+    await store.openResource("truncated.md");
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(
+      await within(pane).findByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeVisible();
+
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    expect(within(pane).getByText("Preview ends here")).toBeVisible();
+    expect(
+      within(pane).queryByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeNull();
+
+    await act(async () => {
+      await store.openResource("truncated.html");
+    });
+    expect(
+      await within(pane).findByText(
+        "Rendered preview truncated · Source shows the preview boundary",
+      ),
+    ).toBeVisible();
+    expect(within(pane).getByTitle("Preview truncated.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
   });
 
   it("previews SVG and notebook files before offering their source", async () => {

@@ -374,13 +374,6 @@ export class GitController {
         const selectionChanged =
           selectedPathId !== currentState.selectedGitPathId ||
           selectedSide !== currentState.selectedGitSide;
-        const refreshSelectedDiff = Boolean(
-          selectedExists &&
-            selectedPathId &&
-            selectedSide &&
-            currentState.resourcesOpen &&
-            currentState.contextMode === "changes",
-        );
         this.host.patch({
           gitStatus: status,
           gitStatusError: null,
@@ -392,8 +385,6 @@ export class GitController {
               }
             : {}),
         });
-        if (refreshSelectedDiff)
-          void this.openDiff(selectedPathId!, selectedSide!);
       } catch (error) {
         if (!current()) continue;
         if (error instanceof ApiError && error.status === 401) {

@@ -494,9 +494,9 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   ).toContainText("Working reading");
 
   await resources.getByRole("button", { name: "Back to file browser" }).click();
-  await search.fill("ResourcesPane.tsx");
+  await search.fill("FilePreview.tsx");
   await resources
-    .locator('[data-workspace-path="src/components/ResourcesPane.tsx"]')
+    .locator('[data-workspace-path="src/components/FilePreview.tsx"]')
     .click();
   const source = resources.getByRole("region", { name: "File source" });
   await expect(source).toBeVisible();
@@ -509,7 +509,10 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   await source.evaluate((element) => {
     element.scrollTop = 0;
   });
-  await page.getByRole("separator", { name: "Resize files panel" }).hover();
+  await expect(
+    page.getByRole("separator", { name: "Resize file list and preview" }),
+  ).toHaveCount(0);
+  await source.hover({ position: { x: 12, y: 2 } });
   await page.mouse.wheel(0, 480);
   await expect
     .poll(() => source.evaluate((element) => element.scrollTop))

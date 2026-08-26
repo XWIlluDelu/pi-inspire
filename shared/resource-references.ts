@@ -16,34 +16,100 @@ export function isToolResourceArgumentKey(key: string): boolean {
   return FILE_ARGUMENT_KEYS.has(key);
 }
 
-const FILE_LIKE_EXTENSIONS = new Set([
-  "avif",
-  "bmp",
+const TEXT_FILE_EXTENSIONS = new Set([
   "c",
   "cc",
+  "cfg",
+  "conf",
   "cpp",
+  "cs",
   "css",
   "csv",
-  "edf",
-  "gif",
   "go",
+  "gql",
+  "graphql",
   "h",
+  "hcl",
   "hpp",
   "htm",
   "html",
+  "ini",
   "ipynb",
-  "jpeg",
-  "jpg",
+  "java",
   "js",
   "json",
   "jsonl",
   "jsx",
+  "kt",
+  "kts",
   "log",
-  "m4a",
-  "md",
+  "lua",
   "markdown",
-  "mat",
+  "md",
   "mjs",
+  "php",
+  "properties",
+  "proto",
+  "py",
+  "r",
+  "rb",
+  "rs",
+  "sh",
+  "sql",
+  "svelte",
+  "swift",
+  "svg",
+  "tex",
+  "tf",
+  "toml",
+  "ts",
+  "tsv",
+  "tsx",
+  "txt",
+  "vue",
+  "xml",
+  "yaml",
+  "yml",
+]);
+
+const TEXT_FILE_BASENAMES = new Set([
+  ".dockerignore",
+  ".editorconfig",
+  ".env",
+  ".eslintignore",
+  ".gitignore",
+  ".npmrc",
+  ".nvmrc",
+  ".prettierignore",
+  "changelog",
+  "copying",
+  "dockerfile",
+  "gnumakefile",
+  "license",
+  "makefile",
+  "readme",
+]);
+
+export function isTextFileName(value: string): boolean {
+  const name = value.split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
+  const extension = /\.([A-Za-z0-9]{1,12})$/u.exec(name)?.[1]?.toLowerCase();
+  return Boolean(
+    (extension && TEXT_FILE_EXTENSIONS.has(extension)) ||
+      TEXT_FILE_BASENAMES.has(name) ||
+      name.startsWith(".env."),
+  );
+}
+
+const FILE_LIKE_EXTENSIONS = new Set([
+  ...TEXT_FILE_EXTENSIONS,
+  "avif",
+  "bmp",
+  "edf",
+  "gif",
+  "jpeg",
+  "jpg",
+  "m4a",
+  "mat",
   "mov",
   "mp3",
   "mp4",
@@ -51,23 +117,9 @@ const FILE_LIKE_EXTENSIONS = new Set([
   "npz",
   "pdf",
   "png",
-  "py",
-  "r",
-  "rs",
-  "sh",
-  "svg",
-  "tex",
-  "toml",
-  "ts",
-  "tsv",
-  "tsx",
-  "txt",
   "wav",
   "webm",
   "webp",
-  "xml",
-  "yaml",
-  "yml",
   "zip",
 ]);
 
@@ -165,7 +217,10 @@ export function isLocalResourceReference(value: string): boolean {
   const extension = /\.([A-Za-z0-9]{1,12})$/
     .exec(withoutLocation)?.[1]
     ?.toLowerCase();
-  return Boolean(extension && FILE_LIKE_EXTENSIONS.has(extension));
+  return Boolean(
+    (extension && FILE_LIKE_EXTENSIONS.has(extension)) ||
+      isTextFileName(withoutLocation),
+  );
 }
 
 function referenceKey(value: string): string {

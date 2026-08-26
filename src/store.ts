@@ -78,8 +78,8 @@ import { SessionSelectionController } from "./controllers/session-selection-cont
 import { UpdateController } from "./controllers/update-controller";
 import {
   emptyWorkspaceBrowserState,
-  WorkspaceController,
   type WorkspaceBrowserState,
+  WorkspaceController,
 } from "./controllers/workspace-controller";
 import {
   asMessage,
@@ -389,8 +389,8 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     prepareGitForResourceOpen: (contextMode) =>
       this.git.prepareResourceOpen(contextMode),
-    selectWorkspacePath: (workspacePath) => {
-      this.workspace.revealPath(workspacePath);
+    selectWorkspacePath: (workspacePath, reveal = true) => {
+      if (reveal) this.workspace.revealPath(workspacePath);
       this.git.selectWorkspacePath(workspacePath);
     },
   });
@@ -977,8 +977,8 @@ export class AppStore {
       this.userTurnTranscriptRequest = null;
       if (sessionChanged) this.git.cancelAll();
     } else if (revisionChanged) {
-      // Availability is a filesystem observation made against one transcript
-      // generation; do not expose its old standing during the next render.
+      // Cancel observations owned by the old transcript generation. Keep the
+      // last known standing visible until Browse produces current observations.
       this.resources.cancelProbes();
     }
     const newestMessages = (page?.messages ?? []).map(asMessage);
@@ -1196,9 +1196,7 @@ export class AppStore {
                 resourceAvailability: {},
                 resourceWorkspacePaths: {},
               }
-            : revisionChanged
-              ? { resourceAvailability: {}, resourceWorkspacePaths: {} }
-              : {}),
+            : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
@@ -2751,6 +2749,9 @@ export class AppStore {
     this.workspace.toggleDirectory(dir);
   };
 
+  consumeWorkspaceRevealRequest = (nonce: number): boolean =>
+    this.workspace.consumeRevealRequest(nonce);
+
   setWorkspaceQuery = (query: string): void => {
     this.workspace.setQuery(query);
   };
@@ -2765,7 +2766,7 @@ export class AppStore {
 
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
-    return this.resources.openResource(path);
+    return this.resources.openResource(path, "files", path);
   };
 
   refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
@@ -3216,6 +3217,19 @@ export class AppStore {
 
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
+  refreshGitInspection = async (): Promise<void> => {
+    const { selectedGitPathId: pathId, selectedGitSide: side } = this.state;
+    await this.git.refreshStatus();
+    const current = this.state;
+    if (
+      pathId &&
+      side &&
+      current.selectedGitPathId === pathId &&
+      current.selectedGitSide === side
+    )
+      await this.git.openDiff(pathId, side);
+  };
+
   openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
     this.git.openChange(pathId, requestedSide);
 
@@ -3250,30 +3264,6 @@ export class AppStore {
     reference: string,
     contextMode: "files" | "changes" = "files",
   ): Promise<void> => this.resources.openResource(reference, contextMode);
-
-  downloadResource = async (id: string, name: string): Promise<void> => {
-    const api = this.api;
-    const sessionId = this.state.sessionId;
-    if (!api || !sessionId) return;
-    try {
-      const { blob } = await api.resourceContent(id, sessionId);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        this.handleAuthFailure();
-      } else {
-        this.notify(
-          "error",
-          error instanceof Error ? error.message : "Download failed",
-        );
-      }
-    }
-  };
 }
 
 export function gitChangeForWorkspacePath(

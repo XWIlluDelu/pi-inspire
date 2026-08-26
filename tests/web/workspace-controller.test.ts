@@ -162,6 +162,15 @@ describe("WorkspaceController", () => {
       "src",
       "src/components",
     ]);
+    expect(harness.state().workspaceRevealRequest).toEqual({
+      path: "src/components/App.tsx",
+      nonce: 1,
+    });
+    expect(harness.controller.consumeRevealRequest(0)).toBe(false);
+    expect(harness.state().workspaceRevealRequest).not.toBeNull();
+    expect(harness.controller.consumeRevealRequest(1)).toBe(true);
+    expect(harness.controller.consumeRevealRequest(1)).toBe(false);
+    expect(harness.state().workspaceRevealRequest).toBeNull();
     expect(harness.listFiles.mock.calls.map((call) => call[1])).toEqual([
       "",
       "src",

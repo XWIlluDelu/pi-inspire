@@ -2,14 +2,23 @@
 scope:
   - docdoki/specs/resource-preview.md
   - docdoki/specs/workbench.md
-  - src/components/Nav.tsx
-  - src/components/ResourcesPane.tsx
+  - server/resources.ts
+  - shared/resource-references.ts
+  - src/App.tsx
+  - src/components/ContextPane.tsx
+  - src/components/ContextPaneState.tsx
+  - src/components/ContextSplitBody.tsx
+  - src/components/FilesPane.tsx
+  - src/components/FilePreview.tsx
+  - src/components/ChangesPane.tsx
   - src/components/WorkspaceBrowser.tsx
+  - src/components/PaneResizeHandle.tsx
+  - src/components/ResourcePathLabel.tsx
   - src/controllers/workspace-controller.ts
   - src/controllers/resource-controller.ts
   - src/controllers/git-controller.ts
+  - src/store.ts
   - src/styles.css
-  - tests/web/nav-render.test.tsx
   - tests/web/resources-pane.test.tsx
   - tests/web/workspace-controller.test.ts
   - tests/browser/workbench.spec.ts
@@ -23,18 +32,19 @@ Make workspace discovery and contextual file inspection feel like one coherent f
 
 ## Status
 
-The selected functional subset is implemented and verified. Its visual redesign remains explicitly deferred.
+The selected functional scope is implemented, stabilized, documented, and release-validated. Its broader visual redesign remains explicitly deferred.
 
 ## Selected functional scope
 
-- One cwd-scoped `WorkspaceController` owns lazy levels, expansion, search, refresh, selection reveal, request cancellation, and transport/session acceptance. The compact navigation tree and right Files browser consume that same projection.
-- The compact lower-left surface keeps only the project basename, disclosure, and tree. Workspace search belongs to the right Files Browse page, which also presents at most five deduplicated recent conversation files.
-- Selecting any workspace, search, recent, transcript, or Git file opens one full-pane Preview with the resolved relative path and an explicit Back transition. Text/code previews add highlighting, line numbers, manual and reference-suffix line jumps, Copy, and workspace-authorized `Add to prompt`.
-- Exact workspace paths join resource and Git identity. Changed resources can switch between File and Diff, while Changes retains its own index and semantics.
-- On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Returning to Browse preserves the shared tree/query state and the browser's scroll position.
-- Files refresh renews recent-reference standing, the workspace index, and the selected preview. Directory failures remain distinct from an empty level, and stale asynchronous results cannot repopulate another workspace or transport.
+- One cwd-scoped `WorkspaceController` owns lazy levels, expansion, search, refresh, one-shot selection reveal, request cancellation, and transport/session acceptance. The compact navigation tree and right Files browser consume that same projection.
+- The compact lower-left surface keeps only the project basename, disclosure, and tree. Workspace search belongs to Files Browse, which also presents at most five deduplicated recent conversation files.
+- Selecting a workspace, search, recent, transcript, or Git file replaces Browse with a fixed index/detail stack: the shared workspace tree stays above the preview, while a compact project-folder row returns to Browse without losing tree, query, or Browse scroll state.
+- Files and Changes share fixed upper-region, divider, detail-header, source-canvas, and narrow-drawer geometry without an internal splitter. Files owns preview/source reading; Changes owns grouped Git facets and source diffs.
+- Recent refreshes run only while Browse is visible and retain the previous page and standing until current results arrive. Preview stays mounted through compatible transcript appends, preserving its reader scroll. Git polling likewise retains the selected diff and scroll while that exact facet remains present.
+- Resource probe and resolve generations prevent stale standing from overwriting a successful preview. Downloads stream through the authenticated resource route, text detection covers common source/configuration names, truncated rendered previews are explicit, and every iframe uses the same empty sandbox capability set.
+- On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Directory, search, probe, preview, Git, session, view, and transport transitions reject stale asynchronous results.
 
-## Deferred visual follow-up
+## Next actions
 
 Treat the Files surfaces as one later, holistic visual-design task rather than continuing local color and placement experiments:
 

@@ -18,6 +18,7 @@ import {
 } from "../shared/contracts.js";
 import {
   collectSessionResourceReferences,
+  isTextFileName,
   MAX_RESOURCE_LIST_PAGE_SIZE,
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
@@ -101,6 +102,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".htm": "text/html",
   ".html": "text/html",
   ".ipynb": "application/x-ipynb+json",
+  ".java": "text/x-java",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".js": "text/javascript",
@@ -116,11 +118,14 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".mp4": "video/mp4",
   ".pdf": "application/pdf",
+  ".php": "text/x-php",
   ".png": "image/png",
   ".py": "text/x-python",
   ".r": "text/x-r",
+  ".rb": "text/x-ruby",
   ".rs": "text/x-rust",
   ".sh": "text/x-shellscript",
+  ".sql": "text/x-sql",
   ".svg": "image/svg+xml",
   ".tex": "text/x-tex",
   ".toml": "application/toml",
@@ -171,7 +176,8 @@ export function referencePath(referenceInput: string, cwd: string): string {
 
 function mimeTypeFor(path: string): string {
   return (
-    MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream"
+    MIME_BY_EXTENSION[extname(path).toLowerCase()] ??
+    (isTextFileName(path) ? "text/plain" : "application/octet-stream")
   );
 }
 

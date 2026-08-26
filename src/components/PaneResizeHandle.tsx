@@ -1,39 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
-interface ResizeHandleCommonProps {
-  /** CSS size variable driven by this handle. */
+interface PaneResizeHandleProps {
   cssVar: string;
   storageKey: string;
+  paneSelector: string;
+  edge: "start" | "end";
   min: number;
+  max: (viewportWidth: number) => number;
   label: string;
-  /** Modifier for breakpoint-specific visibility or local styling. */
   variant: string;
   /** Active native scroller(s) inside the adjacent pane. Wheel input over the
    * resize hit band is forwarded to the target under the pointer. */
   wheelTargetSelector?: string;
 }
-
-interface VerticalPaneResizeHandleProps extends ResizeHandleCommonProps {
-  orientation?: "vertical";
-  /** Selector for the pane being resized (used to read the live width). */
-  paneSelector: string;
-  /** Which edge of the pane the handle rides. This decides the drag sign. */
-  edge: "start" | "end";
-  /** Upper width bound for a given viewport width. */
-  max: (viewportWidth: number) => number;
-}
-
-interface HorizontalPaneResizeHandleProps extends ResizeHandleCommonProps {
-  orientation: "horizontal";
-  /** The stacked regions' shared container and its first region. */
-  container: React.RefObject<HTMLElement | null>;
-  pane: React.RefObject<HTMLElement | null>;
-  minRemainder: number;
-}
-
-type PaneResizeHandleProps =
-  | VerticalPaneResizeHandleProps
-  | HorizontalPaneResizeHandleProps;
 
 interface ResizeMetrics {
   current: number;
@@ -48,7 +27,6 @@ interface ActiveDrag {
 }
 
 const KEYBOARD_STEP = 24;
-const SPLITTER_SIZE = 1;
 const WHEEL_LINE_PX = 16;
 
 function clamp(value: number, min: number, max: number): number {
@@ -73,11 +51,9 @@ function writeStoredSize(storageKey: string, value: number | null): void {
   }
 }
 
-/** One resize mechanism for the workbench's outer vertical boundaries and the
- * resource pane's internal horizontal boundary. Both use the same pointer,
- * keyboard, persistence, responsive-clamp, and reset lifecycle. */
+/** Resizes one outer workbench boundary with pointer, keyboard, persistence,
+ * responsive clamping, and double-click reset. */
 export function PaneResizeHandle(props: PaneResizeHandleProps) {
-  const orientation = props.orientation ?? "vertical";
   const dragRef = useRef<ActiveDrag | null>(null);
   const [dragging, setDragging] = useState(false);
   const [metrics, setMetrics] = useState<ResizeMetrics>({
@@ -86,82 +62,32 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     max: props.min,
   });
 
-  const paneElement = (): HTMLElement | null => {
-    if (props.orientation === "horizontal") return props.pane.current;
-    return document.querySelector(props.paneSelector);
-  };
-
-  const styleTarget = (): HTMLElement | null => {
-    if (props.orientation === "horizontal") return props.container.current;
-    return document.documentElement;
-  };
+  const paneElement = (): HTMLElement | null =>
+    document.querySelector(props.paneSelector);
 
   const rawSize = (): number | null => {
     const pane = paneElement();
-    if (!pane) return null;
-    const rect = pane.getBoundingClientRect();
-    return orientation === "vertical" ? rect.width : rect.height;
+    return pane ? pane.getBoundingClientRect().width : null;
   };
 
-  const bounds = (current: number): Pick<ResizeMetrics, "min" | "max"> => {
-    if (props.orientation !== "horizontal") {
-      return {
-        min: props.min,
-        max: Math.max(props.min, props.max(window.innerWidth)),
-      };
-    }
-    const container = props.container.current;
-    const pane = props.pane.current;
-    if (!container || !pane) return { min: 0, max: 0 };
-    const available = Math.max(
-      0,
-      Math.round(
-        container.getBoundingClientRect().bottom -
-          pane.getBoundingClientRect().top -
-          SPLITTER_SIZE,
-      ),
-    );
-    const max = Math.max(0, available - props.minRemainder);
-    // A naturally short list may begin below the ordinary drag minimum. Its
-    // current height is the initial floor, preventing a first-movement jump.
-    return { min: Math.min(props.min, Math.round(current), max), max };
-  };
+  const bounds = (): Pick<ResizeMetrics, "min" | "max"> => ({
+    min: props.min,
+    max: Math.max(props.min, props.max(window.innerWidth)),
+  });
 
   const measure = (): ResizeMetrics | null => {
     const current = rawSize();
     if (current === null) return null;
-    const range = bounds(current);
-    return {
-      current: clamp(current, range.min, range.max),
-      ...range,
-    };
+    const range = bounds();
+    return { current: clamp(current, range.min, range.max), ...range };
   };
 
   const setLiveSize = (size: number) => {
-    const target = styleTarget();
-    if (!target) return;
-    target.style.setProperty(props.cssVar, `${size}px`);
-    if (orientation === "horizontal") target.dataset.paneResizeSized = "true";
+    document.documentElement.style.setProperty(props.cssVar, `${size}px`);
   };
 
   const clearLiveSize = () => {
-    const target = styleTarget();
-    if (!target) return;
-    target.style.removeProperty(props.cssVar);
-    if (orientation === "horizontal") delete target.dataset.paneResizeSized;
-  };
-
-  const horizontalAvailable = (): number | null => {
-    if (props.orientation !== "horizontal") return null;
-    const container = props.container.current;
-    const pane = props.pane.current;
-    if (!container || !pane) return null;
-    return Math.max(
-      0,
-      container.getBoundingClientRect().bottom -
-        pane.getBoundingClientRect().top -
-        SPLITTER_SIZE,
-    );
+    document.documentElement.style.removeProperty(props.cssVar);
   };
 
   const applyResponsiveSize = () => {
@@ -170,19 +96,12 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
       clearLiveSize();
       const natural = rawSize();
       if (natural === null) return;
-      const range = bounds(natural);
+      const range = bounds();
       const bounded = clamp(natural, range.min, range.max);
       if (bounded !== Math.round(natural)) setLiveSize(bounded);
     } else {
-      const current = rawSize();
-      if (current === null) return;
-      const range = bounds(current);
-      // Brief builds before this shared implementation stored a ratio for the
-      // horizontal split. Read it once as such; the next interaction writes px.
-      const available = horizontalAvailable();
-      const desired =
-        available !== null && stored < 1 ? stored * available : stored;
-      setLiveSize(clamp(desired, range.min, range.max));
+      const range = bounds();
+      setLiveSize(clamp(stored, range.min, range.max));
     }
     const measured = measure();
     if (measured) setMetrics(measured);
@@ -195,33 +114,18 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     if (measured) setMetrics({ ...measured, current: size });
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: these props define immutable handle ownership; a changed identity remounts the handle.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: both call sites provide mount-time handle configuration.
   useEffect(() => {
     applyResponsiveSize();
     window.addEventListener("resize", applyResponsiveSize);
-    const observer =
-      props.orientation === "horizontal" &&
-      typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(applyResponsiveSize)
-        : null;
-    if (props.orientation === "horizontal" && props.container.current)
-      observer?.observe(props.container.current);
     return () => {
-      observer?.disconnect();
       window.removeEventListener("resize", applyResponsiveSize);
       document.body.classList.remove(
         "pane-resizing",
-        `pane-resizing--${orientation}`,
+        "pane-resizing--vertical",
       );
     };
   }, []);
-
-  const coordinate = (event: { clientX: number; clientY: number }) =>
-    orientation === "vertical" ? event.clientX : event.clientY;
-  const direction =
-    props.orientation === "horizontal" || props.edge === "end" ? 1 : -1;
-  const negativeKey = orientation === "vertical" ? "ArrowLeft" : "ArrowUp";
-  const positiveKey = orientation === "vertical" ? "ArrowRight" : "ArrowDown";
 
   const finishDrag = (target: HTMLDivElement, pointerId: number) => {
     const active = dragRef.current;
@@ -231,10 +135,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     if (target.hasPointerCapture?.(pointerId))
       target.releasePointerCapture(pointerId);
     setDragging(false);
-    document.body.classList.remove(
-      "pane-resizing",
-      `pane-resizing--${orientation}`,
-    );
+    document.body.classList.remove("pane-resizing", "pane-resizing--vertical");
   };
 
   const reset = () => {
@@ -281,14 +182,15 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     event.preventDefault();
   };
 
+  const direction = props.edge === "end" ? 1 : -1;
   return (
     <div
-      className={`pane-resize pane-resize--${orientation} pane-resize--${props.variant}`}
+      className={`pane-resize pane-resize--vertical pane-resize--${props.variant}`}
     >
       <div
         className={`pane-resize__hit ${dragging ? "pane-resize__hit--drag" : ""}`}
         role="separator"
-        aria-orientation={orientation}
+        aria-orientation="vertical"
         aria-label={props.label}
         aria-valuenow={metrics.current}
         aria-valuemin={metrics.min}
@@ -302,7 +204,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           event.preventDefault();
           event.currentTarget.setPointerCapture?.(event.pointerId);
           dragRef.current = {
-            startCoordinate: coordinate(event),
+            startCoordinate: event.clientX,
             metrics: measured,
             size: measured.current,
           };
@@ -310,7 +212,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           setDragging(true);
           document.body.classList.add(
             "pane-resizing",
-            `pane-resizing--${orientation}`,
+            "pane-resizing--vertical",
           );
         }}
         onPointerMove={(event) => {
@@ -318,7 +220,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           if (!active) return;
           const size = clamp(
             active.metrics.current +
-              direction * (coordinate(event) - active.startCoordinate),
+              direction * (event.clientX - active.startCoordinate),
             active.metrics.min,
             active.metrics.max,
           );
@@ -335,12 +237,12 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
         onDoubleClick={reset}
         onWheel={forwardWheel}
         onKeyDown={(event) => {
-          if (event.key !== negativeKey && event.key !== positiveKey) return;
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
           const measured = measure();
           if (!measured) return;
           event.preventDefault();
           const coordinateDelta =
-            event.key === positiveKey ? KEYBOARD_STEP : -KEYBOARD_STEP;
+            event.key === "ArrowRight" ? KEYBOARD_STEP : -KEYBOARD_STEP;
           commit(
             clamp(
               measured.current + direction * coordinateDelta,
