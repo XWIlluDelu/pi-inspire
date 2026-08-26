@@ -9,6 +9,7 @@ import {
   resolve,
 } from "node:path";
 import { pathToFileURL } from "node:url";
+import { escapesBase } from "./paths.js";
 
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
@@ -38,8 +39,7 @@ interface PiInstallationOptions {
 }
 
 function isInside(path: string, parent: string): boolean {
-  const offset = relative(parent, path);
-  return offset === "" || (!offset.startsWith("..") && !isAbsolute(offset));
+  return !escapesBase(relative(parent, path));
 }
 
 function executableCandidates(command: string, path: string): string[] {

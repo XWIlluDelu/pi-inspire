@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -78,21 +86,166 @@ const LOCK_WAIT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
 const LOCK_OWNER_FILE = "owner.json";
 
-async function lockOwnerAlive(lock: string): Promise<boolean | null> {
+interface LockOwner {
+  pid: number;
+  token: string | null;
+}
+
+interface LockIdentity {
+  dev: number;
+  ino: number;
+}
+
+async function readLockOwner(lock: string): Promise<LockOwner | null> {
   try {
-    const owner = JSON.parse(
-      await readFile(join(lock, LOCK_OWNER_FILE), "utf8"),
-    ) as { pid?: unknown };
+    const lockStat = await stat(lock);
+    const ownerPath = lockStat.isDirectory()
+      ? join(lock, LOCK_OWNER_FILE)
+      : lock;
+    const owner = JSON.parse(await readFile(ownerPath, "utf8")) as {
+      pid?: unknown;
+      token?: unknown;
+    };
     if (!Number.isInteger(owner.pid) || Number(owner.pid) <= 0) return null;
-    try {
-      process.kill(Number(owner.pid), 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : true;
-    }
+    return {
+      pid: Number(owner.pid),
+      token:
+        typeof owner.token === "string" && owner.token.length > 0
+          ? owner.token
+          : null,
+    };
   } catch {
     return null;
   }
+}
+
+async function tryAcquireWriteLock(lock: string): Promise<string | null> {
+  const token = randomUUID();
+  const candidate = `${lock}.candidate-${process.pid}-${token}`;
+  try {
+    await writeFile(
+      candidate,
+      `${JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() })}\n`,
+      { mode: 0o600, flag: "wx" },
+    );
+    try {
+      // A hard link installs the fully written owner record atomically and
+      // never replaces an existing file or legacy directory lock.
+      await link(candidate, lock);
+      return token;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+      throw error;
+    }
+  } finally {
+    await rm(candidate, { force: true }).catch(() => undefined);
+  }
+}
+
+function lockOwnerAlive(owner: LockOwner | null): boolean | null {
+  if (!owner) return null;
+  try {
+    process.kill(owner.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : true;
+  }
+}
+
+function sameLockIdentity(left: LockIdentity, right: LockIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameLockOwner(
+  left: LockOwner | null,
+  right: LockOwner | null,
+): boolean {
+  return left?.pid === right?.pid && left?.token === right?.token;
+}
+
+async function restoreClaimedLock(
+  lock: string,
+  claimed: string,
+): Promise<void> {
+  try {
+    await rename(claimed, lock);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EEXIST") throw error;
+  }
+}
+
+async function claimLockDirectory(
+  lock: string,
+  expectedIdentity: LockIdentity,
+  purpose: "release" | "stale",
+): Promise<string | null> {
+  const claimed = `${lock}.${purpose}-${process.pid}-${randomUUID()}`;
+  try {
+    await rename(lock, claimed);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+
+  const claimedStat = await stat(claimed).catch(() => null);
+  if (
+    claimedStat &&
+    sameLockIdentity(expectedIdentity, {
+      dev: claimedStat.dev,
+      ino: claimedStat.ino,
+    })
+  ) {
+    return claimed;
+  }
+
+  await restoreClaimedLock(lock, claimed);
+  return null;
+}
+
+function compromisedLockError(): Error {
+  return Object.assign(
+    new Error("Saved preferences changed ownership while being updated"),
+    { status: 503 },
+  );
+}
+
+async function assertOwnedLock(lock: string, token: string): Promise<void> {
+  if ((await readLockOwner(lock))?.token !== token)
+    throw compromisedLockError();
+}
+
+async function releaseOwnedLock(lock: string, token: string): Promise<void> {
+  const owner = await readLockOwner(lock);
+  if (owner?.token !== token) return;
+  const lockStat = await stat(lock).catch(() => null);
+  if (!lockStat || (await readLockOwner(lock))?.token !== token) return;
+  const claimed = await claimLockDirectory(
+    lock,
+    { dev: lockStat.dev, ino: lockStat.ino },
+    "release",
+  );
+  if (!claimed) return;
+  if ((await readLockOwner(claimed))?.token !== token) {
+    await restoreClaimedLock(lock, claimed);
+    return;
+  }
+  await rm(claimed, { recursive: true, force: true });
+}
+
+async function reclaimObservedLock(
+  lock: string,
+  identity: LockIdentity,
+  owner: LockOwner | null,
+): Promise<boolean> {
+  const claimed = await claimLockDirectory(lock, identity, "stale");
+  if (!claimed) return false;
+  if (!sameLockOwner(owner, await readLockOwner(claimed))) {
+    await restoreClaimedLock(lock, claimed);
+    return false;
+  }
+  await rm(claimed, { recursive: true, force: true });
+  return true;
 }
 
 function projectPreferences(value: unknown): {
@@ -201,62 +354,53 @@ export class PreferencesStore {
     return (await this.inspect()).preferences;
   }
 
-  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+  private async withWriteLock<T>(
+    operation: (assertOwned: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
     const parent = dirname(this.path);
     const lock = `${this.path}.lock`;
     await mkdir(parent, { recursive: true, mode: 0o700 });
     const startedAt = Date.now();
-    while (true) {
-      try {
-        await mkdir(lock, { mode: 0o700 });
-        try {
-          await writeFile(
-            join(lock, LOCK_OWNER_FILE),
-            `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now() })}\n`,
-            { mode: 0o600, flag: "wx" },
-          );
-        } catch (error) {
-          await rm(lock, { recursive: true, force: true });
-          throw error;
-        }
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const lockStat = await stat(lock).catch(() => null);
-        if (!lockStat) continue;
-        const lockAge = Date.now() - lockStat.mtimeMs;
-        const ownerAlive = await lockOwnerAlive(lock);
-        if (
-          ownerAlive === false ||
-          (ownerAlive === null && lockAge > STALE_LOCK_MS)
-        ) {
-          const stale = `${lock}.stale-${process.pid}-${randomUUID()}`;
-          try {
-            await rename(lock, stale);
-            await rm(stale, { recursive: true, force: true });
-          } catch (staleError) {
-            if ((staleError as NodeJS.ErrnoException).code !== "ENOENT")
-              throw staleError;
-          }
-          continue;
-        }
-        if (Date.now() - startedAt >= LOCK_WAIT_MS) {
-          throw Object.assign(
-            new Error("Timed out waiting to update saved preferences"),
-            { status: 503 },
-          );
-        }
-        await delay(LOCK_RETRY_MS);
+    let ownerToken: string | null = null;
+    while (ownerToken === null) {
+      ownerToken = await tryAcquireWriteLock(lock);
+      if (ownerToken !== null) break;
+      const lockStat = await stat(lock).catch(() => null);
+      if (!lockStat) continue;
+      const lockAge = Date.now() - lockStat.mtimeMs;
+      const owner = await readLockOwner(lock);
+      const ownerAlive = lockOwnerAlive(owner);
+      if (
+        ownerAlive === false ||
+        (ownerAlive === null && lockAge > STALE_LOCK_MS)
+      ) {
+        const reclaimed = await reclaimObservedLock(
+          lock,
+          { dev: lockStat.dev, ino: lockStat.ino },
+          owner,
+        );
+        if (reclaimed) continue;
       }
+      if (Date.now() - startedAt >= LOCK_WAIT_MS) {
+        throw Object.assign(
+          new Error("Timed out waiting to update saved preferences"),
+          { status: 503 },
+        );
+      }
+      await delay(LOCK_RETRY_MS);
     }
+    const token = ownerToken;
     try {
-      return await operation();
+      return await operation(() => assertOwnedLock(lock, token));
     } finally {
-      await rm(lock, { recursive: true, force: true });
+      await releaseOwnedLock(lock, token);
     }
   }
 
-  private async persist(preferences: InspirePreferences): Promise<void> {
+  private async persist(
+    preferences: InspirePreferences,
+    assertOwned: () => Promise<void>,
+  ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     try {
@@ -264,6 +408,7 @@ export class PreferencesStore {
         mode: 0o600,
         flag: "wx",
       });
+      await assertOwned();
       await rename(temporary, this.path);
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
@@ -283,14 +428,14 @@ export class PreferencesStore {
     transform: (current: InspirePreferences) => unknown,
   ): Promise<InspirePreferences> {
     return this.enqueue(() =>
-      this.withWriteLock(async () => {
+      this.withWriteLock(async (assertOwned) => {
         const current = await this.readDisk();
         const invalid = this.invalidSourceError(current);
         if (invalid) throw invalid;
         const preferences = preferencesSchema.parse(
           transform(current.preferences),
         );
-        await this.persist(preferences);
+        await this.persist(preferences, assertOwned);
         return preferences;
       }),
     );

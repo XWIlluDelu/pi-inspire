@@ -54,6 +54,34 @@ describe("catalog identity and pagination", () => {
     );
   });
 
+  it("rescans an invalidated ambiguous id so repaired storage can recover", async () => {
+    const duplicateNew = record(
+      "duplicate",
+      "/work/new",
+      "2026-07-03T10:00:00Z",
+    );
+    duplicateNew.path = "/sessions/new.jsonl";
+    const duplicateOld = record(
+      "duplicate",
+      "/work/old",
+      "2026-07-01T10:00:00Z",
+    );
+    duplicateOld.path = "/sessions/old.jsonl";
+    const list = vi
+      .fn<() => Promise<SessionRecord[]>>()
+      .mockResolvedValueOnce([duplicateOld, duplicateNew])
+      .mockResolvedValueOnce([duplicateNew]);
+    const catalog = new SessionCatalog("/unused", { list });
+
+    await expect(catalog.get("duplicate")).rejects.toMatchObject({
+      status: 409,
+    });
+    catalog.invalidate();
+
+    await expect(catalog.get("duplicate")).resolves.toBe(duplicateNew);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
   it("uses deterministic newest-first ordering with stable tie-breakers", () => {
     const sameTime = "2026-07-27T10:00:00Z";
     const old = record("old", "/work/a", "2026-07-01T10:00:00Z");
@@ -62,6 +90,61 @@ describe("catalog identity and pagination", () => {
     expect(
       orderSessionRecords([old, beta, alpha]).map((session) => session.id),
     ).toEqual(["alpha", "beta", "old"]);
+  });
+
+  it("queues a new generation and never returns invalidated rows", async () => {
+    const stale = record("stale", "/work/a", "2026-07-01T10:00:00Z");
+    const fresh = record("fresh", "/work/a", "2026-07-02T10:00:00Z");
+    const resolvers: Array<(rows: SessionRecord[]) => void> = [];
+    const list = vi.fn(
+      () =>
+        new Promise<SessionRecord[]>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const catalog = new SessionCatalog("/unused", { list });
+
+    const first = catalog.refresh();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    catalog.invalidate();
+    const current = catalog.refresh();
+    expect(list).toHaveBeenCalledTimes(1);
+
+    resolvers[0]!([stale]);
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    resolvers[1]!([fresh]);
+
+    await expect(first).resolves.toEqual([fresh]);
+    await expect(current).resolves.toEqual([fresh]);
+    await expect(catalog.refresh()).resolves.toEqual([fresh]);
+  });
+
+  it("makes a forced refresh a distinct ordered generation", async () => {
+    const stale = record("stale", "/work/a", "2026-07-01T10:00:00Z");
+    const fresh = record("fresh", "/work/a", "2026-07-02T10:00:00Z");
+    const resolvers: Array<(rows: SessionRecord[]) => void> = [];
+    const list = vi.fn(
+      () =>
+        new Promise<SessionRecord[]>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const catalog = new SessionCatalog("/unused", { list });
+
+    const first = catalog.refresh();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    const forced = catalog.refresh(true);
+    expect(list).toHaveBeenCalledTimes(1);
+
+    resolvers[0]!([stale]);
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    resolvers[1]!([fresh]);
+
+    await expect(first).resolves.toEqual([fresh]);
+    await expect(forced).resolves.toEqual([fresh]);
+    await expect(catalog.list()).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ id: "fresh" })],
+    });
   });
 
   it("reports offset, bounded limit, and filtered total independently from page length", async () => {

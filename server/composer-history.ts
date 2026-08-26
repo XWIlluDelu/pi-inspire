@@ -17,18 +17,26 @@ interface ComposerHistoryCandidate {
   filePaths: string[];
 }
 
+export type ComposerHistoryFileNameResolver = (
+  path: string,
+) => string | null | undefined;
+
 function historyFile(
   path: string,
   persistedIndex: number,
   referenceIndex: number,
   cwd?: string,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryFile {
+  const absolutePath = resolve(path);
   const project = cwd
-    ? !escapesBase(relative(resolve(cwd), resolve(path)))
+    ? !escapesBase(relative(resolve(cwd), absolutePath))
     : false;
   return {
     reference: `pi-file://${persistedIndex}/${referenceIndex}`,
-    fileName: basename(path) || "file",
+    fileName:
+      (!project ? fileNameForPath?.(absolutePath) : null) ??
+      (basename(path) || "file"),
     kind: project ? "project" : "attachment",
   };
 }
@@ -37,6 +45,7 @@ function userMessageEntry(
   value: unknown,
   messageIndex: number,
   cwd?: string,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryCandidate | null {
   if (!value || typeof value !== "object") return null;
   const message = value as Record<string, unknown>;
@@ -76,7 +85,7 @@ function userMessageEntry(
   const parsed = parseAttachmentContext(content);
   const text = parsed.text.trim();
   const files = parsed.references.map((path, referenceIndex) =>
-    historyFile(path, persistedIndex, referenceIndex, cwd),
+    historyFile(path, persistedIndex, referenceIndex, cwd, fileNameForPath),
   );
   return text || images.length > 0 || files.length > 0
     ? {
@@ -108,10 +117,16 @@ function samePrompt(
 export function composerHistoryEntries(
   messages: readonly unknown[],
   cwd?: string,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryEntry[] {
   const history: ComposerHistoryCandidate[] = [];
   messages.forEach((message, messageIndex) => {
-    const candidate = userMessageEntry(message, messageIndex, cwd);
+    const candidate = userMessageEntry(
+      message,
+      messageIndex,
+      cwd,
+      fileNameForPath,
+    );
     if (!candidate || (history[0] && samePrompt(history[0], candidate))) return;
     history.unshift(candidate);
     if (history.length > MAX_COMPOSER_HISTORY_ENTRIES) history.pop();
@@ -142,8 +157,9 @@ export function projectComposerHistoryPage(
   owner: ComposerHistoryOwner,
   start = 0,
   cwd?: string,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryPage {
-  const history = composerHistoryEntries(messages, cwd);
+  const history = composerHistoryEntries(messages, cwd, fileNameForPath);
   if (!Number.isSafeInteger(start) || start < 0 || start > history.length) {
     throw Object.assign(new Error("Composer history offset is invalid"), {
       status: 400,

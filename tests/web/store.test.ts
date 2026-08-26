@@ -1316,6 +1316,103 @@ describe("transcript paging", () => {
     expect(store.getState().promptMapNavigatingOrdinal).toBeNull();
   });
 
+  it("keeps a newer prompt-map load coalesced when an obsolete load settles", async () => {
+    const staleResponse = deferredResponse();
+    const currentResponse = deferredResponse();
+    let requests = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot({
+              transcriptPage: {
+                revision: 4,
+                viewId: "view-old",
+                incarnation: "projection-old",
+              },
+            }),
+          }),
+        };
+      }
+      if (url.startsWith("/api/transcript/user-turns")) {
+        requests += 1;
+        if (requests === 1) return staleResponse.promise;
+        if (requests === 2) return currentResponse.promise;
+        return { status: 500, body: { error: "duplicate prompt-map load" } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const stale = store.loadPromptMapTurns();
+    await vi.waitFor(() => expect(requests).toBe(1));
+
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        transcriptPage: {
+          revision: 5,
+          viewId: "view-current",
+          incarnation: "projection-current",
+        },
+      }),
+    });
+    const current = store.loadPromptMapTurns();
+    await vi.waitFor(() => expect(requests).toBe(2));
+
+    staleResponse.resolve({
+      body: {
+        sessionId: "s1",
+        revision: 4,
+        viewId: "view-old",
+        incarnation: "projection-old",
+        total: 1,
+        start: 0,
+        turns: [{ id: "old", ordinal: 0, snippet: "old", attachmentCount: 0 }],
+      },
+    });
+    await stale;
+    const coalesced = store.loadPromptMapTurns();
+    expect(requests).toBe(2);
+
+    currentResponse.resolve({
+      body: {
+        sessionId: "s1",
+        revision: 5,
+        viewId: "view-current",
+        incarnation: "projection-current",
+        total: 1,
+        start: 0,
+        turns: [
+          {
+            id: "current",
+            ordinal: 0,
+            snippet: "current",
+            attachmentCount: 0,
+          },
+        ],
+      },
+    });
+    await expect(Promise.all([current, coalesced])).resolves.toEqual([
+      [
+        {
+          id: "current",
+          ordinal: 0,
+          snippet: "current",
+          attachmentCount: 0,
+        },
+      ],
+      [
+        {
+          id: "current",
+          ordinal: 0,
+          snippet: "current",
+          attachmentCount: 0,
+        },
+      ],
+    ]);
+    expect(requests).toBe(2);
+  });
+
   it("cancels an in-flight prompt-map seek when the branch view changes", async () => {
     const first = deferredResponse();
     let firstRequested!: () => void;

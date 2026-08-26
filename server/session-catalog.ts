@@ -84,7 +84,12 @@ export class SessionCatalog implements SessionCatalogLike {
   private byId = new Map<string, SessionRecord>();
   private ambiguousIds = new Set<string>();
   private idByPath = new Map<string, string>();
-  private loading: Promise<readonly SessionRecord[]> | null = null;
+  private generation = 0;
+  private loadedGeneration = -1;
+  private loading: {
+    generation: number;
+    promise: Promise<void>;
+  } | null = null;
 
   constructor(
     private readonly startupCwd: string,
@@ -95,46 +100,87 @@ export class SessionCatalog implements SessionCatalogLike {
   ) {}
 
   async refresh(force = false): Promise<readonly SessionRecord[]> {
-    if (!force && this.loadedAt > 0 && Date.now() - this.loadedAt < CACHE_MS)
-      return this.cached;
-    if (this.loading) return this.loading;
+    if (force) this.invalidate();
 
-    this.loading = (async () => {
+    for (;;) {
+      const generation = this.generation;
+      if (
+        this.loadedGeneration === generation &&
+        this.loadedAt > 0 &&
+        Date.now() - this.loadedAt < CACHE_MS
+      ) {
+        return this.cached;
+      }
+
+      try {
+        await this.loadGeneration(generation);
+      } catch (error) {
+        // An obsolete scan cannot decide the result of a caller that crossed
+        // an invalidation boundary. The current generation owns that result.
+        if (generation !== this.generation) continue;
+        throw error;
+      }
+      if (this.loadedGeneration === this.generation) return this.cached;
+    }
+  }
+
+  private loadGeneration(generation: number): Promise<void> {
+    if (this.loading?.generation === generation) return this.loading.promise;
+
+    const predecessor = this.loading?.promise;
+    const loading = (async (): Promise<void> => {
+      // Metadata enumeration can be expensive. Generations serialize scans,
+      // while the checks on both sides keep obsolete results from publishing.
+      if (predecessor) await predecessor.catch(() => undefined);
+      if (generation !== this.generation) return;
+
       const sessionDir = SettingsManager.create(
         this.startupCwd,
       ).getSessionDir();
       const sessions = await this.metadata.list(sessionDir);
+      if (generation !== this.generation) return;
+
       // Pi storage enumeration is not an ordering contract. Page boundaries
       // require one deterministic newest-first order with stable tie-breakers.
-      this.cached = orderSessionRecords(sessions);
-      this.byId = new Map();
-      this.ambiguousIds = new Set();
-      for (const session of this.cached) {
-        if (this.ambiguousIds.has(session.id)) continue;
-        if (this.byId.delete(session.id)) this.ambiguousIds.add(session.id);
-        else this.byId.set(session.id, session);
+      const cached = orderSessionRecords(sessions);
+      const byId = new Map<string, SessionRecord>();
+      const ambiguousIds = new Set<string>();
+      for (const session of cached) {
+        if (ambiguousIds.has(session.id)) continue;
+        if (byId.delete(session.id)) ambiguousIds.add(session.id);
+        else byId.set(session.id, session);
       }
-      this.idByPath = new Map(
-        this.cached
-          .filter((session) => !this.ambiguousIds.has(session.id))
+      const idByPath = new Map(
+        cached
+          .filter((session) => !ambiguousIds.has(session.id))
           .map((session) => [session.path, session.id]),
       );
+      this.cached = cached;
+      this.byId = byId;
+      this.ambiguousIds = ambiguousIds;
+      this.idByPath = idByPath;
       this.loadedAt = Date.now();
-      return this.cached;
+      this.loadedGeneration = generation;
     })();
-
-    try {
-      return await this.loading;
-    } finally {
-      this.loading = null;
-    }
+    this.loading = { generation, promise: loading };
+    const clear = () => {
+      if (this.loading?.promise === loading) this.loading = null;
+    };
+    void loading.then(clear, clear);
+    return loading;
   }
 
   async get(id: string): Promise<SessionRecord | undefined> {
     // Opening needs stable identity/path/cwd, not freshly sorted list metadata.
     // Keep known identities usable after invalidate() so a click never pays for
     // a global JSONL rescan; explicit/list refreshes still rebuild the catalog.
-    if (!this.byId.has(id) && !this.ambiguousIds.has(id)) await this.refresh();
+    if (
+      (this.ambiguousIds.has(id) &&
+        this.loadedGeneration !== this.generation) ||
+      (!this.byId.has(id) && !this.ambiguousIds.has(id))
+    ) {
+      await this.refresh();
+    }
     if (this.ambiguousIds.has(id)) {
       throw Object.assign(
         new Error("The session identity is ambiguous in the Pi catalog"),
@@ -223,6 +269,7 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   invalidate(): void {
+    this.generation += 1;
     this.loadedAt = 0;
   }
 }
