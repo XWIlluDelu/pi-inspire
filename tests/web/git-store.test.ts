@@ -79,7 +79,7 @@ describe("Git inspection ownership and freshness", () => {
     expect(store.getState().gitStatusError).toBe("Git timed out");
   });
 
-  it("re-fetches a selected diff when status succeeds with the same facet identity", async () => {
+  it("preserves a selected diff when status polling retains the same facet", async () => {
     let diffCalls = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/git/status")) return { body: cleanStatus };
@@ -114,13 +114,57 @@ describe("Git inspection ownership and freshness", () => {
     });
 
     await store.refreshGitStatus();
-    await vi.waitFor(() =>
-      expect(store.getState().gitDiff).toMatchObject({
-        status: "ready",
-        result: { lines: [{ text: "+version-2" }] },
-      }),
-    );
+    expect(diffCalls).toBe(1);
+    expect(store.getState().gitDiff).toMatchObject({
+      status: "ready",
+      result: { lines: [{ text: "+version-1" }] },
+    });
+
+    await store.refreshGitInspection();
     expect(diffCalls).toBe(2);
+    expect(store.getState().gitDiff).toMatchObject({
+      status: "ready",
+      result: { lines: [{ text: "+version-2" }] },
+    });
+  });
+
+  it("does not reload the selected diff on the four-second status poll", async () => {
+    vi.useFakeTimers();
+    let store: AppStore | null = null;
+    try {
+      let diffCalls = 0;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/git/status")) return { body: cleanStatus };
+        if (url.startsWith("/api/git/diff")) {
+          diffCalls += 1;
+          return {
+            body: {
+              kind: "text",
+              path,
+              side: "unstaged",
+              truncated: false,
+              encodingLossy: false,
+              lines: [],
+            },
+          };
+        }
+        return baseRoutes(url, init);
+      });
+      ({ store } = await initStore());
+      await store.refreshGitStatus();
+      store.setGitSurfaceVisible("resources-pane", true);
+      await vi.advanceTimersByTimeAsync(0);
+      await store.openGitDiff(path.id, "unstaged");
+      const selectedDiff = store.getState().gitDiff;
+
+      await vi.advanceTimersByTimeAsync(4_001);
+
+      expect(diffCalls).toBe(1);
+      expect(store.getState().gitDiff).toBe(selectedDiff);
+    } finally {
+      store?.setGitSurfaceVisible("resources-pane", false);
+      vi.useRealTimers();
+    }
   });
 
   it("coalesces in-flight hints into exactly one queued rerun", async () => {

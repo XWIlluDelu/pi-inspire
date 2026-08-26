@@ -451,7 +451,7 @@ export function addAttachmentContext(
   return `${message.trim()}\n\n${REFERENCE_CONTEXT_HEADING}\n${lines.join("\n")}`.trim();
 }
 
-export interface ParsedAttachmentContext {
+interface ParsedAttachmentContext {
   text: string;
   references: string[];
 }

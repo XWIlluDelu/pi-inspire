@@ -20,20 +20,20 @@ import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
+import { ContextPane } from "./components/ContextPane";
 import { CopyAction } from "./components/CopyAction";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
-import { ResourcesPane } from "./components/ResourcesPane";
 import { Settings, type SettingsCategoryId } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
 import { store, useAppState } from "./store";
+import { type AvailableUpdates, availableUpdates } from "./update-availability";
 import { hasActiveModal } from "./use-modal-focus";
-import { availableUpdates, type AvailableUpdates } from "./update-availability";
 import { cacheVisualPreferences } from "./visual-preferences";
 
 // Vite replaces MODE at build time. The production false branches are folded
@@ -649,7 +649,7 @@ export function App() {
     </div>
   ) : null;
   const resourcesContent = state.resourcesOpen ? (
-    <ResourcesPane
+    <ContextPane
       isModal={isResourcesModal}
       onClose={() => store.setResourcesOpen(false)}
     />

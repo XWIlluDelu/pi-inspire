@@ -2,6 +2,7 @@ import { FolderSearch, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ProjectFileResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 
 export function ProjectFileChips({
   paths,
@@ -18,7 +19,7 @@ export function ProjectFileChips({
       {paths.map((path) => (
         <li key={path} className="attachment attachment--ready" title={path}>
           <FolderSearch size={13} aria-hidden />
-          <span className="attachment__name">{path}</span>
+          <ResourcePathLabel path={path} className="attachment__name" />
           <span className="attachment__meta">project file</span>
           <button
             type="button"
@@ -178,6 +179,7 @@ export function ProjectFilePicker({
               type="button"
               id={`${listId}-option-${index}`}
               role="option"
+              aria-label={`${file.name}, ${file.path}`}
               aria-selected={added}
               disabled={unavailable}
               tabIndex={-1}
@@ -189,7 +191,7 @@ export function ProjectFilePicker({
               onClick={() => onAdd(file)}
             >
               <span className="picker__name">{file.name}</span>
-              <span className="picker__path">{file.path}</span>
+              <ResourcePathLabel path={file.path} className="picker__path" />
             </button>
           );
         })}

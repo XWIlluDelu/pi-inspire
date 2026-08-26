@@ -10,41 +10,106 @@ const FILE_ARGUMENT_KEYS = new Set([
   "outputPath",
   "path",
   "referencedImagePaths",
-  "saveDir",
 ]);
 
 export function isToolResourceArgumentKey(key: string): boolean {
   return FILE_ARGUMENT_KEYS.has(key);
 }
 
-const FILE_LIKE_EXTENSIONS = new Set([
-  "avif",
-  "bmp",
+const TEXT_FILE_EXTENSIONS = new Set([
   "c",
   "cc",
+  "cfg",
+  "conf",
   "cpp",
+  "cs",
   "css",
   "csv",
-  "edf",
-  "gif",
   "go",
+  "gql",
+  "graphql",
   "h",
+  "hcl",
   "hpp",
   "htm",
   "html",
+  "ini",
   "ipynb",
-  "jpeg",
-  "jpg",
+  "java",
   "js",
   "json",
   "jsonl",
   "jsx",
+  "kt",
+  "kts",
   "log",
-  "m4a",
-  "md",
+  "lua",
   "markdown",
-  "mat",
+  "md",
   "mjs",
+  "php",
+  "properties",
+  "proto",
+  "py",
+  "r",
+  "rb",
+  "rs",
+  "sh",
+  "sql",
+  "svelte",
+  "swift",
+  "svg",
+  "tex",
+  "tf",
+  "toml",
+  "ts",
+  "tsv",
+  "tsx",
+  "txt",
+  "vue",
+  "xml",
+  "yaml",
+  "yml",
+]);
+
+const TEXT_FILE_BASENAMES = new Set([
+  ".dockerignore",
+  ".editorconfig",
+  ".env",
+  ".eslintignore",
+  ".gitignore",
+  ".npmrc",
+  ".nvmrc",
+  ".prettierignore",
+  "changelog",
+  "copying",
+  "dockerfile",
+  "gnumakefile",
+  "license",
+  "makefile",
+  "readme",
+]);
+
+export function isTextFileName(value: string): boolean {
+  const name = value.split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
+  const extension = /\.([A-Za-z0-9]{1,12})$/u.exec(name)?.[1]?.toLowerCase();
+  return Boolean(
+    (extension && TEXT_FILE_EXTENSIONS.has(extension)) ||
+      TEXT_FILE_BASENAMES.has(name) ||
+      name.startsWith(".env."),
+  );
+}
+
+const FILE_LIKE_EXTENSIONS = new Set([
+  ...TEXT_FILE_EXTENSIONS,
+  "avif",
+  "bmp",
+  "edf",
+  "gif",
+  "jpeg",
+  "jpg",
+  "m4a",
+  "mat",
   "mov",
   "mp3",
   "mp4",
@@ -52,23 +117,9 @@ const FILE_LIKE_EXTENSIONS = new Set([
   "npz",
   "pdf",
   "png",
-  "py",
-  "r",
-  "rs",
-  "sh",
-  "svg",
-  "tex",
-  "toml",
-  "ts",
-  "tsv",
-  "tsx",
-  "txt",
   "wav",
   "webm",
   "webp",
-  "xml",
-  "yaml",
-  "yml",
   "zip",
 ]);
 
@@ -166,7 +217,10 @@ export function isLocalResourceReference(value: string): boolean {
   const extension = /\.([A-Za-z0-9]{1,12})$/
     .exec(withoutLocation)?.[1]
     ?.toLowerCase();
-  return Boolean(extension && FILE_LIKE_EXTENSIONS.has(extension));
+  return Boolean(
+    (extension && FILE_LIKE_EXTENSIONS.has(extension)) ||
+      isTextFileName(withoutLocation),
+  );
 }
 
 function referenceKey(value: string): string {
@@ -195,23 +249,35 @@ function valuesForArgument(value: unknown): string[] {
 function textReferences(
   text: string,
 ): Array<{ reference: string; source: ResourceReferenceSource }> {
-  const found: Array<{ reference: string; source: ResourceReferenceSource }> =
-    [];
-  const add = (value: string, source: ResourceReferenceSource) => {
+  const found: Array<{
+    reference: string;
+    source: ResourceReferenceSource;
+    position: number;
+  }> = [];
+  const add = (
+    value: string,
+    source: ResourceReferenceSource,
+    position: number,
+  ) => {
     const reference = trimReference(value);
-    if (isLocalResourceReference(reference)) found.push({ reference, source });
+    if (isLocalResourceReference(reference))
+      found.push({ reference, source, position });
   };
   for (const match of text.matchAll(FILE_TAG))
-    add(match[2] ?? "", "attachment");
+    add(match[2] ?? "", "attachment", match.index ?? 0);
   for (const match of text.matchAll(MARKDOWN_TARGET))
-    add(match[1] ?? match[2] ?? "", "link");
-  for (const match of text.matchAll(OSC8_TARGET)) add(match[1] ?? "", "link");
+    add(match[1] ?? match[2] ?? "", "link", match.index ?? 0);
+  for (const match of text.matchAll(OSC8_TARGET))
+    add(match[1] ?? "", "link", match.index ?? 0);
   for (const match of text.matchAll(INLINE_CODE))
-    add(match[1] ?? "", "mention");
+    add(match[1] ?? "", "mention", match.index ?? 0);
   for (const match of text.matchAll(EXPLICIT_PATH))
-    add(match[1] ?? "", "mention");
-  for (const match of text.matchAll(AT_PATH)) add(match[1] ?? "", "mention");
-  return found;
+    add(match[1] ?? "", "mention", match.index ?? 0);
+  for (const match of text.matchAll(AT_PATH))
+    add(match[1] ?? "", "mention", match.index ?? 0);
+  return found
+    .sort((left, right) => right.position - left.position)
+    .map(({ reference, source }) => ({ reference, source }));
 }
 
 /**

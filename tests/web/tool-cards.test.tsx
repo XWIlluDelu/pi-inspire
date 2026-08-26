@@ -2,10 +2,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
-import {
-  projectResourcePath,
-  ResourcePathLabel,
-} from "../../src/components/ResourcePathLabel";
+import { ResourcePathLabel } from "../../src/components/ResourcePathLabel";
 import { ToolCard } from "../../src/components/transcript-cards";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
@@ -127,7 +124,9 @@ describe("native Pi tool cards", () => {
     );
 
     expect(container.querySelector(".tool-search-group")).not.toBeNull();
-    expect(screen.getByText("a.ts")).toBeInTheDocument();
+    expect(
+      container.querySelector(".tool-search-group .resource-path__visible"),
+    ).toHaveTextContent("a.ts");
     expect(screen.getByText("needle here")).toBeInTheDocument();
     expect(screen.getByText("5")).toHaveClass("tool-search-line__number");
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
@@ -147,52 +146,33 @@ describe("native Pi tool cards", () => {
     expect(summaryParts[2]).toHaveClass("tool-summary__part--resource");
   });
 
-  it("projects resource paths through exactly one adjacent leading and tail pair", () => {
-    const cases = [
-      {
-        path: "server/app.ts",
-        leading: "server/",
-        tail: "app.ts",
-      },
-      {
-        path: "src/components/Nav.tsx",
-        leading: "src/components/",
-        tail: "Nav.tsx",
-      },
-      {
-        path: "C:\\workspace\\src\\really-long-file-name.ts",
-        leading: "C:\\workspace\\src\\really-lon",
-        tail: "g-file-name.ts",
-      },
-      {
-        path: "file:///home/user/folder/report.json",
-        leading: "file:///home/user/folder/",
-        tail: "report.json",
-      },
-      {
-        path: "/home/user/directory/",
-        leading: "/home/user/",
-        tail: "directory/",
-      },
+  it("keeps the complete value on adaptive resource path labels", () => {
+    const paths = [
+      "server/app.ts",
+      "src/components/Nav.tsx",
+      "C:\\workspace\\src\\really-long-file-name.ts",
+      "file:///home/user/folder/report.json",
+      "/home/user/directory/",
     ];
     const { container } = render(
       <>
-        {cases.map(({ path }) => (
+        {paths.map((path) => (
           <ResourcePathLabel key={path} path={path} />
         ))}
       </>,
     );
 
-    for (const [index, expected] of cases.entries()) {
-      expect(projectResourcePath(expected.path)).toEqual({
-        leading: expected.leading,
-        tail: expected.tail,
-      });
+    for (const [index, path] of paths.entries()) {
       const label = container.querySelectorAll(".resource-path")[index];
-      expect(label).toHaveTextContent(expected.path);
-      expect(label.children).toHaveLength(2);
-      expect(label.children[0]).toHaveClass("resource-path__leading");
-      expect(label.children[1]).toHaveClass("resource-path__tail");
+      expect(label).toHaveAttribute("title", path);
+      expect(label.querySelector(".visually-hidden")).toHaveTextContent(path);
+      expect(label.querySelector(".resource-path__visible")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+      expect(label.querySelector(".resource-path__visible")).toHaveTextContent(
+        path,
+      );
     }
   });
 
@@ -231,11 +211,9 @@ describe("native Pi tool cards", () => {
       const label = resource.querySelector(".resource-path");
       expect(resource).toHaveAttribute("data-file-path", path);
       expect(resource).toHaveAttribute("title", `Preview ${path}`);
-      expect(label).toHaveTextContent(path);
-      expect(label?.querySelector(".resource-path__tail")).toHaveTextContent(
-        Array.from(path).slice(-14).join(""),
+      expect(label?.querySelector(".resource-path__visible")).toHaveTextContent(
+        path,
       );
-      expect(label?.querySelector(".resource-path__leading")).not.toBeNull();
     }
     expect(container.querySelector(".tool-block__heading")).toContainElement(
       container.querySelector(".tool-block__path"),
@@ -295,11 +273,8 @@ describe("native Pi tool cards", () => {
     expect(screen.getByText("Result")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
     const resource = screen.getByRole("button", { name: "src/app.ts" });
-    expect(resource.querySelector(".resource-path__leading")).toHaveTextContent(
-      "src/",
-    );
-    expect(resource.querySelector(".resource-path__tail")).toHaveTextContent(
-      "app.ts",
+    expect(resource.querySelector(".resource-path__visible")).toHaveTextContent(
+      "src/app.ts",
     );
   });
 });

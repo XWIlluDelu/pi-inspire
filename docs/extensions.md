@@ -173,7 +173,7 @@ First confirm that an existing command or widget is insufficient. Then modify th
 - `src/components/AppTopbar.tsx` — only frequent session-wide navigation or actions.
 - `src/components/ExtensionDisplays.tsx` — generic RPC text-widget presentation beside the Composer.
 - `src/components/transcript-rows.tsx` — inspectable fallback for unknown one-way display methods.
-- `src/components/ResourcesPane.tsx` — persistent project/session detail with its own navigation mode.
+- `src/components/ContextPane.tsx` and its Files, preview, and Changes children — persistent project/session detail with its own navigation mode.
 - `src/App.tsx` — composition and placement, not feature state.
 - `src/store.ts` and `src/events.ts` — browser projection and lifecycle; do not put product state in components.
 - `shared/contracts.ts` and `server/runtime.ts` — only when the Host must validate or project new data.

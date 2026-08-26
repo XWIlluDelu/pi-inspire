@@ -330,7 +330,7 @@ describe("new-session start surface", () => {
     expect(
       within(
         screen.getByRole("list", { name: "Referenced project files" }),
-      ).getByText("src/index.ts"),
+      ).getByText("src/index.ts", { selector: ".resource-path__visible" }),
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("First message"), {

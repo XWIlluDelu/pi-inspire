@@ -282,6 +282,7 @@ export type ResourceKind =
   | "html"
   | "pdf"
   | "markdown"
+  | "notebook"
   | "text"
   | "audio"
   | "video"
@@ -374,6 +375,8 @@ export type GitDiffResponse =
   | (GitDiffBase & {
       kind: "text";
       lines: GitDiffLine[];
+      additions: number;
+      deletions: number;
       truncated: boolean;
       encodingLossy: boolean;
     })
