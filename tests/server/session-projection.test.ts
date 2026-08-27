@@ -56,6 +56,7 @@ async function fixture(
   const record: SessionRecord = {
     id,
     path,
+    source: null,
     cwd: "/project",
     name: "Projection",
     created: new Date(),
@@ -91,7 +92,8 @@ describe("SessionProjection framing and last-good state", () => {
     const record: SessionRecord = {
       id: "pending-session",
       path,
-      cwd: directory,
+      source: null,
+      cwd: "/project",
       created: new Date(),
       modified: new Date(),
       messageCount: 0,
@@ -149,6 +151,58 @@ describe("SessionProjection framing and last-good state", () => {
     }
   });
 
+  it("tracks an incomplete first header until the owned new session completes it", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-partial-header-projection-"),
+    );
+    directories.push(directory);
+    const path = join(directory, "pending-session.jsonl");
+    const record: SessionRecord = {
+      id: "pending-session",
+      path,
+      source: null,
+      cwd: "/project",
+      created: new Date(),
+      modified: new Date(),
+      messageCount: 0,
+      firstMessage: "",
+      searchText: "",
+    };
+    const projection = await SessionProjection.openPending(record);
+    await projection.suspendReconciliation();
+    try {
+      const serialized = JSON.stringify(header("pending-session"));
+      await writeFile(path, serialized.slice(0, -1));
+      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+        changed: false,
+        kind: "none",
+        sourceChanged: true,
+        committedBytes: 0,
+        uncommittedBytes: Buffer.byteLength(serialized) - 1,
+        health: { status: "ok" },
+      });
+      expect(projection.attestInitialMaterialization("/project", [])).toBe(
+        "partial",
+      );
+
+      await appendFile(path, `${serialized.slice(-1)}\n`);
+      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+        changed: true,
+        kind: "append",
+        previousTailVerified: true,
+        appendedEntries: [],
+        uncommittedBytes: 0,
+        health: { status: "ok" },
+      });
+      expect(projection.attestInitialMaterialization("/project", [])).toBe(
+        "complete",
+      );
+    } finally {
+      projection.resumeReconciliation();
+      await projection.close();
+    }
+  });
+
   it("still rejects a missing JSONL on an ordinary existing-session open", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-missing-projection-"),
@@ -157,6 +211,7 @@ describe("SessionProjection framing and last-good state", () => {
     const record: SessionRecord = {
       id: "missing-session",
       path: join(directory, "missing.jsonl"),
+      source: null,
       cwd: directory,
       created: new Date(),
       modified: new Date(),
@@ -426,7 +481,7 @@ describe("SessionProjection framing and last-good state", () => {
       await writeFile(path, `${JSON.stringify(header("another-session"))}\n`);
       await projection.reconcile(true);
       expect(projection.revision).toBe(revision);
-      expect(projection.health.message).toMatch(/another-session/);
+      expect(projection.health.message).toMatch(/another session/);
       expect(projection.messages[0]).toMatchObject({
         role: "user",
         content: "good",

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -57,6 +57,16 @@ describe("project index authority", () => {
     return root;
   }
 
+  it("surfaces a non-directory project root instead of reporting an empty project", async () => {
+    const root = await scratch();
+    const file = join(root, "not-a-directory");
+    await writeFile(file, "content\n");
+
+    await expect(searchProjectFiles(file, "", 100)).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+  });
+
   it("keeps hidden files and credential trees out of the non-git fallback", async () => {
     const root = await scratch();
     await writeFile(join(root, ".env"), "SECRET=1\n");
@@ -78,6 +88,25 @@ describe("project index authority", () => {
     await writeFile(
       join(bin, "git"),
       '#!/bin/sh\ncase "$*" in *rev-parse*) echo true; exit 0;; *) echo boom >&2; exit 1;; esac\n',
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    try {
+      await expect(searchProjectFiles(root, "", 100)).rejects.toThrow();
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
+  it("does not widen to the filesystem after an incompatible Git probe", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "app.js"), "code\n");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      '#!/bin/sh\ncase "$*" in *rev-parse*) echo unexpected; exit 0;; *) echo boom >&2; exit 1;; esac\n',
       { mode: 0o755 },
     );
     const previousPath = process.env.PATH;
@@ -127,6 +156,26 @@ describe("project index authority", () => {
       "one.txt",
       "two.txt",
     ]);
+  });
+
+  it("invalidates a canonical cache after a bounded symlink alias is forgotten", async () => {
+    const project = await scratch();
+    const aliases = await scratch();
+    await writeFile(join(project, "one.txt"), "one\n");
+    const paths: string[] = [];
+    for (let index = 0; index < 40; index += 1) {
+      const alias = join(aliases, `project-${index}`);
+      await symlink(project, alias);
+      paths.push(alias);
+      await searchProjectFiles(alias);
+    }
+    await writeFile(join(project, "two.txt"), "two\n");
+
+    invalidateProjectIndex(paths[0]!);
+
+    expect(
+      (await searchProjectFiles(project)).map((item) => item.path),
+    ).toEqual(["one.txt", "two.txt"]);
   });
 
   it("accepts tracked names beginning with two dots without weakening containment", async () => {

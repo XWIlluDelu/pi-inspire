@@ -213,6 +213,7 @@ beforeAll(async () => {
         body: {
           id: "r1",
           sessionId: String(body.sessionId ?? ""),
+          viewId: store.getState().transcriptViewId,
           reference: String(body.reference ?? ""),
           name: "README.md",
           mimeType: "application/octet-stream",
@@ -221,7 +222,8 @@ beforeAll(async () => {
         },
       };
     }
-    if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
+    if (url.startsWith("/api/preferences"))
+      return { body: { ...store.getState().prefs, ...jsonBody(init) } };
     return undefined;
   });
   await store.init("token");

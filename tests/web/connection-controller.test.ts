@@ -115,14 +115,13 @@ describe("ConnectionController", () => {
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("abandons an open socket that never supplies its first snapshot", () => {
+  it("abandons a connection attempt that never supplies its first snapshot", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
-    socket.open();
     vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS);
 
     expect(socket.closeCount).toBe(1);
@@ -243,6 +242,42 @@ describe("ConnectionController", () => {
         message: expect.objectContaining({ content: "ab" }),
       }),
     );
+  });
+
+  it("rebuilds instead of dropping a malformed frame from a live sequence", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+
+    socket.onmessage?.({ data: "{broken" });
+
+    expect(socket.closeCount).toBe(1);
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1_000);
+    expect(host.reconnect).toHaveBeenCalledWith("token");
+  });
+
+  it("rejects a malformed authoritative snapshot after synchronization", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+
+    socket.emit({
+      type: "snapshot",
+      data: { active: null, runState: "unknown", sessionStatuses: {} },
+    });
+
+    expect(socket.closeCount).toBe(1);
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    expect(host.applyEvent).toHaveBeenCalledTimes(1);
   });
 
   it("rebuilds from a snapshot when a live reducer rejects an event", () => {

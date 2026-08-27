@@ -3,7 +3,7 @@ import type {
   ModelIdentity,
   NewSessionOptions,
 } from "../../shared/contracts";
-import type { Api } from "../api";
+import { ApiError, type Api } from "../api";
 
 export interface SessionSelectionState {
   sessionId: string | null;
@@ -28,6 +28,7 @@ interface SessionSelectionControllerHost {
   rememberModel(model: ModelIdentity): void;
   refreshSessionCatalog(): void;
   notify(kind: "warning", text: string): void;
+  handleAuthFailure(): void;
 }
 
 /**
@@ -66,9 +67,12 @@ export class SessionSelectionController {
       }
     } catch (error) {
       if (this.owns(ticket, api, transportGeneration)) {
-        this.host.setActionError(
-          error instanceof Error ? error.message : "Failed to open session",
-        );
+        if (error instanceof ApiError && error.status === 401)
+          this.host.handleAuthFailure();
+        else
+          this.host.setActionError(
+            error instanceof Error ? error.message : "Failed to open session",
+          );
       }
     } finally {
       this.host.releaseOpening(ticket);
@@ -88,9 +92,14 @@ export class SessionSelectionController {
       return snapshot.active === null;
     } catch (error) {
       if (this.owns(ticket, api, transportGeneration)) {
-        this.host.setActionError(
-          error instanceof Error ? error.message : "Failed to open New session",
-        );
+        if (error instanceof ApiError && error.status === 401)
+          this.host.handleAuthFailure();
+        else
+          this.host.setActionError(
+            error instanceof Error
+              ? error.message
+              : "Failed to open New session",
+          );
       }
       return false;
     } finally {
@@ -131,9 +140,12 @@ export class SessionSelectionController {
       return sessionId;
     } catch (error) {
       if (this.owns(ticket, api, transportGeneration)) {
-        this.host.setActionError(
-          error instanceof Error ? error.message : "Failed to create session",
-        );
+        if (error instanceof ApiError && error.status === 401)
+          this.host.handleAuthFailure();
+        else
+          this.host.setActionError(
+            error instanceof Error ? error.message : "Failed to create session",
+          );
       }
       return null;
     } finally {

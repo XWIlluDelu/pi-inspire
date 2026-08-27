@@ -64,6 +64,7 @@ interface GitControllerHost {
 export class GitController {
   private statusRequest: AbortController | null = null;
   private statusPromise: Promise<void> | null = null;
+  private statusEpoch = 0;
   private refreshQueued = false;
   private diffRequest: AbortController | null = null;
   private surfaces = new Set<string>();
@@ -95,9 +96,7 @@ export class GitController {
     }
     this.unobserveVisibility();
     this.clearRefreshTimer();
-    this.refreshQueued = false;
-    this.statusRequest?.abort();
-    this.statusRequest = null;
+    this.cancelStatusRefresh();
     const state = this.host.state();
     if (state.gitStatusLoading || state.gitStatusRefreshing) {
       this.host.patch({ gitStatusLoading: false, gitStatusRefreshing: false });
@@ -112,40 +111,51 @@ export class GitController {
       return this.statusPromise;
     }
     this.clearRefreshTimer();
-    this.statusPromise = this.runStatusRefresh().finally(() => {
+    const epoch = this.statusEpoch;
+    const promise = this.runStatusRefresh(epoch).finally(() => {
+      if (this.statusPromise !== promise) return;
       this.statusPromise = null;
       this.scheduleRefresh();
     });
-    return this.statusPromise;
+    this.statusPromise = promise;
+    return promise;
   }
 
   async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
     let state = this.host.state();
-    if (!this.host.api() || !state.sessionId) return;
+    const api = this.host.api();
+    const sessionId = state.sessionId;
+    const selectionGeneration = state.selectionGeneration;
+    const transportGeneration = this.host.transportGeneration();
+    if (!api || !sessionId) return;
     let status = state.gitStatus;
     if (!status) {
       await this.refreshStatus();
       state = this.host.state();
       status = state.gitStatus;
+      if (
+        this.host.api() !== api ||
+        this.host.transportGeneration() !== transportGeneration ||
+        state.sessionId !== sessionId ||
+        state.selectionGeneration !== selectionGeneration
+      )
+        return;
     }
-    const api = this.host.api();
-    const sessionId = state.sessionId;
-    if (!api || !sessionId || !status || status.kind !== "repository") return;
+    if (!status || status.kind !== "repository") return;
     const change = status.files.find(
       (candidate) => candidate.path.id === pathId,
     );
     if (!change) return;
-    this.selectedWorkspacePath = change.path.workspacePath ?? null;
     const side =
       requestedSide ??
       (change.unstaged || change.untracked || change.conflict
         ? "unstaged"
         : "staged");
+    if (!changeHasSide(change, side)) return;
+    this.selectedWorkspacePath = change.path.workspacePath ?? null;
     this.cancelDiff();
     const request = new AbortController();
     this.diffRequest = request;
-    const selectionGeneration = state.selectionGeneration;
-    const transportGeneration = this.host.transportGeneration();
     this.host.patch({
       resourcesOpen: true,
       contextMode: "changes",
@@ -169,6 +179,8 @@ export class GitController {
     try {
       const result = await api.gitDiff(sessionId, pathId, side, request.signal);
       if (!current()) return;
+      if (result.path.id !== pathId || result.side !== side)
+        throw new Error("The Host returned a diff for another selection");
       this.host.patch({ gitDiff: { status: "ready", result } });
     } catch (error) {
       if (!current()) return;
@@ -265,10 +277,24 @@ export class GitController {
   }
 
   async openChange(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
-    let status = this.host.state().gitStatus;
+    let state = this.host.state();
+    const api = this.host.api();
+    const sessionId = state.sessionId;
+    const selectionGeneration = state.selectionGeneration;
+    const transportGeneration = this.host.transportGeneration();
+    if (!api || !sessionId) return;
+    let status = state.gitStatus;
     if (!status) {
       await this.refreshStatus();
-      status = this.host.state().gitStatus;
+      state = this.host.state();
+      status = state.gitStatus;
+      if (
+        this.host.api() !== api ||
+        this.host.transportGeneration() !== transportGeneration ||
+        state.sessionId !== sessionId ||
+        state.selectionGeneration !== selectionGeneration
+      )
+        return;
     }
     if (!status || status.kind !== "repository") return;
     const change = status.files.find(
@@ -280,6 +306,7 @@ export class GitController {
       (change.unstaged || change.untracked || change.conflict
         ? "unstaged"
         : "staged");
+    if (!changeHasSide(change, side)) return;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
     const deleted =
       side === "staged"
@@ -290,16 +317,48 @@ export class GitController {
     await this.openDiff(pathId, side);
   }
 
-  cancelAll(): void {
-    this.refreshQueued = false;
-    this.selectedWorkspacePath = null;
-    this.statusRequest?.abort();
-    this.statusRequest = null;
+  /** A replacement API cannot inherit request ownership from its predecessor.
+   * Keep the last good status visible, but discard loading flags and diff bytes
+   * whose freshness cannot be established across the transport boundary. */
+  invalidateForTransportReplacement(): void {
+    this.clearRefreshTimer();
+    this.cancelStatusRefresh();
     this.cancelDiff();
+    const state = this.host.state();
+    this.host.patch({
+      ...(state.gitStatusLoading ? { gitStatusLoading: false } : {}),
+      ...(state.gitStatusRefreshing ? { gitStatusRefreshing: false } : {}),
+      ...(state.gitDiff ? { gitDiff: null } : {}),
+    });
   }
 
-  private async runStatusRefresh(): Promise<void> {
+  /** Revalidate retained status after bootstrap and restore an open Changes
+   * detail exactly once. Ordinary polling deliberately leaves a stable diff
+   * alone so reader scroll is not reset. */
+  async resumeAfterTransportReplacement(): Promise<void> {
+    if (!this.hasVisibleSurface() || !this.pageVisible()) return;
+    await this.refreshStatus();
+    const state = this.host.state();
+    if (
+      state.resourcesOpen &&
+      state.contextMode === "changes" &&
+      state.gitStatusError === null &&
+      state.gitDiff === null &&
+      state.selectedGitPathId &&
+      state.selectedGitSide
+    ) {
+      await this.openDiff(state.selectedGitPathId, state.selectedGitSide);
+    }
+  }
+
+  cancelAll(): void {
+    this.invalidateForTransportReplacement();
+    this.selectedWorkspacePath = null;
+  }
+
+  private async runStatusRefresh(epoch: number): Promise<void> {
     do {
+      if (epoch !== this.statusEpoch) return;
       this.refreshQueued = false;
       const api = this.host.api();
       const state = this.host.state();
@@ -316,6 +375,7 @@ export class GitController {
       const current = (): boolean => {
         const currentState = this.host.state();
         return (
+          epoch === this.statusEpoch &&
           this.statusRequest === request &&
           !request.signal.aborted &&
           this.host.api() === api &&
@@ -385,6 +445,15 @@ export class GitController {
               }
             : {}),
         });
+        if (
+          selectionChanged &&
+          selectedPathId &&
+          selectedSide &&
+          currentState.resourcesOpen &&
+          currentState.contextMode === "changes"
+        ) {
+          void this.openDiff(selectedPathId, selectedSide);
+        }
       } catch (error) {
         if (!current()) continue;
         if (error instanceof ApiError && error.status === 401) {
@@ -407,10 +476,19 @@ export class GitController {
         }
       }
     } while (
+      epoch === this.statusEpoch &&
       this.refreshQueued &&
       this.hasVisibleSurface() &&
       this.pageVisible()
     );
+  }
+
+  private cancelStatusRefresh(): void {
+    this.statusEpoch += 1;
+    this.refreshQueued = false;
+    this.statusRequest?.abort();
+    this.statusRequest = null;
+    this.statusPromise = null;
   }
 
   private cancelDiff(): void {
@@ -448,8 +526,14 @@ export class GitController {
   private readonly handleVisibilityChange = (): void => {
     if (!this.pageVisible()) {
       this.clearRefreshTimer();
-      this.refreshQueued = false;
-      this.statusRequest?.abort();
+      this.cancelStatusRefresh();
+      const state = this.host.state();
+      if (state.gitStatusLoading || state.gitStatusRefreshing) {
+        this.host.patch({
+          gitStatusLoading: false,
+          gitStatusRefreshing: false,
+        });
+      }
       return;
     }
     if (this.hasVisibleSurface()) void this.refreshStatus();

@@ -1,3 +1,4 @@
+import { isRunState, isSessionRuntimeStatus } from "../../shared/contracts";
 import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl } from "../api";
 import type { WireEvent } from "../events";
@@ -93,15 +94,15 @@ function parseWireEvent(data: unknown): WireEvent | null {
 function isAuthoritativeSnapshot(event: WireEvent): boolean {
   if (event.type !== "snapshot") return false;
   const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const snapshot = data as Record<string, unknown>;
+  if (!isRunState(snapshot.runState)) return false;
+  const statuses = snapshot.sessionStatuses;
   return Boolean(
-    data &&
-      typeof data === "object" &&
-      !Array.isArray(data) &&
-      typeof (data as { runState?: unknown }).runState === "string" &&
-      (data as { sessionStatuses?: unknown }).sessionStatuses &&
-      typeof (data as { sessionStatuses?: unknown }).sessionStatuses ===
-        "object" &&
-      !Array.isArray((data as { sessionStatuses?: unknown }).sessionStatuses),
+    statuses &&
+      typeof statuses === "object" &&
+      !Array.isArray(statuses) &&
+      Object.values(statuses).every(isSessionRuntimeStatus),
   );
 }
 
@@ -153,18 +154,22 @@ export class ConnectionController {
     });
     const socket = new WebSocket(eventsUrl(token));
     this.socket = socket;
-    socket.onopen = () => {
-      if (this.socket !== socket) return;
-      this.clearSnapshotTimer();
-      this.snapshotTimer = setTimeout(
-        () => this.failSocket(socket),
-        FIRST_SNAPSHOT_TIMEOUT_MS,
-      );
-    };
+    // Bound the whole connection handshake, not only an already-open socket:
+    // a black-holed TCP/WebSocket negotiation may otherwise remain CONNECTING
+    // indefinitely without producing an error or close event.
+    this.snapshotTimer = setTimeout(
+      () => this.failSocket(socket),
+      FIRST_SNAPSHOT_TIMEOUT_MS,
+    );
     socket.onmessage = (frame) => {
       if (this.socket !== socket) return;
       const event = parseWireEvent(frame.data);
-      if (!event) return;
+      if (!event) {
+        // Dropping an unparseable frame would leave a permanent sequence gap;
+        // later heartbeats could otherwise keep that stale projection alive.
+        this.failSocket(socket);
+        return;
+      }
 
       if (!this.synchronized) {
         if (!isAuthoritativeSnapshot(event)) {
@@ -187,6 +192,10 @@ export class ConnectionController {
         return;
       }
 
+      if (event.type === "snapshot" && !isAuthoritativeSnapshot(event)) {
+        this.failSocket(socket);
+        return;
+      }
       this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       if (event.type === "heartbeat") return;

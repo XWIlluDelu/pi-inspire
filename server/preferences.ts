@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
   type FileHandle,
   mkdir,
@@ -18,6 +19,7 @@ import {
   defaultPreferences,
   DESKTOP_SEND_KEYS,
   READING_WIDTHS,
+  MAX_SESSION_ID_CHARS,
   type InspirePreferences,
 } from "../shared/contracts.js";
 
@@ -58,10 +60,14 @@ const preferenceFields = {
         .strict(),
     )
     .max(8),
-  pinnedSessionIds: z.array(z.string().min(1).max(128)).max(100),
+  pinnedSessionIds: z
+    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+    .max(100),
   pinnedProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
   hiddenProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
-  hiddenSessionIds: z.array(z.string().min(1).max(128)).max(500),
+  hiddenSessionIds: z
+    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+    .max(500),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
 };
 
@@ -276,10 +282,26 @@ export class PreferencesStore {
     // userspace. The persistent inode is harmless after a crash because the
     // kernel releases its lease with the final open file description.
     const lock = `${this.path}.flock`;
-    const handle = await open(lock, "a", 0o600);
+    let handle: FileHandle;
+    try {
+      handle = await open(
+        lock,
+        constants.O_RDWR |
+          constants.O_APPEND |
+          constants.O_CREAT |
+          constants.O_NONBLOCK |
+          constants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP")
+        throw compromisedLockError();
+      throw error;
+    }
     try {
       await acquireKernelLock(handle.fd);
       const lockStat = await handle.stat();
+      if (!lockStat.isFile()) throw compromisedLockError();
       const identity = { dev: lockStat.dev, ino: lockStat.ino };
       const assertOwned = () => assertOwnedLock(lock, handle, identity);
       await assertOwned();

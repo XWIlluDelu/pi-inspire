@@ -14,6 +14,11 @@ covers:
   - src/api.ts
   - src/main.tsx
   - src/store.ts
+  - src/app-state.ts
+  - src/controllers/preference-controller.ts
+  - src/controllers/runtime-event-controller.ts
+  - src/controllers/session-management-controller.ts
+  - src/controllers/transcript-data-controller.ts
   - src/git-presentation.ts
   - src/controllers/git-controller.ts
   - src/controllers/workspace-controller.ts
@@ -32,6 +37,7 @@ covers:
   - src/components/Settings.tsx
   - src/components/ContextPane.tsx
   - src/components/ContextPaneState.tsx
+  - src/components/context-pane-view.ts
   - src/components/ContextSplitBody.tsx
   - src/components/FilesPane.tsx
   - src/components/FilePreview.tsx
@@ -47,6 +53,7 @@ covers:
   - public/theme-init.js
   - server/host-dirs.ts
   - src/styles.css
+  - src/styles/*.css
   - tests/server/app.test.ts
   - tests/server/host-dirs.test.ts
   - tests/server/update-checker.test.ts

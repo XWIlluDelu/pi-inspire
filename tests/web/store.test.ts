@@ -199,6 +199,50 @@ describe("websocket lifecycle", () => {
     }
   });
 
+  it("bounds a bootstrap that never produces an HTTP response", async () => {
+    vi.useFakeTimers();
+    try {
+      const bootstrapSignals: AbortSignal[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: string | URL | Request, init?: RequestInit) => {
+          if (!String(input).startsWith("/api/bootstrap"))
+            return Promise.resolve(
+              Response.json({ error: "unexpected request" }, { status: 500 }),
+            );
+          const bootstrapSignal = init?.signal;
+          if (!bootstrapSignal)
+            throw new Error("Bootstrap request did not carry a signal");
+          bootstrapSignals.push(bootstrapSignal);
+          return new Promise<Response>((_resolve, reject) => {
+            const abort = () =>
+              reject(new DOMException("Bootstrap timed out", "AbortError"));
+            if (bootstrapSignal.aborted) abort();
+            else
+              bootstrapSignal.addEventListener("abort", abort, {
+                once: true,
+              });
+          });
+        }),
+      );
+      const store = new AppStore();
+      const initializing = store.init(null);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await initializing;
+
+      expect(bootstrapSignals[0]?.aborted).toBe(true);
+      expect(store.getState()).toMatchObject({
+        bootstrapped: false,
+        connection: "offline",
+        connectionProblem: { kind: "host-unreachable" },
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("retains bootstrap model choices while an active preview has not loaded its worker catalog", async () => {
     const models = [
       { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
@@ -2437,6 +2481,28 @@ describe("thinking level control", () => {
     await vi.waitFor(() => expect(snapshotCalls).toBeGreaterThan(0));
   });
 
+  it("does not let an older refusal undo a newer accepted level", async () => {
+    const xhigh = deferredResponse();
+    const low = deferredResponse();
+    installFetch((url, init) => {
+      if (url.startsWith("/api/control/thinking")) {
+        const body = jsonBody(init) as { level: string };
+        return body.level === "xhigh" ? xhigh.promise : low.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const older = store.setThinkingLevel("xhigh");
+    const newer = store.setThinkingLevel("low");
+    low.resolve({ body: { ok: true } });
+    await newer;
+    xhigh.resolve({ status: 500, body: { error: "unsupported level" } });
+    await older;
+
+    expect(store.getState().thinkingLevel).toBe("low");
+  });
+
   it("keeps the optimistic level when the API accepts the change", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/control/thinking"))
@@ -3037,6 +3103,44 @@ describe("navigation curation", () => {
     expect(store.getState().prefs.theme).toBe("light");
   });
 
+  it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
+    const pendingPatch = deferredResponse();
+    let patchStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      patchStarted = resolve;
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        const token = new Headers(init.headers).get("authorization");
+        return {
+          body: bootstrapPayload({
+            preferences: {
+              ...DEFAULT_PREFS,
+              theme: token === "Bearer fresh" ? "light" : "system",
+            },
+          }),
+        };
+      }
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        patchStarted();
+        return pendingPatch.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    store.setTheme("dark");
+    await started;
+    await store.init("fresh");
+    expect(store.getState().prefs.theme).toBe("dark");
+
+    pendingPatch.resolve({
+      status: 500,
+      body: { error: "preference write rejected" },
+    });
+    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("light"));
+  });
+
   it("keeps the newest owner when a refused preference write has the same value", async () => {
     let writes = 0;
     const patches: Record<string, unknown>[] = [];
@@ -3234,6 +3338,41 @@ describe("navigation curation", () => {
         ),
     ).toBe(true);
   });
+
+  it("adopts untouched authoritative fields as the next rollback baseline", async () => {
+    let writes = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        writes += 1;
+        if (writes === 2)
+          return { status: 500, body: { error: "preference write rejected" } };
+        return {
+          body: {
+            ...bootstrapPayload().preferences,
+            ...jsonBody(init),
+            palette: "teal",
+          },
+        };
+      }
+      return curationRoutes("ok")(url, init);
+    });
+    const { store } = await initStore();
+
+    store.setTheme("dark");
+    await vi.waitFor(() => expect(store.getState().prefs.palette).toBe("teal"));
+
+    store.setPalette("amber");
+    await vi.waitFor(() =>
+      expect(
+        store
+          .getState()
+          .notices.some(
+            (notice) => notice.text === "preference write rejected",
+          ),
+      ).toBe(true),
+    );
+    expect(store.getState().prefs.palette).toBe("teal");
+  });
 });
 
 describe("resource previews", () => {
@@ -3332,6 +3471,7 @@ describe("resource previews", () => {
           body: {
             id: "r1",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: body.reference,
             name: body.reference.split("/").pop(),
             mimeType: "text/markdown",
@@ -3728,6 +3868,7 @@ describe("resource previews", () => {
           body: {
             id: "notebook",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "analysis.ipynb",
             workspacePath: "analysis.ipynb",
             name: "analysis.ipynb",
@@ -3815,6 +3956,7 @@ describe("resource previews", () => {
           body: {
             id: body.reference,
             sessionId: "s1",
+            viewId: "view-s1",
             reference: body.reference,
             name: body.reference,
             mimeType: "text/markdown",
@@ -3876,6 +4018,7 @@ describe("resource previews", () => {
           body: {
             id: "large-image",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "large.png",
             name: "large.png",
             mimeType: "image/png",
@@ -3919,6 +4062,7 @@ describe("resource previews", () => {
           body: {
             id: body.reference.startsWith("first") ? "first" : "second",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: body.reference,
             name: body.reference,
             mimeType: "image/png",
@@ -3990,6 +4134,7 @@ describe("resource previews", () => {
     const blob = await store.loadEmbeddedImage(
       "s1",
       "view-s1",
+      "view-s1\u0000projection-1",
       "pi-embedded://4/0",
       new AbortController().signal,
     );
@@ -3999,10 +4144,105 @@ describe("resource previews", () => {
       store.loadEmbeddedImage(
         "s1",
         "obsolete",
+        "obsolete\u0000projection-1",
         "pi-embedded://4/0",
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("rejects embedded-image bytes from a replaced projection incarnation", async () => {
+    const oldContent = deferredResponse();
+    let contentStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      contentStarted = resolve;
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        const body = jsonBody(init) as { sessionId: string; reference: string };
+        return {
+          body: {
+            id: "embedded-image",
+            sessionId: body.sessionId,
+            viewId: "view-s1",
+            reference: body.reference,
+            name: "Embedded image",
+            mimeType: "image/png",
+            size: 3,
+            kind: "image",
+          },
+        };
+      }
+      if (url.includes("/api/resources/embedded-image/content")) {
+        contentStarted();
+        return oldContent.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+
+    const loading = store.loadEmbeddedImage(
+      "s1",
+      "view-s1",
+      "view-s1\u0000projection-1",
+      "pi-embedded://4/0",
+      new AbortController().signal,
+    );
+    await started;
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        transcriptPage: { incarnation: "projection-2" },
+      }),
+    });
+    oldContent.resolve({ body: "old" });
+
+    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("ignores an obsolete embedded-image authorization failure after transport replacement", async () => {
+    const oldContent = deferredResponse();
+    let contentStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      contentStarted = resolve;
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        const body = jsonBody(init) as { sessionId: string; reference: string };
+        return {
+          body: {
+            id: "embedded-image",
+            sessionId: body.sessionId,
+            viewId: "view-s1",
+            reference: body.reference,
+            name: "Embedded image",
+            mimeType: "image/png",
+            size: 3,
+            kind: "image",
+          },
+        };
+      }
+      if (url.includes("/api/resources/embedded-image/content")) {
+        contentStarted();
+        return oldContent.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const loading = store.loadEmbeddedImage(
+      "s1",
+      "view-s1",
+      "view-s1\u0000projection-1",
+      "pi-embedded://4/0",
+      new AbortController().signal,
+    );
+    await started;
+    await store.init("fresh");
+    oldContent.resolve({ status: 401, body: { error: "expired token" } });
+
+    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.getState().needsToken).toBe(false);
   });
 
   it("aborts a pending preview when the pane closes", async () => {
@@ -4015,6 +4255,7 @@ describe("resource previews", () => {
           body: {
             id: "pending",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "pending.pdf",
             name: "pending.pdf",
             mimeType: "application/pdf",
@@ -4057,6 +4298,7 @@ describe("resource previews", () => {
           body: {
             id: "owned-by-s1",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "owned.png",
             name: "owned.png",
             mimeType: "image/png",
@@ -4125,6 +4367,7 @@ describe("resource previews", () => {
           body: {
             id: "r2",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "missing/file.md",
             name: "file.md",
             mimeType: "text/markdown",
@@ -4187,6 +4430,7 @@ describe("resource previews", () => {
           body: {
             id: "r1",
             sessionId: "s1",
+            viewId: "view-s1",
             reference: "chart.png",
             name: "chart.png",
             mimeType: "image/png",

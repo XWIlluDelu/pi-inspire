@@ -125,6 +125,8 @@ export interface RuntimeSlot {
   preview: ActiveSessionSnapshot | null;
   projection: SessionProjectionView | null;
   runState: RunState;
+  /** State to restore after the current manual or automatic compaction ends. */
+  compactionReturnState: RunState | null;
   attention: CompletionAttention | null;
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
   pendingExtensionUiOwners: Map<string, PiRpcProcess>;
@@ -209,6 +211,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     stopping: null,
     ready: false,
     runState: "idle",
+    compactionReturnState: null,
     attention: null,
     pendingExtensionUiRequests: new Map(),
     pendingExtensionUiOwners: new Map(),

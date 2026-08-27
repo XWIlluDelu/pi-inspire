@@ -1,0 +1,334 @@
+/* --- Top bar & Reading Stage --- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--topbar-h);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  overflow: hidden;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--line);
+  /* Identity degradation is keyed to the bar's own width — the nav/context
+     panes and window size all change it — not to the viewport. */
+  container-type: inline-size;
+}
+
+.reading-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  height: calc(100% - var(--topbar-h));
+  background: var(--bg-stage);
+  position: relative;
+  overflow: hidden;
+  container: reading-stage / inline-size;
+}
+
+/* Session identity stays in the leading cluster with status. It yields through
+   ellipsis before either cluster can collide with the fixed action targets. */
+.topbar__ident {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 56%;
+  overflow: hidden;
+}
+
+.topbar__workspace-meta {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.topbar__title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Project and Git are peer workspace identifiers. Keep one visual grammar so
+   Git state reads as location context, not a second runtime-status system. */
+.topbar__project,
+.topbar__git {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  padding: 1px var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  /* Both are interactive workspace identifiers; muted clears AA on every
+     surface while still yielding hierarchy to the session title. */
+  color: var(--muted);
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__project {
+  flex: 0 1 auto;
+  position: relative;
+  max-width: 360px;
+}
+
+.topbar__project-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__project-label--copied {
+  opacity: 0;
+}
+
+.topbar__project-feedback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.75);
+  opacity: 0;
+  color: var(--success);
+  pointer-events: none;
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__project-feedback--visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.topbar__project:hover,
+.topbar__git:hover {
+  color: var(--ink);
+  background: var(--bg-inset);
+}
+
+.topbar__git {
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  max-width: 180px;
+  cursor: pointer;
+}
+
+.topbar__git-icon {
+  flex: 0 0 auto;
+}
+
+.topbar__git-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__git-count {
+  flex: 0 0 auto;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar__git-count::before {
+  content: "·";
+  margin-right: var(--space-1);
+  color: inherit;
+}
+
+/* Identity degradation tiers, in discard order: the project location yields
+   first (navigation and the workspace explorer already carry it), the Git
+   branch text yields next (glyph + count keep the state, the accessible name
+   and tooltip keep the branch), and only then may the session title
+   ellipsize. Proportional truncation of everything at once produced useless
+   fragments. The phone tier applies the same grammar by viewport below. */
+@container (max-width: 820px) {
+  .topbar__project {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .topbar__ident {
+    max-width: none;
+  }
+
+  .topbar__git {
+    flex: 0 0 auto;
+    max-width: none;
+    padding: 1px var(--space-1);
+    white-space: nowrap;
+  }
+
+  .topbar__git-branch {
+    display: none;
+  }
+
+  .topbar__git-count::before {
+    display: none;
+  }
+}
+
+/* Ordinary changes remain location context. Color is reserved for the two
+   exceptional states that need recognition before opening the Changes pane. */
+.topbar__git--conflict .topbar__git-count {
+  color: var(--error);
+}
+
+.topbar__git--stale {
+  color: var(--warning);
+}
+
+.topbar__title-button {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 2px var(--space-1);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.topbar__title-button:hover {
+  background: var(--bg-inset);
+}
+
+/* Status immediately follows session identity on the left. Its bounded share
+   and shrinkable labels preserve that placement without crossing later chrome. */
+.topbar__status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: min(38%, 360px);
+}
+
+.topbar__status > .chip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.topbar__extension-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.topbar__actions {
+  flex: 0 0 auto;
+  display: flex;
+  margin-left: auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar__rename {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.topbar__rename input {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  padding: 2px var(--space-2);
+  font-size: var(--text-base);
+  min-width: 0;
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.topbar__rename input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+/* --- Banners --- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.banner__message {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.banner__incident {
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.banner--error {
+  color: var(--error);
+  background: var(--error-tint);
+}
+
+.banner--error button {
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.banner--warning {
+  color: var(--warning);
+  background: var(--warning-tint);
+}
+
+.banner--warning button {
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+}

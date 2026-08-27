@@ -1,16 +1,18 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
+import {
+  type ActivityMaterializationMode,
+  type AppState,
+  contextUsage,
+  createInitialAppState,
+} from "./app-state";
 import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
-  type AvailableUpdate,
-  type BranchTreeResponse,
   type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
-  defaultInterfaceSettings,
-  defaultPreferences,
   emptyPendingQueues,
   type GitDiffSide,
   type GitFileChange,
@@ -18,35 +20,22 @@ import {
   type HiddenClearResponse,
   type HostDirListing,
   type HostRootsResponse,
-  type InspirePreferences,
   type LaunchPreference,
-  MAX_COMPOSER_HISTORY_ENTRIES,
   type ModelIdentity,
   type ModelOption,
-  modelIdentityKey,
   type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
-  type PiUpdateCheckResponse,
   type ProjectDisplayPreference,
-  type ProjectionConflict,
-  type ProjectionHealth,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   projectionConflictSeverity,
   projectNameFromCwd,
   type ReadingWidthPreference,
-  type ResourceProbeResult,
-  type RunState,
   type SessionDeleteDisposition,
-  type SessionRuntimeStatus,
-  type SessionSummary,
   type ThemePreference,
   type ToolVisibilityPreference,
-  type TranscriptActivityRange,
-  type UpdateCheckResponse,
   type UserTurnAnchor,
-  type UserTurnTranscriptPage,
   type VisibilityPreference,
 } from "../shared/contracts";
 import { messageFallbackCorrelation } from "../shared/message-identity";
@@ -61,314 +50,43 @@ import {
 import type { PiCommand } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import { BranchController } from "./controllers/branch-controller";
-import {
-  ComposerController,
-  type PendingAttachment,
-} from "./controllers/composer-controller";
+import { ComposerController } from "./controllers/composer-controller";
 import {
   ConnectionController,
   type ConnectionRecoveryTrigger,
-  type ManagedConnectionProblem,
-  type ManagedConnectionState,
 } from "./controllers/connection-controller";
-import { GitController, type GitDiffView } from "./controllers/git-controller";
+import { GitController } from "./controllers/git-controller";
+import { PreferenceController } from "./controllers/preference-controller";
 import { ResourceController } from "./controllers/resource-controller";
+import { RuntimeEventController } from "./controllers/runtime-event-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
+import { SessionManagementController } from "./controllers/session-management-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
+import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
 import {
   emptyWorkspaceBrowserState,
-  type WorkspaceBrowserState,
   WorkspaceController,
 } from "./controllers/workspace-controller";
 import {
   asMessage,
   type ChatMessage,
-  type EventSlice,
-  emptyEventSlice,
   messageKey,
   type Notice,
   parseExtensionDisplays,
-  reduceEvent,
-  type WireEvent,
 } from "./events";
-import type { ResourcePreview } from "./resource-preview";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 
-// --- Store state ---
-
-type ConnectionState = ManagedConnectionState;
-type ConnectionProblem = ManagedConnectionProblem;
-
-/** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
- * null right after a compaction until the next assistant response reports
- * fresh usage; the whole value is null when Pi provides no usable stats. */
-interface ContextUsage {
-  tokens: number | null;
-  contextWindow: number;
-  percent: number | null;
-}
-
-export interface TranscriptActivityRangeState extends TranscriptActivityRange {
-  status: "idle" | "loading" | "error";
-  error: string | null;
-}
-
-export type ActivityMaterializationMode = "all" | "tail";
-
-function contextUsage(stats: unknown): ContextUsage | null {
-  if (!stats || typeof stats !== "object") return null;
-  const raw = (stats as { contextUsage?: unknown }).contextUsage;
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const contextWindow =
-    typeof record.contextWindow === "number" &&
-    Number.isFinite(record.contextWindow) &&
-    record.contextWindow > 0
-      ? record.contextWindow
-      : null;
-  if (contextWindow === null) return null;
-  const tokens =
-    typeof record.tokens === "number" && Number.isFinite(record.tokens)
-      ? record.tokens
-      : null;
-  const percent =
-    typeof record.percent === "number" && Number.isFinite(record.percent)
-      ? record.percent
-      : tokens !== null
-        ? (tokens / contextWindow) * 100
-        : null;
-  return { tokens, contextWindow, percent };
-}
-
-interface AppState extends EventSlice, WorkspaceBrowserState {
-  needsToken: boolean;
-  connection: ConnectionState;
-  connectionProblem: ConnectionProblem;
-  bootstrapped: boolean;
-  mock: boolean;
-  /** Host-reported runtime versions, shown on the settings page. */
-  version: string;
-  piVersion: string;
-  inspireUpdateCheck: UpdateCheckResponse | null;
-  piUpdateCheck: PiUpdateCheckResponse | null;
-  inspireUpdateChecking: boolean;
-  piUpdateChecking: boolean;
-  availableUpdate: AvailableUpdate | null;
-  updateSnoozedUntil: number | null;
-  prefs: InspirePreferences;
-  sessionId: string | null;
-  sessionName: string;
-  cwd: string | null;
-  project: string | null;
-  model: ModelOption | null;
-  thinkingLevel: string;
-  availableModels: ModelOption[];
-  commands: PiCommand[];
-  /** Context-window occupancy parsed from Pi's session stats at the
-   * snapshot boundary; null when Pi provides no usable data. */
-  contextUsage: ContextUsage | null;
-  transcriptRevision: number;
-  /** Earliest revision still sharing this projection's unchanged prefix. */
-  transcriptAppendFromRevision: number;
-  transcriptIncarnation: string | null;
-  transcriptViewId: string | null;
-  /** Durable Pi projection leaf. It differs from effective only while the
-   * visible session is inspecting an earlier branch. */
-  transcriptDurableLeafId: string | null;
-  transcriptEffectiveLeafId: string | null;
-  hasOlderMessages: boolean;
-  olderMessagesCursor: string | null;
-  loadingOlderMessages: boolean;
-  olderMessagesError: string | null;
-  transcriptActivityRanges: TranscriptActivityRangeState[];
-  /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
-  promptMapTurns: UserTurnAnchor[];
-  promptMapTotal: number;
-  promptMapLoadedStarts: number[];
-  promptMapLoadingStarts: number[];
-  promptMapError: string | null;
-  promptMapNavigatingOrdinal: number | null;
-  projectionHealth: ProjectionHealth;
-  projectionConflict: ProjectionConflict | null;
-  projectionError: string | null;
-  /** Global operation error. Projection conflicts use errorSeverity to
-   * distinguish safe external attention from integrity failures. */
-  errorSeverity: "error" | "warning";
-  /** Rendered union of chronological catalog pages and separately hydrated
-   * curated/live identities. Only the chronological pages advance the cursor. */
-  sessions: SessionSummary[];
-  sessionQuery: string;
-  sessionListTotal: number;
-  sessionListNextOffset: number;
-  sessionListLoading: boolean;
-  sessionListLoadingOlder: boolean;
-  sessionListHydrating: boolean;
-  /** Current operation, retained after failure so retry copy stays truthful. */
-  sessionListOperation:
-    | "reset"
-    | "older"
-    | "refresh"
-    | "preserve"
-    | "hydrate"
-    | "curation"
-    | null;
-  sessionListError: string | null;
-  /** Selection failures stay with the session navigation/start surface rather
-   * than competing with transcript integrity errors in the topbar. */
-  sessionActionError: string | null;
-  /** Destructive-action failures stay inside the confirmation dialog. */
-  sessionDeleteError: string | null;
-  /** Authoritative per-session runtime status for every live session worker,
-   * keyed by session id. Drives nav attention indicators. */
-  sessionStatuses: Record<string, SessionRuntimeStatus>;
-  /** Unseen terminal transitions currently contributing a title marker. */
-  attentionSessionIds: string[];
-  /** Session currently owned by the newest open operation, if any. */
-  openingSessionId: string | null;
-  /** Whether an open, deselect, or create request still owns selection. */
-  sessionSelectionPending: boolean;
-  /** The Hidden-row destructive action currently awaiting its host result. */
-  deletingSessionId: string | null;
-  /** Whether the complete Hidden selection is awaiting its host result. */
-  clearingHidden: boolean;
-  /** The visible session's composer slice. Authoritative copies live in
-   * per-session partitions inside the store; a session switch swaps the
-   * slice, so staged work never leaks across sessions. */
-  attachments: PendingAttachment[];
-  projectFiles: string[];
-  /** Prompt delivery in flight for the visible session: repeat sends are
-   * refused and attachment withdrawals freeze, so a DELETE cannot race the
-   * host resolving those same files into the outgoing message. */
-  sending: boolean;
-  /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: PendingManagementAction["action"] | null;
-  /** Files/resources pane visibility (Ctrl+.). */
-  resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches";
-  /** Full browsing or the shared workspace/detail split. */
-  fileBrowserView: "browse" | "preview";
-  /** The compact nav disclosure is store-owned so drawer remounts and
-   * responsive transitions retain it. */
-  workspaceExplorerOpen: boolean;
-  branchTree: BranchTreeResponse | null;
-  branchTreeLoading: boolean;
-  branchTreeError: string | null;
-  branchActionId: string | null;
-  /** Reference currently selected in the resources pane. */
-  selectedResourceReference: string | null;
-  resourcePreview: ResourcePreview | null;
-  gitStatus: GitStatusResponse | null;
-  gitStatusError: string | null;
-  gitStatusLoading: boolean;
-  gitStatusRefreshing: boolean;
-  selectedGitPathId: string | null;
-  selectedGitSide: GitDiffSide | null;
-  gitDiff: GitDiffView | null;
-  /** Preflight standing for the bounded Files-pane references. A textual
-   * mention stays unverified until the host classifies it for this branch
-   * view; only a successful resolve grants a separate content handle. */
-  resourceAvailability: Record<string, ResourceProbeResult>;
-  /** Canonical workspace identity for successfully resolved references. */
-  resourceWorkspacePaths: Record<string, string>;
-  error: string | null;
-}
+export type {
+  ActivityMaterializationMode,
+  TranscriptActivityRangeState,
+} from "./app-state";
 
 const NOTICE_TTL_MS = 8_000;
-const PROMPT_MAP_PAGE_SIZE = 100;
-
-const initialState: AppState = {
-  ...emptyEventSlice(),
-  ...emptyWorkspaceBrowserState(),
-  needsToken: false,
-  connection: "connecting",
-  connectionProblem: null,
-  bootstrapped: false,
-  mock: false,
-  version: "",
-  piVersion: "",
-  inspireUpdateCheck: null,
-  piUpdateCheck: null,
-  inspireUpdateChecking: false,
-  piUpdateChecking: false,
-  availableUpdate: null,
-  updateSnoozedUntil: null,
-  prefs: defaultPreferences,
-  sessionId: null,
-  sessionName: "",
-  cwd: null,
-  project: null,
-  model: null,
-  thinkingLevel: "medium",
-  availableModels: [],
-  commands: [],
-  contextUsage: null,
-  transcriptRevision: 0,
-  transcriptAppendFromRevision: 0,
-  transcriptIncarnation: null,
-  transcriptViewId: null,
-  transcriptDurableLeafId: null,
-  transcriptEffectiveLeafId: null,
-  hasOlderMessages: false,
-  olderMessagesCursor: null,
-  loadingOlderMessages: false,
-  olderMessagesError: null,
-  transcriptActivityRanges: [],
-  promptMapTurns: [],
-  promptMapTotal: 0,
-  promptMapLoadedStarts: [],
-  promptMapLoadingStarts: [],
-  promptMapError: null,
-  promptMapNavigatingOrdinal: null,
-  projectionHealth: { status: "ok" },
-  projectionConflict: null,
-  projectionError: null,
-  errorSeverity: "error",
-  sessions: [],
-  sessionQuery: "",
-  sessionListTotal: 0,
-  sessionListNextOffset: 0,
-  sessionListLoading: false,
-  sessionListLoadingOlder: false,
-  sessionListHydrating: false,
-  sessionListOperation: null,
-  sessionListError: null,
-  sessionActionError: null,
-  sessionDeleteError: null,
-  sessionStatuses: {},
-  attentionSessionIds: [],
-  openingSessionId: null,
-  sessionSelectionPending: false,
-  deletingSessionId: null,
-  clearingHidden: false,
-  attachments: [],
-  projectFiles: [],
-  sending: false,
-  pendingAction: null,
-  resourcesOpen: false,
-  contextMode: "files",
-  fileBrowserView: "browse",
-  workspaceExplorerOpen: false,
-  branchTree: null,
-  branchTreeLoading: false,
-  branchTreeError: null,
-  branchActionId: null,
-  selectedResourceReference: null,
-  resourcePreview: null,
-  gitStatus: null,
-  gitStatusError: null,
-  gitStatusLoading: false,
-  gitStatusRefreshing: false,
-  selectedGitPathId: null,
-  selectedGitSide: null,
-  gitDiff: null,
-  resourceAvailability: {},
-  resourceWorkspacePaths: {},
-  error: null,
-};
+const BOOTSTRAP_TIMEOUT_MS = 15_000;
 
 export class AppStore {
-  private state: AppState = initialState;
+  private state: AppState = createInitialAppState();
   private listeners = new Set<() => void>();
   private api: Api | null = null;
   /** Both Files surfaces consume this one tree/search projection. */
@@ -406,7 +124,7 @@ export class AppStore {
     api: () => this.api,
     transportGeneration: () => this.transportGeneration,
     openResourceFromGit: (workspacePath) =>
-      this.resources.openResource(workspacePath, "changes"),
+      this.resources.openResource(workspacePath, "changes", workspacePath),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
@@ -445,6 +163,19 @@ export class AppStore {
     refreshSessionCatalog: () => void this.refreshLoadedSessions(),
     notify: (kind, text) => this.notify(kind, text),
   });
+  private readonly preferences = new PreferenceController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    notify: (kind, text) => this.notify(kind, text),
+    handleAuthFailure: () => this.handleAuthFailure(),
+    curationChanged: (hydrate) => {
+      this.catalog.reconcileCuration();
+      if (hydrate) void this.catalog.hydrateCuration();
+    },
+    clearCompletionAttention: () => this.runtimeEvents.clearTitleAttention(),
+  });
   /** SessionCatalogController owns pagination, curation/live hydration, and
    * retry lifecycles. AppStore remains the only catalog snapshot publisher and
    * selection authority. */
@@ -452,7 +183,7 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    confirmedPreferences: () => this.confirmedPrefs,
+    confirmedPreferences: () => this.preferences.confirmed(),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** SessionSelectionController owns only latest-wins open/new/deselect
@@ -493,6 +224,47 @@ export class AppStore {
     rememberModel: (model) => this.rememberModel(model),
     refreshSessionCatalog: () => void this.refreshLoadedSessions(),
     notify: (kind, text) => this.notify(kind, text),
+    handleAuthFailure: () => this.handleAuthFailure(),
+  });
+  private readonly runtimeEvents = new RuntimeEventController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    notify: (kind, text) => this.notify(kind, text),
+    openSession: (sessionId) => this.openSession(sessionId),
+    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
+    invalidateSelection: () => this.selection.invalidateForReplacement(),
+    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
+    recordRuntimeReady: (sessionId) => {
+      if (this.openingOwner !== null)
+        this.readyWhileOpening.set(sessionId, this.openingOwner);
+    },
+    clearRuntimeReady: (sessionId) => this.readyWhileOpening.delete(sessionId),
+    refreshLoadedSessions: () => this.refreshLoadedSessions(),
+    hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
+    refreshGitStatus: () => this.git.refreshStatus(),
+    markProjectionStale: () => this.branches.markProjectionStale(),
+    selectionGeneration: () => this.selectionGeneration,
+    resync: (sessionId, generation, minimumRevision) =>
+      this.resync(sessionId, generation, minimumRevision),
+    scheduleNoticeDismissal: (noticeId) =>
+      this.scheduleNoticeDismissal(noticeId),
+  });
+  private readonly transcriptData = new TranscriptDataController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    selectionGeneration: () => this.selectionGeneration,
+    transportGeneration: () => this.transportGeneration,
+    markSettled: (key) => this.runtimeEvents.markSettled(key),
+    resync: (sessionId, generation, minimumRevision, preserveAppendHistory) =>
+      this.resync(
+        sessionId,
+        generation,
+        minimumRevision,
+        preserveAppendHistory,
+      ),
+    handleAuthFailure: () => this.handleAuthFailure(),
+    fail: (message, severity) => this.fail(message, severity),
   });
   /** ComposerController owns session-partitioned staged attachments, project
    * files, and delivery lifetime. AppStore remains the snapshot owner. */
@@ -508,6 +280,23 @@ export class AppStore {
     failVisible: (sessionId, message) => {
       if (this.state.sessionId === sessionId) this.fail(message);
     },
+    handleAuthFailure: () => this.handleAuthFailure(),
+  });
+  private readonly sessionManagement = new SessionManagementController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    transportGeneration: () => this.transportGeneration,
+    notify: (kind, text) => this.notify(kind, text),
+    handleAuthFailure: () => this.handleAuthFailure(),
+    refreshLoadedSessions: () => this.refreshLoadedSessions(),
+    preserveLoadedSessions: (query, offset, total) =>
+      this.preserveLoadedSessions(query, offset, total),
+    forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
+    flushPreferences: () => this.preferences.flush(),
+    capturePreferenceOwners: () => this.preferences.captureOwners(),
+    reconcilePreferences: (authoritative, owners) =>
+      this.preferences.reconcile(authoritative, owners),
   });
   private authToken: string | null = null;
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
@@ -521,13 +310,13 @@ export class AppStore {
   private readonly connectionController = new ConnectionController({
     state: () => ({ bootstrapped: this.state.bootstrapped }),
     patch: (patch) => this.set(patch),
-    applyEvent: (event) => this.applyEvent(event),
-    onTransportReplaced: () => this.attentionArms.clear(),
+    applyEvent: (event) => this.runtimeEvents.apply(event),
+    onTransportReplaced: () => this.runtimeEvents.clearLiveAttention(),
     onTransportClosed: () => {
       // A later terminal event cannot be correlated across a lost stream.
       // The reconnect snapshot may remove stale state but must not recreate
       // ownership from historical active status.
-      this.attentionArms.clear();
+      this.runtimeEvents.clearLiveAttention();
       this.branches.markConnectionInterrupted();
       this.set({
         connection: "reconnecting",
@@ -536,7 +325,6 @@ export class AppStore {
     },
     reconnect: (token) => void this.init(token),
   });
-  private settledKeys = new Set<string>();
   private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
   private selectionGeneration = 0;
@@ -552,18 +340,10 @@ export class AppStore {
   private openingOwner: number | null = null;
   private resyncRequest = 0;
   private pendingActionRequest = 0;
+  private thinkingLevelRequest = 0;
   private readyWhileOpening = new Map<string, number>();
-  private olderTranscriptRequest: AbortController | null = null;
-  private activityTranscriptRequests = new Map<string, AbortController>();
-  private userTurnIndexRequests = new Map<string, AbortController>();
-  private userTurnIndexPromises = new Map<string, Promise<UserTurnAnchor[]>>();
-  private userTurnTranscriptRequest: AbortController | null = null;
   private transportGeneration = 0;
-  /** Live operation kinds own their own terminal attention. Nested automatic
-   * compaction must never consume the agent run that owns it. */
-  private attentionArms = new Map<string, Set<"agent" | "compaction">>();
-  private titleAttention = new Set<string>();
-
+  private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -586,165 +366,33 @@ export class AppStore {
       notices: [...this.state.notices, { id, kind, text }],
       nextNoticeId: id + 1,
     });
+    this.scheduleNoticeDismissal(id);
+  }
+
+  private scheduleNoticeDismissal(id: number): void {
+    const existing = this.noticeTimers.get(id);
+    if (existing) clearTimeout(existing);
     this.noticeTimers.set(
       id,
       setTimeout(() => this.dismissNotice(id), NOTICE_TTL_MS),
     );
   }
 
-  private isForeground(): boolean {
-    return (
-      typeof document !== "undefined" &&
-      document.visibilityState === "visible" &&
-      document.hasFocus()
-    );
-  }
-
-  private publishTitleAttention(): void {
-    const attentionSessionIds = [...this.titleAttention];
-    if (
-      attentionSessionIds.length === this.state.attentionSessionIds.length &&
-      attentionSessionIds.every(
-        (id, index) => id === this.state.attentionSessionIds[index],
-      )
-    )
-      return;
-    this.set({ attentionSessionIds });
-  }
-
-  private clearAttentionFor(sessionId: string | null): void {
-    if (!sessionId || !this.titleAttention.delete(sessionId)) return;
-    this.publishTitleAttention();
-  }
-
-  /** Called from the window focus/visibility boundary. Viewing the owning
-   * selected session acknowledges its title attention. */
-  acknowledgeVisibleSession = (): void => {
-    if (this.isForeground()) this.clearAttentionFor(this.state.sessionId);
-  };
-
-  private armAttention(sessionId: string, kind: "agent" | "compaction"): void {
-    const arms =
-      this.attentionArms.get(sessionId) ?? new Set<"agent" | "compaction">();
-    arms.add(kind);
-    this.attentionArms.set(sessionId, arms);
-  }
-
-  private hasAttentionArm(
-    sessionId: string,
-    kind: "agent" | "compaction",
-  ): boolean {
-    return this.attentionArms.get(sessionId)?.has(kind) ?? false;
-  }
-
-  private consumeAttentionArm(
-    sessionId: string,
-    kind: "agent" | "compaction",
-  ): boolean {
-    const arms = this.attentionArms.get(sessionId);
-    if (!arms?.delete(kind)) return false;
-    if (arms.size === 0) this.attentionArms.delete(sessionId);
-    return true;
-  }
-
-  /** Snapshots never create attention ownership, but they are authoritative
-   * evidence that an observed live operation either still exists or ended
-   * outside this socket's event stream. */
-  private reconcileAttentionArms(
-    sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
-  ): void {
-    const liveAgentStates = new Set([
-      "running",
-      "retrying",
-      "queued",
-      "compacting",
-    ]);
-    for (const [sessionId, arms] of this.attentionArms) {
-      const runState = sessionStatuses[sessionId]?.runState;
-      if (!runState) {
-        this.attentionArms.delete(sessionId);
-        continue;
-      }
-      if (arms.has("agent") && !liveAgentStates.has(runState))
-        arms.delete("agent");
-      if (arms.has("compaction") && runState !== "compacting")
-        arms.delete("compaction");
-      if (arms.size === 0) this.attentionArms.delete(sessionId);
+  private forgetSessions(
+    sessionIds: ReadonlySet<string>,
+  ): AppState["sessionStatuses"] {
+    const sessionStatuses = { ...this.state.sessionStatuses };
+    for (const sessionId of sessionIds) {
+      this.catalog.remove(sessionId);
+      delete sessionStatuses[sessionId];
+      this.discardSessionComposer(sessionId);
     }
+    this.runtimeEvents.forgetAttention(sessionIds);
+    return sessionStatuses;
   }
 
-  private statusOutcome(event: WireEvent): "completed" | "failed" | "aborted" {
-    const status = event.sessionStatus as
-      | Partial<SessionRuntimeStatus>
-      | undefined;
-    if (
-      event.type === "runtime_error" ||
-      status?.runState === "failed" ||
-      status?.runState === "conflict"
-    )
-      return "failed";
-    if (status?.runState === "aborted") return "aborted";
-    return "completed";
-  }
-
-  private compactionOutcome(
-    event: WireEvent,
-  ): "completed" | "failed" | "aborted" {
-    if (event.aborted === true) return "aborted";
-    if (typeof event.errorMessage === "string" && event.errorMessage.trim())
-      return "failed";
-    if (event.result === undefined || event.result === null) return "failed";
-    return this.statusOutcome(event);
-  }
-
-  private attendToOutcome(
-    sessionId: string,
-    outcome: "completed" | "failed" | "aborted",
-  ): void {
-    const foregroundOwner =
-      sessionId === this.state.sessionId && this.isForeground();
-    if (foregroundOwner || this.state.prefs.completionAttention === "off")
-      return;
-    // Desktop attention is progressive: the durable tab marker remains after
-    // the transient OS notification disappears or cannot be delivered.
-    this.titleAttention.add(sessionId);
-    this.publishTitleAttention();
-    if (this.state.prefs.completionAttention === "title") return;
-    if (this.state.prefs.completionAttention !== "desktop") return;
-    const NotificationApi =
-      typeof window !== "undefined" ? window.Notification : undefined;
-    if (!NotificationApi || NotificationApi.permission !== "granted") return;
-    const project = this.state.sessions.find(
-      (candidate) => candidate.id === sessionId,
-    )?.project;
-    const title =
-      outcome === "completed"
-        ? "Task completed"
-        : outcome === "aborted"
-          ? "Task aborted"
-          : "Task failed";
-    // A catalog title can be the first prompt. OS-visible fields therefore use
-    // only fixed copy, opaque session identity, and cwd-derived project data.
-    const body = project ? `Project: ${project}` : "Pi task";
-    try {
-      const notification = new NotificationApi(title, {
-        body,
-        tag: `inspire-task:${sessionId}:${outcome}`,
-      });
-      notification.onclick = () => {
-        window.focus();
-        if (this.state.sessionId !== sessionId)
-          void this.openSession(sessionId);
-        else this.acknowledgeVisibleSession();
-        notification.close();
-      };
-    } catch {
-      this.notify(
-        "warning",
-        "Desktop notifications are unavailable in this browser context",
-      );
-    }
-  }
+  acknowledgeVisibleSession = (): void =>
+    this.runtimeEvents.acknowledgeVisibleSession();
 
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
@@ -761,40 +409,52 @@ export class AppStore {
     this.catalog.invalidate();
   }
 
+  private invalidateTransportRequests(): void {
+    this.resyncRequest += 1;
+    this.transcriptData.invalidate();
+    this.pendingActionRequest += 1;
+    this.set({
+      loadingOlderMessages: false,
+      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
+        (range) =>
+          range.status === "loading"
+            ? { ...range, status: "idle", error: null }
+            : range,
+      ),
+      promptMapLoadingStarts: [],
+      promptMapNavigatingOrdinal: null,
+      deletingSessionId: null,
+      clearingHidden: false,
+      pendingAction: null,
+      extensionUiRespondingId: null,
+    });
+  }
+
   private handleAuthFailure(): void {
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the rejected token.
     this.connectionController.stop();
-    this.transportGeneration += 1;
+    const transportGeneration = ++this.transportGeneration;
+    this.bootstrapRequest?.abort();
+    this.bootstrapRequest = null;
     this.composer.invalidateForTransportReplacement();
+    this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
+    this.git.invalidateForTransportReplacement();
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
     this.invalidateSessionListRequests();
-    this.olderTranscriptRequest?.abort();
-    this.olderTranscriptRequest = null;
-    for (const request of this.activityTranscriptRequests.values())
-      request.abort();
-    this.activityTranscriptRequests.clear();
-    for (const request of this.userTurnIndexRequests.values()) request.abort();
-    this.userTurnIndexRequests.clear();
-    this.userTurnIndexPromises.clear();
-    this.userTurnTranscriptRequest?.abort();
-    this.userTurnTranscriptRequest = null;
-    this.attentionArms.clear();
+    this.invalidateTransportRequests();
+    this.runtimeEvents.clearLiveAttention();
     this.authToken = null;
+    this.api = null;
     this.set({
       needsToken: true,
+      transportGeneration,
       error: null,
       connection: "offline",
       connectionProblem: null,
-      loadingOlderMessages: false,
-      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-        (range) => ({ ...range, status: "idle", error: null }),
-      ),
-      promptMapLoadingStarts: [],
-      promptMapNavigatingOrdinal: null,
     });
   }
 
@@ -826,29 +486,47 @@ export class AppStore {
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
+    // Bootstrap defines a new transport generation immediately. Detach the
+    // preceding event stream now so it cannot mutate state while its successor
+    // is being authenticated and snapshotted.
+    this.connectionController.stop();
     const api = createApi(token);
     const generation = ++this.transportGeneration;
+    this.set({ transportGeneration: generation });
+    this.bootstrapRequest?.abort();
+    const bootstrapRequest = new AbortController();
+    this.bootstrapRequest = bootstrapRequest;
+    const bootstrapTimeout = setTimeout(
+      () => bootstrapRequest.abort(),
+      BOOTSTRAP_TIMEOUT_MS,
+    );
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
+    this.git.invalidateForTransportReplacement();
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
+    this.invalidateTransportRequests();
     this.authToken = token;
     this.api = api;
     this.invalidateSessionListRequests();
     const ownsBootstrap = (): boolean =>
       generation === this.transportGeneration && this.api === api;
+    const preferenceOwners = this.preferences.captureBootstrapOwners();
     try {
-      const boot = await api.bootstrap();
+      const boot = await api.bootstrap(bootstrapRequest.signal);
       if (!ownsBootstrap()) return;
-      this.confirmedPrefs = boot.preferences;
+      const preferences = this.preferences.reconcile(
+        boot.preferences,
+        preferenceOwners,
+      );
       configureToolPresentationRegistry(boot.toolPresentations);
       const staleInspireUpdate =
         this.state.availableUpdate !== null &&
         this.state.availableUpdate.currentVersion !== boot.version;
       this.set({
-        prefs: boot.preferences,
+        prefs: preferences,
         mock: boot.mock,
         version: boot.version,
         piVersion: boot.piVersion,
@@ -869,6 +547,7 @@ export class AppStore {
         connectionProblem: null,
       });
       this.applySnapshot(boot.snapshot);
+      void this.git.resumeAfterTransportReplacement();
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
@@ -884,7 +563,7 @@ export class AppStore {
         this.autoContinued = true;
         if (this.selectionIntentGeneration !== autoContinueIntent) return;
         if (
-          boot.preferences.launch === "continue" &&
+          preferences.launch === "continue" &&
           !this.state.sessionId &&
           !this.state.sessionSelectionPending
         ) {
@@ -908,6 +587,10 @@ export class AppStore {
         });
         this.connectionController.scheduleReconnect(token);
       }
+    } finally {
+      clearTimeout(bootstrapTimeout);
+      if (this.bootstrapRequest === bootstrapRequest)
+        this.bootstrapRequest = null;
     }
   }
 
@@ -964,17 +647,7 @@ export class AppStore {
       // against one branch lineage, not merely a session id. A same-view
       // compaction/rewrite invalidates them even when the owner ids survive.
       this.resources.invalidate();
-      this.olderTranscriptRequest?.abort();
-      this.olderTranscriptRequest = null;
-      for (const request of this.activityTranscriptRequests.values())
-        request.abort();
-      this.activityTranscriptRequests.clear();
-      for (const request of this.userTurnIndexRequests.values())
-        request.abort();
-      this.userTurnIndexRequests.clear();
-      this.userTurnIndexPromises.clear();
-      this.userTurnTranscriptRequest?.abort();
-      this.userTurnTranscriptRequest = null;
+      this.transcriptData.invalidate();
       if (sessionChanged) this.git.cancelAll();
     } else if (revisionChanged) {
       // Cancel observations owned by the old transcript generation. Keep the
@@ -1027,9 +700,7 @@ export class AppStore {
         ...newestMessages,
       ];
     }
-    this.settledKeys = new Set(
-      messages.map(messageKey).filter((key): key is string => key !== null),
-    );
+    this.runtimeEvents.replaceSettledMessages(messages);
     const projectionHealth = active?.projectionHealth ?? {
       status: "ok" as const,
     };
@@ -1048,7 +719,7 @@ export class AppStore {
     const sessionStatuses = snapshot.sessionStatuses ?? {};
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
-    this.reconcileAttentionArms(sessionStatuses);
+    this.runtimeEvents.reconcileAttentionArms(sessionStatuses);
     this.set({
       sessionId: active?.sessionId ?? null,
       sessionName: active?.sessionName ?? "",
@@ -1161,6 +832,7 @@ export class AppStore {
             branchTreeError: null,
             branchActionId: null,
             selectedResourceReference: null,
+            selectedResourceWorkspacePath: null,
             resourcePreview: null,
             gitStatus: null,
             gitStatusError: null,
@@ -1184,6 +856,7 @@ export class AppStore {
               branchActionId: null,
               fileBrowserView: "browse",
               selectedResourceReference: null,
+              selectedResourceWorkspacePath: null,
               resourcePreview: null,
               resourceAvailability: {},
               resourceWorkspacePaths: {},
@@ -1192,6 +865,7 @@ export class AppStore {
             ? {
                 fileBrowserView: "browse",
                 selectedResourceReference: null,
+                selectedResourceWorkspacePath: null,
                 resourcePreview: null,
                 resourceAvailability: {},
                 resourceWorkspacePaths: {},
@@ -1200,237 +874,9 @@ export class AppStore {
     });
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
-    if (nextSessionId && this.isForeground())
-      this.clearAttentionFor(nextSessionId);
+    if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
     if (sessionChanged && nextSessionId && this.git.hasVisibleSurface())
       void this.git.refreshStatus();
-  }
-
-  private eventSlice(): EventSlice {
-    const s = this.state;
-    return {
-      messages: s.messages,
-      streaming: s.streaming,
-      activeAssistantMessageKey: s.activeAssistantMessageKey,
-      runState: s.runState,
-      tools: s.tools,
-      retry: s.retry,
-      queue: s.queue,
-      extensionUiRequests: s.extensionUiRequests,
-      extensionUiRespondingId: s.extensionUiRespondingId,
-      extensionDisplays: s.extensionDisplays,
-      notices: s.notices,
-      statuses: s.statuses,
-      editorText: s.editorText,
-      windowTitle: s.windowTitle,
-      nextNoticeId: s.nextNoticeId,
-    };
-  }
-
-  private applyEvent(event: WireEvent): void {
-    if (event.type === "snapshot") {
-      if (event.data) {
-        // An authoritative push is the newest selection truth: invalidate any
-        // open/new response still in flight so it cannot overwrite this. The
-        // push also immediately releases the old opening marker; stale
-        // finally blocks are fenced by their operation owner.
-        this.selection.invalidateForReplacement();
-        const snapshot = event.data as ActiveSnapshot;
-        this.applySnapshot(snapshot);
-        if (snapshot.active?.sessionId)
-          this.ensureSessionVisible(snapshot.active.sessionId);
-      }
-      return;
-    }
-
-    // Every live event carries its authoritative per-session status; merge it
-    // into the map before any transcript routing.
-    const eventSessionId =
-      typeof event.sessionId === "string" ? event.sessionId : null;
-    if (eventSessionId) this.ensureSessionVisible(eventSessionId);
-    const priorRunState = eventSessionId
-      ? this.state.sessionStatuses[eventSessionId]?.runState
-      : undefined;
-    const sessionStatuses = this.mergeSessionStatus(
-      eventSessionId,
-      event.sessionStatus,
-    );
-    if (eventSessionId) {
-      if (event.type === "agent_start" || event.type === "auto_retry_start") {
-        this.armAttention(eventSessionId, "agent");
-      } else if (event.type === "compaction_start") {
-        const nestedInAgent =
-          this.hasAttentionArm(eventSessionId, "agent") ||
-          priorRunState === "running" ||
-          priorRunState === "retrying" ||
-          priorRunState === "queued";
-        if (event.reason === "manual" && !nestedInAgent)
-          this.armAttention(eventSessionId, "compaction");
-      } else if (event.type === "compaction_end") {
-        if (this.consumeAttentionArm(eventSessionId, "compaction")) {
-          this.attendToOutcome(eventSessionId, this.compactionOutcome(event));
-        }
-      } else if (event.type === "agent_settled") {
-        if (this.consumeAttentionArm(eventSessionId, "agent")) {
-          this.attendToOutcome(eventSessionId, this.statusOutcome(event));
-        }
-      } else if (event.type === "runtime_error") {
-        const armed =
-          this.consumeAttentionArm(eventSessionId, "agent") ||
-          this.consumeAttentionArm(eventSessionId, "compaction");
-        // Runtime death terminates every operation owned by this worker.
-        this.attentionArms.delete(eventSessionId);
-        if (armed) this.attendToOutcome(eventSessionId, "failed");
-      }
-    }
-
-    if (eventSessionId !== null && eventSessionId !== this.state.sessionId) {
-      // Background session: its message/tool/notice deltas must never enter
-      // the visible transcript and must not resync it. Only the status
-      // changes; a settle refreshes the list so folder/time ordering catches
-      // up. Unchanged statuses (token-level chatter) publish nothing.
-      if (sessionStatuses) this.set({ sessionStatuses });
-      if (
-        event.type === "runtime_ready" &&
-        eventSessionId === this.state.openingSessionId &&
-        this.openingOwner !== null
-      ) {
-        this.readyWhileOpening.set(eventSessionId, this.openingOwner);
-      }
-      if (event.type === "runtime_error")
-        this.readyWhileOpening.delete(eventSessionId);
-      if (event.type === "agent_settled") void this.refreshLoadedSessions();
-      return;
-    }
-
-    if (event.type === "tool_execution_end" && this.git.hasVisibleSurface()) {
-      void this.git.refreshStatus();
-    }
-
-    if (event.type === "session_projection_changed") {
-      const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
-      const health: ProjectionHealth =
-        rawHealth?.status === "error"
-          ? {
-              status: "error",
-              ...(typeof rawHealth.message === "string"
-                ? { message: rawHealth.message }
-                : {}),
-            }
-          : rawHealth?.status === "ok"
-            ? { status: "ok" }
-            : this.state.projectionHealth;
-      const conflict =
-        event.conflict === null
-          ? null
-          : event.conflict && typeof event.conflict === "object"
-            ? (event.conflict as ProjectionConflict)
-            : this.state.projectionConflict;
-      const projectionError =
-        conflict?.message ??
-        (health.status === "error"
-          ? (health.message ?? "Session projection failed")
-          : null);
-      const projectionSeverity =
-        projectionConflictSeverity(conflict) === "attention"
-          ? "warning"
-          : "error";
-      const clearedProjectionError =
-        !projectionError && this.state.error === this.state.projectionError;
-      this.set({
-        ...(sessionStatuses ? { sessionStatuses } : {}),
-        projectionHealth: health,
-        projectionConflict: conflict,
-        projectionError,
-        ...(projectionError
-          ? { error: projectionError, errorSeverity: projectionSeverity }
-          : clearedProjectionError
-            ? { error: null, errorSeverity: "error" }
-            : {}),
-      });
-      this.branches.markProjectionStale();
-      const revision =
-        typeof event.revision === "number" ? event.revision : undefined;
-      void this.resync(
-        eventSessionId ?? this.state.sessionId,
-        this.selectionGeneration,
-        revision,
-      );
-      return;
-    }
-
-    if (event.type === "session_projection_conflict") {
-      if (sessionStatuses) this.set({ sessionStatuses });
-      const conflict = event.conflict as ProjectionConflict | undefined;
-      if (typeof conflict?.message === "string") {
-        this.set({
-          projectionConflict: conflict,
-          projectionError: conflict.message,
-          runState: "conflict",
-          error: conflict.message,
-          errorSeverity:
-            projectionConflictSeverity(conflict) === "attention"
-              ? "warning"
-              : "error",
-        });
-      }
-      return;
-    }
-
-    // An unopened session is shown from its read-only Pi-file preview while
-    // extensions initialize off the critical path. Replace that preview with
-    // the worker's live state as soon as its own runtime becomes ready.
-    if (event.type === "runtime_ready") {
-      if (sessionStatuses) this.set({ sessionStatuses });
-      void this.resync(eventSessionId, this.selectionGeneration);
-      return;
-    }
-
-    const before = this.state.notices.length;
-    const { slice, settle, resync, changed } = reduceEvent(
-      this.eventSlice(),
-      this.settledKeys,
-      event,
-    );
-    for (const key of settle) this.settledKeys.add(key);
-    if (changed) {
-      this.set(sessionStatuses ? { ...slice, sessionStatuses } : slice);
-      for (const notice of slice.notices.slice(before)) {
-        this.noticeTimers.set(
-          notice.id,
-          setTimeout(() => this.dismissNotice(notice.id), NOTICE_TTL_MS),
-        );
-      }
-    } else if (sessionStatuses) {
-      this.set({ sessionStatuses });
-    }
-    if (resync)
-      void this.resync(
-        eventSessionId ?? this.state.sessionId,
-        this.selectionGeneration,
-      );
-  }
-
-  /** Merge an event's sessionStatus into the map; null when nothing changed. */
-  private mergeSessionStatus(
-    sessionId: string | null,
-    status: unknown,
-  ): Record<string, SessionRuntimeStatus> | null {
-    if (!sessionId || !status || typeof status !== "object") return null;
-    const record = status as Partial<SessionRuntimeStatus>;
-    if (typeof record.runState !== "string") return null;
-    const next: SessionRuntimeStatus = {
-      runState: record.runState as RunState,
-      ...(record.indicator ? { indicator: record.indicator } : {}),
-    };
-    const existing = this.state.sessionStatuses[sessionId];
-    if (
-      existing &&
-      existing.runState === next.runState &&
-      existing.indicator === next.indicator
-    )
-      return null;
-    return { ...this.state.sessionStatuses, [sessionId]: next };
   }
 
   /** Authoritative reconcile after stream settlement or reconnect. */
@@ -1440,14 +886,19 @@ export class AppStore {
     minimumRevision?: number,
     preserveAppendHistory = true,
   ): Promise<void> {
-    if (!this.api) return;
+    const api = this.api;
+    if (!api) return;
+    const transportGeneration = this.transportGeneration;
     const request = ++this.resyncRequest;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
     try {
-      const snapshot = await this.api.snapshot();
+      const snapshot = await api.snapshot();
       const snapshotSessionId = snapshot.active?.sessionId ?? null;
       const page = snapshot.active?.transcriptPage;
       if (
         request !== this.resyncRequest ||
+        !ownsTransport() ||
         this.state.sessionId !== expectedSessionId ||
         this.selectionGeneration !== expectedGeneration ||
         snapshotSessionId !== expectedSessionId ||
@@ -1463,6 +914,7 @@ export class AppStore {
         preserveAppendHistory ? "preserve" : "replace",
       );
     } catch (error) {
+      if (!ownsTransport() || request !== this.resyncRequest) return;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
@@ -1482,775 +934,34 @@ export class AppStore {
     }
   }
 
-  loadOlderMessages = async (): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const cursor = this.state.olderMessagesCursor;
-    const revision = this.state.transcriptRevision;
-    const viewId = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
-    const generation = this.selectionGeneration;
-    if (
-      !this.api ||
-      !sessionId ||
-      !cursor ||
-      !viewId ||
-      this.state.loadingOlderMessages
-    )
-      return false;
-    const request = new AbortController();
-    this.olderTranscriptRequest = request;
-    this.set({ loadingOlderMessages: true, olderMessagesError: null });
-    try {
-      const page = await this.api.olderTranscript(
-        sessionId,
-        cursor,
-        request.signal,
-      );
-      const pageLineageCompatible =
-        page.revision === revision ||
-        (page.revision > revision &&
-          (page.appendFromRevision ?? page.revision) <= revision);
-      const currentLineageCompatible =
-        this.state.transcriptRevision === revision ||
-        (this.state.transcriptRevision > revision &&
-          this.state.transcriptAppendFromRevision <= revision);
-      if (
-        this.state.sessionId !== sessionId ||
-        this.selectionGeneration !== generation ||
-        !currentLineageCompatible ||
-        this.state.transcriptViewId !== viewId ||
-        this.state.transcriptIncarnation !== incarnation ||
-        page.sessionId !== sessionId ||
-        !pageLineageCompatible ||
-        (page.viewId ?? viewId) !== viewId ||
-        (page.incarnation ?? incarnation) !== incarnation
-      )
-        return false;
-      const existing = new Set(
-        this.state.messages.map(
-          (message) => messageKey(message) ?? JSON.stringify(message),
-        ),
-      );
-      const older = page.messages.map(asMessage).filter((message) => {
-        const key = messageKey(message) ?? JSON.stringify(message);
-        if (existing.has(key)) return false;
-        existing.add(key);
-        return true;
-      });
-      for (const message of older) {
-        const key = messageKey(message);
-        if (key) this.settledKeys.add(key);
-      }
-      const existingRanges = new Set(
-        this.state.transcriptActivityRanges.map((range) => range.cursor),
-      );
-      const activityRanges = (page.activityRanges ?? [])
-        .filter((range) => !existingRanges.has(range.cursor))
-        .map((range) => ({
-          ...range,
-          status: "idle" as const,
-          error: null,
-        }));
-      this.set({
-        messages: [...older, ...this.state.messages],
-        transcriptActivityRanges: [
-          ...activityRanges,
-          ...this.state.transcriptActivityRanges,
-        ],
-        hasOlderMessages: page.hasOlder,
-        olderMessagesCursor: page.olderCursor,
-        olderMessagesError: null,
-        error: this.state.projectionError,
-      });
-      return true;
-    } catch (error) {
-      if (
-        request.signal.aborted ||
-        this.selectionGeneration !== generation ||
-        this.state.transcriptViewId !== viewId
-      ) {
-        return false;
-      }
-      if (error instanceof ApiError && error.status === 409) {
-        await this.resync(sessionId, generation, undefined, false);
-      } else if (error instanceof ApiError && error.status === 401) {
-        this.handleAuthFailure();
-      } else {
-        this.set({
-          olderMessagesError:
-            error instanceof Error
-              ? error.message
-              : "Failed to load earlier messages",
-          ...(this.state.projectionError
-            ? { error: this.state.projectionError }
-            : {}),
-        });
-      }
-      return false;
-    } finally {
-      if (this.olderTranscriptRequest === request)
-        this.olderTranscriptRequest = null;
-      if (
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === generation &&
-        this.state.transcriptViewId === viewId
-      )
-        this.set({ loadingOlderMessages: false });
-    }
-  };
+  loadOlderMessages = (): Promise<boolean> =>
+    this.transcriptData.loadOlderMessages();
 
-  loadComposerHistory = async (
+  loadComposerHistory = (
     sessionId: string,
     viewId: string,
     incarnation: string | null,
     effectiveLeafId: string | null,
-  ): Promise<ComposerHistoryEntry[] | null> => {
-    const api = this.api;
-    const generation = this.selectionGeneration;
-    const transportGeneration = this.transportGeneration;
-    const ownsScope = () =>
-      this.api === api &&
-      this.transportGeneration === transportGeneration &&
-      this.selectionGeneration === generation &&
-      this.state.sessionId === sessionId &&
-      this.state.transcriptViewId === viewId &&
-      this.state.transcriptIncarnation === incarnation &&
-      this.state.transcriptEffectiveLeafId === effectiveLeafId;
-    if (!api || !ownsScope()) return null;
+  ): Promise<ComposerHistoryEntry[] | null> =>
+    this.transcriptData.loadComposerHistory(
+      sessionId,
+      viewId,
+      incarnation,
+      effectiveLeafId,
+    );
 
-    try {
-      // A user append can shift newest-first offsets between bounded pages.
-      // Restart one read-only pass when its content identity changes.
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        let start = 0;
-        let historyId: string | null = null;
-        let total: number | null = null;
-        const entries: ComposerHistoryEntry[] = [];
-        let changed = false;
-        while (true) {
-          const page = await api.composerHistory(sessionId, start);
-          if (
-            !ownsScope() ||
-            page.sessionId !== sessionId ||
-            page.viewId !== viewId ||
-            (page.incarnation ?? null) !== incarnation ||
-            (page.effectiveLeafId ?? null) !== effectiveLeafId
-          )
-            return null;
-          if (
-            page.entries.some(
-              (entry) =>
-                typeof entry === "string" ||
-                (entry &&
-                  typeof entry === "object" &&
-                  typeof entry.text === "string" &&
-                  Array.isArray(entry.images) &&
-                  !Array.isArray(entry.files)),
-            )
-          ) {
-            throw new Error(
-              "The Host is still running the previous prompt-history interface; restart INSΠRE",
-            );
-          }
-          if (
-            page.start !== start ||
-            !Number.isSafeInteger(page.total) ||
-            page.total < 0 ||
-            page.total > MAX_COMPOSER_HISTORY_ENTRIES ||
-            entries.length + page.entries.length > page.total ||
-            page.entries.some(
-              (entry) =>
-                !entry ||
-                typeof entry !== "object" ||
-                typeof entry.text !== "string" ||
-                !Array.isArray(entry.images) ||
-                entry.images.some(
-                  (image) =>
-                    !image ||
-                    typeof image !== "object" ||
-                    !/^pi-embedded:\/\/\d+\/\d+$/.test(image.reference) ||
-                    typeof image.mimeType !== "string" ||
-                    !Number.isSafeInteger(image.size) ||
-                    image.size < 0,
-                ) ||
-                !Array.isArray(entry.files) ||
-                entry.files.some(
-                  (file) =>
-                    !file ||
-                    typeof file !== "object" ||
-                    !/^pi-file:\/\/\d+\/\d+$/.test(file.reference) ||
-                    typeof file.fileName !== "string" ||
-                    file.fileName.length === 0 ||
-                    (file.kind !== "attachment" && file.kind !== "project"),
-                ),
-            )
-          )
-            throw new Error("The Host returned invalid composer history");
-          if (historyId === null) {
-            historyId = page.historyId;
-            total = page.total;
-          } else if (page.historyId !== historyId || page.total !== total) {
-            changed = true;
-            break;
-          }
-          entries.push(...page.entries);
-          if (page.nextStart === null) {
-            if (entries.length !== page.total)
-              throw new Error("The Host returned incomplete composer history");
-            return entries;
-          }
-          if (
-            page.nextStart !== start + page.entries.length ||
-            page.nextStart <= start
-          )
-            throw new Error(
-              "The Host returned invalid composer history paging",
-            );
-          start = page.nextStart;
-        }
-        if (!changed) break;
-      }
-      return null;
-    } catch (error) {
-      if (!ownsScope()) return null;
-      if (error instanceof ApiError && error.status === 401) {
-        this.handleAuthFailure();
-      } else if (!(error instanceof ApiError && error.status === 409)) {
-        this.fail(
-          error instanceof Error
-            ? `Prompt history could not be loaded: ${error.message}`
-            : "Prompt history could not be loaded",
-          "warning",
-        );
-      }
-      return null;
-    }
-  };
+  loadPromptMapTurns = (start?: number): Promise<UserTurnAnchor[]> =>
+    this.transcriptData.loadPromptMapTurns(start);
 
-  loadPromptMapTurns = async (start?: number): Promise<UserTurnAnchor[]> => {
-    const sessionId = this.state.sessionId;
-    const revision = this.state.transcriptRevision;
-    const viewId = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
-    const generation = this.selectionGeneration;
-    if (!this.api || !sessionId || !viewId) return [];
-    if (start !== undefined) {
-      const cached = this.state.promptMapTurns.filter(
-        (turn) =>
-          turn.ordinal >= start && turn.ordinal < start + PROMPT_MAP_PAGE_SIZE,
-      );
-      if (
-        this.state.promptMapLoadedStarts.includes(start) &&
-        (cached.length === PROMPT_MAP_PAGE_SIZE ||
-          start + cached.length >= this.state.promptMapTotal)
-      )
-        return cached;
-    }
-    const requestKey = start === undefined ? "latest" : String(start);
-    const existingRequest = this.userTurnIndexPromises.get(requestKey);
-    if (existingRequest) return existingRequest;
-    const request = new AbortController();
-    this.userTurnIndexRequests.set(requestKey, request);
-    const loadingKey = start ?? -1;
-    if (!this.state.promptMapLoadingStarts.includes(loadingKey))
-      this.set({
-        promptMapLoadingStarts: [
-          ...this.state.promptMapLoadingStarts,
-          loadingKey,
-        ],
-        promptMapError: null,
-      });
-    let pending!: Promise<UserTurnAnchor[]>;
-    pending = (async (): Promise<UserTurnAnchor[]> => {
-      try {
-        const page = await this.api!.transcriptUserTurns(
-          sessionId,
-          start,
-          request.signal,
-        );
-        const pageLineageCompatible =
-          page.revision === revision ||
-          (page.revision > revision &&
-            (page.appendFromRevision ?? page.revision) <= revision);
-        const currentLineageCompatible =
-          this.state.transcriptRevision === revision ||
-          (this.state.transcriptRevision > revision &&
-            this.state.transcriptAppendFromRevision <= revision);
-        if (
-          request.signal.aborted ||
-          this.state.sessionId !== sessionId ||
-          this.selectionGeneration !== generation ||
-          !currentLineageCompatible ||
-          this.state.transcriptViewId !== viewId ||
-          this.state.transcriptIncarnation !== incarnation ||
-          page.sessionId !== sessionId ||
-          !pageLineageCompatible ||
-          page.viewId !== viewId ||
-          (page.incarnation ?? incarnation) !== incarnation
-        )
-          return [];
-        const byOrdinal = new Map(
-          this.state.promptMapTurns.map((turn) => [turn.ordinal, turn]),
-        );
-        for (const turn of page.turns) byOrdinal.set(turn.ordinal, turn);
-        const turns = [...byOrdinal.values()]
-          .filter((turn) => turn.ordinal < page.total)
-          .sort((left, right) => left.ordinal - right.ordinal);
-        this.set({
-          promptMapTurns: turns,
-          promptMapTotal: page.total,
-          promptMapLoadedStarts: [
-            ...new Set([...this.state.promptMapLoadedStarts, page.start]),
-          ].sort((left, right) => left - right),
-          promptMapError: null,
-        });
-        return page.turns;
-      } catch (error) {
-        if (
-          request.signal.aborted ||
-          this.selectionGeneration !== generation ||
-          this.state.transcriptViewId !== viewId
-        )
-          return [];
-        if (error instanceof ApiError && error.status === 409) {
-          await this.resync(sessionId, generation, undefined, false);
-        } else if (error instanceof ApiError && error.status === 401) {
-          this.handleAuthFailure();
-        } else {
-          this.set({
-            promptMapError:
-              error instanceof Error
-                ? error.message
-                : "Failed to load the user-turn outline",
-          });
-        }
-        return [];
-      } finally {
-        if (this.userTurnIndexRequests.get(requestKey) === request)
-          this.userTurnIndexRequests.delete(requestKey);
-        if (this.userTurnIndexPromises.get(requestKey) === pending)
-          this.userTurnIndexPromises.delete(requestKey);
-        if (
-          this.state.sessionId === sessionId &&
-          this.selectionGeneration === generation &&
-          this.state.transcriptViewId === viewId
-        )
-          this.set({
-            promptMapLoadingStarts: this.state.promptMapLoadingStarts.filter(
-              (value) => value !== loadingKey,
-            ),
-          });
-      }
-    })();
-    this.userTurnIndexPromises.set(requestKey, pending);
-    return pending;
-  };
+  navigatePromptMapTurn = (ordinal: number): Promise<boolean> =>
+    this.transcriptData.navigatePromptMapTurn(ordinal);
 
-  navigatePromptMapTurn = async (ordinal: number): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const revision = this.state.transcriptRevision;
-    const viewId = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
-    const generation = this.selectionGeneration;
-    if (
-      !this.api ||
-      !sessionId ||
-      !viewId ||
-      !Number.isSafeInteger(ordinal) ||
-      ordinal < 0 ||
-      ordinal >= this.state.promptMapTotal ||
-      this.state.promptMapNavigatingOrdinal !== null
-    )
-      return false;
-    this.set({ promptMapNavigatingOrdinal: ordinal, promptMapError: null });
-    let request: AbortController | null = null;
-    try {
-      let turn = this.state.promptMapTurns.find(
-        (candidate) => candidate.ordinal === ordinal,
-      );
-      if (!turn) {
-        const start =
-          Math.floor(ordinal / PROMPT_MAP_PAGE_SIZE) * PROMPT_MAP_PAGE_SIZE;
-        const page = await this.loadPromptMapTurns(start);
-        turn =
-          page.find((candidate) => candidate.ordinal === ordinal) ??
-          this.state.promptMapTurns.find(
-            (candidate) => candidate.ordinal === ordinal,
-          );
-      }
-      if (!turn) throw new Error("That user turn is no longer available");
-      if (
-        this.state.messages.some(
-          (message) =>
-            message.role === "user" && message.__inspireMessageId === turn!.id,
-        )
-      )
-        return true;
-
-      request = new AbortController();
-      this.userTurnTranscriptRequest?.abort();
-      this.userTurnTranscriptRequest = request;
-      const pages: UserTurnTranscriptPage[] = [];
-      const seenCursors = new Set<string>();
-      let continuationCursor: string | undefined;
-      do {
-        const page = await this.api.transcriptUserTurn(
-          sessionId,
-          turn.id,
-          continuationCursor,
-          request.signal,
-        );
-        const pageLineageCompatible =
-          page.revision === revision ||
-          (page.revision > revision &&
-            (page.appendFromRevision ?? page.revision) <= revision);
-        const currentLineageCompatible =
-          this.state.transcriptRevision === revision ||
-          (this.state.transcriptRevision > revision &&
-            this.state.transcriptAppendFromRevision <= revision);
-        if (
-          request.signal.aborted ||
-          this.state.sessionId !== sessionId ||
-          this.selectionGeneration !== generation ||
-          !currentLineageCompatible ||
-          this.state.transcriptViewId !== viewId ||
-          this.state.transcriptIncarnation !== incarnation ||
-          page.sessionId !== sessionId ||
-          !pageLineageCompatible ||
-          page.viewId !== viewId ||
-          (page.incarnation ?? incarnation) !== incarnation ||
-          page.targetMessageId !== turn.id
-        )
-          return false;
-        pages.push(page);
-        continuationCursor = page.continuationCursor ?? undefined;
-        if (continuationCursor) {
-          if (seenCursors.has(continuationCursor))
-            throw new Error("User-turn transcript cursor did not advance");
-          seenCursors.add(continuationCursor);
-        }
-      } while (continuationCursor);
-
-      const existing = new Set(
-        this.state.messages.map(
-          (message) => messageKey(message) ?? JSON.stringify(message),
-        ),
-      );
-      const incoming = pages
-        .flatMap((page) => page.messages)
-        .map(asMessage)
-        .filter((message) => {
-          const key = messageKey(message) ?? JSON.stringify(message);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        });
-      const messages = [...this.state.messages, ...incoming].sort(
-        (left, right) => {
-          const leftIndex = left.__inspireMessageIndex;
-          const rightIndex = right.__inspireMessageIndex;
-          if (leftIndex === undefined) return rightIndex === undefined ? 0 : 1;
-          if (rightIndex === undefined) return -1;
-          return leftIndex - rightIndex;
-        },
-      );
-      for (const message of incoming) {
-        const key = messageKey(message);
-        if (key) this.settledKeys.add(key);
-      }
-      const existingRanges = new Set(
-        this.state.transcriptActivityRanges.map((range) => range.cursor),
-      );
-      const activityRanges = pages
-        .flatMap((page) => page.activityRanges ?? [])
-        .filter((range) => {
-          if (existingRanges.has(range.cursor)) return false;
-          existingRanges.add(range.cursor);
-          return true;
-        })
-        .map((range) => ({
-          ...range,
-          status: "idle" as const,
-          error: null,
-        }));
-      const firstPage = pages[0]!;
-      const currentEarliest = this.state.messages.reduce(
-        (minimum, message) =>
-          message.__inspireMessageIndex === undefined
-            ? minimum
-            : Math.min(minimum, message.__inspireMessageIndex),
-        Number.POSITIVE_INFINITY,
-      );
-      const extendsEarlier = firstPage.rangeStart < currentEarliest;
-      this.set({
-        messages,
-        transcriptActivityRanges: [
-          ...this.state.transcriptActivityRanges,
-          ...activityRanges,
-        ],
-        ...(extendsEarlier
-          ? {
-              hasOlderMessages: firstPage.hasOlder,
-              olderMessagesCursor: firstPage.olderCursor,
-              olderMessagesError: null,
-            }
-          : {}),
-      });
-      return true;
-    } catch (error) {
-      if (
-        request?.signal.aborted ||
-        this.selectionGeneration !== generation ||
-        this.state.transcriptViewId !== viewId
-      )
-        return false;
-      if (error instanceof ApiError && error.status === 409) {
-        await this.resync(sessionId, generation, undefined, false);
-      } else if (error instanceof ApiError && error.status === 401) {
-        this.handleAuthFailure();
-      } else {
-        this.set({
-          promptMapError:
-            error instanceof Error
-              ? error.message
-              : "Failed to load that user turn",
-        });
-      }
-      return false;
-    } finally {
-      const ownsNavigation = request
-        ? this.userTurnTranscriptRequest === request
-        : this.state.promptMapNavigatingOrdinal === ordinal;
-      if (ownsNavigation) {
-        if (request) this.userTurnTranscriptRequest = null;
-        if (
-          this.state.sessionId === sessionId &&
-          this.selectionGeneration === generation &&
-          this.state.transcriptViewId === viewId
-        )
-          this.set({ promptMapNavigatingOrdinal: null });
-      }
-    }
-  };
-
-  materializeActivityRanges = async (
+  materializeActivityRanges = (
     cursors: readonly string[],
     beforeCommit?: () => void,
     mode: ActivityMaterializationMode = "all",
-  ): Promise<void> => {
-    const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
-    const generation = this.selectionGeneration;
-    if (!this.api || !sessionId || !viewId) return;
-    const requested = this.state.transcriptActivityRanges.filter(
-      (range) => cursors.includes(range.cursor) && range.status !== "loading",
-    );
-    if (requested.length === 0) return;
-    this.set({
-      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-        (range) =>
-          requested.some((candidate) => candidate.cursor === range.cursor)
-            ? { ...range, status: "loading", error: null }
-            : range,
-      ),
-    });
-
-    const results = await Promise.all(
-      requested.map(async (range) => {
-        const request = new AbortController();
-        this.activityTranscriptRequests.set(range.cursor, request);
-        const pages: ChatMessage[][] = [];
-        const seenCursors = new Set<string>();
-        let cursor: string | null = range.cursor;
-        let received = 0;
-        let hasMore = false;
-        try {
-          while (cursor) {
-            if (seenCursors.has(cursor))
-              throw new Error("Deferred activity cursor did not advance");
-            seenCursors.add(cursor);
-            const page = await this.api!.transcriptActivity(
-              sessionId,
-              cursor,
-              request.signal,
-            );
-            if (
-              page.sessionId !== sessionId ||
-              page.viewId !== viewId ||
-              (page.incarnation !== undefined &&
-                page.incarnation !== incarnation)
-            )
-              throw new Error("Deferred activity belongs to another view");
-            const messages = page.messages.map(asMessage);
-            if (messages.length === 0 && page.hasMore)
-              throw new Error("Deferred activity page made no progress");
-            received += messages.length;
-            if (received > range.messageCount)
-              throw new Error("Deferred activity exceeded its declared range");
-            pages.unshift(messages);
-            hasMore = page.hasMore;
-            cursor = page.hasMore ? page.cursor : null;
-            if (page.hasMore && !cursor)
-              throw new Error("Deferred activity continuation is missing");
-            if (mode === "tail") break;
-          }
-          const remaining = range.messageCount - received;
-          if (mode === "all" && remaining !== 0)
-            throw new Error("Deferred activity range is incomplete");
-          if (mode === "tail" && hasMore !== remaining > 0)
-            throw new Error("Deferred activity continuation is inconsistent");
-          const remainder =
-            mode === "tail" && hasMore && cursor
-              ? {
-                  ...range,
-                  cursor,
-                  messageCount: remaining,
-                  status: "idle" as const,
-                  error: null,
-                }
-              : null;
-          return {
-            range,
-            messages: pages.flat(),
-            remainder,
-            error: null,
-          };
-        } catch (error) {
-          return {
-            range,
-            messages: [] as ChatMessage[],
-            remainder: null,
-            error,
-          };
-        } finally {
-          if (this.activityTranscriptRequests.get(range.cursor) === request)
-            this.activityTranscriptRequests.delete(range.cursor);
-        }
-      }),
-    );
-
-    if (
-      this.state.sessionId !== sessionId ||
-      this.selectionGeneration !== generation ||
-      this.state.transcriptIncarnation !== incarnation ||
-      this.state.transcriptViewId !== viewId
-    )
-      return;
-    const conflict = results.find(
-      (result) =>
-        result.error instanceof ApiError && result.error.status === 409,
-    );
-    if (conflict) {
-      const message =
-        conflict.error instanceof Error
-          ? conflict.error.message
-          : "Deferred activity became stale";
-      this.set({
-        transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-          (range) =>
-            requested.some((candidate) => candidate.cursor === range.cursor)
-              ? { ...range, status: "error", error: message }
-              : range,
-        ),
-      });
-      await this.resync(sessionId, generation, undefined, false);
-      return;
-    }
-    if (
-      results.some(
-        (result) =>
-          result.error instanceof ApiError && result.error.status === 401,
-      )
-    ) {
-      this.set({
-        transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-          (range) =>
-            requested.some((candidate) => candidate.cursor === range.cursor)
-              ? { ...range, status: "idle", error: null }
-              : range,
-        ),
-      });
-      this.handleAuthFailure();
-      return;
-    }
-
-    const nextMessages = [...this.state.messages];
-    const completed = new Set<string>();
-    const remainders = new Map<string, TranscriptActivityRangeState>();
-    const failures = new Map<string, string>();
-    const existing = new Set(
-      nextMessages.map(
-        (message) => messageKey(message) ?? JSON.stringify(message),
-      ),
-    );
-    for (const result of results) {
-      if (result.error) {
-        if (
-          !(
-            result.error instanceof DOMException &&
-            result.error.name === "AbortError"
-          )
-        )
-          failures.set(
-            result.range.cursor,
-            result.error instanceof Error
-              ? result.error.message
-              : "Failed to load deferred activity",
-          );
-        continue;
-      }
-      const insertAt =
-        result.range.afterMessageId === null
-          ? 0
-          : nextMessages.findIndex(
-              (message) =>
-                message.__inspireMessageId === result.range.afterMessageId,
-            ) + 1;
-      if (insertAt === 0 && result.range.afterMessageId !== null) {
-        failures.set(
-          result.range.cursor,
-          "Deferred activity anchor is no longer available",
-        );
-        continue;
-      }
-      const materialized = result.messages
-        .filter((message) => {
-          const key = messageKey(message) ?? JSON.stringify(message);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        })
-        .map((message) => ({
-          ...message,
-          __inspireActivityRangeCursor: result.range.cursor,
-        }));
-      nextMessages.splice(insertAt, 0, ...materialized);
-      for (const message of materialized) {
-        const key = messageKey(message);
-        if (key) this.settledKeys.add(key);
-      }
-      completed.add(result.range.cursor);
-      if (result.remainder)
-        remainders.set(result.range.cursor, result.remainder);
-    }
-    beforeCommit?.();
-    this.set({
-      messages: nextMessages,
-      transcriptActivityRanges: this.state.transcriptActivityRanges.flatMap(
-        (range) => {
-          const remainder = remainders.get(range.cursor);
-          if (remainder) return [remainder];
-          if (completed.has(range.cursor)) return [];
-          const error = failures.get(range.cursor);
-          if (error) return [{ ...range, status: "error" as const, error }];
-          if (requested.some((candidate) => candidate.cursor === range.cursor))
-            return [{ ...range, status: "idle" as const, error: null }];
-          return [range];
-        },
-      ),
-    });
-  };
+  ): Promise<void> =>
+    this.transcriptData.materializeActivityRanges(cursors, beforeCommit, mode);
 
   // --- Connection lifecycle ---
 
@@ -2297,256 +1008,21 @@ export class AppStore {
     nameOrOptions: string | NewSessionOptions = {},
   ): Promise<string | null> => this.selection.create(cwd, nameOrOptions);
 
-  renameSession = async (sessionId: string, name: string): Promise<boolean> => {
-    if (!this.api || !sessionId || !name.trim()) return false;
-    const trimmedName = name.trim();
-    try {
-      await this.api.renameSession(sessionId, trimmedName);
-      // The response may return after a session switch; only the owning
-      // session's visible title updates.
-      if (this.state.sessionId === sessionId)
-        this.set({ sessionName: trimmedName });
-      void this.refreshLoadedSessions();
-      return true;
-    } catch (error) {
-      // A background rename must not surface its failure over another visible
-      // session. The caller still receives false for its owning editor.
-      if (this.state.sessionId === sessionId) {
-        this.notify(
-          "warning",
-          error instanceof Error ? error.message : "Failed to rename session",
-        );
-      }
-      return false;
-    }
-  };
+  renameSession = (sessionId: string, name: string): Promise<boolean> =>
+    this.sessionManagement.renameSession(sessionId, name);
 
-  clearSessionDeleteError = (): void => this.set({ sessionDeleteError: null });
+  clearSessionDeleteError = (): void =>
+    this.sessionManagement.clearSessionDeleteError();
 
-  private forgetDeletedSessions(
-    sessionIds: ReadonlySet<string>,
-  ): AppState["sessionStatuses"] {
-    const sessionStatuses = { ...this.state.sessionStatuses };
-    for (const sessionId of sessionIds) {
-      this.catalog.remove(sessionId);
-      this.attentionArms.delete(sessionId);
-      this.titleAttention.delete(sessionId);
-      delete sessionStatuses[sessionId];
-      this.discardSessionComposer(sessionId);
-    }
-    this.publishTitleAttention();
-    return sessionStatuses;
-  }
-
-  private preferencesWithoutSessions(
-    sessionIds: ReadonlySet<string>,
-  ): InspirePreferences {
-    return {
-      ...this.state.prefs,
-      pinnedSessionIds: this.state.prefs.pinnedSessionIds.filter(
-        (id) => !sessionIds.has(id),
-      ),
-      hiddenSessionIds: this.state.prefs.hiddenSessionIds.filter(
-        (id) => !sessionIds.has(id),
-      ),
-    };
-  }
-
-  deleteSession = async (
+  deleteSession = (
     sessionId: string,
-  ): Promise<SessionDeleteDisposition | null> => {
-    const session = this.state.sessions.find(
-      (candidate) => candidate.id === sessionId,
-    );
-    const hidden =
-      this.state.prefs.hiddenSessionIds.includes(sessionId) ||
-      (session !== undefined &&
-        this.state.prefs.hiddenProjectCwds.includes(session.cwd));
-    if (
-      !this.api ||
-      this.state.deletingSessionId ||
-      this.state.clearingHidden ||
-      sessionId === this.state.sessionId ||
-      !hidden
-    )
-      return null;
-    const preserveQuery = this.state.sessionQuery;
-    const preserveOffset = this.state.sessionListNextOffset;
-    const preserveTotal = this.state.sessionListTotal;
-    this.set({ deletingSessionId: sessionId, sessionDeleteError: null });
-    try {
-      // Hiding is an optimistic preference write. Fence it before DELETE so a
-      // late PATCH cannot resurrect the deleted id in durable navigation data.
-      await this.prefsWrites;
-      const current = this.state.sessions.find(
-        (candidate) => candidate.id === sessionId,
-      );
-      const stillHidden =
-        this.state.prefs.hiddenSessionIds.includes(sessionId) ||
-        (current !== undefined &&
-          this.state.prefs.hiddenProjectCwds.includes(current.cwd));
-      if (!stillHidden) {
-        this.set({
-          sessionDeleteError:
-            "The session must remain in Hidden before it can be deleted",
-        });
-        return null;
-      }
-      const preferenceOwners = new Map(this.preferenceFieldOwners);
-      const result = await this.api.deleteSession(sessionId);
-      const deleted = new Set([sessionId]);
-      const sessionStatuses = this.forgetDeletedSessions(deleted);
-      const prefs = result.preferences
-        ? this.reconcilePreferenceSnapshot(result.preferences, preferenceOwners)
-        : this.preferencesWithoutSessions(deleted);
-      this.set({ prefs, sessionStatuses });
-      this.notify(
-        "info",
-        result.disposition === "trashed"
-          ? "Session moved to Trash"
-          : "Session permanently deleted",
-      );
-      if (result.preferenceCleanupFailed) {
-        this.notify(
-          "warning",
-          "Session was deleted, but its navigation metadata could not be saved",
-        );
-      }
-      // Rebuild the already-consumed chronological extent under one fresh
-      // generation. The optimistic row removal keeps the destructive result
-      // immediate while offset-based pagination is repaired authoritatively.
-      void this.preserveLoadedSessions(
-        preserveQuery,
-        preserveOffset,
-        preserveTotal,
-      );
-      return result.disposition;
-    } catch (error) {
-      this.set({
-        sessionDeleteError:
-          error instanceof Error ? error.message : "Failed to delete session",
-      });
-      return null;
-    } finally {
-      if (this.state.deletingSessionId === sessionId)
-        this.set({ deletingSessionId: null });
-    }
-  };
+  ): Promise<SessionDeleteDisposition | null> =>
+    this.sessionManagement.deleteSession(sessionId);
 
-  clearHiddenSessions = async (
+  clearHiddenSessions = (
     sessionIds: string[],
-  ): Promise<HiddenClearResponse | null> => {
-    if (
-      !this.api ||
-      sessionIds.length === 0 ||
-      this.state.deletingSessionId ||
-      this.state.clearingHidden ||
-      this.state.sessionQuery.trim() ||
-      this.state.sessionListLoading ||
-      this.state.sessionListLoadingOlder ||
-      this.state.sessionListHydrating ||
-      this.state.sessionListError
-    )
-      return null;
-    const preserveQuery = this.state.sessionQuery;
-    const preserveOffset = this.state.sessionListNextOffset;
-    const preserveTotal = this.state.sessionListTotal;
-    this.set({ clearingHidden: true, sessionDeleteError: null });
-    try {
-      // Hiding is optimistic. Fence every outstanding curation write before
-      // confirming that the reviewed ids still represent the complete Hidden
-      // selection sent to the host.
-      await this.prefsWrites;
-      const hiddenSessionIds = [...this.state.prefs.hiddenSessionIds];
-      const hiddenProjectCwds = [...this.state.prefs.hiddenProjectCwds];
-      const individualIds = new Set(hiddenSessionIds);
-      const projectCwds = new Set(hiddenProjectCwds);
-      const currentIds = this.state.sessions
-        .filter(
-          (session) =>
-            individualIds.has(session.id) || projectCwds.has(session.cwd),
-        )
-        .map((session) => session.id);
-      const reviewed = new Set(sessionIds);
-      if (
-        reviewed.size !== sessionIds.length ||
-        currentIds.length !== reviewed.size ||
-        currentIds.some((sessionId) => !reviewed.has(sessionId))
-      ) {
-        this.set({
-          sessionDeleteError: "Hidden changed; review it before clearing",
-        });
-        return null;
-      }
-
-      const preferenceOwners = new Map(this.preferenceFieldOwners);
-      const result = await this.api.clearHiddenSessions(sessionIds);
-      const deleted = new Set(
-        result.deleted.map((session) => session.sessionId),
-      );
-      const sessionStatuses = this.forgetDeletedSessions(deleted);
-      const remainingPrefs = this.preferencesWithoutSessions(deleted);
-      const fallbackPrefs = result.failure
-        ? remainingPrefs
-        : {
-            ...remainingPrefs,
-            hiddenSessionIds: remainingPrefs.hiddenSessionIds.filter(
-              (sessionId) => !individualIds.has(sessionId),
-            ),
-            pinnedProjectCwds: remainingPrefs.pinnedProjectCwds.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-            hiddenProjectCwds: remainingPrefs.hiddenProjectCwds.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-            navCollapsedGroups: remainingPrefs.navCollapsedGroups.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-          };
-      const prefs = result.preferences
-        ? this.reconcilePreferenceSnapshot(result.preferences, preferenceOwners)
-        : fallbackPrefs;
-      this.set({ prefs, sessionStatuses });
-
-      if (result.deleted.length > 0) {
-        const count = result.deleted.length;
-        const allTrashed = result.deleted.every(
-          (session) => session.disposition === "trashed",
-        );
-        this.notify(
-          "info",
-          allTrashed
-            ? `${count} ${count === 1 ? "session" : "sessions"} moved to Trash`
-            : `${count} ${count === 1 ? "session" : "sessions"} deleted`,
-        );
-        void this.preserveLoadedSessions(
-          preserveQuery,
-          preserveOffset,
-          preserveTotal,
-        );
-      }
-      if (result.preferenceCleanupFailed) {
-        this.notify(
-          "warning",
-          "Sessions were deleted, but their navigation metadata could not be saved",
-        );
-      }
-      if (result.failure) {
-        this.set({
-          sessionDeleteError: `Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "session" : "sessions"}; stopped at ${result.failure.sessionId}: ${result.failure.message}`,
-        });
-      }
-      return result;
-    } catch (error) {
-      this.set({
-        sessionDeleteError:
-          error instanceof Error ? error.message : "Failed to clear Hidden",
-      });
-      return null;
-    } finally {
-      this.set({ clearingHidden: false });
-    }
-  };
+  ): Promise<HiddenClearResponse | null> =>
+    this.sessionManagement.clearHiddenSessions(sessionIds);
 
   // --- Prompting ---
 
@@ -2561,19 +1037,30 @@ export class AppStore {
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId) return;
     try {
-      await this.api.abort(sessionId);
+      await api.abort(sessionId);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : "Failed to abort");
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.fail(error instanceof Error ? error.message : "Failed to abort");
     }
   };
 
   managePending = async (action: PendingManagementIntent): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const pending = this.state.queue;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
     if (
-      !this.api ||
+      !api ||
       !sessionId ||
       this.state.pendingAction ||
       !pending.managementAvailable
@@ -2585,10 +1072,12 @@ export class AppStore {
     const expectedRevision = pending.revision;
     this.set({ pendingAction: action.action });
     try {
-      const response = await this.api.managePending(sessionId, {
+      const response = await api.managePending(sessionId, {
         ...action,
         expectedRevision,
       } as PendingManagementAction);
+      if (!ownsTransport() || request !== this.pendingActionRequest)
+        return false;
       if (
         this.state.sessionId === sessionId &&
         this.state.transcriptIncarnation === projectionIncarnation &&
@@ -2598,14 +1087,19 @@ export class AppStore {
       }
       return true;
     } catch (error) {
-      this.fail(
-        error instanceof Error
-          ? error.message
-          : "Failed to update Pending messages",
-      );
+      if (!ownsTransport() || request !== this.pendingActionRequest)
+        return false;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.fail(
+          error instanceof Error
+            ? error.message
+            : "Failed to update Pending messages",
+        );
       return false;
     } finally {
-      if (request === this.pendingActionRequest)
+      if (ownsTransport() && request === this.pendingActionRequest)
         this.set({ pendingAction: null });
     }
   };
@@ -2615,12 +1109,17 @@ export class AppStore {
   ): Promise<string[] | null> => {
     const sessionId = this.state.sessionId;
     const projectionIncarnation = this.state.transcriptIncarnation;
-    if (!this.api || !sessionId || messageIds.length === 0) return null;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
+    if (!api || !sessionId || messageIds.length === 0) return null;
     try {
-      const response = await this.api.pendingMessageTexts(sessionId, [
+      const response = await api.pendingMessageTexts(sessionId, [
         ...messageIds,
       ]);
       if (
+        !ownsTransport() ||
         this.state.sessionId !== sessionId ||
         this.state.transcriptIncarnation !== projectionIncarnation
       ) {
@@ -2636,61 +1135,83 @@ export class AppStore {
       }
       return response.messages.map((message) => message.text);
     } catch (error) {
-      this.fail(
-        error instanceof Error
-          ? error.message
-          : "Failed to copy the Pending messages",
-      );
+      if (!ownsTransport()) return null;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.fail(
+          error instanceof Error
+            ? error.message
+            : "Failed to copy the Pending messages",
+        );
       return null;
     }
   };
 
   private rememberModel(model: ModelIdentity): void {
-    const recentModelIds = [
-      model,
-      ...this.state.prefs.recentModelIds.filter(
-        (candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model),
-      ),
-    ].slice(0, 8);
-    this.savePrefs({ recentModelIds });
+    this.preferences.rememberModel(model);
   }
 
   setModel = async (provider: string, modelId: string): Promise<void> => {
     const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
+    if (!api || !sessionId) return;
     try {
-      await this.api.setModel(sessionId, provider, modelId);
+      await api.setModel(sessionId, provider, modelId);
+      if (!ownsTransport()) return;
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
       this.rememberModel({ provider, id: modelId });
       await this.resync(sessionId, this.selectionGeneration);
     } catch (error) {
-      this.notify(
-        "warning",
-        error instanceof Error ? error.message : "Failed to set model",
-      );
+      if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error ? error.message : "Failed to set model",
+        );
     }
   };
 
   setThinkingLevel = async (level: string): Promise<void> => {
     const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
+    if (!api || !sessionId) return;
     const previous = this.state.thinkingLevel;
+    const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevel: level });
     try {
-      await this.api.setThinkingLevel(sessionId, level);
+      await api.setThinkingLevel(sessionId, level);
     } catch (error) {
-      // Truthful control: a rejected change cannot leave the UI claiming it —
-      // but only roll back if that session is still visible. After a switch
-      // the visible level belongs to another session and must stay untouched.
-      if (this.state.sessionId === sessionId) {
+      if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+        return;
+      }
+      // An older failure cannot undo a newer click. If the latest request was
+      // refused, restore its immediate predecessor and reconcile in case that
+      // predecessor was itself only an optimistic request that later failed.
+      if (
+        request === this.thinkingLevelRequest &&
+        this.state.sessionId === sessionId
+      ) {
         this.set({ thinkingLevel: previous });
         void this.resync();
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to set thinking level",
+        );
       }
-      this.notify(
-        "warning",
-        error instanceof Error ? error.message : "Failed to set thinking level",
-      );
     }
   };
 
@@ -2790,16 +1311,20 @@ export class AppStore {
   respondExtensionUi = async (
     payload: Record<string, unknown>,
   ): Promise<void> => {
-    if (!this.api || this.state.extensionUiRespondingId) return;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
+    if (!api || this.state.extensionUiRespondingId) return;
     const request = this.state.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return;
     this.set({ extensionUiRespondingId: request.id });
     try {
-      await this.api.respondExtensionUi({
+      await api.respondExtensionUi({
         ...payload,
         sessionId: request.sessionId,
       });
-      if (this.state.sessionId === request.sessionId) {
+      if (ownsTransport() && this.state.sessionId === request.sessionId) {
         this.set({
           extensionUiRequests: this.state.extensionUiRequests.filter(
             (candidate) => candidate.id !== request.id,
@@ -2807,6 +1332,11 @@ export class AppStore {
         });
       }
     } catch (error) {
+      if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+        return;
+      }
       // Expiry, settle, replacement, or a successful duplicate response may
       // remove the owning request before the HTTP result arrives. That stale
       // completion must not turn a later dialog into a global error.
@@ -2823,7 +1353,7 @@ export class AppStore {
         );
       }
     } finally {
-      if (this.state.extensionUiRespondingId === request.id)
+      if (ownsTransport() && this.state.extensionUiRespondingId === request.id)
         this.set({ extensionUiRespondingId: null });
     }
   };
@@ -2848,323 +1378,40 @@ export class AppStore {
 
   // --- Preferences ---
 
-  /** Preference writes queue behind one another so field patches reach the
-   * host in the order the user made them; each patch carries only its own
-   * fields, so out-of-order arrival can no longer resurrect stale values. */
-  private prefsWrites: Promise<unknown> = Promise.resolve();
-  private preferenceWriteSequence = 0;
-  /** Each field is owned by its newest optimistic write even when a later
-   * value happens to equal an older one. */
-  private preferenceFieldOwners = new Map<keyof InspirePreferences, number>();
-  private completionAttentionRequest = 0;
-  /** The last preferences the host confirmed. Rollback restores from here
-   * rather than from whatever was on screen when a write started: with two
-   * refused writes in a row, that earlier screen value was itself never
-   * persisted, and restoring it would show a preference no reload can keep. */
-  private confirmedPrefs: InspirePreferences = defaultPreferences;
-
-  private reconcilePreferenceSnapshot(
-    authoritative: InspirePreferences,
-    baselineOwners: ReadonlyMap<keyof InspirePreferences, number>,
-  ): InspirePreferences {
-    const visible = { ...authoritative };
-    const confirmed = { ...authoritative };
-    for (const field of Object.keys(authoritative) as Array<
-      keyof InspirePreferences
-    >) {
-      if (this.preferenceFieldOwners.get(field) === baselineOwners.get(field))
-        continue;
-      Object.assign(visible, { [field]: this.state.prefs[field] });
-      Object.assign(confirmed, { [field]: this.confirmedPrefs[field] });
-    }
-    this.confirmedPrefs = confirmed;
-    return visible;
-  }
-
-  private curationMutationBlocked(): boolean {
-    return Boolean(this.state.deletingSessionId || this.state.clearingHidden);
-  }
-
-  private isCurationPatch(patch: Partial<InspirePreferences>): boolean {
-    return (
-      "pinnedSessionIds" in patch ||
-      "hiddenSessionIds" in patch ||
-      "pinnedProjectCwds" in patch ||
-      "hiddenProjectCwds" in patch
-    );
-  }
-
-  private curationIds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
-  }
-
-  private curationProjectCwds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedProjectCwds, ...prefs.hiddenProjectCwds]);
-  }
-
-  private curationNeedsHydration(
-    previous: InspirePreferences,
-    previousConfirmed: InspirePreferences,
-    next: InspirePreferences,
-    nextConfirmed: InspirePreferences,
-  ): boolean {
-    const previousIds = new Set([
-      ...this.curationIds(previous),
-      ...this.curationIds(previousConfirmed),
-    ]);
-    const nextIds = new Set([
-      ...this.curationIds(next),
-      ...this.curationIds(nextConfirmed),
-    ]);
-    const loadedIds = new Set(this.state.sessions.map((session) => session.id));
-    for (const id of nextIds) {
-      if (!previousIds.has(id) && !loadedIds.has(id)) return true;
-    }
-    const previousCwds = new Set([
-      ...this.curationProjectCwds(previous),
-      ...this.curationProjectCwds(previousConfirmed),
-    ]);
-    const nextCwds = new Set([
-      ...this.curationProjectCwds(next),
-      ...this.curationProjectCwds(nextConfirmed),
-    ]);
-    for (const cwd of nextCwds) {
-      if (!previousCwds.has(cwd)) return true;
-    }
-    return false;
-  }
-
-  private curationChanged(hydrate: boolean): void {
-    this.catalog.reconcileCuration();
-    if (hydrate) void this.catalog.hydrateCuration();
-  }
-
-  private savePrefs(patch: Partial<InspirePreferences>): void {
-    const fields = Object.keys(patch) as Array<keyof InspirePreferences>;
-    const owner = ++this.preferenceWriteSequence;
-    for (const field of fields) this.preferenceFieldOwners.set(field, owner);
-    const curationPatch = this.isCurationPatch(patch);
-    const previousPrefs = this.state.prefs;
-    const nextPrefs = { ...previousPrefs, ...patch };
-    const hydrateCuration =
-      curationPatch &&
-      this.curationNeedsHydration(
-        previousPrefs,
-        this.confirmedPrefs,
-        nextPrefs,
-        this.confirmedPrefs,
-      );
-    this.set({ prefs: nextPrefs });
-    if (curationPatch) this.curationChanged(hydrateCuration);
-    this.prefsWrites = this.prefsWrites
-      .then(async () => {
-        if (!this.api) return;
-        await this.api.savePreferences(patch);
-        const previousConfirmed = this.confirmedPrefs;
-        const nextConfirmed = { ...previousConfirmed, ...patch };
-        const hydrateConfirmedCuration =
-          curationPatch &&
-          this.curationNeedsHydration(
-            this.state.prefs,
-            previousConfirmed,
-            this.state.prefs,
-            nextConfirmed,
-          );
-        this.confirmedPrefs = nextConfirmed;
-        if (curationPatch) this.curationChanged(hydrateConfirmedCuration);
-      })
-      .catch((error: unknown) => {
-        // Truthful control: a refused write cannot leave a control claiming
-        // its change. Only fields still owned by this write roll back —
-        // equality is insufficient because a newer edit may cycle back to the
-        // same value.
-        const stale = fields.filter(
-          (field) => this.preferenceFieldOwners.get(field) === owner,
-        );
-        const previousPrefs = this.state.prefs;
-        if (stale.length > 0) {
-          const restored = Object.fromEntries(
-            stale.map((field) => [field, this.confirmedPrefs[field]]),
-          ) as Partial<InspirePreferences>;
-          this.set({ prefs: { ...this.state.prefs, ...restored } });
-        }
-        if (curationPatch) {
-          const hydrateRestoredCuration = this.curationNeedsHydration(
-            previousPrefs,
-            this.confirmedPrefs,
-            this.state.prefs,
-            this.confirmedPrefs,
-          );
-          this.curationChanged(hydrateRestoredCuration);
-        }
-        this.notify(
-          "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to save the preference",
-        );
-      });
-  }
-
-  setTheme = (theme: ThemePreference): void => this.savePrefs({ theme });
-  setPalette = (palette: PalettePreference): void =>
-    this.savePrefs({ palette });
-  setContentTextSize = (contentTextSize: ContentTextSizePreference): void =>
-    this.savePrefs({ contentTextSize });
-  setReadingWidth = (readingWidth: ReadingWidthPreference): void =>
-    this.savePrefs({ readingWidth });
-  setLaunch = (launch: LaunchPreference): void => this.savePrefs({ launch });
-  setDesktopSendKey = (desktopSendKey: DesktopSendKeyPreference): void =>
-    this.savePrefs({ desktopSendKey });
-  setCompletionAttention = async (
-    completionAttention: CompletionAttentionPreference,
-  ): Promise<boolean> => {
-    const request = ++this.completionAttentionRequest;
-    if (completionAttention === "desktop") {
-      const NotificationApi =
-        typeof window !== "undefined" ? window.Notification : undefined;
-      if (!NotificationApi) {
-        this.notify(
-          "warning",
-          "Desktop notifications are not supported by this browser",
-        );
-        return false;
-      }
-      let permission = NotificationApi.permission;
-      if (permission !== "granted") {
-        try {
-          // This method is called directly from the Settings selection gesture;
-          // never request permission during bootstrap or background events.
-          permission = await NotificationApi.requestPermission();
-        } catch {
-          if (request !== this.completionAttentionRequest) return false;
-          this.notify(
-            "warning",
-            "The browser could not request notification permission",
-          );
-          return false;
-        }
-      }
-      if (request !== this.completionAttentionRequest) return false;
-      if (permission !== "granted") {
-        this.notify(
-          "warning",
-          permission === "denied"
-            ? "Desktop notification permission was denied"
-            : "Desktop notification permission was not granted",
-        );
-        return false;
-      }
-    }
-    if (request !== this.completionAttentionRequest) return false;
-    if (completionAttention === "off") {
-      this.titleAttention.clear();
-      this.publishTitleAttention();
-    }
-    this.savePrefs({ completionAttention });
-    return true;
-  };
-  setProjectDisplay = (projectDisplay: ProjectDisplayPreference): void =>
-    this.savePrefs({ projectDisplay });
-  setThinkingVisibility = (thinkingVisibility: VisibilityPreference): void =>
-    this.savePrefs({ thinkingVisibility });
-  setToolVisibility = (toolVisibility: ToolVisibilityPreference): void =>
-    this.savePrefs({ toolVisibility });
-  setActivityFoldVisibility = (
-    activityFoldVisibility: ActivityFoldVisibilityPreference,
-  ): void => this.savePrefs({ activityFoldVisibility });
-  setAssistantRoundDisplay = (
-    assistantRoundDisplay: AssistantRoundDisplayPreference,
-  ): void => this.savePrefs({ assistantRoundDisplay });
-  restoreDefaultSettings = (): void => {
-    this.completionAttentionRequest += 1;
-    this.titleAttention.clear();
-    this.publishTitleAttention();
-    this.savePrefs({ ...defaultInterfaceSettings });
-  };
-
-  toggleNavGroup = (cwd: string): void => {
-    if (this.curationMutationBlocked()) return;
-    const current = this.state.prefs.navCollapsedGroups;
-    const navCollapsedGroups = current.includes(cwd)
-      ? current.filter((item) => item !== cwd)
-      : [...current, cwd];
-    this.savePrefs({ navCollapsedGroups });
-  };
-
-  /** Pin and Hidden are mutually exclusive, and both are one patch: the two
-   * identity lists move together so navigation can never file a session in
-   * two sections at once. */
-  toggleSessionPin = (id: string): void => {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
-    const pinned = pinnedSessionIds.includes(id);
-    this.savePrefs({
-      pinnedSessionIds: pinned
-        ? pinnedSessionIds.filter((candidate) => candidate !== id)
-        : [id, ...pinnedSessionIds],
-      ...(!pinned && hiddenSessionIds.includes(id)
-        ? {
-            hiddenSessionIds: hiddenSessionIds.filter(
-              (candidate) => candidate !== id,
-            ),
-          }
-        : {}),
-    });
-  };
-
-  toggleSessionHidden = (id: string): void => {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedSessionIds, hiddenSessionIds } = this.state.prefs;
-    const hidden = hiddenSessionIds.includes(id);
-    this.savePrefs({
-      hiddenSessionIds: hidden
-        ? hiddenSessionIds.filter((candidate) => candidate !== id)
-        : [id, ...hiddenSessionIds],
-      ...(!hidden && pinnedSessionIds.includes(id)
-        ? {
-            pinnedSessionIds: pinnedSessionIds.filter(
-              (candidate) => candidate !== id,
-            ),
-          }
-        : {}),
-    });
-  };
-
-  /** Folder pin/Hidden state uses the exact cwd identity navigation already
-   * groups by. The two states are mutually exclusive without touching any
-   * per-session curation. */
-  toggleProjectPin = (cwd: string): void => {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
-    const pinned = pinnedProjectCwds.includes(cwd);
-    this.savePrefs({
-      pinnedProjectCwds: pinned
-        ? pinnedProjectCwds.filter((item) => item !== cwd)
-        : [cwd, ...pinnedProjectCwds],
-      ...(!pinned && hiddenProjectCwds.includes(cwd)
-        ? {
-            hiddenProjectCwds: hiddenProjectCwds.filter((item) => item !== cwd),
-          }
-        : {}),
-    });
-  };
-
-  toggleProjectHidden = (cwd: string): void => {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedProjectCwds, hiddenProjectCwds } = this.state.prefs;
-    const hidden = hiddenProjectCwds.includes(cwd);
-    this.savePrefs({
-      hiddenProjectCwds: hidden
-        ? hiddenProjectCwds.filter((item) => item !== cwd)
-        : [cwd, ...hiddenProjectCwds],
-      ...(!hidden && pinnedProjectCwds.includes(cwd)
-        ? {
-            pinnedProjectCwds: pinnedProjectCwds.filter((item) => item !== cwd),
-          }
-        : {}),
-    });
-  };
+  setTheme = (value: ThemePreference): void => this.preferences.setTheme(value);
+  setPalette = (value: PalettePreference): void =>
+    this.preferences.setPalette(value);
+  setContentTextSize = (value: ContentTextSizePreference): void =>
+    this.preferences.setContentTextSize(value);
+  setReadingWidth = (value: ReadingWidthPreference): void =>
+    this.preferences.setReadingWidth(value);
+  setLaunch = (value: LaunchPreference): void =>
+    this.preferences.setLaunch(value);
+  setDesktopSendKey = (value: DesktopSendKeyPreference): void =>
+    this.preferences.setDesktopSendKey(value);
+  setCompletionAttention = (
+    value: CompletionAttentionPreference,
+  ): Promise<boolean> => this.preferences.setCompletionAttention(value);
+  setProjectDisplay = (value: ProjectDisplayPreference): void =>
+    this.preferences.setProjectDisplay(value);
+  setThinkingVisibility = (value: VisibilityPreference): void =>
+    this.preferences.setThinkingVisibility(value);
+  setToolVisibility = (value: ToolVisibilityPreference): void =>
+    this.preferences.setToolVisibility(value);
+  setActivityFoldVisibility = (value: ActivityFoldVisibilityPreference): void =>
+    this.preferences.setActivityFoldVisibility(value);
+  setAssistantRoundDisplay = (value: AssistantRoundDisplayPreference): void =>
+    this.preferences.setAssistantRoundDisplay(value);
+  restoreDefaultSettings = (): void => this.preferences.restoreDefaults();
+  toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
+  toggleSessionPin = (id: string): void =>
+    this.preferences.toggleSessionPin(id);
+  toggleSessionHidden = (id: string): void =>
+    this.preferences.toggleSessionHidden(id);
+  toggleProjectPin = (cwd: string): void =>
+    this.preferences.toggleProjectPin(cwd);
+  toggleProjectHidden = (cwd: string): void =>
+    this.preferences.toggleProjectHidden(cwd);
 
   // --- Files/resources pane ---
 
@@ -3257,15 +1504,24 @@ export class AppStore {
   loadEmbeddedImage = (
     sessionId: string,
     viewId: string,
+    projectionKey: string,
     reference: string,
     signal: AbortSignal,
   ): Promise<Blob> =>
-    this.resources.loadEmbeddedImage(sessionId, viewId, reference, signal);
+    this.resources.loadEmbeddedImage(
+      sessionId,
+      viewId,
+      projectionKey,
+      reference,
+      signal,
+    );
 
   openResource = (
     reference: string,
     contextMode: "files" | "changes" = "files",
-  ): Promise<void> => this.resources.openResource(reference, contextMode);
+    workspacePath?: string,
+  ): Promise<void> =>
+    this.resources.openResource(reference, contextMode, workspacePath);
 }
 
 export function gitChangeForWorkspacePath(
@@ -3278,6 +1534,59 @@ export function gitChangeForWorkspacePath(
 
 export const store = new AppStore();
 
-export function useAppState(): AppState {
-  return useSyncExternalStore(store.subscribe, store.getState);
+type AppStateSelectionEqual<T> = (left: T, right: T) => boolean;
+
+export function shallowEqual<T extends Record<string, unknown>>(
+  left: T,
+  right: T,
+): boolean {
+  if (Object.is(left, right)) return true;
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every(
+    (key) =>
+      Object.prototype.hasOwnProperty.call(right, key) &&
+      Object.is(left[key], right[key]),
+  );
+}
+
+export function useAppState(): AppState;
+export function useAppState<T>(
+  selector: (state: AppState) => T,
+  isEqual?: AppStateSelectionEqual<T>,
+): T;
+export function useAppState<T>(
+  selector?: (state: AppState) => T,
+  isEqual?: AppStateSelectionEqual<T>,
+): AppState | T {
+  const cache = useRef<
+    | {
+        source: AppState;
+        selector: typeof selector;
+        isEqual: typeof isEqual;
+        selection: AppState | T;
+      }
+    | undefined
+  >(undefined);
+  const getSnapshot = useCallback(() => {
+    const source = store.getState();
+    const previous = cache.current;
+    if (
+      previous?.source === source &&
+      previous.selector === selector &&
+      previous.isEqual === isEqual
+    )
+      return previous.selection;
+    const candidate = selector ? selector(source) : source;
+    const selection =
+      previous &&
+      previous.selector === selector &&
+      previous.isEqual === isEqual &&
+      (isEqual ?? Object.is)(previous.selection as T, candidate as T)
+        ? previous.selection
+        : candidate;
+    cache.current = { source, selector, isEqual, selection };
+    return selection;
+  }, [isEqual, selector]);
+  return useSyncExternalStore(store.subscribe, getSnapshot);
 }

@@ -616,6 +616,14 @@ export function reduceEvent(
         `Pi runtime stopped: ${String(event.error ?? "unknown error")}`,
       );
       changed = true;
+      resync = true;
+      break;
+    }
+    case "extension_runtime_stopped": {
+      // Stopping a worker renews its branch-view identity and may discard a
+      // temporary navigation lease. Replace the visible projection instead of
+      // leaving otherwise-valid cursors bound to the retired view.
+      resync = true;
       break;
     }
     case "extension_ui_request": {

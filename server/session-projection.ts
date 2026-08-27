@@ -6,24 +6,25 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { type FSWatcher, watch } from "node:fs";
+import { constants, type FSWatcher, watch } from "node:fs";
 import { open, stat } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type {
   SessionEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
-import type {
-  BranchTreeResponse,
-  ComposerHistoryPage,
-  ProjectionHealth,
-  TranscriptActivityKind,
-  TranscriptActivityPage,
-  TranscriptActivityRange,
-  TranscriptPage,
-  UserTurnAnchor,
-  UserTurnIndexPage,
-  UserTurnTranscriptPage,
+import {
+  MAX_SESSION_ID_CHARS,
+  type BranchTreeResponse,
+  type ComposerHistoryPage,
+  type ProjectionHealth,
+  type TranscriptActivityKind,
+  type TranscriptActivityPage,
+  type TranscriptActivityRange,
+  type TranscriptPage,
+  type UserTurnAnchor,
+  type UserTurnIndexPage,
+  type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import {
@@ -54,6 +55,7 @@ export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
 const USER_TURN_INDEX_PAGE_SIZE = 100;
 const USER_TURN_SNIPPET_CHARS = 180;
 const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
+const MAX_SESSION_PATH_CHARS = 32_768;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
 export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
 
@@ -78,7 +80,7 @@ interface Candidate {
   /** Fingerprints observed from this same read, never a later filesystem pass. */
   previousPrefixFingerprint: string | null;
   previousTailFingerprint: string | null;
-  header: SessionHeader;
+  header: SessionHeader | null;
   entries: SessionEntry[];
   entriesById: Map<string, SessionEntry>;
   messages: unknown[];
@@ -111,7 +113,12 @@ export interface ProjectionReconcileResult {
   sourceChanged: boolean;
   previousSourceVersion: string | null;
   sourceVersion: string | null;
+  /** Projection state captured by this exact filesystem observation. */
+  sourceIdentity: string | null;
+  committedBytes: number;
   uncommittedBytes: number;
+  uncommittedFingerprint: string | null;
+  health: ProjectionHealth;
   previousUncommittedBytes: number;
   /** A prior unresolved tail is an exact prefix of this candidate's post-commit bytes. */
   previousTailVerified: boolean;
@@ -209,6 +216,28 @@ export interface SessionProjectionView {
   ): this;
 }
 
+function validSessionHeader(value: unknown): value is SessionHeader {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const header = value as unknown as Record<string, unknown>;
+  return (
+    header.type === "session" &&
+    typeof header.id === "string" &&
+    header.id.length > 0 &&
+    header.id.length <= MAX_SESSION_ID_CHARS &&
+    typeof header.cwd === "string" &&
+    header.cwd.length > 0 &&
+    header.cwd.length <= MAX_SESSION_PATH_CHARS &&
+    !header.cwd.includes("\0") &&
+    isAbsolute(header.cwd) &&
+    (header.parentSession === undefined ||
+      (typeof header.parentSession === "string" &&
+        header.parentSession.length > 0 &&
+        header.parentSession.length <= MAX_SESSION_PATH_CHARS &&
+        !header.parentSession.includes("\0") &&
+        isAbsolute(header.parentSession)))
+  );
+}
+
 function identity(
   details: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
 ): FileIdentity {
@@ -228,7 +257,10 @@ function identity(
   };
 }
 
-function sameObject(left: FileIdentity, right: FileIdentity): boolean {
+function sameObject(
+  left: Pick<FileIdentity, "dev" | "ino">,
+  right: Pick<FileIdentity, "dev" | "ino">,
+): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
@@ -249,9 +281,13 @@ function indexSessionEntries(
   for (const entry of entries) {
     if (
       typeof entry.type !== "string" ||
+      entry.type.length === 0 ||
+      entry.type.length > 200 ||
       typeof entry.id !== "string" ||
       entry.id.length === 0 ||
-      (entry.parentId !== null && typeof entry.parentId !== "string")
+      entry.id.length > 200 ||
+      (entry.parentId !== null &&
+        (typeof entry.parentId !== "string" || entry.parentId.length > 200))
     )
       throw new Error("Persisted session contains an invalid entry identity");
     if (byId.has(entry.id))
@@ -779,6 +815,7 @@ export class SessionProjection
   private appendFromRevision = 0;
   private readonly revisionFingerprints = new Map<number, string>();
   private currentHealth: ProjectionHealth = { status: "ok" };
+  private currentFailureStatus: number | null = null;
   private currentMessages: unknown[] = [];
   private currentModel: unknown = null;
   private currentThinkingLevel = "off";
@@ -809,7 +846,11 @@ export class SessionProjection
     sourceChanged: false,
     previousSourceVersion: null,
     sourceVersion: null,
+    sourceIdentity: null,
+    committedBytes: 0,
     uncommittedBytes: 0,
+    uncommittedFingerprint: null,
+    health: { status: "ok" },
     previousUncommittedBytes: 0,
     previousTailVerified: true,
   });
@@ -824,6 +865,8 @@ export class SessionProjection
    * Only new-session ownership may enter this state; it remains active across
    * complete-line prefixes until disk catches the creating worker's entries. */
   private initialMaterializationPending: boolean;
+  private readonly initialSourceIdentity: { dev: bigint; ino: bigint } | null;
+  private readonly initialCwd: string;
 
   private constructor(
     session: SessionRecord,
@@ -833,7 +876,12 @@ export class SessionProjection
     super();
     this.sessionId = session.id;
     this.path = resolve(session.path);
+    this.initialCwd = session.cwd;
     this.initialMaterializationPending = initialMaterializationPending;
+    this.initialSourceIdentity =
+      initialMaterializationPending || !session.source
+        ? null
+        : { dev: session.source.dev, ino: session.source.ino };
     if (initialMaterializationPending) {
       this.currentRevision = 1;
       this.appendFromRevision = 1;
@@ -861,7 +909,7 @@ export class SessionProjection
         new Error(
           projection.health.message ?? "Session projection could not be loaded",
         ),
-        { status: 422 },
+        { status: projection.currentFailureStatus ?? 422 },
       );
     }
     projection.startWatching();
@@ -924,10 +972,16 @@ export class SessionProjection
     cwd: string,
     workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation {
+    if (!this.initialMaterializationPending) return "mismatch";
     const header = this.currentHeader;
+    if (!header) {
+      return this.currentEntries.length === 0 &&
+        this.currentCommittedBytes === 0 &&
+        this.currentUncommittedBytes > 0
+        ? "partial"
+        : "mismatch";
+    }
     if (
-      !this.initialMaterializationPending ||
-      !header ||
       header.version !== CURRENT_SESSION_VERSION ||
       resolve(header.cwd) !== resolve(cwd) ||
       header.parentSession !== undefined ||
@@ -1075,6 +1129,23 @@ export class SessionProjection
     );
   }
 
+  private resultObservation(): Pick<
+    ProjectionReconcileResult,
+    | "sourceIdentity"
+    | "committedBytes"
+    | "uncommittedBytes"
+    | "uncommittedFingerprint"
+    | "health"
+  > {
+    return {
+      sourceIdentity: this.sourceIdentity,
+      committedBytes: this.committedBytes,
+      uncommittedBytes: this.uncommittedBytes,
+      uncommittedFingerprint: this.uncommittedFingerprint,
+      health: this.health,
+    };
+  }
+
   private startWatching(): void {
     if (this.closed || this.watcher || this.pollTimer) return;
     try {
@@ -1111,7 +1182,7 @@ export class SessionProjection
             sourceChanged: false,
             previousSourceVersion: this.sourceVersion,
             sourceVersion: this.sourceVersion,
-            uncommittedBytes: this.uncommittedBytes,
+            ...this.resultObservation(),
             previousUncommittedBytes: this.uncommittedBytes,
             previousTailVerified: true,
           } satisfies ProjectionReconcileResult);
@@ -1151,7 +1222,7 @@ export class SessionProjection
             sourceChanged: false,
             previousSourceVersion: this.sourceVersion,
             sourceVersion: this.sourceVersion,
-            uncommittedBytes: this.uncommittedBytes,
+            ...this.resultObservation(),
             previousUncommittedBytes: this.uncommittedBytes,
             previousTailVerified: true,
           } satisfies ProjectionReconcileResult);
@@ -1212,7 +1283,7 @@ export class SessionProjection
             sourceChanged: false,
             previousSourceVersion: this.sourceVersion,
             sourceVersion: this.sourceVersion,
-            uncommittedBytes: this.uncommittedBytes,
+            ...this.resultObservation(),
             previousUncommittedBytes: this.uncommittedBytes,
             previousTailVerified: true,
           };
@@ -1222,7 +1293,7 @@ export class SessionProjection
       const candidate =
         (await this.tryReadAppendCandidate()) ?? (await this.readCandidate());
       const initialFileAppearance =
-        initialMaterialization && this.currentIdentity === null;
+        initialMaterialization && this.currentHeader === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
       const previousEntries = this.currentEntries;
       const previousLeafId = this.currentLeafId;
@@ -1279,6 +1350,8 @@ export class SessionProjection
         this.currentLeafId = candidate.leafId;
         this.currentEntries = candidate.entries;
         this.currentEntriesById = candidate.entriesById;
+        if (!candidate.header)
+          throw new Error("Session file has no complete Pi session header");
         this.currentHeader = candidate.header;
         this.currentFingerprint = candidate.fingerprint;
         this.currentCommittedBytes = candidate.committedBytes;
@@ -1288,6 +1361,7 @@ export class SessionProjection
       this.currentUncommittedBytes = candidate.uncommittedBytes;
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
       this.currentHealth = { status: "ok" };
+      this.currentFailureStatus = null;
       const sourceChanged =
         previousSourceVersion !== this.sourceVersion ||
         previousUncommittedBytes !== this.uncommittedBytes ||
@@ -1308,7 +1382,7 @@ export class SessionProjection
         sourceChanged,
         previousSourceVersion,
         sourceVersion: this.sourceVersion,
-        uncommittedBytes: this.uncommittedBytes,
+        ...this.resultObservation(),
         previousUncommittedBytes,
         previousTailVerified,
         ...(appendedEntries ? { appendedEntries, previousLeafId } : {}),
@@ -1320,6 +1394,7 @@ export class SessionProjection
         (error as NodeJS.ErrnoException)?.code === "ENOENT"
       ) {
         this.currentHealth = { status: "ok" };
+        this.currentFailureStatus = null;
         return {
           changed: false,
           initialMaterialization,
@@ -1333,12 +1408,18 @@ export class SessionProjection
           sourceChanged: false,
           previousSourceVersion,
           sourceVersion: this.sourceVersion,
-          uncommittedBytes: this.uncommittedBytes,
+          ...this.resultObservation(),
           previousUncommittedBytes,
           previousTailVerified: true,
         };
       }
       this.currentHealth = healthError(error);
+      this.currentFailureStatus =
+        error &&
+        typeof error === "object" &&
+        Number.isInteger((error as { status?: unknown }).status)
+          ? Number((error as { status: number }).status)
+          : 422;
       return {
         changed: false,
         initialMaterialization,
@@ -1352,7 +1433,7 @@ export class SessionProjection
         sourceChanged: false,
         previousSourceVersion: this.sourceVersion,
         sourceVersion: this.sourceVersion,
-        uncommittedBytes: this.uncommittedBytes,
+        ...this.resultObservation(),
         previousUncommittedBytes,
         previousTailVerified: false,
       };
@@ -1376,7 +1457,10 @@ export class SessionProjection
       addressed.size < BigInt(this.currentCommittedBytes)
     )
       return null;
-    const handle = await open(this.path, "r");
+    const handle = await open(
+      this.path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     try {
       const before = identity((await handle.stat({ bigint: true })) as never);
       if (!sameObject(before, addressed)) return null;
@@ -1509,9 +1593,22 @@ export class SessionProjection
     // A path can be atomically replaced while its old inode is being read. Retry
     // once against the now-addressed object rather than publishing an orphan.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const handle = await open(this.path, "r");
+      const handle = await open(
+        this.path,
+        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      );
       try {
         const before = identity((await handle.stat({ bigint: true })) as never);
+        if (
+          this.currentRevision === 0 &&
+          this.initialSourceIdentity &&
+          !sameObject(before, this.initialSourceIdentity)
+        ) {
+          throw Object.assign(
+            new Error("The session changed since the catalog was loaded"),
+            { status: 409 },
+          );
+        }
         const hash = createHash("sha256");
         const parsed: Record<string, unknown>[] = [];
         let committedBytes = 0;
@@ -1557,12 +1654,57 @@ export class SessionProjection
         if (!sameVersion(before, after) || !sameVersion(after, addressed))
           continue;
         const tail = decoder.tail();
-        const header = parsed[0] as SessionHeader | undefined;
-        if (!header || header.type !== "session")
-          throw new Error("Session file is not a valid Pi session");
-        if (header.id !== this.sessionId) {
-          throw new Error(
-            `Session file belongs to ${String(header.id)}, expected ${this.sessionId}`,
+        if (
+          parsed.length === 0 &&
+          this.initialMaterializationPending &&
+          this.currentHeader === null
+        ) {
+          if (tail.length === 0) {
+            const pending = new Error(
+              "The new session file has not materialized yet",
+            ) as NodeJS.ErrnoException;
+            pending.code = "ENOENT";
+            throw pending;
+          }
+          return {
+            identity: addressed,
+            fingerprint: this.currentFingerprint,
+            hashState: hash,
+            committedBytes,
+            uncommittedBytes: tail.length,
+            uncommittedFingerprint:
+              tail.length > 0
+                ? createHash("sha256").update(tail).digest("hex")
+                : null,
+            previousPrefixFingerprint:
+              this.currentCommittedBytes === 0 ? null : "",
+            previousTailFingerprint:
+              previousTailBytes === this.currentUncommittedBytes &&
+              this.currentUncommittedBytes > 0
+                ? previousTailHash.digest("hex")
+                : this.currentUncommittedBytes === 0
+                  ? null
+                  : "",
+            header: null,
+            entries: [],
+            entriesById: new Map(),
+            messages: [],
+            model: null,
+            thinkingLevel: "off",
+            leafId: null,
+          };
+        }
+        const header = parsed[0];
+        if (!validSessionHeader(header))
+          throw new Error("Session file has an invalid Pi session header");
+        if (header.id !== this.sessionId)
+          throw new Error("Session file belongs to another session");
+        if (header.cwd !== this.initialCwd) {
+          throw Object.assign(
+            new Error(
+              "The session working directory changed since the catalog was loaded",
+            ),
+            { status: 409 },
           );
         }
         if (

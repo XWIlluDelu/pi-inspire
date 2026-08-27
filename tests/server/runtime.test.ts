@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import {
   access,
+  appendFile,
   mkdir,
   mkdtemp,
   realpath,
@@ -47,6 +48,10 @@ class FakeRpc extends EventEmitter {
   startGate: Promise<void> | null = null;
   sessionPath: string | null;
   sessionId: string;
+
+  get available(): boolean {
+    return true;
+  }
 
   constructor(readonly options: PiRpcOptions) {
     super();
@@ -155,6 +160,7 @@ function record(id: string, cwd: string): SessionRecord {
     id,
     cwd,
     path: `/sessions/${id}.jsonl`,
+    source: null,
     created: new Date("2026-07-22T00:00:00Z"),
     modified: new Date("2026-07-22T00:00:00Z"),
     messageCount: 1,
@@ -627,6 +633,152 @@ describe("RuntimeController concurrent sessions", () => {
     await store.remove(doc.id);
     await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
       /already belong/,
+    );
+    await runtime.close();
+  });
+
+  it("acknowledges an accepted prompt when its immediate projection refresh fails", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    const slots = (
+      runtime as unknown as {
+        slots: Map<
+          string,
+          {
+            projection: {
+              reconcile: (force?: boolean) => Promise<unknown>;
+            } | null;
+          }
+        >;
+      }
+    ).slots;
+    const request = worker.request.bind(worker);
+    worker.request = async <T>(command: Record<string, unknown>) => {
+      const result = await request<T>(command);
+      if (command.type === "prompt") {
+        const projection = slots.get("a")!.projection!;
+        const reconcile = projection.reconcile.bind(projection);
+        projection.reconcile = async () => {
+          projection.reconcile = reconcile;
+          throw new Error("projection read failed");
+        };
+      }
+      return result;
+    };
+
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "accepted once" }),
+    ).resolves.toBeNull();
+    expect(
+      worker.commands.filter((command) => command.type === "prompt"),
+    ).toHaveLength(1);
+    expect(worker.stops).toBe(1);
+    expect((await runtime.snapshot()).active?.projectionConflict).toMatchObject(
+      {
+        kind: "projection-failure",
+      },
+    );
+    await runtime.close();
+  });
+
+  it("does not reject an accepted prompt when optional Composer-history hydration fails", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    const slot = (
+      runtime as unknown as {
+        slots: Map<
+          string,
+          {
+            projection: {
+              composerHistoryPage: (...args: unknown[]) => unknown;
+            } | null;
+          }
+        >;
+      }
+    ).slots.get("a")!;
+    const request = worker.request.bind(worker);
+    worker.request = async <T>(command: Record<string, unknown>) => {
+      const result = await request<T>(command);
+      if (command.type === "prompt") {
+        slot.projection!.composerHistoryPage = () => {
+          throw new Error("history projection failed");
+        };
+      }
+      return result;
+    };
+
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "accepted once" }),
+    ).resolves.toBeNull();
+    expect(
+      worker.commands.filter((command) => command.type === "prompt"),
+    ).toHaveLength(1);
+    expect(worker.stops).toBe(0);
+    await runtime.close();
+  });
+
+  it("stops a worker when terminal-event projection reconciliation fails", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await runtime.prompt({ sessionId: "a", message: "accepted" });
+    const slot = (
+      runtime as unknown as {
+        slots: Map<
+          string,
+          {
+            projection: {
+              reconcile: (force?: boolean) => Promise<unknown>;
+            } | null;
+          }
+        >;
+      }
+    ).slots.get("a")!;
+    const projection = slot.projection!;
+    const reconcile = projection.reconcile.bind(projection);
+    projection.reconcile = async () => {
+      projection.reconcile = reconcile;
+      throw new Error("terminal projection read failed");
+    };
+
+    worker.emit("event", { type: "agent_settled" });
+    await vi.waitFor(() => expect(worker.stops).toBe(1));
+    expect((await runtime.snapshot()).active?.projectionConflict).toMatchObject(
+      {
+        kind: "projection-failure",
+      },
     );
     await runtime.close();
   });
@@ -1619,6 +1771,92 @@ describe("RuntimeController concurrent sessions", () => {
     }
   });
 
+  it("tracks a partial new-session header until the worker completes it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-new-session-"));
+    workspaceDirectories.push(directory);
+    const sessionPath = join(directory, "new-id.jsonl");
+    const serializedHeader = JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "new-id",
+      timestamp: "2026-08-01T00:00:00.000Z",
+      cwd: "/tmp",
+    });
+    const store = new AttachmentStore();
+    attachments.push(store);
+    let worker: FakeRpc | undefined;
+    const runtime = new RuntimeController(
+      catalog([]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.sessionPath = sessionPath;
+        worker.start = async () => {
+          worker!.starts += 1;
+          await writeFile(sessionPath, serializedHeader.slice(0, -1));
+        };
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await expect(runtime.newSession("/tmp")).resolves.toMatchObject({
+        active: { sessionId: "new-id" },
+      });
+      const slot = (
+        runtime as unknown as {
+          slots: Map<
+            string,
+            {
+              projection: { uncommittedBytes: number };
+            }
+          >;
+        }
+      ).slots.get("new-id")!;
+      expect(slot.projection.uncommittedBytes).toBeGreaterThan(0);
+
+      await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
+      await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0));
+      expect(worker?.stops).toBe(0);
+      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("rejects a new Pi worker that reports a path owned by another slot", async () => {
+    const existing = record("a", "/tmp");
+    existing.path = "/sessions/a.jsonl";
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([existing]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        if (workers.length === 2) {
+          worker.sessionId = "new-id";
+          worker.sessionPath = existing.path;
+        }
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(workers).toHaveLength(1));
+
+      await expect(runtime.newSession("/tmp")).rejects.toThrow(
+        "Pi created a duplicate session path",
+      );
+      expect(workers[1]?.stops).toBeGreaterThan(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -1757,6 +1995,16 @@ describe("RuntimeController concurrent sessions", () => {
     expect((await runtime.snapshot()).sessionStatuses.b).toEqual({
       runState: "failed",
       indicator: "failed",
+    });
+
+    workers[0]!.emit("event", { type: "agent_start" });
+    workers[0]!.emit("event", {
+      type: "message_end",
+      message: { role: "assistant", stopReason: "length" },
+    });
+    workers[0]!.emit("event", { type: "agent_settled" });
+    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
+      runState: "failed",
     });
 
     await runtime.openSession("b");
@@ -2476,6 +2724,45 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("rejects an open whose catalog lookup outlives runtime close", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const base = catalog([record("a", "/project")]);
+    let releaseCatalog!: () => void;
+    const catalogGate = new Promise<void>((resolveCatalog) => {
+      releaseCatalog = resolveCatalog;
+    });
+    let lookupStarted = false;
+    let previewLoads = 0;
+    const runtime = new RuntimeController(
+      {
+        ...base,
+        get: async (id) => {
+          lookupStarted = true;
+          await catalogGate;
+          return base.get(id);
+        },
+      },
+      store,
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      async (session) => {
+        previewLoads += 1;
+        return preview(session);
+      },
+    );
+
+    const opening = runtime.openSession("a");
+    await vi.waitFor(() => expect(lookupStarted).toBe(true));
+    await expect(runtime.close()).resolves.toBeUndefined();
+    releaseCatalog();
+
+    await expect(opening).rejects.toThrow(/closing/);
+    expect(previewLoads).toBe(0);
+    expect(
+      (runtime as unknown as { slots: Map<string, unknown> }).slots.size,
+    ).toBe(0);
+  });
+
   it("owns and drains a provisional new-session worker during concurrent close", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -2673,6 +2960,46 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("does not delete a catalog identity reserved by a provisional new session", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+    const provisionalSlots = (
+      runtime as unknown as {
+        provisionalSlots: Map<
+          string,
+          {
+            slot: { id: string; sessionPath: string | null };
+            completion: Promise<void>;
+          }
+        >;
+      }
+    ).provisionalSlots;
+    provisionalSlots.set("pending-test", {
+      slot: { id: "a", sessionPath: null },
+      completion: new Promise(() => undefined),
+    });
+    try {
+      await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+        status: 409,
+        message: "Wait for the session to finish opening before deleting it",
+      });
+      expect(remove).not.toHaveBeenCalled();
+    } finally {
+      provisionalSlots.delete("pending-test");
+      await runtime.close();
+    }
+  });
+
   it("clears individually hidden sessions and every session in hidden folders after reserving all identities", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
@@ -2708,6 +3035,34 @@ describe("RuntimeController concurrent sessions", () => {
     expect(remove).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: "ordinary" }),
     );
+    await runtime.close();
+  });
+
+  it("preflights every Hidden file before moving the first one", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const remove = vi.fn(async () => "trashed" as const);
+    const validate = vi.fn(async (session: SessionRecord) => {
+      if (session.id === "b")
+        throw Object.assign(new Error("session b changed"), { status: 409 });
+    });
+    const runtime = new RuntimeController(
+      catalog([record("a", "/folder"), record("b", "/folder")]),
+      store,
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+      undefined,
+      validate,
+    );
+
+    await expect(
+      runtime.clearHiddenSessions(["a", "b"], [], ["/folder"]),
+    ).rejects.toMatchObject({ status: 409, message: "session b changed" });
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(remove).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -2757,6 +3112,47 @@ describe("RuntimeController concurrent sessions", () => {
       message: "Switch to another session before clearing Hidden",
     });
     expect(remove).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("rejects a Hidden clear before moving any session when Pending is paused", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const workers = new Map<string, FakeRpc>();
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/hidden"), record("ordinary", "/ordinary")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+
+    await runtime.openSession("a");
+    const worker = workers.get("a")!;
+    await vi.waitFor(() => expect(worker.starts).toBe(1));
+    worker.emit("event", {
+      type: "queue_update",
+      steering: [],
+      followUp: [],
+      pending: pendingState([], [], { paused: true, revision: 1 }),
+    });
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).pendingQueues?.paused).toBe(true),
+    );
+    await runtime.openSession("ordinary");
+
+    await expect(
+      runtime.clearHiddenSessions(["a"], ["a"], []),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(remove).not.toHaveBeenCalled();
+    expect(worker.stops).toBe(0);
     await runtime.close();
   });
 
@@ -2981,6 +3377,39 @@ describe("RuntimeController concurrent sessions", () => {
       sessionId: "a",
       disposition: "trashed",
     });
+    await runtime.close();
+  });
+
+  it("accepts the full image attachment limit without counting RPC image parts twice", async () => {
+    const store = new AttachmentStore();
+    attachments.push(store);
+    const uploaded = await store.addMany(
+      Array.from({ length: 8 }, (_, index) =>
+        upload(`shot-${index}.png`, "image/png"),
+      ),
+    );
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+
+    await runtime.openSession("a");
+    await runtime.prompt({
+      sessionId: "a",
+      message: "use these images",
+      attachmentIds: uploaded.map((item) => item.id),
+    });
+
+    const promptCommand = worker.commands.find(
+      (command) => command.type === "prompt",
+    );
+    expect(promptCommand?.images).toHaveLength(8);
     await runtime.close();
   });
 

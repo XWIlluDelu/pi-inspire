@@ -77,7 +77,7 @@ export function classifiedResourceFailure(
   }
   if (error.status === 404)
     return { reference, availability: "missing", message: error.message };
-  if (error.status === 403)
+  if (error.status === 403 || error.status === 409)
     return { reference, availability: "unavailable", message: error.message };
   if (error.status === 400)
     return { reference, availability: "invalid", message: error.message };

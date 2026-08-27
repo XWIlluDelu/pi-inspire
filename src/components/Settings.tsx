@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -41,7 +42,7 @@ import {
   subscribeInstallAvailability,
 } from "../install-app";
 import { preferenceChoiceLabel } from "../preference-labels";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
 
@@ -441,14 +442,25 @@ function UpdateEntry({
 
 /** Persistent workbench preferences grouped by user purpose, with secondary
  * install/about/reset utilities kept outside the settings taxonomy. */
-export function Settings({
+export const Settings = memo(function Settings({
   onClose,
   initialCategory = "display",
 }: {
   onClose: () => void;
   initialCategory?: SettingsCategoryId;
 }) {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      prefs: source.prefs,
+      piUpdateCheck: source.piUpdateCheck,
+      piUpdateChecking: source.piUpdateChecking,
+      piVersion: source.piVersion,
+      inspireUpdateCheck: source.inspireUpdateCheck,
+      inspireUpdateChecking: source.inspireUpdateChecking,
+      version: source.version,
+    }),
+    shallowEqual,
+  );
   const install = useSyncExternalStore(
     subscribeInstallAvailability,
     installAvailability,
@@ -848,4 +860,4 @@ export function Settings({
       </div>
     </div>
   );
-}
+});

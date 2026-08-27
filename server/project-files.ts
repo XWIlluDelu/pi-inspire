@@ -18,6 +18,7 @@ const MAX_PROJECT_INDEX_FILES = 20_000;
 const MAX_PROJECT_INDEX_DIRECTORIES = 10_000;
 const PROJECT_INDEX_WALK_MS = 5_000;
 const MAX_PROJECT_INDEX_CACHE_ENTRIES = 8;
+const MAX_PROJECT_INDEX_CACHE_ALIASES = 32;
 
 interface ProjectIndexCache {
   expiresAt: number;
@@ -84,8 +85,14 @@ async function isNonGitDirectory(cwd: string): Promise<boolean> {
       [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--is-inside-work-tree"],
       { stdoutLimit: 64 * 1024, acceptedExitCodes: [0, 128] },
     );
-    if (result.code === 0)
-      return result.stdout.toString("utf8").trim() !== "true";
+    if (result.code === 0) {
+      const value = result.stdout.toString("utf8").trim();
+      if (value === "true") return false;
+      if (value === "false") return true;
+      // A successful but incompatible response cannot authorize the wider
+      // filesystem fallback. Let the original index failure remain visible.
+      return false;
+    }
     return /not a git repository|cannot change to|no such file or directory/i.test(
       result.stderr.toString("utf8"),
     );
@@ -117,7 +124,8 @@ async function fromFilesystem(cwd: string): Promise<string[]> {
     let entries;
     try {
       entries = await opendir(directory);
-    } catch {
+    } catch (error) {
+      if (directory === cwd) throw error;
       continue;
     }
     for await (const entry of entries) {
@@ -148,25 +156,31 @@ function removeCacheEntry(root: string): void {
   }
 }
 
+function rememberCacheAlias(alias: string, root: string): void {
+  cacheAliases.delete(alias);
+  cacheAliases.set(alias, root);
+  while (cacheAliases.size > MAX_PROJECT_INDEX_CACHE_ALIASES) {
+    const oldest = cacheAliases.keys().next().value as string | undefined;
+    if (!oldest) break;
+    cacheAliases.delete(oldest);
+  }
+}
+
 async function projectPaths(cwd: string): Promise<string[]> {
   const alias = resolve(cwd);
-  let root: string;
-  try {
-    root = await realpath(alias);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    root = alias;
-  }
-  cacheAliases.set(alias, root);
-  cacheAliases.set(root, root);
+  const root = await realpath(alias);
   const existing = cache.get(root);
   if (existing && existing.expiresAt > Date.now()) {
+    rememberCacheAlias(alias, root);
+    rememberCacheAlias(root, root);
     // Map insertion order is the LRU order.
     cache.delete(root);
     cache.set(root, existing);
     return existing.paths;
   }
   if (existing) removeCacheEntry(root);
+  rememberCacheAlias(alias, root);
+  rememberCacheAlias(root, root);
 
   const paths = fromGit(root)
     .then((values) => values.slice(0, MAX_PROJECT_INDEX_FILES))
@@ -271,10 +285,17 @@ export async function indexedBasenameMatches(
   return matches;
 }
 
-/** Drop a cached index that has proved stale — a path it offered no longer
- * exists — so the next request rescans instead of serving the same missing
- * file for the rest of the cache window. */
+/** Drop cached index authority before a stale-sensitive operation rescans. */
 export function invalidateProjectIndex(cwd: string): void {
   const alias = resolve(cwd);
-  removeCacheEntry(cacheAliases.get(alias) ?? alias);
+  const root = cacheAliases.get(alias);
+  if (root || cache.has(alias)) {
+    removeCacheEntry(root ?? alias);
+    return;
+  }
+  // A bounded alias map may have forgotten a symlink spelling for an active
+  // canonical cache entry. Invalidation is an authority refresh boundary, so
+  // an unknown spelling drops every small cache rather than risking staleness.
+  cache.clear();
+  cacheAliases.clear();
 }

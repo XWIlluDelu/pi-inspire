@@ -110,6 +110,41 @@ process.stdin.on("data", chunk => {
     expect(await observed).toBe(true);
   });
 
+  it("retires a worker whose response does not match the pending command", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-mismatch-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    process.stdout.write(JSON.stringify({
+      type:"response",
+      id:command.id,
+      command:command.type === "get_state" ? command.type : "another-command",
+      success:true,
+      data:{isStreaming:false}
+    }) + "\\n");
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    await expect(rpc.request({ type: "mismatched" })).rejects.toBeInstanceOf(
+      PiRpcOutcomeUnknownError,
+    );
+  });
+
   it("accepts a bounded Pi message echo above the former image-line ceiling", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-image-echo-"));
     directories.push(directory);
@@ -292,6 +327,169 @@ process.stdin.on("data", chunk => {
     await expect(rpc.request({ type: "second" })).rejects.toThrow(
       /not available/,
     );
+  });
+
+  it("retires a stalled read without reporting a mutation outcome conflict", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-rpc-read-timeout-"),
+    );
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+let reads = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    reads += 1;
+    if (reads === 1) {
+      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
+    }
+  }
+});`,
+      "utf8",
+    );
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const exited = new Promise<Error>((resolveExit) =>
+      rpc.once("exit", resolveExit),
+    );
+
+    const failure = await rpc
+      .request({ type: "get_state" }, 80)
+      .catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(PiRpcOutcomeUnknownError);
+    expect(await exited).toBe(failure);
+    await expect(rpc.request({ type: "second" })).rejects.toThrow(
+      /not available/,
+    );
+  });
+
+  it("accepts a complete final response when stdout closes without a newline", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-final-line-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    const response = JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}});
+    if (command.type === "final") {
+      process.stdout.end(response);
+    } else {
+      process.stdout.write(response + "\\n");
+    }
+  }
+});
+`,
+      "utf8",
+    );
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    const exited = new Promise<Error>((resolve) => rpc.once("exit", resolve));
+    await rpc.start();
+
+    await expect(rpc.request({ type: "final" }, 10_000)).resolves.toEqual({
+      isStreaming: false,
+    });
+    await expect(exited).resolves.toMatchObject({
+      message: "Pi RPC stdout closed unexpectedly",
+    });
+  });
+
+  it("terminates a child that emits malformed JSONL instead of hanging its request", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-malformed-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    if (command.type === "malformed") {
+      process.stdout.write("{broken\\n");
+    } else {
+      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+    }
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    const exited = new Promise<Error>((resolveExit) =>
+      rpc.once("exit", resolveExit),
+    );
+    await rpc.start();
+
+    await expect(
+      rpc.request({ type: "malformed" }, 10_000),
+    ).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
+    await expect(exited).resolves.toMatchObject({
+      message: "Pi RPC stdout contained a malformed frame",
+    });
+    await expect(rpc.request({ type: "second" })).rejects.toThrow(
+      /not available/,
+    );
+  });
+
+  it("terminates a child that emits non-UTF-8 JSONL", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-utf8-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    if (command.type === "invalid_utf8") {
+      process.stdout.write(Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d, 0x0a]));
+    } else {
+      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
+    }
+  }
+});
+`,
+      "utf8",
+    );
+
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    const exited = new Promise<Error>((resolveExit) =>
+      rpc.once("exit", resolveExit),
+    );
+    await rpc.start();
+
+    await expect(
+      rpc.request({ type: "invalid_utf8" }, 10_000),
+    ).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
+    await expect(exited).resolves.toMatchObject({
+      message: "Pi RPC stdout was not valid UTF-8",
+    });
   });
 
   it("terminates a child that emits an oversized unterminated JSONL line", async () => {

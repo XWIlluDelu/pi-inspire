@@ -443,6 +443,7 @@ export class MockCatalog implements SessionCatalogLike {
       messageCount: summary.messageCount,
       firstMessage: summary.title,
       searchText: `${summary.title}\n${summary.cwd}`.toLowerCase(),
+      source: null,
     };
   }
   async list(
