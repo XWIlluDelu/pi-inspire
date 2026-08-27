@@ -112,6 +112,47 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
 });
 
+test("an expired pairing returns to Pair without clearing unrelated cookies", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const origin = new URL(page.url()).origin;
+  const accessCookie = (await page.context().cookies(origin)).find((cookie) =>
+    cookie.name.startsWith("inspire_access_"),
+  );
+  expect(accessCookie).toBeDefined();
+  await page.context().addCookies([
+    {
+      name: accessCookie!.name,
+      value: "expired-pairing",
+      url: origin,
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+    {
+      name: "unrelated_browser_cookie",
+      value: "preserved",
+      url: origin,
+    },
+  ]);
+
+  await page.reload();
+  await expect(page.getByLabel("Access token")).toBeVisible();
+  const cookiesAfterExpiry = await page.context().cookies(origin);
+  expect(
+    cookiesAfterExpiry.some((cookie) => cookie.name === accessCookie!.name),
+  ).toBe(false);
+  expect(
+    cookiesAfterExpiry.find(
+      (cookie) => cookie.name === "unrelated_browser_cookie",
+    )?.value,
+  ).toBe("preserved");
+
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Pair" }).click();
+  await expect(page.getByRole("main")).toBeVisible();
+});
+
 test("activity folds move through the manual density ladder", async ({
   page,
 }) => {
