@@ -58,6 +58,8 @@ async function processAlive(pid) {
 
 async function ownerAlive(owner) {
   if (!(await processAlive(owner.pid))) return false;
+  if (owner.pid === process.pid)
+    return (await ownProcessStartIdentity()) === owner.processStartTime;
   if (owner.processStartTime.startsWith("pid:")) return true;
   try {
     return (await processStartIdentity(owner.pid)) === owner.processStartTime;

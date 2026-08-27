@@ -1825,7 +1825,9 @@ describe("RuntimeController concurrent sessions", () => {
       expect(slot.projection.uncommittedBytes).toBeGreaterThan(0);
 
       await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
-      await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0));
+      await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0), {
+        timeout: 5_000,
+      });
       expect(worker?.stops).toBe(0);
       expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
     } finally {

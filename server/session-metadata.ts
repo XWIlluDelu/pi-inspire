@@ -407,15 +407,14 @@ export class SessionMetadataIndex {
           constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
         );
         try {
-          const [openedPath, before] = await Promise.all([
-            realpath(`/proc/self/fd/${handle.fd}`),
-            handle.stat({ bigint: true }),
-          ]);
-          if (openedPath !== canonicalPath || !before.isFile()) {
+          const before = await handle.stat({ bigint: true });
+          if (!before.isFile()) {
             authorityMismatch = true;
             continue;
           }
           const version = fileVersion(before);
+          if (!(await pathAddressesVersion(path, canonicalPath, version)))
+            continue;
           const cached = this.cache.get(path);
           if (cached?.version === version) {
             if (await pathAddressesVersion(path, canonicalPath, version))
