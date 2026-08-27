@@ -491,6 +491,7 @@ export class AppStore {
     // is being authenticated and snapshotted.
     this.connectionController.stop();
     const api = createApi(token);
+    let reconnectToken = token;
     const generation = ++this.transportGeneration;
     this.set({ transportGeneration: generation });
     this.bootstrapRequest?.abort();
@@ -517,6 +518,13 @@ export class AppStore {
     try {
       const boot = await api.bootstrap(bootstrapRequest.signal);
       if (!ownsBootstrap()) return;
+      // Bootstrap has either confirmed the existing pairing cookie or set one
+      // from the one-shot launch bearer. All continuing browser authority is
+      // cookie-backed; in particular, a forwarded WebSocket must never inherit
+      // a query token from a page that survived a Host upgrade.
+      api.retireBearer();
+      this.authToken = null;
+      reconnectToken = null;
       const preferences = this.preferences.reconcile(
         boot.preferences,
         preferenceOwners,
@@ -553,7 +561,7 @@ export class AppStore {
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
       this.updates.start();
-      this.connectionController.connect(token);
+      this.connectionController.connect(reconnectToken);
       const autoContinueIntent = this.selectionIntentGeneration;
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
@@ -585,7 +593,7 @@ export class AppStore {
           error: null,
           errorSeverity: "error",
         });
-        this.connectionController.scheduleReconnect(token);
+        this.connectionController.scheduleReconnect(reconnectToken);
       }
     } finally {
       clearTimeout(bootstrapTimeout);
