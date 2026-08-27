@@ -47,7 +47,9 @@ export class JsonlObjectDecoder {
     while (offset < chunk.length) {
       const lf = chunk.indexOf(0x0a, offset);
       if (lf === -1) {
-        const remainder = chunk.subarray(offset);
+        // Callers may refill and reuse their read buffer. The unfinished frame
+        // must own its bytes across push() calls rather than retain a view.
+        const remainder = Buffer.from(chunk.subarray(offset));
         this.pending.push(remainder);
         this.pendingBytes += remainder.length;
         if (this.pendingBytes > MAX_PERSISTED_ENTRY_BYTES)
