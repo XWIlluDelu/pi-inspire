@@ -651,22 +651,29 @@ test("session transitions cannot accept input for the previous session", async (
   const openGate = new Promise<void>((resolve) => {
     releaseOpen = resolve;
   });
-  await page.route("**/api/sessions/open", async (route) => {
+  let confirmOpenStarted!: () => void;
+  const openStarted = new Promise<void>((resolve) => {
+    confirmOpenStarted = resolve;
+  });
+  await page.route(/\/api\/sessions\/open(?:\?|$)/, async (route) => {
+    confirmOpenStarted();
     await openGate;
     await route.continue();
   });
 
   const composer = page.getByRole("form", { name: "Message composer" });
   const message = page.getByRole("textbox", { name: "Message" });
+  const switchSession = page
+    .locator(".nav__row-main")
+    .filter({ hasText: /Review extension event lifecycle/ })
+    .click();
   try {
-    await page
-      .locator(".nav__row-main")
-      .filter({ hasText: /Review extension event lifecycle/ })
-      .click();
+    await openStarted;
     await expect(composer).toHaveAttribute("aria-busy", "true");
     await expect(message).toBeDisabled();
   } finally {
     releaseOpen();
+    await switchSession;
   }
 
   await expect(page.locator(".topbar__title-button")).toHaveText(
@@ -724,15 +731,37 @@ test("running composer exposes steer, queue, and abort controls", async ({
         shadow !== "none",
     ),
   ).toBe(true);
-  const firstBreath = await page
-    .locator(".composer")
-    .evaluate((composer) => getComputedStyle(composer).boxShadow);
+  const composerAnimation = page.locator(".composer");
+  const firstBreath = await composerAnimation.evaluate((composer) => {
+    const animation = composer
+      .getAnimations()
+      .find(
+        (candidate) =>
+          candidate instanceof CSSAnimation &&
+          candidate.animationName === "composer-running-breathe",
+      );
+    return {
+      currentTime: Number(animation?.currentTime ?? 0),
+      playState: animation?.playState ?? "missing",
+    };
+  });
   await page.waitForTimeout(700);
-  expect(
-    await page
-      .locator(".composer")
-      .evaluate((composer) => getComputedStyle(composer).boxShadow),
-  ).not.toBe(firstBreath);
+  const secondBreath = await composerAnimation.evaluate((composer) => {
+    const animation = composer
+      .getAnimations()
+      .find(
+        (candidate) =>
+          candidate instanceof CSSAnimation &&
+          candidate.animationName === "composer-running-breathe",
+      );
+    return {
+      currentTime: Number(animation?.currentTime ?? 0),
+      playState: animation?.playState ?? "missing",
+    };
+  });
+  expect(firstBreath.playState).toBe("running");
+  expect(secondBreath.playState).toBe("running");
+  expect(secondBreath.currentTime).toBeGreaterThan(firstBreath.currentTime);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedMotionAppearance = await page
     .locator(".composer")

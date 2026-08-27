@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { npmInvocation } from "../server/npm-command.mjs";
 import { npmPackageRecord } from "./npm-package-manifest.mjs";
 
 const exec = promisify(execFile);
@@ -14,15 +15,15 @@ const requiredReleasePaths = [
   "dist/THIRD_PARTY_NOTICES.txt",
 ];
 
-async function filesUnder(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...(await filesUnder(path)));
-    else if (entry.isFile()) files.push(path);
-  }
-  return files;
+async function execNpm(args, options = {}) {
+  const invocation = npmInvocation(args, {
+    environment: options.env ?? process.env,
+    cwd: options.cwd ?? root,
+  });
+  return exec(invocation.command, invocation.args, {
+    ...options,
+    env: invocation.environment,
+  });
 }
 
 function category(path) {
@@ -54,10 +55,8 @@ async function assertPreparedRelease() {
   }
 }
 
-function assertPackagedRelease(packageDirectory, files, breakdown) {
-  const packagedPaths = new Set(
-    files.map((file) => relative(packageDirectory, file).replaceAll("\\", "/")),
-  );
+function assertPackagedRelease(files, breakdown) {
+  const packagedPaths = new Set(files.map((file) => file.path));
   const missing = requiredReleasePaths.filter(
     (path) => !packagedPaths.has(path),
   );
@@ -82,8 +81,7 @@ try {
   // The release build is prepared by the package script before this program
   // runs. Ignore lifecycle scripts here so the measured tarball is exactly the
   // prepared artifact rather than a second, implicit rebuild.
-  const { stdout } = await exec(
-    "npm",
+  const { stdout } = await execNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", temporary],
     { cwd: root, maxBuffer: 1_024 * 1_024 },
   );
@@ -92,9 +90,7 @@ try {
     throw new Error("npm pack did not report a package");
   }
   const tarball = join(temporary, record.filename);
-  await exec("tar", ["-xzf", tarball, "-C", temporary]);
-  const packageDirectory = join(temporary, "package");
-  const files = await filesUnder(packageDirectory);
+  const files = record.files ?? [];
   const breakdown = { javascript: 0, css: 0, fonts: 0, other: 0 };
   // This is a package-name heuristic, not a browser network measurement.
   // Runtime font transfer is reported separately by the browser evidence.
@@ -104,14 +100,14 @@ try {
     measurement: "static-package-candidates",
   };
   for (const file of files) {
-    const size = (await stat(file)).size;
-    breakdown[category(file)] += size;
-    if (coldStartFont(relative(packageDirectory, file))) {
+    const size = Number(file.size) || 0;
+    breakdown[category(file.path ?? "")] += size;
+    if (coldStartFont(file.path ?? "")) {
       coldStartFontCandidates.files += 1;
       coldStartFontCandidates.bytes += size;
     }
   }
-  assertPackagedRelease(packageDirectory, files, breakdown);
+  assertPackagedRelease(files, breakdown);
 
   console.log(
     JSON.stringify(

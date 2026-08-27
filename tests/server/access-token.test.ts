@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,8 +38,10 @@ describe("persistent host access token", () => {
     expect(first).toMatch(/^[A-Za-z0-9_-]{64}$/);
     expect(second).toBe(first);
     expect((await readFile(path, "utf8")).trim()).toBe(first);
-    expect((await lstat(path)).mode & 0o777).toBe(0o600);
-    expect((await lstat(dirname(path))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect((await lstat(path)).mode & 0o777).toBe(0o600);
+      expect((await lstat(dirname(path))).mode & 0o777).toBe(0o700);
+    }
   });
 
   it("rotates prior generated token lengths once and then reuses the replacement", async () => {
@@ -69,12 +72,30 @@ describe("persistent host access token", () => {
     });
   });
 
-  it("refuses a token file exposed to other local users", async () => {
-    const path = await temporaryPath();
-    await resolveAccessToken(undefined, path);
-    await chmod(path, 0o644);
-    await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
-      "must not be accessible by other users",
-    );
-  });
+  it.runIf(process.platform !== "win32")(
+    "refuses a token path that redirects through a symbolic link",
+    async () => {
+      const path = await temporaryPath();
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      const target = join(dirname(path), "target.token");
+      await writeFile(target, `${"a".repeat(64)}\n`, { mode: 0o600 });
+      await symlink(target, path);
+
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "not a regular file",
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a token file exposed to other local users",
+    async () => {
+      const path = await temporaryPath();
+      await resolveAccessToken(undefined, path);
+      await chmod(path, 0o644);
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "must not be accessible by other users",
+      );
+    },
+  );
 });

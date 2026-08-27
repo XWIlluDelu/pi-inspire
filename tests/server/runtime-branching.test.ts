@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -265,7 +265,9 @@ async function setup(
   branchBridgeTimeoutMs = 15_000,
   openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-branch-runtime-"));
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
+  );
   directories.push(directory);
   const path = join(directory, "session.jsonl");
   const lines = [

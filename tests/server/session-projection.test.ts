@@ -1,5 +1,6 @@
 import {
   appendFile,
+  mkdir,
   mkdtemp,
   readFile,
   rename,
@@ -8,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   boundedTranscriptValue,
@@ -83,6 +84,36 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("accepts only working-directory aliases for the catalogued project", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-projection-cwd-"));
+    directories.push(directory);
+    const child = join(directory, "child");
+    const other = join(directory, "other");
+    await Promise.all([mkdir(child), mkdir(other)]);
+    const path = join(directory, "session.jsonl");
+    await writeFile(
+      path,
+      `${JSON.stringify({ ...header(), cwd: directory })}\n`,
+    );
+    const record: SessionRecord = {
+      id: "session-a",
+      path,
+      source: null,
+      cwd: `${child}${sep}..`,
+      created: new Date(),
+      modified: new Date(),
+      messageCount: 0,
+      firstMessage: "",
+      searchText: "",
+    };
+
+    const projection = await SessionProjection.open(record);
+    await projection.close();
+    await expect(
+      SessionProjection.open({ ...record, cwd: other }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("keeps a Pi-owned new session healthy until its reported JSONL path first materializes", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-pending-projection-"),

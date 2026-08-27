@@ -37,7 +37,7 @@ Make common tool and Thinking activity immediately legible without coupling the 
 
 ## User configuration boundary
 
-Source checkouts load `.inspire/tool-presentations.json`, inside the already ignored machine-local directory. Installed packages load `${XDG_CONFIG_HOME:-~/.config}/inspire/tool-presentations.json`. `INSPIRE_TOOL_PRESENTATIONS_PATH` overrides either location. The Host validates the file on every authenticated bootstrap and never rewrites it. Invalid input raises a transient warning and activates no user tool rules or Thinking declaration.
+Source checkouts load `.inspire/tool-presentations.json`, inside the already ignored machine-local directory. Installed packages use the native user configuration directory: `${XDG_CONFIG_HOME:-~/.config}/inspire` on Linux, `~/Library/Application Support/Inspire` on macOS, and `%APPDATA%\\Inspire` on Windows. `INSPIRE_TOOL_PRESENTATIONS_PATH` overrides either location. The Host validates the file on every authenticated bootstrap and never rewrites it. Invalid input raises a transient warning and activates no user tool rules or Thinking declaration.
 
 Tool declarations can select persisted `args.*`, normalized `result.*`, and `tool.name` fields. Exact mappings bind tool names to user or shipped rule ids. The optional top-level `thinking` declaration uses the same summary and block grammar directly, with `thinking.text` as its sole selectable field:
 

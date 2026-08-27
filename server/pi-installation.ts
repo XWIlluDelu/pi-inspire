@@ -3,6 +3,7 @@ import { access, readFile, realpath } from "node:fs/promises";
 import {
   delimiter,
   dirname,
+  extname,
   isAbsolute,
   join,
   relative,
@@ -42,12 +43,23 @@ function isInside(path: string, parent: string): boolean {
   return !escapesBase(relative(parent, path));
 }
 
+function commandNames(command: string): string[] {
+  if (process.platform !== "win32" || extname(command)) return [command];
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .filter(Boolean)
+    .map((extension) => `${command}${extension.toLowerCase()}`);
+  return [...extensions, command];
+}
+
 function executableCandidates(command: string, path: string): string[] {
-  if (command.includes("/") || isAbsolute(command)) return [resolve(command)];
+  const names = commandNames(command);
+  if (/[\\/]/u.test(command) || isAbsolute(command))
+    return names.map((name) => resolve(name));
   return path
     .split(delimiter)
     .filter(Boolean)
-    .map((directory) => resolve(directory, command));
+    .flatMap((directory) => names.map((name) => resolve(directory, name)));
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -111,6 +123,28 @@ function manifestPaths(
   };
 }
 
+async function adjacentPackageRoot(
+  commandPath: string,
+): Promise<{ root: string; manifest: PiPackageManifest } | null> {
+  const directory = dirname(commandPath);
+  const candidates = [
+    join(directory, "node_modules", PI_PACKAGE_NAME),
+    resolve(directory, "..", PI_PACKAGE_NAME),
+    resolve(directory, "..", "node_modules", PI_PACKAGE_NAME),
+  ];
+  for (const root of candidates) {
+    try {
+      const physicalRoot = await realpath(root);
+      const manifest = JSON.parse(
+        await readFile(join(physicalRoot, "package.json"), "utf8"),
+      ) as PiPackageManifest;
+      if (manifest.name === PI_PACKAGE_NAME)
+        return { root: physicalRoot, manifest };
+    } catch {}
+  }
+  return null;
+}
+
 async function inspectCandidate(commandPath: string): Promise<{
   commandPath: string;
   packageRoot: string;
@@ -120,7 +154,9 @@ async function inspectCandidate(commandPath: string): Promise<{
 } | null> {
   if (!(await isExecutable(commandPath))) return null;
   const resolvedCommand = await realpath(commandPath);
-  const found = await findPackageRoot(resolvedCommand);
+  const found =
+    (await findPackageRoot(resolvedCommand)) ??
+    (await adjacentPackageRoot(commandPath));
   if (!found) return null;
   const paths = manifestPaths(found.root, found.manifest);
   return {
@@ -140,10 +176,13 @@ export async function resolvePiInstallationIdentity(
   const explicitCommand = options.command ?? process.env.INSPIRE_PI_COMMAND;
   const command = explicitCommand || "pi";
   const searchPath = options.path ?? process.env.PATH ?? "";
-  const installationRoot = resolve(
+  const requestedInstallationRoot = resolve(
     options.installationRoot ??
       process.env.INSPIRE_INSTALLATION_ROOT ??
       process.cwd(),
+  );
+  const installationRoot = await realpath(requestedInstallationRoot).catch(
+    () => requestedInstallationRoot,
   );
   let discoveredLocal: Awaited<ReturnType<typeof inspectCandidate>> = null;
 

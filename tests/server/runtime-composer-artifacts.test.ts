@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,7 +38,9 @@ describe("composer-history artifacts", () => {
   });
 
   it("retains Host-owned attachments even when the project root contains the upload path", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
+    );
     roots.push(root);
     const attachment = join(root, "owned.txt");
     await writeFile(attachment, "owned attachment\n");
