@@ -1096,17 +1096,21 @@ describe("local host API", () => {
   });
 
   it("lists workspace directory levels only inside the project index", async () => {
-    await request(application.server)
-      .post("/api/sessions/open")
+    const workspace = join(temporary, "workspace");
+    await mkdir(workspace);
+    await writeFile(join(workspace, "README.md"), "fixture");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ cwd: workspace })
       .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
     await request(application.server)
-      .get("/api/files/list?sessionId=mock-active&dir=..%2Fetc")
+      .get(`/api/files/list?sessionId=${sessionId}&dir=..%2Fetc`)
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
     const listed = await request(application.server)
-      .get("/api/files/list?sessionId=mock-active")
+      .get(`/api/files/list?sessionId=${sessionId}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(Array.isArray(listed.body.entries)).toBe(true);
@@ -1445,6 +1449,27 @@ describe("local host API", () => {
     }
   });
 
+  it("contains an unserializable runtime event instead of failing its emitter", async () => {
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("message", () => resolve());
+        socket.once("error", reject);
+      });
+      const closed = new Promise<number>((resolve) =>
+        socket.once("close", resolve),
+      );
+      expect(() =>
+        runtime.emit("event", { type: "runtime_event", data: 1n }),
+      ).not.toThrow();
+      expect(await closed).toBe(1013);
+    } finally {
+      socket.close();
+    }
+  });
+
   it("closes a joining socket whose pre-snapshot event backlog exceeds the bound", async () => {
     let releaseSnapshot!: () => void;
     const gate = new Promise<void>(
@@ -1526,6 +1551,7 @@ describe("local host API", () => {
   it("serves transcript-referenced and workspace-indexed files, nothing else", async () => {
     await writeFile(join(temporary, "preview.md"), "# Host preview\n");
     await writeFile(join(temporary, "notes.txt"), "workspace note\n");
+    await writeFile(join(temporary, "quoted'(*).md"), "quoted\n");
     await mkdir(join(temporary, "node_modules"));
     await writeFile(
       join(temporary, "node_modules", "mentioned.txt"),
@@ -1640,8 +1666,30 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/resources/resolve")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "notes.txt" })
+      .send({
+        sessionId,
+        reference: "notes.txt",
+        workspacePath: "notes.txt",
+      })
       .expect(200);
+    const quoted = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId,
+        reference: "quoted'(*).md",
+        workspacePath: "quoted'(*).md",
+      })
+      .expect(200);
+    const quotedContent = await request(application.server)
+      .get(
+        `/api/resources/${quoted.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(quotedContent.headers["content-disposition"]).toBe(
+      "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
+    );
     // A transcript mention still reaches files the index ignores.
     await request(application.server)
       .post("/api/resources/resolve")

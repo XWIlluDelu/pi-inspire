@@ -17,9 +17,11 @@ import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
   MAX_COMPOSER_HISTORY_ENTRIES,
+  MAX_CURATED_SESSION_RESULTS,
   MAX_PENDING_MESSAGES,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
+  MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
   type NewSessionDefaults,
@@ -53,13 +55,18 @@ import type {
 import type { UpdateCheckerLike } from "./update-checker.js";
 
 const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
-const openSchema = z.object({ id: z.string().min(1).max(128) });
+const openSchema = z.object({
+  id: z.string().min(1).max(MAX_SESSION_ID_CHARS),
+});
 const deleteSessionParamsSchema = z.object({
-  sessionId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(MAX_SESSION_ID_CHARS),
 });
 const clearHiddenSchema = z
   .object({
-    sessionIds: z.array(z.string().min(1).max(128)).min(1).max(10_000),
+    sessionIds: z
+      .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+      .min(1)
+      .max(MAX_CURATED_SESSION_RESULTS),
   })
   .strict();
 const newSchema = z
@@ -76,7 +83,7 @@ const newSchema = z
     thinkingLevel: z.enum(THINKING_LEVELS).optional(),
   })
   .strict();
-const sessionIdField = z.string().min(1).max(200);
+const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 const promptSchema = z
   .object({
     sessionId: sessionIdField,
@@ -241,7 +248,9 @@ const hostDirsSchema = z.object({
 // Hydration unions can also contain selected/live identities, so the browser
 // chunks the deduplicated union to this explicit per-request contract.
 const sessionIdsSchema = z.object({
-  ids: z.array(z.string().min(1).max(128)).max(MAX_SESSION_ID_HYDRATION_IDS),
+  ids: z
+    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+    .max(MAX_SESSION_ID_HYDRATION_IDS),
 });
 const sessionCwdsSchema = z.object({
   cwds: z
@@ -261,10 +270,13 @@ const resourceListSchema = z
       .default(RESOURCE_LIST_INITIAL_SIZE),
   })
   .strict();
-const resourceResolveSchema = z.object({
-  sessionId: sessionIdField,
-  reference: z.string().min(1).max(8_192),
-});
+const resourceResolveSchema = z
+  .object({
+    sessionId: sessionIdField,
+    reference: z.string().min(1).max(8_192),
+    workspacePath: z.string().min(1).max(8_192).optional(),
+  })
+  .strict();
 const resourceProbeSchema = z.object({
   sessionId: sessionIdField,
   references: z
@@ -393,10 +405,19 @@ async function prospectiveWorkspaceRoot(cwd: string): Promise<string> {
   try {
     root = await realpath(resolve(cwd));
     details = await stat(root);
-  } catch {
-    throw Object.assign(new Error("Project path does not exist"), {
-      status: 400,
-    });
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      ["ENOENT", "ENOTDIR"].includes(
+        String((error as NodeJS.ErrnoException).code),
+      )
+    ) {
+      throw Object.assign(new Error("Project path does not exist"), {
+        status: 400,
+      });
+    }
+    throw error;
   }
   if (!details.isDirectory()) {
     throw Object.assign(new Error("Project path is not a directory"), {
@@ -490,15 +511,23 @@ function trustedForwardedHttps(request: IncomingMessage): boolean {
   );
 }
 
+function encodeContentDispositionName(name: string): string {
+  return encodeURIComponent(name).replace(
+    /['()*]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 /** This endpoint deliberately supports one byte range. Express owns RFC
  * parsing (including suffix and open-ended forms); malformed, unsatisfiable,
  * non-byte, and multi-range requests fail rather than unexpectedly receiving
- * the whole potentially large resource. */
+ * the whole potentially large resource. An empty representation ignores Range
+ * and returns its complete zero-byte body, as HTTP permits. */
 function resourceByteRange(
   request: Request,
   size: number,
 ): { start: number; end: number } | null {
-  if (!request.get("range")) return null;
+  if (!request.get("range") || size === 0) return null;
   const ranges = request.range(size);
   if (
     !Array.isArray(ranges) ||
@@ -507,7 +536,7 @@ function resourceByteRange(
   ) {
     throw Object.assign(
       new Error("The requested byte range cannot be served"),
-      { status: 416 },
+      { status: 416, contentRange: `bytes */${size}` },
     );
   }
   return ranges[0]!;
@@ -549,6 +578,9 @@ function apiError(
         : Number((error as { status?: unknown })?.status) || 500;
   const message =
     error instanceof Error ? error.message : "Unexpected server error";
+  const contentRange = (error as { contentRange?: unknown })?.contentRange;
+  if (status === 416 && typeof contentRange === "string")
+    response.set("Content-Range", contentRange);
   if (status >= 500)
     console.error(`[${request.method} ${request.path}]`, error);
   // A refusal may carry the candidates the host declined to choose between.
@@ -971,9 +1003,13 @@ export function createInspireServer(deps: AppDependencies): {
     });
   });
   app.post("/api/resources/resolve", async (request, response) => {
-    const { sessionId, reference } = resourceResolveSchema.parse(request.body);
+    const { sessionId, reference, workspacePath } = resourceResolveSchema.parse(
+      request.body,
+    );
     const context = await deps.runtime.resourceContext(sessionId);
-    response.json(await deps.resources.resolve(context, reference));
+    response.json(
+      await deps.resources.resolve(context, reference, true, workspacePath),
+    );
   });
   app.get("/api/resources/:id/content", async (request, response) => {
     let closed = response.destroyed;
@@ -991,14 +1027,22 @@ export function createInspireServer(deps: AppDependencies): {
     );
     await deps.resources.revalidate(resource, context);
     if (closed || response.destroyed) return;
-    response.set({
-      "Content-Type": resource.descriptor.mimeType,
-      "Content-Disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(resource.descriptor.name)}`,
-    });
+    const setResourceHeaders = (
+      mimeType = resource.descriptor.mimeType,
+    ): void => {
+      response.set({
+        "Content-Type": mimeType,
+        "Content-Disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeContentDispositionName(resource.descriptor.name)}`,
+      });
+    };
     if (resource.authority === "embedded") {
-      const data = await deps.resources.embeddedData(resource, context);
+      const { data, mimeType } = await deps.resources.embeddedContent(
+        resource,
+        context,
+      );
       if (closed || response.destroyed) return;
       const range = resourceByteRange(request, data.length);
+      setResourceHeaders(mimeType);
       response.set("Accept-Ranges", "bytes");
       if (range) {
         response.status(206).set({
@@ -1023,6 +1067,7 @@ export function createInspireServer(deps: AppDependencies): {
         await handle.close();
         throw error;
       }
+      setResourceHeaders();
       response.set("Accept-Ranges", "bytes");
       if (range) {
         response.status(206).set({
@@ -1031,9 +1076,16 @@ export function createInspireServer(deps: AppDependencies): {
         });
       } else {
         response.set("Content-Length", String(size));
+        if (size === 0) {
+          await handle.close();
+          response.end();
+          return;
+        }
       }
       const stream = handle.createReadStream(
-        range ? { start: range.start, end: range.end } : {},
+        range
+          ? { start: range.start, end: range.end }
+          : { start: 0, end: size - 1 },
       );
       response.on("close", () => stream.destroy());
       stream.on("error", () => {
@@ -1168,9 +1220,21 @@ export function createInspireServer(deps: AppDependencies): {
    * first frame a client processes is always the authoritative snapshot,
    * with the queued events flushed after it in arrival order. */
   const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
+  const responsiveSockets = new Map<WebSocket, boolean>();
+  const forgetSocket = (socket: WebSocket): void => {
+    sockets.delete(socket);
+    joining.delete(socket);
+    responsiveSockets.delete(socket);
+  };
   const closeLaggingSocket = (socket: WebSocket, reason: string) => {
     joining.delete(socket);
-    if (socket.readyState === WebSocket.OPEN) socket.close(1013, reason);
+    if (socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.close(1013, reason);
+    } catch {
+      forgetSocket(socket);
+      socket.terminate();
+    }
   };
   const sendBounded = (socket: WebSocket, message: string): boolean => {
     if (socket.readyState !== WebSocket.OPEN) return false;
@@ -1181,10 +1245,15 @@ export function createInspireServer(deps: AppDependencies): {
       closeLaggingSocket(socket, "Client fell behind");
       return false;
     }
-    socket.send(message);
-    return true;
+    try {
+      socket.send(message);
+      return true;
+    } catch {
+      forgetSocket(socket);
+      socket.terminate();
+      return false;
+    }
   };
-  const responsiveSockets = new Map<WebSocket, boolean>();
   const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
   const heartbeatInterval = setInterval(() => {
     for (const socket of sockets) {
@@ -1209,8 +1278,19 @@ export function createInspireServer(deps: AppDependencies): {
   }, deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS);
   heartbeatInterval.unref();
 
-  deps.runtime.on("event", (event) => {
-    const message = JSON.stringify(event);
+  const publishRuntimeEvent = (event: unknown): void => {
+    let message: string;
+    try {
+      const encoded = JSON.stringify(event);
+      if (encoded === undefined) throw new Error("event is not serializable");
+      message = encoded;
+    } catch {
+      // A transport projection failure must not throw back through the runtime
+      // operation that emitted it. Re-bootstrap every client instead.
+      for (const socket of sockets)
+        closeLaggingSocket(socket, "Runtime event was not serializable");
+      return;
+    }
     const messageBytes = Buffer.byteLength(message);
     if (messageBytes > MAX_RUNTIME_EVENT_BYTES) {
       // The next bootstrap snapshot is the recovery authority. Never enqueue
@@ -1232,7 +1312,8 @@ export function createInspireServer(deps: AppDependencies): {
         sendBounded(socket, message);
       }
     }
-  });
+  };
+  deps.runtime.on("event", publishRuntimeEvent);
 
   server.on("upgrade", (request, socket, head) => {
     let url: URL;
@@ -1273,23 +1354,24 @@ export function createInspireServer(deps: AppDependencies): {
     joining.set(socket, { messages: [], bytes: 0 });
     responsiveSockets.set(socket, true);
     socket.on("pong", () => responsiveSockets.set(socket, true));
-    socket.on("close", () => {
-      sockets.delete(socket);
-      joining.delete(socket);
-      responsiveSockets.delete(socket);
+    socket.on("error", () => {
+      forgetSocket(socket);
+      socket.terminate();
     });
+    socket.on("close", () => forgetSocket(socket));
     void deps.runtime.snapshot().then(
       (snapshot) => {
         const queued = joining.get(socket);
         joining.delete(socket);
         if (!queued || socket.readyState !== WebSocket.OPEN) return;
-        if (
-          !sendBounded(
-            socket,
-            JSON.stringify({ type: "snapshot", data: snapshot }),
-          )
-        )
+        let message: string;
+        try {
+          message = JSON.stringify({ type: "snapshot", data: snapshot });
+        } catch {
+          socket.close(1011, "Session state was not serializable");
           return;
+        }
+        if (!sendBounded(socket, message)) return;
         for (const message of queued.messages) {
           if (!sendBounded(socket, message)) break;
         }
@@ -1306,6 +1388,7 @@ export function createInspireServer(deps: AppDependencies): {
     server,
     close: async () => {
       clearInterval(heartbeatInterval);
+      deps.runtime.off("event", publishRuntimeEvent);
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening

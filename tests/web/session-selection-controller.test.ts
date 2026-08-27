@@ -76,6 +76,7 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     rememberModel,
     refreshSessionCatalog,
     notify,
+    handleAuthFailure: vi.fn(),
   });
   return {
     controller,

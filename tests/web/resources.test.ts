@@ -55,6 +55,22 @@ describe("Pi resource references", () => {
     ).toBe(false);
   });
 
+  it("keeps embedded coordinates aligned with the original content array", () => {
+    const resources = collectSessionResourceReferences([
+      {
+        role: "user",
+        content: [
+          "malformed primitive",
+          { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+        ],
+      },
+    ]);
+
+    expect(resources.map((item) => item.reference)).toEqual([
+      "pi-embedded://0/1",
+    ]);
+  });
+
   it("understands file URLs, OSC 8 targets, inline-code paths, and @ mentions", () => {
     const osc = "\u001b]8;;file:///tmp/chart.png\u0007chart\u001b]8;;\u0007";
     const resources = collectSessionResourceReferences([

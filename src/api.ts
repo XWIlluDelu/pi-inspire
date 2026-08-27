@@ -129,10 +129,20 @@ interface ResourceContentResponse {
 function contentTotalSize(response: Response, blob: Blob): number {
   const contentRange = response.headers.get("Content-Range");
   if (!contentRange) return blob.size;
-  const match = /^bytes\s+\d+-\d+\/(\d+)$/.exec(contentRange);
-  const total = match ? Number(match[1]) : Number.NaN;
-  if (!Number.isSafeInteger(total) || total < 0) {
-    throw new ApiError(502, "The resource response has an invalid total size");
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+)$/.exec(contentRange);
+  const start = match ? Number(match[1]) : Number.NaN;
+  const end = match ? Number(match[2]) : Number.NaN;
+  const total = match ? Number(match[3]) : Number.NaN;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    !Number.isSafeInteger(total) ||
+    start !== 0 ||
+    end < start ||
+    end - start + 1 !== blob.size ||
+    total <= end
+  ) {
+    throw new ApiError(502, "The resource response has an invalid byte range");
   }
   return total;
 }
@@ -158,6 +168,9 @@ async function fetchResourceContent(
   );
   await ensureOk(response);
   const blob = await response.blob();
+  if (options.byteLimit !== undefined && blob.size > options.byteLimit) {
+    throw new ApiError(502, "The resource response exceeded its byte limit");
+  }
   return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
@@ -193,7 +206,8 @@ function post<T>(
 
 export function createApi(token: string | null = null) {
   return {
-    bootstrap: () => request<BootstrapResponse>(token, "/api/bootstrap"),
+    bootstrap: (signal?: AbortSignal) =>
+      request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
     update: (refresh = false) =>
       request<UpdateCheckResponse>(
         token,
@@ -416,11 +430,16 @@ export function createApi(token: string | null = null) {
       sessionId: string,
       reference: string,
       signal?: AbortSignal,
+      workspacePath?: string,
     ) =>
       post<ResourceDescriptor>(
         token,
         "/api/resources/resolve",
-        { sessionId, reference },
+        {
+          sessionId,
+          reference,
+          ...(workspacePath !== undefined ? { workspacePath } : {}),
+        },
         { signal },
       ),
     resourceContent: (

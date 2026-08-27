@@ -4,7 +4,7 @@ import {
   MAX_PROJECT_FILES,
   type PromptAcceptedResponse,
 } from "../../shared/contracts";
-import type { Api } from "../api";
+import { ApiError, type Api } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import {
   type ComposerHistoryScope,
@@ -67,6 +67,7 @@ interface ComposerControllerHost {
   notify(kind: "warning", text: string): void;
   clearVisibleError(sessionId: string): void;
   failVisible(sessionId: string, message: string): void;
+  handleAuthFailure(): void;
 }
 
 /**
@@ -93,7 +94,9 @@ export class ComposerController {
 
   invalidateForTransportReplacement(): void {
     this.requestEpoch += 1;
+    let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
+      deliveryOutcomeUnknown ||= composer.sending;
       composer.sending = false;
       const invalidateUploads = (items: PendingAttachment[]) =>
         items.map((item) =>
@@ -115,6 +118,11 @@ export class ComposerController {
     }
     const sessionId = this.host.state().sessionId;
     if (sessionId) this.publish(sessionId);
+    if (deliveryOutcomeUnknown)
+      this.host.notify(
+        "warning",
+        "Connection changed while sending; check the conversation before retrying",
+      );
   }
 
   discard(sessionId: string): void {
@@ -271,6 +279,13 @@ export class ComposerController {
     } catch (error) {
       if (!ownsTransport()) return false;
       this.commitHistoryDraft(composer);
+      if (error instanceof ApiError && error.status === 401) {
+        // This request received a definitive rejection, so transport teardown
+        // must not label its delivery outcome as unknown.
+        composer.sending = false;
+        this.host.handleAuthFailure();
+        return false;
+      }
       // Keep failures attached to the session that sent the prompt. A switch
       // before the HTTP result arrives must not overwrite the new session's
       // visible error.
@@ -424,6 +439,14 @@ export class ComposerController {
         );
         return;
       }
+      if (uploaded.length !== pending.length) {
+        await Promise.all(
+          uploaded.map((item) =>
+            api.deleteAttachment(item.id).catch(() => undefined),
+          ),
+        );
+        throw new Error("The Host returned an invalid attachment upload");
+      }
       const applyUploaded = (items: PendingAttachment[]) =>
         items.map((item) => {
           const index = pending.findIndex(
@@ -464,6 +487,10 @@ export class ComposerController {
       });
     } catch (error) {
       if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this.host.handleAuthFailure();
+        return;
+      }
       const message = error instanceof Error ? error.message : "Upload failed";
       const failPending = (items: PendingAttachment[]) =>
         items.map((item) =>

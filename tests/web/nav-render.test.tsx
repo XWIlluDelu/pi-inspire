@@ -182,7 +182,7 @@ describe("session navigation controls", () => {
         };
       }
       if (url.startsWith("/api/preferences") && init.method === "PATCH")
-        return { body: jsonBody(init) };
+        return { body: { ...store.getState().prefs, ...jsonBody(init) } };
       return undefined;
     });
     await store.init("token");

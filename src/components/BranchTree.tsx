@@ -21,7 +21,7 @@ import type {
   BranchTreeResponse,
 } from "../../shared/contracts";
 import { sessionDraft } from "../session-drafts";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { relativeTime } from "./transcript-rows";
 
 const MAX_VISIBLE_BRANCH_LANE = 4;
@@ -528,7 +528,18 @@ function HistoryTurn({
 }
 
 export function BranchTree() {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      branchTree: source.branchTree,
+      branchTreeLoading: source.branchTreeLoading,
+      branchTreeError: source.branchTreeError,
+      branchActionId: source.branchActionId,
+      projectionHealth: source.projectionHealth,
+      projectionConflict: source.projectionConflict,
+    }),
+    shallowEqual,
+  );
   const tree = state.branchTree;
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(

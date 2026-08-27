@@ -30,12 +30,11 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { store } from "../store";
+import type { ContextPaneView } from "./context-pane-view";
 import { ContextPaneState } from "./ContextPaneState";
 import { ContextSplitBody } from "./ContextSplitBody";
 import { PathCopyButton, ResourcePreviewContent } from "./FilePreview";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-
-type AppState = ReturnType<typeof store.getState>;
 
 function selectedChange(
   status: GitStatusResponse | null,
@@ -146,7 +145,7 @@ function GitResultState({
   state,
   result,
 }: {
-  state: AppState;
+  state: ContextPaneView;
   result: GitDiffResponse;
 }) {
   if (result.kind === "binary")
@@ -287,7 +286,7 @@ function ChangeGroup({
   );
 }
 
-function ChangesIndex({ state }: { state: AppState }) {
+function ChangesIndex({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
   if (!status && state.gitStatusLoading)
     return (
@@ -363,7 +362,7 @@ function ChangesIndex({ state }: { state: AppState }) {
   );
 }
 
-function ChangesIndexHeader({ state }: { state: AppState }) {
+function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
   if (!status || status.kind !== "repository")
     return (
@@ -397,7 +396,7 @@ function ChangesIndexHeader({ state }: { state: AppState }) {
   );
 }
 
-function ChangesDetail({ state }: { state: AppState }) {
+function ChangesDetail({ state }: { state: ContextPaneView }) {
   const sourceRef = useRef<HTMLDivElement>(null);
   const [activeChange, setActiveChange] = useState<number | null>(null);
   const change = selectedChange(state.gitStatus, state.selectedGitPathId);
@@ -546,7 +545,7 @@ function ChangesDetail({ state }: { state: AppState }) {
   );
 }
 
-export function ChangesPane({ state }: { state: AppState }) {
+export function ChangesPane({ state }: { state: ContextPaneView }) {
   return (
     <ContextSplitBody
       mode="changes"

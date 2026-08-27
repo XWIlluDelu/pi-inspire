@@ -28,10 +28,15 @@ describe("Files pane", () => {
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let resourceProbeRequests = 0;
   let resourceResolveRequests = 0;
+  let resourceResolveBodies: Array<{
+    reference: string;
+    workspacePath?: string;
+  }> = [];
   let resourceListGate: Promise<void> | null = null;
   let resourceProbeGate: Promise<void> | null = null;
   let bootstrapMessages: unknown[] = [];
   let transcriptRevision = 1;
+  let resourceListHead: string | null = null;
 
   beforeEach(async () => {
     gitStatusFails = false;
@@ -40,9 +45,11 @@ describe("Files pane", () => {
     resourceListRequests = [];
     resourceProbeRequests = 0;
     resourceResolveRequests = 0;
+    resourceResolveBodies = [];
     resourceListGate = null;
     resourceProbeGate = null;
     transcriptRevision = 1;
+    resourceListHead = null;
     bootstrapMessages = [
       {
         role: "assistant",
@@ -301,7 +308,8 @@ describe("Files pane", () => {
           });
           if (gate) await gate;
           const resources = [
-            responseRevision === 1 ? "notes.md" : "fresh.md",
+            resourceListHead ??
+              (responseRevision === 1 ? "notes.md" : "fresh.md"),
             "demo.html",
             ...Array.from({ length: 148 }, (_, index) => `old-${index + 1}.md`),
           ].map((reference) => ({
@@ -362,8 +370,11 @@ describe("Files pane", () => {
           resourceResolveRequests += 1;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
+            workspacePath?: string;
           };
-          const resolvedPath = stripResourceLocation(body.reference);
+          resourceResolveBodies.push(body);
+          const resolvedPath =
+            body.workspacePath ?? stripResourceLocation(body.reference);
           if (resolvedPath === "./folder")
             return Response.json(
               { error: "The reference is not a file" },
@@ -373,6 +384,7 @@ describe("Files pane", () => {
             return Response.json({
               id: "pdf",
               sessionId: "s1",
+              viewId: "view-s1",
               reference: body.reference,
               workspacePath: resolvedPath,
               name: resolvedPath.split("/").at(-1) ?? resolvedPath,
@@ -405,6 +417,7 @@ describe("Files pane", () => {
           return Response.json({
             id,
             sessionId: "s1",
+            viewId: "view-s1",
             reference: body.reference,
             workspacePath: resolvedPath,
             name: resolvedPath.split("/").at(-1) ?? resolvedPath,
@@ -682,7 +695,25 @@ describe("Files pane", () => {
         await within(pane).findByRole("button", { name: "long.ts" }),
       );
       await within(pane).findByRole("region", { name: "File source" });
+      expect(resourceResolveBodies.at(-1)).toMatchObject({
+        reference: "src/long.ts",
+        workspacePath: "src/long.ts",
+      });
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+      const resolvesBeforeRefresh = resourceResolveBodies.length;
+      fireEvent.click(
+        within(pane).getByRole("button", { name: "Refresh context pane" }),
+      );
+      await waitFor(() =>
+        expect(resourceResolveBodies.length).toBeGreaterThan(
+          resolvesBeforeRefresh,
+        ),
+      );
+      expect(resourceResolveBodies.at(-1)).toMatchObject({
+        reference: "src/long.ts",
+        workspacePath: "src/long.ts",
+      });
 
       fireEvent.click(within(pane).getByRole("button", { name: "src" }));
       fireEvent.click(within(pane).getByRole("button", { name: "src" }));
@@ -778,6 +809,42 @@ describe("Files pane", () => {
     });
     expect(
       await within(pane).findByRole("button", { name: /fresh\.md/ }),
+    ).toBeVisible();
+    expect(
+      within(pane).queryByRole("button", { name: /notes\.md/ }),
+    ).toBeNull();
+  });
+
+  it("revalidates Recent across a same-projection transport replacement", async () => {
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("button", { name: /notes\.md/ });
+
+    let releaseList: (() => void) | undefined;
+    resourceListGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    resourceListHead = "replacement.md";
+    const requestsBefore = resourceListRequests.length;
+    await act(async () => {
+      await store.init(`replacement-${++testToken}`);
+    });
+
+    await waitFor(() =>
+      expect(resourceListRequests.length).toBe(requestsBefore + 1),
+    );
+    expect(
+      within(pane).getByRole("button", { name: /notes\.md/ }),
+    ).toBeVisible();
+
+    act(() => releaseList?.());
+    expect(
+      await within(pane).findByRole("button", { name: /replacement\.md/ }),
     ).toBeVisible();
     expect(
       within(pane).queryByRole("button", { name: /notes\.md/ }),

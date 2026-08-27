@@ -8,9 +8,23 @@ const launcherIcons = [
   new URL("../../public/app-icon-512.png", import.meta.url),
 ];
 
+async function readStylesheet(
+  url = stylesheet,
+  seen = new Set<string>(),
+): Promise<string> {
+  if (seen.has(url.href)) return "";
+  seen.add(url.href);
+  const css = await readFile(url, "utf8");
+  const imports = [...css.matchAll(/@import\s+["']([^"']+\.css)["'];/g)];
+  const dependencies = await Promise.all(
+    imports.map((match) => readStylesheet(new URL(match[1]!, url), seen)),
+  );
+  return [css, ...dependencies].join("\n");
+}
+
 describe("design token contract", () => {
   it("does not reference undeclared project CSS variables", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     const declared = new Set(
       [...css.matchAll(/--([a-z0-9-]+)\s*:/gi)].map((match) => match[1]),
     );
@@ -23,7 +37,7 @@ describe("design token contract", () => {
   });
 
   it("keeps navigation run outcomes on distinct traffic-light tokens", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(/\.nav__row-dot--running\s*{[^}]*animation:\s*spin/s);
     expect(css).toMatch(
       /\.nav__row-dot--completed\s*{[^}]*background:\s*var\(--success\)/s,
@@ -39,7 +53,7 @@ describe("design token contract", () => {
 
   it("keeps mobile edge insets and touch targets in the layout flow", async () => {
     const [css, html] = await Promise.all([
-      readFile(stylesheet, "utf8"),
+      readStylesheet(),
       readFile(documentTemplate, "utf8"),
     ]);
     expect(css).toMatch(/padding-top:\s*var\(--safe-top\)/);
@@ -62,7 +76,7 @@ describe("design token contract", () => {
   });
 
   it("declares permanent brand and dedicated surface tokens", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(/--brand-accent\s*:/);
     expect(css).toMatch(/--brand-ink\s*:/);
     expect(css).toMatch(/--bg-prompt\s*:/);
@@ -77,7 +91,7 @@ describe("design token contract", () => {
   });
 
   it("keeps file content canvases neutral across palettes", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     for (const token of [
       "bg-file-canvas",
       "bg-file-surface",
@@ -93,7 +107,7 @@ describe("design token contract", () => {
   });
 
   it("keeps card controls separate while summaries use the remaining header width", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(
       /\.card__disclosure:has\(\+ \.card__summary\)\s*{[^}]*flex:\s*0 0 auto[^}]*max-width:\s*min\(50%, 32ch\)/s,
     );
@@ -107,7 +121,7 @@ describe("design token contract", () => {
   });
 
   it("truncates resource paths in CSS while block paths use the remaining row", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(
       /\.resource-path\s*{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/s,
     );
@@ -125,7 +139,7 @@ describe("design token contract", () => {
   });
 
   it("scopes reading presets to content typography and the shared reading measure", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(
       /:root\[data-content-text-size="compact"\]\s*{[^}]*--text-reading:\s*14px/s,
     );
@@ -167,7 +181,7 @@ describe("design token contract", () => {
   });
 
   it("preserves user prompt line breaks, bounds token-gate controls, and keeps composer spacers elastic", async () => {
-    const css = await readFile(stylesheet, "utf8");
+    const css = await readStylesheet();
     expect(css).toMatch(
       /\.rich-text--user\s+p,\s*\.rich-text--user\s+li\s*{[^}]*white-space:\s*pre-wrap/s,
     );

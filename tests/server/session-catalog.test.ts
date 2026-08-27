@@ -9,6 +9,7 @@ import {
 function record(id: string, cwd: string, modified: string): SessionRecord {
   return {
     path: `/sessions/${id}.jsonl`,
+    source: null,
     id,
     cwd,
     created: new Date("2026-01-01T00:00:00Z"),
@@ -145,6 +146,19 @@ describe("catalog identity and pagination", () => {
     await expect(catalog.list()).resolves.toMatchObject({
       sessions: [expect.objectContaining({ id: "fresh" })],
     });
+  });
+
+  it("hydrates complete curated folders beyond the chronological page size", async () => {
+    const rows = Array.from({ length: 41 }, (_, index) =>
+      record(`session-${index}`, "/work/curated", "2026-07-01T10:00:00Z"),
+    );
+    const catalog = new SessionCatalog("/unused", {
+      list: async () => rows,
+    });
+
+    await expect(catalog.listByCwds(["/work/curated"])).resolves.toHaveLength(
+      41,
+    );
   });
 
   it("reports offset, bounded limit, and filtered total independently from page length", async () => {

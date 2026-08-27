@@ -114,10 +114,12 @@ export const UserBubble = memo(function UserBubble({
   message,
   sessionId,
   viewId,
+  projectionKey,
 }: {
   message: ChatMessage;
   sessionId: string;
   viewId: string;
+  projectionKey: string;
 }) {
   const timestamp = message.timestamp;
   const text = messageText(message);
@@ -174,6 +176,7 @@ export const UserBubble = memo(function UserBubble({
                   key={image.key}
                   sessionId={sessionId}
                   viewId={viewId}
+                  projectionKey={projectionKey}
                   reference={image.reference}
                 />
               ) : (

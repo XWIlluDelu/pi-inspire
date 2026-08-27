@@ -240,7 +240,6 @@ function validBranchAb(value: Buffer): boolean {
 
 interface ParsedRepository {
   response: Extract<GitStatusResponse, { kind: "repository" }>;
-  rawById: Map<string, Buffer>;
 }
 
 export function parsePorcelainV2(
@@ -260,7 +259,6 @@ export function parsePorcelainV2(
   let branchUpstreamSeen = false;
   let branchAbSeen = false;
   const files: GitFileChange[] = [];
-  const rawById = new Map<string, Buffer>();
   const seenIds = new Set<string>();
   let total = 0;
 
@@ -310,11 +308,12 @@ export function parsePorcelainV2(
       rawPath = parsed.path;
       validateTrackedFields(parsed.fields, "1", [3, 4, 5], [6, 7]);
       const [, xy, sub] = parsed.fields;
+      const submodule = submoduleState(sub!);
       change = {
         path: identity(rawPath, workspacePrefix),
         ...facets(xy!),
         untracked: false,
-        ...(submoduleState(sub!) ? { submodule: submoduleState(sub!) } : {}),
+        ...(submodule ? { submodule } : {}),
       };
     } else if (type === "2") {
       const parsed = splitFixed(record, 9);
@@ -326,7 +325,8 @@ export function parsePorcelainV2(
         );
       validateTrackedFields(parsed.fields, "2", [3, 4, 5], [6, 7]);
       const [, xy, sub, , , , , , score] = parsed.fields;
-      facets(xy!); // Validate the ordinary facet grammar before rename metadata.
+      const originalPath = identity(original, workspacePrefix);
+      const changeFacets = facets(xy!, originalPath);
       const renameFacets = [...xy!].filter(
         (value) => value === "R" || value === "C",
       );
@@ -340,12 +340,12 @@ export function parsePorcelainV2(
         scoreValue > 100
       )
         throw new GitInspectionError("Git returned malformed rename data");
-      const originalPath = identity(original, workspacePrefix);
+      const submodule = submoduleState(sub!);
       change = {
         path: identity(rawPath, workspacePrefix),
-        ...facets(xy!, originalPath),
+        ...changeFacets,
         untracked: false,
-        ...(submoduleState(sub!) ? { submodule: submoduleState(sub!) } : {}),
+        ...(submodule ? { submodule } : {}),
       };
     } else if (type === "u") {
       const parsed = splitFixed(record, 10);
@@ -355,11 +355,12 @@ export function parsePorcelainV2(
       if (!/^(?:DD|AU|UD|UA|DU|AA|UU)$/.test(xy!)) {
         throw new GitInspectionError("Git returned malformed conflict data");
       }
+      const submodule = submoduleState(sub!);
       change = {
         path: identity(rawPath, workspacePrefix),
         conflict: { code: xy! },
         untracked: false,
-        ...(submoduleState(sub!) ? { submodule: submoduleState(sub!) } : {}),
+        ...(submodule ? { submodule } : {}),
       };
     } else if (type === "?") {
       const parsed = splitFixed(record, 1);
@@ -372,10 +373,7 @@ export function parsePorcelainV2(
     if (seenIds.has(change.path.id))
       throw new GitInspectionError("Git returned duplicate path identities");
     seenIds.add(change.path.id);
-    if (files.length < MAX_GIT_STATUS_FILES) {
-      rawById.set(change.path.id, rawPath);
-      files.push(change);
-    }
+    if (files.length < MAX_GIT_STATUS_FILES) files.push(change);
   }
 
   if (branchOid === undefined || branchHead === undefined)
@@ -419,7 +417,7 @@ export function parsePorcelainV2(
         .map((file) => file.path.id),
     },
   };
-  return { response, rawById };
+  return { response };
 }
 
 function decodePatchLines(

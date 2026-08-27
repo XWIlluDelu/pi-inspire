@@ -243,6 +243,14 @@ export class SessionCatalogController {
       try {
         const page = await api.sessions(query, offset, SESSION_PAGE_SIZE);
         if (!this.owns(ticket, query, api)) return;
+        if (
+          page.offset !== offset ||
+          (page.sessions.length === 0 && offset < page.total)
+        ) {
+          throw new Error(
+            "Session paging did not advance from its requested offset",
+          );
+        }
         const seen = new Set(this.basePages.map((session) => session.id));
         const appended = [...this.basePages];
         for (const session of page.sessions) {
@@ -424,8 +432,13 @@ export class SessionCatalogController {
           ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, preserveOffset))
           : SESSION_PAGE_SIZE,
       );
+      if (page.offset !== 0 || (page.sessions.length === 0 && page.total > 0)) {
+        throw new Error(
+          "Session paging did not advance from its requested offset",
+        );
+      }
       rows.push(...page.sessions);
-      let nextOffset = page.offset + page.sessions.length;
+      let nextOffset = page.sessions.length;
       let total = page.total;
       if (!this.owns(ticket, query, api)) return;
       // New rows inserted ahead of an already-consumed cursor must not displace
@@ -448,10 +461,13 @@ export class SessionCatalogController {
           Math.min(MAX_SESSION_LIST_PAGE_SIZE, targetOffset - nextOffset),
         );
         if (!this.owns(ticket, query, api)) return;
+        if (page.offset !== priorOffset) {
+          throw new Error("Session paging resumed from an unexpected offset");
+        }
         rows.push(...page.sessions);
         nextOffset = page.offset + page.sessions.length;
         total = page.total;
-        if (nextOffset <= priorOffset) {
+        if (nextOffset <= priorOffset && priorOffset < total) {
           throw new Error(
             `Session refresh stopped at ${nextOffset} before the preserved extent ${targetOffset}`,
           );
@@ -770,8 +786,10 @@ export class SessionCatalogController {
       try {
         const response = await api.sessionsByIds(chunk);
         if (!isCurrent()) return null;
+        const requested = new Set(chunk);
         for (const session of response.sessions) {
-          if (!baseIds.has(session.id)) hydration.set(session.id, session);
+          if (requested.has(session.id) && !baseIds.has(session.id))
+            hydration.set(session.id, session);
         }
       } catch (error) {
         throw this.hydrationFailure("session ids", error);
@@ -792,8 +810,10 @@ export class SessionCatalogController {
       try {
         const response = await api.sessionsByCwds(chunk);
         if (!isCurrent()) return null;
+        const requested = new Set(chunk);
         for (const session of response.sessions) {
-          if (!baseIds.has(session.id)) hydration.set(session.id, session);
+          if (requested.has(session.cwd) && !baseIds.has(session.id))
+            hydration.set(session.id, session);
         }
       } catch (error) {
         throw this.hydrationFailure("curated folders", error);

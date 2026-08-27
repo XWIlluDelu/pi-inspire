@@ -1,6 +1,6 @@
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
 import type { SessionSummary } from "../../shared/contracts";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 export function SessionDeleteDialog({
@@ -10,8 +10,14 @@ export function SessionDeleteDialog({
   session: SessionSummary;
   onClose: () => void;
 }) {
-  const state = useAppState();
-  const deleting = state.deletingSessionId === session.id;
+  const { deletingSessionId, error } = useAppState(
+    (state) => ({
+      deletingSessionId: state.deletingSessionId,
+      error: state.sessionDeleteError,
+    }),
+    shallowEqual,
+  );
+  const deleting = deletingSessionId === session.id;
   const dialogRef = useModalFocus<HTMLDivElement>(true, session.id, () => {
     if (!deleting) onClose();
   });
@@ -70,9 +76,9 @@ export function SessionDeleteDialog({
           <AlertTriangle size={14} aria-hidden />
           Make sure this session is not open in another Pi process.
         </p>
-        {state.sessionDeleteError ? (
+        {error ? (
           <p className="session-delete__error" role="alert">
-            {state.sessionDeleteError}
+            {error}
           </p>
         ) : null}
 

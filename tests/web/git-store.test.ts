@@ -128,6 +128,108 @@ describe("Git inspection ownership and freshness", () => {
     });
   });
 
+  it("revalidates status and the open diff across a same-session transport replacement", async () => {
+    let statusCalls = 0;
+    let diffCalls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/git/status")) {
+        statusCalls += 1;
+        return {
+          body: {
+            ...cleanStatus,
+            head: { ...cleanStatus.head, name: `branch-${statusCalls}` },
+          },
+        };
+      }
+      if (url.startsWith("/api/git/diff")) {
+        diffCalls += 1;
+        return {
+          body: {
+            kind: "text",
+            path,
+            side: "unstaged",
+            truncated: false,
+            encodingLossy: false,
+            lines: [
+              {
+                kind: "add",
+                text: `+transport-${diffCalls}`,
+                oldLine: null,
+                newLine: 1,
+              },
+            ],
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    store.setGitSurfaceVisible("resources-pane", true);
+    await vi.waitFor(() =>
+      expect(store.getState().gitStatus).toMatchObject({
+        head: { name: "branch-1" },
+      }),
+    );
+    await store.openGitDiff(path.id, "unstaged");
+    expect(store.getState().gitDiff).toMatchObject({
+      status: "ready",
+      result: { lines: [{ text: "+transport-1" }] },
+    });
+
+    await store.init("replacement-token");
+    await vi.waitFor(() =>
+      expect(store.getState().gitDiff).toMatchObject({
+        status: "ready",
+        result: { lines: [{ text: "+transport-2" }] },
+      }),
+    );
+
+    expect(statusCalls).toBe(2);
+    expect(store.getState().gitStatus).toMatchObject({
+      head: { name: "branch-2" },
+    });
+    store.setGitSurfaceVisible("resources-pane", false);
+  });
+
+  it("does not let an uncooperative old status request block replacement transport", async () => {
+    let resolveOldStatus!: (response: { body: typeof cleanStatus }) => void;
+    const oldStatus = new Promise<{ body: typeof cleanStatus }>((resolve) => {
+      resolveOldStatus = resolve;
+    });
+    let statusCalls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/git/status")) {
+        statusCalls += 1;
+        if (statusCalls === 1) return oldStatus;
+        return {
+          body: {
+            ...cleanStatus,
+            head: { ...cleanStatus.head, name: "replacement" },
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    store.setGitSurfaceVisible("resources-pane", true);
+    await vi.waitFor(() => expect(statusCalls).toBe(1));
+
+    await store.init("replacement-token");
+
+    await vi.waitFor(() => {
+      expect(statusCalls).toBe(2);
+      expect(store.getState().gitStatus).toMatchObject({
+        head: { name: "replacement" },
+      });
+    });
+    resolveOldStatus({ body: cleanStatus });
+    await Promise.resolve();
+    expect(store.getState().gitStatus).toMatchObject({
+      head: { name: "replacement" },
+    });
+    store.setGitSurfaceVisible("resources-pane", false);
+  });
+
   it("does not reload the selected diff on the four-second status poll", async () => {
     vi.useFakeTimers();
     let store: AppStore | null = null;

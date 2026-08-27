@@ -1,0 +1,944 @@
+/* --- Composer --- */
+
+.composer-dock {
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  background: transparent;
+}
+
+.extension-dock {
+  width: 100%;
+  max-width: var(--composer-max);
+  max-height: min(28dvh, 240px);
+  margin: 0 auto var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.extension-dock--below {
+  max-height: min(16dvh, 112px);
+  margin-top: var(--space-2);
+  margin-bottom: 0;
+}
+
+.extension-display {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+.extension-display__head {
+  min-height: 30px;
+  padding: 3px var(--space-2) 3px var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+}
+
+.extension-display__lead {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.extension-display__lead > svg {
+  flex: 0 0 auto;
+  color: var(--activity-tool);
+}
+
+.extension-display__title,
+.extension-display__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-display__title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.extension-display__detail {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.extension-display__copy.icon-button {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+}
+
+.extension-display__copy.icon-button:hover,
+.extension-display__copy.icon-button:focus-visible {
+  color: var(--ink);
+  background: var(--bg-inset);
+}
+
+.extension-display__text {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-inset);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .extension-display__head {
+    min-height: 44px;
+  }
+
+  .extension-display__copy.icon-button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.composer {
+  position: relative;
+  max-width: var(--composer-max);
+  margin: 0 auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-1);
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+/* Focus lights the surface being typed into with clean accent border */
+.composer:focus-within:not(:where(:has(.welcome__directory:focus-within))) {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-1);
+}
+
+.composer--drop {
+  border-color: var(--accent);
+  border-style: dashed;
+  background: var(--accent-tint);
+}
+
+/* Running work breathes through the whole composer surface. Focus may change
+   controls inside it, but never takes ownership of this run-level signal. */
+.composer--running,
+.composer--running:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--running-glow) 42%, transparent),
+    0 0 10px color-mix(in srgb, var(--running-glow) 18%, transparent);
+  animation: composer-running-breathe 2.8s ease-in-out infinite;
+}
+
+@keyframes composer-running-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--running-glow) 42%, transparent),
+      0 0 10px color-mix(in srgb, var(--running-glow) 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--running-glow) 60%, transparent),
+      0 0 18px color-mix(in srgb, var(--running-glow) 32%, transparent),
+      0 0 30px color-mix(in srgb, var(--running-glow) 10%, transparent);
+  }
+}
+
+.composer--retrying,
+.composer--retrying:focus-within {
+  border-color: var(--warning);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--warning) 42%, transparent),
+    0 0 10px var(--warning-tint);
+}
+
+.composer--compacting,
+.composer--compacting:focus-within {
+  border-color: var(--info);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--info) 42%, transparent),
+    0 0 10px color-mix(in srgb, var(--info) 18%, transparent);
+}
+
+.composer--failed,
+.composer--failed:focus-within {
+  border-color: var(--error);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--error) 42%, transparent),
+    0 0 10px var(--error-tint);
+}
+
+.composer__file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composer__input-wrap {
+  display: flex;
+  min-width: 0;
+}
+
+.composer__input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  resize: none;
+  outline: none;
+  font-size: var(--text-reading);
+  line-height: 1.5;
+  max-height: 40dvh;
+}
+
+.composer__input::placeholder {
+  color: var(--faint);
+}
+
+.composer__delivery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.composer__delivery .segmented {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.composer__delivery .segmented button {
+  justify-content: center;
+}
+
+.composer__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* Dropdown: the themed replacement for native selects. The trigger is the
+   quiet chip used in the composer; `.dropdown--field` restyles it as a
+   bordered form field for Settings. The menu is a token-styled listbox —
+   the native option popup is OS-drawn and can match neither theme. */
+.dropdown {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.dropdown__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 3px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.dropdown__trigger:hover,
+.dropdown__trigger[aria-expanded="true"] {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.dropdown__trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dropdown__trigger:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.dropdown__trigger:disabled:hover {
+  background: transparent;
+}
+
+.dropdown__trigger svg {
+  flex: 0 0 auto;
+  color: var(--faint);
+  transition: transform var(--dur-micro) var(--ease-standard);
+}
+
+.dropdown__trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.dropdown__value {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__menu {
+  position: absolute;
+  left: 0;
+  z-index: 40;
+  min-width: max(100%, 148px);
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+.dropdown__menu--down {
+  top: calc(100% + var(--space-1));
+}
+
+.dropdown__menu--up {
+  bottom: calc(100% + var(--space-1));
+}
+
+.dropdown__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dropdown__option--active {
+  background: var(--bg-inset);
+}
+
+.dropdown__option[aria-selected="true"] {
+  color: var(--accent-deep);
+  font-weight: 500;
+}
+
+.dropdown__option svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.dropdown__option-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.dropdown__option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Bordered form-field variant (Settings): follows the text-field focus
+   grammar — accent border plus soft tint halo. */
+.dropdown--field .dropdown__trigger {
+  min-width: 176px;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  border-color: var(--hairline);
+  background: var(--bg-canvas);
+  color: var(--ink);
+}
+
+.dropdown--field .dropdown__trigger:hover {
+  background: var(--bg-canvas);
+  border-color: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.dropdown--field .dropdown__trigger:focus-visible,
+.dropdown--field .dropdown__trigger[aria-expanded="true"] {
+  outline: none;
+  background: var(--bg-canvas);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.composer__spacer {
+  flex: 1;
+}
+
+/* Context gauge: a small ring plus percent, both taking the occupancy tone —
+   calm while low, warning past 60%, error past 85%. */
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter__ring {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.meter__ring-track {
+  fill: none;
+  stroke: var(--bg-inset);
+  stroke-width: 2.5;
+}
+
+.meter__ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.meter--warning {
+  color: var(--warning);
+}
+
+.meter--warning .meter__ring-fill {
+  stroke: var(--warning);
+}
+
+.meter--error {
+  color: var(--error);
+}
+
+.meter--error .meter__ring-fill {
+  stroke: var(--error);
+}
+
+.composer__send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+.composer__send:hover {
+  background: var(--accent-hover);
+}
+
+.composer__send:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.composer__send:disabled {
+  background: var(--bg-inset);
+  color: var(--faint);
+  cursor: default;
+}
+
+.composer__send--abort {
+  background: var(--error);
+  color: var(--on-status);
+}
+
+.composer__send--abort:hover {
+  background: var(--error);
+  filter: brightness(1.08);
+}
+
+.composer__send--recover {
+  background: var(--warning);
+  color: var(--on-status);
+}
+
+.composer__send--recover:hover {
+  background: var(--warning);
+  filter: brightness(1.08);
+}
+
+/* Attachments & project-file chips */
+
+.composer__attachments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  max-width: 100%;
+}
+
+.attachment--error {
+  border-color: color-mix(in srgb, var(--error) 50%, transparent);
+}
+
+.attachment--image {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.attachment--image .attachment__remove,
+.attachment--image .attachment__status {
+  position: absolute;
+  z-index: 2;
+  color: white;
+  background: color-mix(in srgb, black 66%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, black 30%, transparent);
+}
+
+.attachment--image .attachment__remove {
+  top: 4px;
+  right: 4px;
+}
+
+.attachment--image .attachment__status {
+  right: 5px;
+  bottom: 5px;
+  border-radius: var(--radius-pill);
+}
+
+.attachment__name {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.attachment__remove {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.attachment__remove:hover {
+  color: var(--error);
+}
+
+.image-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--faint);
+  cursor: zoom-in;
+}
+
+.image-preview:disabled {
+  cursor: default;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image-preview--attachment {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+}
+
+.image-preview--message {
+  width: clamp(132px, 28vw, 280px);
+  height: clamp(96px, 20vw, 210px);
+}
+
+.overlay.image-lightbox {
+  z-index: 80;
+  align-items: center;
+  padding: var(--space-6);
+  background: transparent;
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+/* Keep the depth-of-field treatment on one viewport-sized plane. The image is
+   a crisp sibling above it, so no blur edge or shadow halo can outline it. */
+.image-lightbox::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, black 52%, transparent);
+  backdrop-filter: blur(18px) saturate(0.82);
+}
+
+.image-lightbox__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(94vw, 1400px);
+  height: min(92dvh, 1000px);
+  overflow: hidden;
+  outline: none;
+}
+
+.image-lightbox__canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  touch-action: manipulation;
+}
+
+.image-lightbox__canvas--zoomed {
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-lightbox__canvas--panning {
+  cursor: grabbing;
+}
+
+.image-lightbox__canvas > img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  transform-origin: center;
+  transition: transform var(--dur-standard) var(--ease-standard);
+  will-change: transform;
+}
+
+.image-lightbox__canvas--panning > img {
+  transition: none;
+}
+
+.image-lightbox__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, black 70%, transparent);
+  color: white;
+}
+
+/* Project-file picker */
+
+.picker {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  width: min(420px, 100%);
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10;
+  animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.picker__input {
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  outline: none;
+  transition: border-color var(--dur-micro) var(--ease-standard);
+}
+
+.picker__input:focus {
+  border-bottom-color: var(--accent);
+}
+
+.picker__list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.picker__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  text-align: left;
+  color: var(--ink);
+}
+
+.picker__row:hover,
+.picker__row--active {
+  background: var(--bg-inset);
+}
+
+.picker__row--added {
+  background: var(--accent-tint);
+}
+
+.picker__name {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.picker__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.picker__empty {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* Caret completion shares the picker's restrained floating surface, but
+   stays anchored to the writing instrument rather than becoming a dialog. */
+.completion {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: 42;
+  max-height: min(320px, 45dvh);
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2);
+  animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+.completion__heading,
+.model-picker__heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.completion__option {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.completion__option--active {
+  background: var(--accent-tint);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.completion__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.completion__hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion__empty {
+  padding: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.completion__empty--error {
+  color: var(--error);
+}
+
+/* Searchable model picker. Provider headings are structural and never enter
+   the keyboard option index. */
+.model-picker {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.model-picker__trigger-copy,
+.model-picker__option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.model-picker__provider,
+.model-picker__id {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__menu {
+  position: fixed;
+  display: flex;
+  width: min(520px, calc(100vw - var(--space-8)));
+  min-width: 0;
+  max-height: min(440px, 60dvh);
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.model-picker__search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--faint);
+}
+
+.model-picker__search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.model-picker__list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+}
+
+.model-picker__option {
+  white-space: normal;
+}
+
+.model-picker__badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}

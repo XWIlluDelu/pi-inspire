@@ -8,7 +8,7 @@ import {
   PanelRight,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   projectionConflictSeverity,
@@ -18,7 +18,7 @@ import {
 import { stripTerminalSequences } from "../ansi";
 import { messageText, type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
@@ -93,9 +93,15 @@ function StateChip({
 }
 
 function GitSummary({ sessionId }: { sessionId: string }) {
-  const state = useAppState();
+  const { gitStatus, gitStatusError } = useAppState(
+    (state) => ({
+      gitStatus: state.gitStatus,
+      gitStatusError: state.gitStatusError,
+    }),
+    shallowEqual,
+  );
   const observesRepository =
-    state.gitStatus === null || state.gitStatus.kind === "repository";
+    gitStatus === null || gitStatus.kind === "repository";
   useEffect(() => {
     // The compact topbar indicator is a first-class Git surface, so its branch
     // and dirty count remain current even while the detailed Changes pane is closed.
@@ -106,14 +112,12 @@ function GitSummary({ sessionId }: { sessionId: string }) {
     return () => store.setGitSurfaceVisible("topbar-git", false);
   }, [observesRepository, sessionId]);
 
-  const branch = gitHeadLabel(state.gitStatus);
-  const changes = gitChangeCount(state.gitStatus);
+  const branch = gitHeadLabel(gitStatus);
+  const changes = gitChangeCount(gitStatus);
   if (!branch || changes === null) return null;
 
   const conflictCount =
-    state.gitStatus?.kind === "repository"
-      ? state.gitStatus.groups.conflicted.length
-      : 0;
+    gitStatus?.kind === "repository" ? gitStatus.groups.conflicted.length : 0;
   const changeLabel = changes === 1 ? "1 change" : `${changes} changes`;
   const conflictLabel =
     conflictCount === 1 ? "1 conflict" : `${conflictCount} conflicts`;
@@ -121,12 +125,12 @@ function GitSummary({ sessionId }: { sessionId: string }) {
     changes > 0
       ? [changeLabel, ...(conflictCount > 0 ? [conflictLabel] : [])].join(", ")
       : "Working tree clean";
-  const tone = state.gitStatusError
+  const tone = gitStatusError
     ? "topbar__git--stale"
     : conflictCount > 0
       ? "topbar__git--conflict"
       : "";
-  const staleLabel = state.gitStatusError ? " Status may be stale." : "";
+  const staleLabel = gitStatusError ? " Status may be stale." : "";
   return (
     <button
       type="button"
@@ -135,7 +139,7 @@ function GitSummary({ sessionId }: { sessionId: string }) {
         store.setResourcesOpen(true);
         store.setContextMode("changes");
       }}
-      aria-label={`Open Git changes: ${branch}, ${statusLabel}${state.gitStatusError ? ", status may be stale" : ""}`}
+      aria-label={`Open Git changes: ${branch}, ${statusLabel}${gitStatusError ? ", status may be stale" : ""}`}
       title={`${branch} · ${statusLabel} — open Changes.${staleLabel}`}
     >
       <GitBranch size={13} className="topbar__git-icon" aria-hidden />
@@ -147,22 +151,39 @@ function GitSummary({ sessionId }: { sessionId: string }) {
   );
 }
 
-function SessionIdent({ show }: { show: boolean }) {
-  const state = useAppState();
+const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
+  const { sessionId, sessionName, heading, cwd, project, projectDisplay } =
+    useAppState((state) => {
+      const catalogTitle = state.sessions.find(
+        (session) => session.id === state.sessionId,
+      )?.title;
+      return {
+        sessionId: state.sessionId,
+        sessionName: state.sessionName,
+        heading: sessionHeading(
+          state.sessionName,
+          catalogTitle,
+          state.messages,
+          !state.hasOlderMessages,
+        ),
+        cwd: state.cwd,
+        project: state.project,
+        projectDisplay: state.prefs.projectDisplay,
+      };
+    }, shallowEqual);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const { copied, copy } = useCopied();
-  const editing =
-    editingSessionId !== null && editingSessionId === state.sessionId;
+  const editing = editingSessionId !== null && editingSessionId === sessionId;
 
   useEffect(() => {
     // The editor belongs to the session whose heading opened it. Switching
     // sessions cancels that local editor before a submit can retarget it.
-    if (editingSessionId !== null && editingSessionId !== state.sessionId) {
+    if (editingSessionId !== null && editingSessionId !== sessionId) {
       setEditingSessionId(null);
       setValue("");
     }
-  }, [editingSessionId, state.sessionId]);
+  }, [editingSessionId, sessionId]);
 
   if (editing) {
     return (
@@ -212,17 +233,7 @@ function SessionIdent({ show }: { show: boolean }) {
 
   // The rail already carries the product icon. The topbar belongs to the
   // visible session; the welcome surface needs no duplicate wordmark.
-  if (!show || !state.sessionId) return null;
-
-  const catalogTitle = state.sessions.find(
-    (session) => session.id === state.sessionId,
-  )?.title;
-  const heading = sessionHeading(
-    state.sessionName,
-    catalogTitle,
-    state.messages,
-    !state.hasOlderMessages,
-  );
+  if (!show || !sessionId) return null;
 
   // The heading itself is the rename affordance: an absent Pi name is
   // presented as the first prompt without turning that prompt into a name.
@@ -238,20 +249,20 @@ function SessionIdent({ show }: { show: boolean }) {
           onClick={() => {
             // The first-prompt heading is presentation only; rename starts
             // empty unless Pi already owns an explicit session name.
-            setValue(state.sessionName);
-            setEditingSessionId(state.sessionId);
+            setValue(sessionName);
+            setEditingSessionId(sessionId);
           }}
         >
           {heading}
         </button>
       </h1>
       <div className="topbar__workspace-meta">
-        {state.cwd ? (
+        {cwd ? (
           <button
             type="button"
             className="topbar__project"
-            onClick={() => void copy(state.cwd ?? "")}
-            title={copied ? "Copied" : `Copy path — ${state.cwd}`}
+            onClick={() => void copy(cwd)}
+            title={copied ? "Copied" : `Copy path — ${cwd}`}
             aria-label="Copy project path"
           >
             {/* The normal label remains the sole width authority. Copy feedback
@@ -259,9 +270,7 @@ function SessionIdent({ show }: { show: boolean }) {
             <span
               className={`topbar__project-label ${copied ? "topbar__project-label--copied" : ""}`}
             >
-              {state.prefs.projectDisplay === "path"
-                ? state.cwd
-                : state.project}
+              {projectDisplay === "path" ? cwd : project}
             </span>
             <Check
               size={11}
@@ -270,13 +279,13 @@ function SessionIdent({ show }: { show: boolean }) {
             />
           </button>
         ) : null}
-        <GitSummary sessionId={state.sessionId} />
+        <GitSummary sessionId={sessionId} />
       </div>
     </div>
   );
-}
+});
 
-export function AppTopbar({
+export const AppTopbar = memo(function AppTopbar({
   narrowViewport,
   mobileNavOpen,
   settingsOpen,
@@ -293,7 +302,18 @@ export function AppTopbar({
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      statuses: source.statuses,
+      sessionId: source.sessionId,
+      runState: source.runState,
+      projectionConflict: source.projectionConflict,
+      connection: source.connection,
+      connectionProblem: source.connectionProblem,
+      resourcesOpen: source.resourcesOpen,
+    }),
+    shallowEqual,
+  );
   const statuses = Object.entries(state.statuses)
     .map(([key, text]) => [key, stripTerminalSequences(text)] as const)
     .filter(([, text]) => text.length > 0)
@@ -376,4 +396,4 @@ export function AppTopbar({
       </div>
     </header>
   );
-}
+});

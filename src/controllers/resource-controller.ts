@@ -17,11 +17,13 @@ import {
 interface ResourceControllerState {
   sessionId: string | null;
   transcriptViewId: string | null;
+  transcriptIncarnation: string | null;
   transcriptRevision: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches";
   fileBrowserView: "browse" | "preview";
   selectedResourceReference: string | null;
+  selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
   resourceAvailability: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths: Record<string, string>;
@@ -35,6 +37,7 @@ interface ResourceControllerPatch {
   contextMode?: "files" | "changes" | "branches";
   fileBrowserView?: "browse" | "preview";
   selectedResourceReference?: string | null;
+  selectedResourceWorkspacePath?: string | null;
   resourcePreview?: ResourcePreview | null;
   resourceAvailability?: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths?: Record<string, string>;
@@ -327,27 +330,34 @@ export class ResourceController {
   clearSelection(): void {
     this.cancelRequest();
     this.revokePreviewObjectUrl();
-    const { selectedResourceReference, resourcePreview, fileBrowserView } =
-      this.host.state();
+    const {
+      selectedResourceReference,
+      selectedResourceWorkspacePath,
+      resourcePreview,
+      fileBrowserView,
+    } = this.host.state();
     if (
       selectedResourceReference === null &&
+      selectedResourceWorkspacePath === null &&
       resourcePreview === null &&
       fileBrowserView === "browse"
     )
       return;
     this.host.patch({
       selectedResourceReference: null,
+      selectedResourceWorkspacePath: null,
       resourcePreview: null,
       fileBrowserView: "browse",
     });
   }
 
   /** Load one Pi-persisted embedded image without selecting the Files pane.
-   * The session and branch-view identity are rechecked across both authenticated
-   * requests so a late thumbnail can never cross a navigation boundary. */
+   * Session, branch view, and projection incarnation are rechecked across both
+   * authenticated requests so a late thumbnail cannot cross a rewrite. */
   async loadEmbeddedImage(
     sessionId: string,
     viewId: string,
+    projectionKey: string,
     reference: string,
     signal: AbortSignal,
   ): Promise<Blob> {
@@ -362,7 +372,9 @@ export class ResourceController {
         signal.aborted ||
         !this.ownsTransport(api, transportGeneration) ||
         current.sessionId !== sessionId ||
-        current.transcriptViewId !== viewId
+        current.transcriptViewId !== viewId ||
+        `${current.transcriptViewId ?? ""}\u0000${current.transcriptIncarnation ?? ""}` !==
+          projectionKey
       );
     };
     const staleError = () =>
@@ -376,7 +388,12 @@ export class ResourceController {
         signal,
       );
       if (stale()) throw staleError();
-      if (descriptor.kind !== "image" || descriptor.viewId !== viewId) {
+      if (
+        descriptor.sessionId !== sessionId ||
+        descriptor.reference !== reference ||
+        descriptor.kind !== "image" ||
+        descriptor.viewId !== viewId
+      ) {
         throw new Error(
           "The embedded image is unavailable in this conversation view",
         );
@@ -396,7 +413,11 @@ export class ResourceController {
       }
       return content.blob;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        this.ownsTransport(api, transportGeneration)
+      ) {
         this.host.handleAuthFailure();
         throw error;
       }
@@ -426,8 +447,10 @@ export class ResourceController {
       contextMode,
       fileBrowserView: "preview",
       selectedResourceReference: reference,
+      selectedResourceWorkspacePath: knownWorkspacePath ?? null,
       resourcePreview: { status: "loading", reference },
     });
+    let descriptorResolved = false;
     const stale = () => {
       const current = this.host.state();
       return (
@@ -438,17 +461,23 @@ export class ResourceController {
         current.transcriptViewId !== viewId
       );
     };
-    let resolvedReference = false;
     try {
       const descriptor = await api.resolveResource(
         sessionId,
         reference,
         request.signal,
+        knownWorkspacePath,
       );
-      if (stale() || (descriptor.viewId ?? viewId) !== viewId) return;
+      if (stale()) return;
+      // Bare filename recovery intentionally returns the canonical workspace
+      // reference rather than echoing the shorthand, so session/view identity
+      // — not textual equality — binds this response to the request.
+      if (descriptor.sessionId !== sessionId || descriptor.viewId !== viewId) {
+        throw new Error("The Host returned a resource for another selection");
+      }
       // Resolution confirms or corrects preflight standing. Advance first so
       // an older probe cannot overwrite this result when it arrives later.
-      resolvedReference = true;
+      descriptorResolved = true;
       this.advanceReferenceGeneration(reference);
       this.recordAvailability({
         reference,
@@ -571,12 +600,16 @@ export class ResourceController {
         },
       });
     } catch (error) {
-      if (stale()) return;
-      if (error instanceof ApiError && error.status === 401) {
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        this.ownsTransport(api, transportGeneration)
+      ) {
         this.host.handleAuthFailure();
         return;
       }
-      const availability = resolvedReference
+      if (stale()) return;
+      const availability = descriptorResolved
         ? null
         : classifiedResourceFailure(reference, error);
       if (availability) {

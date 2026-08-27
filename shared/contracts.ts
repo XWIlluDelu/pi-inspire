@@ -49,11 +49,13 @@ export const MAX_COMPOSER_HISTORY_ENTRIES = 100;
 export const MAX_COMPOSER_HISTORY_PAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_PROJECT_FILES = 20;
 export const MAX_SESSION_LIST_PAGE_SIZE = 100;
+export const MAX_SESSION_ID_CHARS = 128;
 /** Session-list and fallback-heading text is bounded before responsive CSS
  * applies its viewport-dependent ellipsis. */
 export const MAX_SESSION_DISPLAY_TITLE_CHARS = 120;
 export const MAX_SESSION_ID_HYDRATION_IDS = 600;
 export const MAX_SESSION_CWD_HYDRATION_CWDS = 100;
+export const MAX_CURATED_SESSION_RESULTS = 10_000;
 
 export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
 export type ToolVisibilityPreference =
@@ -103,15 +105,22 @@ export function modelIdentityKey(
 ): string {
   return JSON.stringify([model.provider, model.id]);
 }
-export type RunState =
-  | "idle"
-  | "running"
-  | "retrying"
-  | "compacting"
-  | "queued"
-  | "aborted"
-  | "failed"
-  | "conflict";
+const RUN_STATES = [
+  "idle",
+  "running",
+  "retrying",
+  "compacting",
+  "queued",
+  "aborted",
+  "failed",
+  "conflict",
+] as const;
+export type RunState = (typeof RUN_STATES)[number];
+
+export function isRunState(value: unknown): value is RunState {
+  return (RUN_STATES as readonly unknown[]).includes(value);
+}
+
 /** Run states in which Pi owns an active or queued mutation. Browser controls
  * and host lifecycle/reclamation rules must use this one authority. */
 const BUSY_RUN_STATES = [
@@ -131,7 +140,17 @@ export function isAbortableRunState(runState: RunState): boolean {
   return isBusyRunState(runState) || runState === "conflict";
 }
 
-export type SessionIndicator = "running" | "completed" | "failed" | "attention";
+const SESSION_INDICATORS = [
+  "running",
+  "completed",
+  "failed",
+  "attention",
+] as const;
+export type SessionIndicator = (typeof SESSION_INDICATORS)[number];
+
+function isSessionIndicator(value: unknown): value is SessionIndicator {
+  return (SESSION_INDICATORS as readonly unknown[]).includes(value);
+}
 
 type ProjectionConflictKind =
   | "external-change"
@@ -152,6 +171,17 @@ export function projectionConflictSeverity(
 export interface SessionRuntimeStatus {
   runState: RunState;
   indicator?: SessionIndicator;
+}
+
+export function isSessionRuntimeStatus(
+  value: unknown,
+): value is SessionRuntimeStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  return (
+    isRunState(status.runState) &&
+    (status.indicator === undefined || isSessionIndicator(status.indicator))
+  );
 }
 
 export interface InspirePreferences {

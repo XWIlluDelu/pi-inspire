@@ -1,31 +1,34 @@
 import { RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
 import { resourceRows as toResourceRows } from "../resources";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
+import { selectContextPaneView } from "./context-pane-view";
 import { FilesPane } from "./FilesPane";
 
-export function ContextPane({
+export const ContextPane = memo(function ContextPane({
   isModal = false,
   onClose,
 }: {
   isModal?: boolean;
   onClose?: () => void;
 } = {}) {
-  const state = useAppState();
+  const state = useAppState(selectContextPaneView, shallowEqual);
+  const transportGeneration = state.transportGeneration;
   const modalPaneRef = useModalFocus<HTMLDivElement>(
     isModal,
     undefined,
     onClose,
   );
-  const [resourcePage, setResourcePage] =
-    useState<SessionResourceListResponse | null>(null);
+  const [resourcePage, setResourcePage] = useState<
+    (SessionResourceListResponse & { clientTransportGeneration: number }) | null
+  >(null);
   const [resourceStatus, setResourceStatus] = useState<
     "idle" | "loading" | "error"
   >("idle");
@@ -56,11 +59,23 @@ export function ContextPane({
         limit: RESOURCE_LIST_INITIAL_SIZE,
         signal: request.signal,
       });
-      if (request.signal.aborted) return;
-      if (response) setResourcePage(response);
+      if (
+        request.signal.aborted ||
+        store.getState().transportGeneration !== transportGeneration
+      )
+        return;
+      if (response)
+        setResourcePage({
+          ...response,
+          clientTransportGeneration: transportGeneration,
+        });
       setResourceStatus("idle");
     } catch (error) {
-      if (request.signal.aborted) return;
+      if (
+        request.signal.aborted ||
+        store.getState().transportGeneration !== transportGeneration
+      )
+        return;
       setResourceStatus("error");
       setResourceError(
         error instanceof Error ? error.message : "Recent files failed to load",
@@ -68,21 +83,21 @@ export function ContextPane({
     } finally {
       if (resourceRequest.current === request) resourceRequest.current = null;
     }
-  }, [state.sessionId, state.transcriptViewId]);
+  }, [state.sessionId, state.transcriptViewId, transportGeneration]);
 
   useEffect(() => {
     resourceRequest.current?.abort();
-    setResourcePage(null);
     setResourceStatus("idle");
     setResourceError(null);
-  }, [state.sessionId, state.transcriptViewId]);
+  }, [state.sessionId, state.transcriptViewId, transportGeneration]);
 
   useEffect(() => {
     if (!browsingFiles || !state.sessionId || !state.transcriptViewId) return;
     const current =
       resourcePage?.sessionId === state.sessionId &&
       resourcePage.viewId === state.transcriptViewId &&
-      resourcePage.revision === state.transcriptRevision;
+      resourcePage.revision === state.transcriptRevision &&
+      resourcePage.clientTransportGeneration === transportGeneration;
     if (!current) void loadResources();
   }, [
     browsingFiles,
@@ -90,9 +105,11 @@ export function ContextPane({
     resourcePage?.revision,
     resourcePage?.sessionId,
     resourcePage?.viewId,
+    resourcePage?.clientTransportGeneration,
     state.sessionId,
     state.transcriptRevision,
     state.transcriptViewId,
+    transportGeneration,
   ]);
 
   useEffect(() => {
@@ -100,7 +117,12 @@ export function ContextPane({
     void store.probeResources(
       recentRows.map((row) => row.reference ?? row.label),
     );
-  }, [browsingFiles, recentRows, state.transcriptRevision]);
+  }, [
+    browsingFiles,
+    recentRows,
+    state.transcriptRevision,
+    transportGeneration,
+  ]);
 
   useEffect(
     () => () => {
@@ -127,7 +149,11 @@ export function ContextPane({
           : Promise.resolve(),
         store.refreshWorkspaceBrowser(),
         state.fileBrowserView === "preview" && state.selectedResourceReference
-          ? store.openResource(state.selectedResourceReference)
+          ? store.openResource(
+              state.selectedResourceReference,
+              "files",
+              state.selectedResourceWorkspacePath ?? undefined,
+            )
           : Promise.resolve(),
       ]);
       return;
@@ -141,6 +167,8 @@ export function ContextPane({
   const refreshing =
     state.contextMode === "files"
       ? (state.fileBrowserView === "browse" && resourceStatus === "loading") ||
+        (state.fileBrowserView === "preview" &&
+          state.resourcePreview?.status === "loading") ||
         state.workspaceLoadingDirs.length > 0 ||
         state.workspaceSearchLoading
       : state.contextMode === "changes"
@@ -227,4 +255,4 @@ export function ContextPane({
       {contents}
     </aside>
   );
-}
+});
