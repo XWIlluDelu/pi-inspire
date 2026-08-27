@@ -1201,6 +1201,7 @@ describe("persisted user images", () => {
       expect(load).toHaveBeenCalledWith(
         "s-images",
         "view-images",
+        "view-images\u0000",
         "pi-embedded://4/0",
         expect.any(AbortSignal),
       );

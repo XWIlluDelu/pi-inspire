@@ -530,7 +530,7 @@ describe("extension_ui_request mapping", () => {
       id: "r1",
       method: "confirm",
     }).slice;
-    const failed = reduce(
+    const result = reduce(
       {
         ...pending,
         streaming: true,
@@ -558,8 +558,9 @@ describe("extension_ui_request mapping", () => {
         extensionDisplays: [],
         extensionStatuses: {},
       },
-    ).slice;
-    expect(failed).toMatchObject({
+    );
+    expect(result.resync).toBe(true);
+    expect(result.slice).toMatchObject({
       runState: "failed",
       streaming: false,
       activeAssistantMessageKey: null,
@@ -569,6 +570,16 @@ describe("extension_ui_request mapping", () => {
       extensionDisplays: [],
       statuses: {},
     });
+  });
+
+  it("resyncs when a controlled worker stop retires the branch view", () => {
+    expect(
+      reduce(emptyEventSlice(), new Set(), {
+        type: "extension_runtime_stopped",
+        extensionDisplays: [],
+        extensionStatuses: {},
+      }).resync,
+    ).toBe(true);
   });
 
   it("turns notify into a fire-and-forget notice with the given severity", () => {

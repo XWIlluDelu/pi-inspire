@@ -137,6 +137,20 @@ export const spawnGit: GitRunner = (args, options) =>
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
     };
+    const failPipe = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      kill();
+      reject(
+        new GitInspectionError(
+          "Git inspection output could not be read",
+          502,
+          error.message,
+        ),
+      );
+    };
+    child.stdout.on("error", failPipe);
     child.stdout.on("data", (value: Buffer) => {
       const room = options.stdoutLimit - stdoutBytes;
       if (value.length > room) {
@@ -150,6 +164,7 @@ export const spawnGit: GitRunner = (args, options) =>
         stdoutBytes += value.length;
       }
     });
+    child.stderr.on("error", failPipe);
     child.stderr.on("data", (value: Buffer) => {
       const room = stderrLimit - stderrBytes;
       if (room > 0) stderr.push(value.subarray(0, room));

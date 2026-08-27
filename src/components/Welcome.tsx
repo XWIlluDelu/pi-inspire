@@ -6,7 +6,7 @@ import {
   Paperclip,
   Send,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PROJECT_FILES,
   type ModelOption,
@@ -22,7 +22,7 @@ import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { supportedThinkingLevels } from "../model-options";
 import { setSessionDraft } from "../session-drafts";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -63,14 +63,26 @@ export interface WelcomeInheritance {
 /** Landing composer. Its staged files remain browser-local until Pi has
  * assigned the new session identity, then enter the normal attachment owner
  * and prompt lifecycle before the first message is delivered. */
-export function Welcome({
+export const Welcome = memo(function Welcome({
   showRecent = true,
   inherited,
 }: {
   showRecent?: boolean;
   inherited?: WelcomeInheritance | null;
 }) {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      cwd: source.cwd,
+      model: source.model,
+      thinkingLevel: source.thinkingLevel,
+      commands: source.commands,
+      sessions: source.sessions,
+      availableModels: source.availableModels,
+      prefs: source.prefs,
+      sessionActionError: source.sessionActionError,
+    }),
+    shallowEqual,
+  );
   const liveInheritance = state.cwd
     ? ({
         cwd: state.cwd,
@@ -622,4 +634,4 @@ export function Welcome({
       ) : null}
     </div>
   );
-}
+});

@@ -1,5 +1,5 @@
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 export function HiddenClearDialog({
@@ -9,8 +9,13 @@ export function HiddenClearDialog({
   sessionIds: string[];
   onClose: () => void;
 }) {
-  const state = useAppState();
-  const deleting = state.clearingHidden;
+  const { deleting, error } = useAppState(
+    (state) => ({
+      deleting: state.clearingHidden,
+      error: state.sessionDeleteError,
+    }),
+    shallowEqual,
+  );
   const dialogRef = useModalFocus<HTMLDivElement>(true, "clear-hidden", () => {
     if (!deleting) onClose();
   });
@@ -76,9 +81,9 @@ export function HiddenClearDialog({
           <AlertTriangle size={14} aria-hidden />
           Make sure none of these sessions is open in another Pi process.
         </p>
-        {state.sessionDeleteError ? (
+        {error ? (
           <p className="session-delete__error" role="alert">
-            {state.sessionDeleteError}
+            {error}
           </p>
         ) : null}
 

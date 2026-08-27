@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Api } from "../../src/api";
+import { ApiError, type Api } from "../../src/api";
 import {
   ComposerController,
   type ComposerSlice,
@@ -24,12 +24,14 @@ function createHarness(sessionId = "session-a") {
   const notify = vi.fn();
   const clearVisibleError = vi.fn();
   const failVisible = vi.fn();
+  const handleAuthFailure = vi.fn();
   const controller = new ComposerController({
     state: () => ({ sessionId: activeSessionId }),
     api: () => api,
     transportGeneration: () => generation,
     patch,
     notify,
+    handleAuthFailure,
     clearVisibleError: (owner) => {
       if (activeSessionId === owner) clearVisibleError();
     },
@@ -45,6 +47,7 @@ function createHarness(sessionId = "session-a") {
     notify,
     clearVisibleError,
     failVisible,
+    handleAuthFailure,
     deleteAttachment,
     replaceTransport: (replacement?: Api) => {
       generation += 1;
@@ -104,6 +107,22 @@ describe("ComposerController", () => {
     harness.activate("session-b");
 
     await expect(sending).resolves.toBe(false);
+    expect(harness.failVisible).not.toHaveBeenCalled();
+    expect(harness.slice()).toEqual({
+      attachments: [],
+      projectFiles: ["/workspace/message.ts"],
+      sending: false,
+    });
+  });
+
+  it("enters pairing on a current prompt authorization failure without discarding the draft", async () => {
+    const harness = createHarness();
+    harness.prompt.mockRejectedValue(new ApiError(401, "expired token"));
+    harness.controller.addProjectFile("/workspace/message.ts");
+
+    await expect(harness.controller.send("send")).resolves.toBe(false);
+
+    expect(harness.handleAuthFailure).toHaveBeenCalledOnce();
     expect(harness.failVisible).not.toHaveBeenCalled();
     expect(harness.slice()).toEqual({
       attachments: [],
@@ -262,6 +281,24 @@ describe("ComposerController", () => {
       sending: false,
     });
     expect(harness.clearVisibleError).not.toHaveBeenCalled();
+  });
+
+  it("rejects and reclaims an incomplete upload response", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [{ id: "partial", fileName: "one.txt", kind: "file" }],
+    });
+
+    await harness.controller.addFiles([
+      new File(["one"], "one.txt", { type: "text/plain" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+
+    expect(harness.deleteAttachment).toHaveBeenCalledWith("partial");
+    expect(harness.slice().attachments).toEqual([
+      expect.objectContaining({ status: "error" }),
+      expect.objectContaining({ status: "error" }),
+    ]);
   });
 
   it("reclaims an upload that completes on a replaced transport", async () => {

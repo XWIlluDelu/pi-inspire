@@ -1,13 +1,21 @@
 import { AlertTriangle, Loader2, Pause, XCircle } from "lucide-react";
-import { useAppState } from "../store";
+import { memo } from "react";
+import { shallowEqual, useAppState } from "../store";
 
 /**
  * Transient, truthful activity surface: tools currently executing, automatic
  * retries in progress, failed tool calls since the last settle, and a concise
  * pending-input count. Full pending text remains at the transcript boundary.
  */
-export function ActivityBar() {
-  const state = useAppState();
+export const ActivityBar = memo(function ActivityBar() {
+  const state = useAppState(
+    (source) => ({
+      tools: source.tools,
+      retry: source.retry,
+      queue: source.queue,
+    }),
+    shallowEqual,
+  );
   const tools = Object.values(state.tools);
   const running = tools.filter((tool) => tool.phase === "running");
   const failed = tools.filter((tool) => tool.phase === "error");
@@ -66,4 +74,4 @@ export function ActivityBar() {
       ) : null}
     </div>
   );
-}
+});

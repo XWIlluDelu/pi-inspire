@@ -1,4 +1,5 @@
 import { Package } from "lucide-react";
+import { memo } from "react";
 import type {
   ExtensionDisplay,
   ExtensionWidgetDisplay,
@@ -59,7 +60,7 @@ function TextWidget({ display }: { display: ExtensionWidgetDisplay }) {
  * semantics. Unknown one-way display methods retain the generic Transcript
  * fallback instead of being mistaken for editor widgets.
  */
-export function ExtensionDisplayDock({
+export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
   displays,
   placement,
 }: {
@@ -86,4 +87,4 @@ export function ExtensionDisplayDock({
       ))}
     </div>
   );
-}
+});

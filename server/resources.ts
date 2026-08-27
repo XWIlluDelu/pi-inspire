@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
-import { type FileHandle, open, realpath, stat } from "node:fs/promises";
+import { type FileHandle, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   basename,
@@ -12,6 +12,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MAX_PROMPT_IMAGE_BYTES,
   type ResourceDescriptor,
   type ResourceKind,
   type ResourceProbeResult,
@@ -25,6 +26,11 @@ import {
   type SessionResourceReference,
   stripResourceLocation,
 } from "../shared/resource-references.js";
+import {
+  canonicalBase64DecodedSize,
+  decodeCanonicalBase64,
+  isSupportedPromptImageMimeType,
+} from "./image-content.js";
 import { escapesBase } from "./paths.js";
 import {
   indexedBasenameMatches,
@@ -61,6 +67,8 @@ function sameFileObject(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
+
 function changedResourceError(): Error & { status: number } {
   return Object.assign(
     new Error("The referenced file changed on disk; open it again"),
@@ -68,8 +76,46 @@ function changedResourceError(): Error & { status: number } {
   );
 }
 
+/** Open the path the user actually selected and prove that its descriptor
+ * resolves to the canonical file we authorized. For an already-canonical path,
+ * `O_NOFOLLOW` also rejects a final-component exchange. For a selected symlink
+ * or symlinked cwd, the descriptor witness binds the followed chain atomically
+ * to the expected target. INSΠRE is Linux-only, so `/proc/self/fd` is the
+ * kernel-owned descriptor-to-path witness rather than a second pathname stat. */
+async function openAuthorizedResourceFile(
+  selectedPath: string,
+  canonicalPath: string,
+): Promise<{ handle: FileHandle; details: BigIntStats }> {
+  const flags =
+    RESOURCE_OPEN_FLAGS |
+    (selectedPath === canonicalPath ? constants.O_NOFOLLOW : 0);
+  const handle = await open(selectedPath, flags);
+  try {
+    let openedPath: string;
+    try {
+      openedPath = await realpath(`/proc/self/fd/${handle.fd}`);
+    } catch {
+      throw changedResourceError();
+    }
+    if (openedPath !== canonicalPath) throw changedResourceError();
+    return { handle, details: await handle.stat({ bigint: true }) };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export function openCanonicalResourceFile(
+  canonicalPath: string,
+): Promise<{ handle: FileHandle; details: BigIntStats }> {
+  return openAuthorizedResourceFile(canonicalPath, canonicalPath);
+}
+
 interface ResolvedResource {
   descriptor: ResourceDescriptor;
+  /** Absolute path selected by the reference before symlink resolution. */
+  selectedPath?: string;
+  /** Canonical target pinned by this opaque handle. */
   path?: string;
   /** Filesystem object captured at resolve time. The retained anchor keeps
    * that inode allocated, making the device/inode pair non-reusable while this
@@ -79,12 +125,10 @@ interface ResolvedResource {
    * server shutdown. A separately opened serving handle can still observe a
    * legitimate in-place rewrite of this same filesystem object. */
   anchor?: FileHandle;
-  authority: "embedded" | "index" | "citation";
+  authority: "embedded" | "workspace" | "index" | "citation";
 }
 
 const MAX_HANDLES = 256;
-const RESOURCE_OPEN_FLAGS =
-  constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const MAX_CITATION_INDEXES = 32;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -150,6 +194,22 @@ function decoded(value: string): string {
 }
 
 /** Resolve only filesystem syntax; authorization and realpath checks follow. */
+function exactWorkspacePath(workspacePath: string, cwd: string): string {
+  if (isAbsolute(workspacePath) || workspacePath.includes("\0")) {
+    throw Object.assign(new Error("The workspace path is not valid"), {
+      status: 400,
+    });
+  }
+  const root = resolve(cwd);
+  const candidate = resolve(root, workspacePath);
+  if (escapesBase(relative(root, candidate))) {
+    throw Object.assign(new Error("The workspace path is not valid"), {
+      status: 400,
+    });
+  }
+  return candidate;
+}
+
 export function referencePath(referenceInput: string, cwd: string): string {
   let reference = referenceInput.trim().replace(/^@/, "");
   if (reference.startsWith("<") && reference.endsWith(">"))
@@ -360,11 +420,14 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
         typeof image.mimeType !== "string"
       )
         return;
+      if (!isSupportedPromptImageMimeType(image.mimeType)) return;
+      const size = canonicalBase64DecodedSize(image.data);
+      if (size === null || size === 0 || size > MAX_PROMPT_IMAGE_BYTES) return;
       embedded.set(`pi-embedded://${persistedIndex}/${partIndex}`, {
         messageIndex,
         partIndex,
         mimeType: image.mimeType,
-        size: Buffer.byteLength(image.data, "base64"),
+        size,
       });
     });
   });
@@ -534,6 +597,7 @@ export class ResourceStore {
     context: ResourceContext,
     reference: string,
     retainHandle = true,
+    workspacePath?: string,
   ): Promise<ResourceDescriptor> {
     let index: Promise<ResourceCitationIndex> | null = null;
     return this.resolveUsingIndex(
@@ -541,6 +605,7 @@ export class ResourceStore {
       reference,
       retainHandle,
       () => (index ??= this.citationIndex(context)),
+      workspacePath,
     );
   }
 
@@ -549,6 +614,7 @@ export class ResourceStore {
     reference: string,
     retainHandle: boolean,
     getIndex: () => Promise<ResourceCitationIndex>,
+    workspacePath?: string,
   ): Promise<ResourceDescriptor> {
     const embeddedReference = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
     if (embeddedReference) {
@@ -575,10 +641,19 @@ export class ResourceStore {
       return descriptor;
     }
 
+    const exactWorkspaceSelection = workspacePath !== undefined;
     let lexicalPath: string;
     try {
-      lexicalPath = referencePath(reference, context.cwd);
-    } catch {
+      lexicalPath = exactWorkspaceSelection
+        ? exactWorkspacePath(workspacePath, context.cwd)
+        : referencePath(reference, context.cwd);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        typeof (error as { status?: unknown }).status === "number"
+      )
+        throw error;
       throw Object.assign(new Error("The file reference is not valid"), {
         status: 400,
       });
@@ -596,7 +671,7 @@ export class ResourceStore {
         referencedByIndex(index, context, reference),
       ));
     const indexed = await isIndexedProjectFile(context.cwd, lexicalPath);
-    if (!indexed && !(await isCited())) {
+    if (!indexed && (exactWorkspaceSelection || !(await isCited()))) {
       throw Object.assign(
         new Error(
           "The file is not part of this session's workspace or transcript",
@@ -612,7 +687,8 @@ export class ResourceStore {
     // A bare textual mention is shorthand, not a location claim: recover it
     // from the index when exactly one indexed file carries that name, and
     // refuse to guess when several do.
-    const name = path === null ? bareName(reference) : null;
+    const name =
+      path === null && !exactWorkspaceSelection ? bareName(reference) : null;
     const matches = name ? await indexedBasenameMatches(context.cwd, name) : [];
     const recovered = matches.length === 1 ? matches[0]! : null;
     if (path === null && matches.length > 1) {
@@ -624,8 +700,11 @@ export class ResourceStore {
         },
       );
     }
+    const selectedPath = recovered
+      ? resolve(context.cwd, recovered)
+      : lexicalPath;
     if (path === null && recovered)
-      path = await realpath(resolve(context.cwd, recovered)).catch(() => null);
+      path = await realpath(selectedPath).catch(() => null);
     if (path === null) {
       throw Object.assign(new Error("The referenced file was not found"), {
         status: 404,
@@ -639,7 +718,18 @@ export class ResourceStore {
     const workspaceRoot = await realpath(context.cwd).catch(() => null);
     const within =
       workspaceRoot === null ? ".." : relative(workspaceRoot, path);
-    if (escapesBase(within) && (recovered !== null || !(await isCited()))) {
+    const insideWorkspace = !escapesBase(within);
+    const canonicalIndexed =
+      insideWorkspace &&
+      workspaceRoot !== null &&
+      (await isIndexedProjectFile(workspaceRoot, path));
+    // Indexing a symlink authorizes that directory entry, not an ignored or
+    // otherwise unindexed target reached through it. An explicit branch
+    // citation remains an independent authority for the resolved file.
+    if (
+      (recovered !== null && !canonicalIndexed) ||
+      (!canonicalIndexed && (exactWorkspaceSelection || !(await isCited())))
+    ) {
       throw Object.assign(
         new Error(
           "The file is not part of this session's workspace or transcript",
@@ -650,17 +740,12 @@ export class ResourceStore {
 
     let anchor: FileHandle | undefined;
     try {
-      // Retaining an open descriptor pins the authorized inode until the
-      // opaque handle expires. It is stronger than a stat-version fingerprint:
-      // a deleted object cannot have its inode number reused while this anchor
-      // remains open, while legitimate writes to that same object stay visible.
-      let details: BigIntStats;
-      if (retainHandle) {
-        anchor = await open(path, RESOURCE_OPEN_FLAGS);
-        details = await anchor.stat({ bigint: true });
-      } else {
-        details = await stat(path, { bigint: true });
-      }
+      // The descriptor-path witness proves the opened object is still the
+      // canonical object authorized above. Retaining that descriptor then pins
+      // its inode until the opaque handle expires; probes close it immediately.
+      const opened = await openAuthorizedResourceFile(selectedPath, path);
+      anchor = opened.handle;
+      const details = opened.details;
       if (!details.isFile())
         throw Object.assign(new Error("The reference is not a file"), {
           status: 400,
@@ -691,18 +776,23 @@ export class ResourceStore {
         size: Number(details.size),
         kind: kindFor(mimeType),
       };
-      const authority: ResolvedResource["authority"] =
-        (indexed && !escapesBase(within)) || recovered !== null
-          ? "index"
-          : "citation";
+      const authority: ResolvedResource["authority"] = canonicalIndexed
+        ? exactWorkspaceSelection
+          ? "workspace"
+          : "index"
+        : "citation";
       if (retainHandle) {
         this.remember({
           descriptor,
+          selectedPath,
           path,
           fileId: fileIdentity(details),
           anchor,
           authority,
         });
+        anchor = undefined;
+      } else {
+        await anchor.close();
         anchor = undefined;
       }
       return descriptor;
@@ -718,7 +808,12 @@ export class ResourceStore {
   async openForServing(
     resource: ResolvedResource,
   ): Promise<{ handle: FileHandle; size: number }> {
-    if (!resource.path || !resource.fileId || !resource.anchor) {
+    if (
+      !resource.selectedPath ||
+      !resource.path ||
+      !resource.fileId ||
+      !resource.anchor
+    ) {
       throw Object.assign(
         new Error("The resource preview is no longer available"),
         { status: 404 },
@@ -738,8 +833,14 @@ export class ResourceStore {
     }
 
     let handle: FileHandle;
+    let details: BigIntStats;
     try {
-      handle = await open(resource.path, RESOURCE_OPEN_FLAGS);
+      const opened = await openAuthorizedResourceFile(
+        resource.selectedPath,
+        resource.path,
+      );
+      handle = opened.handle;
+      details = opened.details;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
@@ -747,10 +848,18 @@ export class ResourceStore {
           status: 404,
         });
       }
-      throw changedResourceError();
+      if (
+        code === "EACCES" ||
+        code === "ELOOP" ||
+        code === "ENOTDIR" ||
+        code === "EPERM"
+      )
+        throw changedResourceError();
+      // Descriptor exhaustion and I/O failures are operational failures, not
+      // evidence that the authorized pathname changed.
+      throw error;
     }
     try {
-      const details = await handle.stat({ bigint: true });
       if (
         !details.isFile() ||
         !sameFileObject(fileIdentity(details), resource.fileId)
@@ -835,24 +944,32 @@ export class ResourceStore {
         { status: 409 },
       );
     }
-    // embeddedData revalidates an embedded reference against the same message
+    // embeddedContent revalidates an embedded reference against the same message
     // load from which it reads bytes, avoiding a second full transcript load.
     if (resource.authority === "embedded") return;
-    if (resource.authority === "index") {
-      let lexicalPath: string;
-      try {
-        lexicalPath = referencePath(resource.descriptor.reference, context.cwd);
-      } catch {
+    if (resource.authority === "workspace" || resource.authority === "index") {
+      const workspaceRoot = await realpath(context.cwd).catch(() => null);
+      const within =
+        workspaceRoot && resource.path
+          ? relative(workspaceRoot, resource.path)
+          : "..";
+      if (workspaceRoot && resource.path && !escapesBase(within)) {
+        // Serving is the authority boundary, not the five-second explorer
+        // cache. Rebuild once so a newly ignored/deleted path is revoked
+        // before any headers or bytes leave the Host.
+        invalidateProjectIndex(workspaceRoot);
+        if (await isIndexedProjectFile(workspaceRoot, resource.path)) return;
+      }
+      // An exact Files/Changes selection is index-only: reference syntax must
+      // never reinterpret a literal workspace filename as a citation after
+      // index membership is revoked. A textual reference that originally had
+      // both authorities may still retain its independent exact citation.
+      if (resource.authority === "workspace") {
         throw Object.assign(
-          new Error("The resource is no longer authorized by the workspace"),
+          new Error("The file is no longer in the workspace index"),
           { status: 403 },
         );
       }
-      if (await isIndexedProjectFile(context.cwd, lexicalPath)) return;
-      throw Object.assign(
-        new Error("The resource is no longer authorized by the workspace"),
-        { status: 403 },
-      );
     }
     const index = await this.citationIndex(context);
     if (!referencedByIndex(index, context, resource.descriptor.reference)) {
@@ -863,10 +980,10 @@ export class ResourceStore {
     }
   }
 
-  async embeddedData(
+  async embeddedContent(
     resource: ResolvedResource,
     context: ResourceContext,
-  ): Promise<Buffer> {
+  ): Promise<{ data: Buffer; mimeType: string }> {
     const messages = await contextMessages(context);
     const embedded = embeddedCitations(messages).get(
       resource.descriptor.reference,
@@ -884,12 +1001,16 @@ export class ResourceStore {
       part && typeof part === "object"
         ? (part as Record<string, unknown>)
         : undefined;
-    if (!record || record.type !== "image" || typeof record.data !== "string") {
+    const data =
+      record && record.type === "image" && typeof record.data === "string"
+        ? decodeCanonicalBase64(record.data)
+        : null;
+    if (!data || !embedded) {
       throw Object.assign(
         new Error("The embedded image is no longer available"),
         { status: 404 },
       );
     }
-    return Buffer.from(record.data, "base64");
+    return { data, mimeType: embedded.mimeType };
   }
 }

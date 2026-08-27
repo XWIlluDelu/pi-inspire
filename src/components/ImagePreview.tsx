@@ -228,11 +228,13 @@ export function ImagePreview({
 export function PersistedImage({
   sessionId,
   viewId,
+  projectionKey,
   reference,
   className = "image-preview--message",
 }: {
   sessionId: string;
   viewId: string;
+  projectionKey: string;
   reference: string;
   className?: string;
 }) {
@@ -245,7 +247,13 @@ export function PersistedImage({
     setSrc(undefined);
     setError(null);
     void store
-      .loadEmbeddedImage(sessionId, viewId, reference, request.signal)
+      .loadEmbeddedImage(
+        sessionId,
+        viewId,
+        projectionKey,
+        reference,
+        request.signal,
+      )
       .then(
         (blob) => {
           if (request.signal.aborted) return;
@@ -263,7 +271,7 @@ export function PersistedImage({
       request.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [reference, sessionId, viewId]);
+  }, [projectionKey, reference, sessionId, viewId]);
 
   return (
     <ImagePreview

@@ -1,5 +1,6 @@
 import { SettingsManager } from "./pi-runtime.js";
 import {
+  MAX_CURATED_SESSION_RESULTS,
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,
   projectNameFromCwd,
@@ -71,10 +72,7 @@ export interface SessionCatalogLike {
     limit?: number;
   }): Promise<SessionListResponse>;
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
-  listByCwds(
-    cwds: readonly string[],
-    limitPerCwd?: number,
-  ): Promise<SessionSummary[]>;
+  listByCwds(cwds: readonly string[]): Promise<SessionSummary[]>;
   invalidate(): void;
 }
 
@@ -226,6 +224,7 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
+    if (ids.length === 0) return [];
     await this.refresh();
     const sessions = await Promise.all(
       [...new Set(ids)].map((id) => this.get(id)),
@@ -238,18 +237,24 @@ export class SessionCatalog implements SessionCatalogLike {
   /** The newest sessions of each named working directory. A folder pinned as
    * a whole is a complete navigation section, so it cannot depend on which of
    * its sessions happen to fall inside the first chronological page. */
-  async listByCwds(
-    cwds: readonly string[],
-    limitPerCwd = 40,
-  ): Promise<SessionSummary[]> {
+  async listByCwds(cwds: readonly string[]): Promise<SessionSummary[]> {
     if (cwds.length === 0) return [];
-    return newestPerCwd(
+    const sessions = newestPerCwd(
       (await this.refresh()).filter(
         (session) => !this.ambiguousIds.has(session.id),
       ),
       cwds,
-      limitPerCwd,
-    ).map((session) => this.project(session));
+      MAX_CURATED_SESSION_RESULTS + 1,
+    );
+    if (sessions.length > MAX_CURATED_SESSION_RESULTS) {
+      throw Object.assign(
+        new Error(
+          `Curated folders contain more than ${MAX_CURATED_SESSION_RESULTS.toLocaleString("en-US")} sessions`,
+        ),
+        { status: 413 },
+      );
+    }
+    return sessions.map((session) => this.project(session));
   }
 
   project(session: SessionRecord): SessionSummary {

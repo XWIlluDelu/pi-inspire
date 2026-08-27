@@ -204,8 +204,13 @@ export class RuntimeWorkerPool {
         !slot.pendingPartialPersistence &&
         !slot.rebinding &&
         slot.activeOperations === 0 &&
+        slot.mutationPending === 0 &&
+        slot.extensionResponsePending === 0 &&
+        slot.persistenceExpectations.length === 0 &&
         !this.host.isOpening(slot.id) &&
-        !this.host.hasSelectionReservation(slot.id),
+        !this.host.isLoading(slot.id) &&
+        !this.host.hasSelectionReservation(slot.id) &&
+        !this.host.hasForkReservation(slot.id, slot.sessionPath),
     );
   }
 }

@@ -94,6 +94,7 @@ type TrashSessionPath = (
 export type DeleteSessionRecord = (
   session: SessionRecord,
 ) => Promise<SessionDeleteDisposition>;
+export type ValidateSessionRecord = (session: SessionRecord) => Promise<void>;
 
 async function readFirstLine(handle: FileHandle): Promise<string> {
   const chunks: Buffer[] = [];
@@ -139,6 +140,15 @@ async function inspectSessionFile(
   if (!before.isFile() || before.isSymbolicLink()) {
     throw Object.assign(
       new Error("The catalog entry is not a regular session file"),
+      { status: 409 },
+    );
+  }
+  if (
+    !session.source ||
+    !sameFileVersion(fileIdentity(before), session.source)
+  ) {
+    throw Object.assign(
+      new Error("The session changed since the catalog was loaded"),
       { status: 409 },
     );
   }
@@ -206,7 +216,11 @@ async function inspectSessionFile(
       header && typeof header === "object"
         ? (header as Record<string, unknown>)
         : null;
-    if (record?.type !== "session" || record.id !== session.id) {
+    if (
+      record?.type !== "session" ||
+      record.id !== session.id ||
+      record.cwd !== session.cwd
+    ) {
       throw Object.assign(
         new Error("The session file identity does not match the catalog"),
         { status: 409 },
@@ -216,6 +230,12 @@ async function inspectSessionFile(
   } finally {
     await handle.close();
   }
+}
+
+export async function validateSessionFile(
+  session: SessionRecord,
+): Promise<void> {
+  await inspectSessionFile(session);
 }
 
 async function fileIdentityAt(
@@ -363,14 +383,17 @@ async function trashPath(
         "utf8",
       );
       await info.sync();
-    } finally {
       await info.close();
+    } catch (error) {
+      await info.close().catch(() => undefined);
+      await rm(infoPath, { force: true }).catch(() => undefined);
+      throw error;
     }
     try {
       await rename(payloadPath, payloadDestination);
       return;
     } catch (error) {
-      await rm(infoPath, { force: true });
+      await rm(infoPath, { force: true }).catch(() => undefined);
       throw error;
     }
   }

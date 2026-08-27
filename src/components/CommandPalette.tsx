@@ -1,5 +1,5 @@
 import { SearchX } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
@@ -10,7 +10,7 @@ import {
   type ThemePreference,
 } from "../../shared/contracts";
 import { preferenceChoiceLabel } from "../preference-labels";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { sessionHeading } from "./AppTopbar";
 import { relativeTime } from "./transcript-rows";
@@ -41,7 +41,7 @@ function matches(item: PaletteItem, words: string[]): boolean {
   return words.every((word) => haystack.includes(word));
 }
 
-export function CommandPalette({
+export const CommandPalette = memo(function CommandPalette({
   onClose,
   onToggleNav,
   onToggleCtx,
@@ -54,7 +54,26 @@ export function CommandPalette({
   onNewSession: () => void;
   onOpenSession: (id: string) => void;
 }) {
-  const state = useAppState();
+  const state = useAppState((appState) => {
+    const catalogTitle = appState.sessions.find(
+      (session) => session.id === appState.sessionId,
+    )?.title;
+    return {
+      sessionId: appState.sessionId,
+      heading: sessionHeading(
+        appState.sessionName,
+        catalogTitle,
+        appState.messages,
+        !appState.hasOlderMessages,
+      ),
+      runState: appState.runState,
+      transcriptDurableLeafId: appState.transcriptDurableLeafId,
+      transcriptEffectiveLeafId: appState.transcriptEffectiveLeafId,
+      prefs: appState.prefs,
+      sessions: appState.sessions,
+      commands: appState.commands,
+    };
+  }, shallowEqual);
   const [searchQuery, setSearchQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [renaming, setRenaming] = useState(false);
@@ -168,18 +187,9 @@ export function CommandPalette({
         title: "Rename session…",
         keepOpen: true,
         run: () => {
-          const catalogTitle = state.sessions.find(
-            (session) => session.id === state.sessionId,
-          )?.title;
-          const currentTitle = sessionHeading(
-            state.sessionName,
-            catalogTitle,
-            state.messages,
-            !state.hasOlderMessages,
-          );
           setRenameSessionId(state.sessionId);
-          setRenameValue(currentTitle);
-          setRenameInitialValue(currentTitle);
+          setRenameValue(state.heading);
+          setRenameInitialValue(state.heading);
           setRenaming(true);
         },
       });
@@ -445,4 +455,4 @@ export function CommandPalette({
       </div>
     </div>
   );
-}
+});
