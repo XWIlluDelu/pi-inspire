@@ -5,11 +5,12 @@ import {
   readFile,
   rename,
   rm,
+  symlink,
   truncate,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   boundedTranscriptValue,
@@ -87,9 +88,10 @@ describe("SessionProjection framing and last-good state", () => {
   it("accepts only working-directory aliases for the catalogued project", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-projection-cwd-"));
     directories.push(directory);
-    const child = join(directory, "child");
+    const alias = join(directory, "alias");
     const other = join(directory, "other");
-    await Promise.all([mkdir(child), mkdir(other)]);
+    await mkdir(other);
+    await symlink(directory, alias, "junction");
     const path = join(directory, "session.jsonl");
     await writeFile(
       path,
@@ -99,7 +101,7 @@ describe("SessionProjection framing and last-good state", () => {
       id: "session-a",
       path,
       source: null,
-      cwd: `${child}${sep}..`,
+      cwd: alias,
       created: new Date(),
       modified: new Date(),
       messageCount: 0,
@@ -107,10 +109,11 @@ describe("SessionProjection framing and last-good state", () => {
       searchText: "",
     };
 
-    const projection = await SessionProjection.open(record);
+    const projection = await SessionProjection.openPending(record);
+    expect(projection.attestInitialMaterialization([])).toBe("complete");
     await projection.close();
     await expect(
-      SessionProjection.open({ ...record, cwd: other }),
+      SessionProjection.openPending({ ...record, cwd: other }),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -212,9 +215,7 @@ describe("SessionProjection framing and last-good state", () => {
         uncommittedBytes: Buffer.byteLength(serialized) - 1,
         health: { status: "ok" },
       });
-      expect(projection.attestInitialMaterialization("/project", [])).toBe(
-        "partial",
-      );
+      expect(projection.attestInitialMaterialization([])).toBe("partial");
 
       await appendFile(path, `${serialized.slice(-1)}\n`);
       await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
@@ -225,9 +226,7 @@ describe("SessionProjection framing and last-good state", () => {
         uncommittedBytes: 0,
         health: { status: "ok" },
       });
-      expect(projection.attestInitialMaterialization("/project", [])).toBe(
-        "complete",
-      );
+      expect(projection.attestInitialMaterialization([])).toBe("complete");
     } finally {
       projection.resumeReconciliation();
       await projection.close();

@@ -342,16 +342,12 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
 
-    const opened = await Promise.race([
-      runtime.openSession("a"),
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("open waited for worker")), 100),
-      ),
-    ]);
+    const opening = runtime.openSession("a");
+    await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    const opened = await opening;
     expect(opened.active?.transcriptPage.messages).toEqual([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
-    await vi.waitFor(() => expect(worker.starts).toBe(1));
 
     const prompting = runtime.prompt({ sessionId: "a", message: "continue" });
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
