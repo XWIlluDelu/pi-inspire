@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -155,6 +156,7 @@ function pendingState(
 }
 
 const TEST_CWD = realpathSync(tmpdir());
+const HIDDEN_FOLDER_CWD = resolve("/folder");
 
 function record(id: string, cwd: string): SessionRecord {
   return {
@@ -340,16 +342,12 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
 
-    const opened = await Promise.race([
-      runtime.openSession("a"),
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("open waited for worker")), 100),
-      ),
-    ]);
+    const opening = runtime.openSession("a");
+    await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    const opened = await opening;
     expect(opened.active?.transcriptPage.messages).toEqual([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
-    await vi.waitFor(() => expect(worker.starts).toBe(1));
 
     const prompting = runtime.prompt({ sessionId: "a", message: "continue" });
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
@@ -1813,22 +1811,44 @@ describe("RuntimeController concurrent sessions", () => {
       await expect(runtime.newSession(TEST_CWD)).resolves.toMatchObject({
         active: { sessionId: "new-id" },
       });
-      const slot = (
-        runtime as unknown as {
-          slots: Map<
-            string,
-            {
-              projection: { uncommittedBytes: number };
-            }
-          >;
-        }
-      ).slots.get("new-id")!;
+      const internals = runtime as unknown as {
+        slots: Map<
+          string,
+          {
+            projection: {
+              uncommittedBytes: number;
+              suspendReconciliation(): Promise<void>;
+              reconcileSuspended(force: boolean): Promise<unknown>;
+              resumeReconciliation(): void;
+            };
+          }
+        >;
+        projectionCoordinator: {
+          handle(slot: unknown, result: unknown): Promise<void>;
+        };
+        reconcileSlot(slot: unknown, force: boolean): Promise<unknown>;
+      };
+      const slot = internals.slots.get("new-id")!;
       expect(slot.projection.uncommittedBytes).toBeGreaterThan(0);
 
-      await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
-      await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0), {
-        timeout: 5_000,
-      });
+      const touchedAt = new Date(Date.now() + 10_000);
+      await utimes(sessionPath, touchedAt, touchedAt);
+      await internals.reconcileSlot(slot, true);
+      expect(worker?.stops).toBe(0);
+
+      await slot.projection.suspendReconciliation();
+      try {
+        await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
+        const completed = await slot.projection.reconcileSuspended(true);
+        const completedTouch = new Date(Date.now() + 20_000);
+        await utimes(sessionPath, completedTouch, completedTouch);
+        const repeated = await slot.projection.reconcileSuspended(true);
+        await internals.projectionCoordinator.handle(slot, completed);
+        await internals.projectionCoordinator.handle(slot, repeated);
+      } finally {
+        slot.projection.resumeReconciliation();
+      }
+      expect(slot.projection.uncommittedBytes).toBe(0);
       expect(worker?.stops).toBe(0);
       expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
     } finally {
@@ -3036,7 +3056,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).resolves.toEqual({
       deleted: [
         { sessionId: "a", disposition: "trashed" },
@@ -3073,7 +3093,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b"], [], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b"], [], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({ status: 409, message: "session b changed" });
     expect(validate).toHaveBeenCalledTimes(2);
     expect(remove).not.toHaveBeenCalled();
@@ -3095,7 +3115,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({
       status: 409,
       message: "Hidden changed; review it before clearing",
@@ -3120,7 +3140,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({
       status: 409,
       message: "Switch to another session before clearing Hidden",

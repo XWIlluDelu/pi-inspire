@@ -5,11 +5,11 @@ import {
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
+import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
 } from "./session-projection.js";
-import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
 
 export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 
@@ -299,7 +299,28 @@ export class RuntimeProjectionCoordinator {
       return true;
     };
 
-    if (slot.process && result.uncommittedBytes > 0) {
+    const initialMetadataContinuation =
+      slot.process !== null &&
+      initialMaterialization &&
+      !result.changed &&
+      result.sourceChanged &&
+      result.previousRevision === slot.workerProjectionRevision &&
+      result.revision === slot.workerProjectionRevision &&
+      result.previousFingerprint === slot.workerProjectionFingerprint &&
+      result.fingerprint === slot.workerProjectionFingerprint &&
+      result.previousSourceVersion === slot.workerProjectionSourceVersion &&
+      result.sourceIdentity === slot.workerProjectionSourceIdentity &&
+      result.committedBytes + result.uncommittedBytes ===
+        slot.workerProjectionObservedBytes &&
+      result.previousTailVerified;
+
+    if (initialMetadataContinuation) {
+      // Delayed creation notifications can carry a newer source version after
+      // re-observing exactly the bytes already attributed to the new worker.
+      this.captureWriterResult(slot, result);
+      if (result.uncommittedBytes > 0)
+        this.trackPartialPersistence(slot, result);
+    } else if (slot.process && result.uncommittedBytes > 0) {
       const initiallyOwned =
         priorPartial !== null ||
         isBusyRunState(slot.runState) ||
@@ -307,11 +328,13 @@ export class RuntimeProjectionCoordinator {
       const exactPrior =
         !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
       let owned = false;
-      if (!initiallyOwned)
+      if (!initiallyOwned) {
         lastOwnership = { owned: false, reason: "missing-claim" };
-      else if (!exactPrior)
+      } else if (!exactPrior) {
         lastOwnership = { owned: false, reason: "source-version-mismatch" };
-      else owned = await acceptOwnedAppend();
+      } else {
+        owned = await acceptOwnedAppend();
+      }
       if (!owned) {
         await this.failPartialPersistence(
           slot,
