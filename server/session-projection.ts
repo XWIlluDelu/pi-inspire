@@ -154,7 +154,6 @@ export interface SessionProjectionView {
   readonly uncommittedBytes: number;
   readonly uncommittedFingerprint: string | null;
   attestInitialMaterialization(
-    cwd: string,
     workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation;
   hasActiveEntryType(type: string): boolean;
@@ -986,7 +985,6 @@ export class SessionProjection
       : null;
   }
   attestInitialMaterialization(
-    cwd: string,
     workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation {
     if (!this.initialMaterializationPending) return "mismatch";
@@ -1000,7 +998,6 @@ export class SessionProjection
     }
     if (
       header.version !== CURRENT_SESSION_VERSION ||
-      resolve(header.cwd) !== resolve(cwd) ||
       header.parentSession !== undefined ||
       this.currentEntries.length > workerEntries.length ||
       !samePersistedJson(

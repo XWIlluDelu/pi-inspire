@@ -1,10 +1,10 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  mkdtemp,
   mkdir,
-  readFile,
+  mkdtemp,
   readdir,
+  readFile,
   realpath,
   rm,
   writeFile,
@@ -341,9 +341,11 @@ try {
     mkdir(installDirectory),
     mkdir(stateDirectory, { mode: 0o700 }),
     mkdir(homeDirectory, { mode: 0o700 }),
+    mkdir(agentDirectory, { mode: 0o700 }),
+  ]);
+  await Promise.all([
     mkdir(join(homeDirectory, "AppData", "Roaming"), { recursive: true }),
     mkdir(join(homeDirectory, "AppData", "Local"), { recursive: true }),
-    mkdir(agentDirectory, { mode: 0o700 }),
   ]);
   // Keep the release smoke independent of the runner's Pi credentials and
   // provide one no-network model that is sufficient for RPC startup.

@@ -64,7 +64,6 @@ export class PreviewProjection
   }
 
   attestInitialMaterialization(
-    _cwd: string,
     _workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation {
     return "mismatch";
