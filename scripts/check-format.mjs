@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { npmInvocation } from "../server/npm-command.mjs";
 
-execFileSync("npx", ["biome", "format"], {
+const invocation = npmInvocation(["exec", "--", "biome", "format"]);
+execFileSync(invocation.command, invocation.args, {
+  env: invocation.environment,
   stdio: "inherit",
 });

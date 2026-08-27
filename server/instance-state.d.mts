@@ -30,10 +30,15 @@ export type StopResult =
 
 export function instanceUrl(state: InstanceState): string;
 export function processStartIdentity(pid: number): Promise<string>;
-export function writeInstanceState(path: string, state: InstanceState): Promise<void>;
-export function removeInstanceState(path: string, pid: number): Promise<void>;
+export function writeInstanceState(
+  path: string,
+  state: InstanceState,
+): Promise<void>;
+export function removeInstanceState(
+  path: string,
+  owner: InstanceState,
+): Promise<void>;
 export function consumeStopRequest(path: string): Promise<boolean>;
-export function verifyManagedProcess(state: InstanceState, processMarker?: string): Promise<boolean>;
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,
@@ -42,6 +47,10 @@ export function inspectInstance(
 export function stopManagedInstance(
   path: string,
   expected: ExpectedInstance,
-  options?: { processMarker?: string; timeoutMs?: number },
+  options?: {
+    processMarker?: string;
+    healthTimeoutMs?: number;
+    timeoutMs?: number;
+  },
 ): Promise<StopResult>;
 export function portAvailable(host: string, port: number): Promise<boolean>;

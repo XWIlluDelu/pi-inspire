@@ -7,7 +7,7 @@ import {
   realpath,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listHostDirectories, listHostRoots } from "../../server/host-dirs.js";
 
@@ -63,16 +63,19 @@ describe("listHostDirectories", () => {
     ]);
   });
 
-  it("includes symlinks that resolve to directories and skips broken ones", async () => {
-    await symlink(join(root, "alpha"), join(root, "linked"));
-    await symlink(join(root, "vanished"), join(root, "broken"));
-    const listing = await listHostDirectories(root);
-    expect(listing.dirs.map((entry) => entry.name)).toEqual([
-      "alpha",
-      "beta",
-      "linked",
-    ]);
-  });
+  it.runIf(process.platform !== "win32")(
+    "includes symlinks that resolve to directories and skips broken ones",
+    async () => {
+      await symlink(join(root, "alpha"), join(root, "linked"));
+      await symlink(join(root, "vanished"), join(root, "broken"));
+      const listing = await listHostDirectories(root);
+      expect(listing.dirs.map((entry) => entry.name)).toEqual([
+        "alpha",
+        "beta",
+        "linked",
+      ]);
+    },
+  );
 
   it("defaults to the host home directory", async () => {
     const listing = await listHostDirectories();
@@ -81,7 +84,7 @@ describe("listHostDirectories", () => {
 
   it("reports a filesystem root with a null parent", async () => {
     const listing = await listHostDirectories("/");
-    expect(listing.path).toBe("/");
+    expect(listing.path).toBe(resolve("/"));
     expect(listing.parent).toBeNull();
   });
 

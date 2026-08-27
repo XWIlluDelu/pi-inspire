@@ -7,7 +7,7 @@ const MODULE_ID = /^[a-z][a-z0-9-]{0,63}$/;
 
 function usage() {
   console.error(
-    "Use: ./inspire connection <name> [start|stop|status|init|supervise|install-service]",
+    "Use: inspire connection <name> [start|stop|status|init|supervise|install-service]",
   );
 }
 
@@ -35,7 +35,12 @@ export async function loadConnectionManifest(root, id) {
     typeof manifest.entry !== "string" ||
     !/^[-a-zA-Z0-9_.]+\.mjs$/.test(manifest.entry) ||
     !Array.isArray(manifest.actions) ||
-    !manifest.actions.every((action) => typeof action === "string")
+    !manifest.actions.every((action) => typeof action === "string") ||
+    (manifest.platforms !== undefined &&
+      (!Array.isArray(manifest.platforms) ||
+        !manifest.platforms.every((platform) =>
+          ["linux", "darwin", "win32"].includes(platform),
+        )))
   ) {
     throw new Error(`Connection module \`${id}\` has an invalid manifest`);
   }
@@ -85,6 +90,14 @@ async function main() {
     return;
   }
   const module = await loadConnectionManifest(root, name);
+  if (
+    module.manifest.platforms &&
+    !module.manifest.platforms.includes(process.platform)
+  ) {
+    throw new Error(
+      `Connection module \`${name}\` supports ${module.manifest.platforms.join(", ")}, not ${process.platform}`,
+    );
+  }
   if (!module.manifest.actions.includes(action)) {
     throw new Error(
       `Connection module \`${name}\` does not support \`${action}\``,

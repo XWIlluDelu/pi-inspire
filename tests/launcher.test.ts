@@ -9,12 +9,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const launcher = join(root, "inspire");
+const launcher = join(root, "inspire.mjs");
+const unixLauncher = join(root, "inspire");
+const linuxIt = process.platform === "linux" ? it : it.skip;
 const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
 let activeEnvironment: NodeJS.ProcessEnv | null = null;
@@ -43,6 +45,12 @@ function launcherEnv(
   return {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: join(home, "AppData", "Local"),
+    XDG_CONFIG_HOME: join(home, "config"),
+    XDG_STATE_HOME: join(home, "state"),
+    XDG_RUNTIME_DIR: join(home, "runtime"),
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(port),
     INSPIRE_STATE_PATH: statePath,
@@ -125,7 +133,7 @@ esac
     HOME: join(directory, "home"),
     XDG_CONFIG_HOME: configHome,
     XDG_RUNTIME_DIR: join(directory, "runtime"),
-    PATH: `${bin}:${environment.PATH ?? ""}`,
+    PATH: `${bin}${delimiter}${environment.PATH ?? ""}`,
     INSPIRE_OPEN: "0",
     FAKE_SYSTEMD_LOG: log,
     FAKE_SYSTEMD_ROOT: root,
@@ -135,7 +143,7 @@ esac
 }
 
 function runLauncher(args: string[], env: NodeJS.ProcessEnv): string {
-  return execFileSync(launcher, args, {
+  return execFileSync(process.execPath, [launcher, ...args], {
     cwd: root,
     env,
     encoding: "utf8",
@@ -176,47 +184,50 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
-  it("delegates a matching installed host service through systemd", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-"));
-    temporaryDirectories.push(directory);
-    const environment = await serviceLauncherEnv(directory);
+  linuxIt(
+    "delegates a matching installed host service through systemd",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-"));
+      temporaryDirectories.push(directory);
+      const environment = await serviceLauncherEnv(directory);
 
-    expect(runLauncher([], environment)).toContain(
-      "Started INSΠRE system service.",
-    );
-    expect(runLauncher(["service", "status-host"], environment)).toContain(
-      "INSΠRE system service is running (enabled).",
-    );
-    expect(() => runLauncher(["status"], environment)).toThrow(
-      /Host is not reachable/u,
-    );
-    expect(runLauncher(["restart"], environment)).toContain(
-      "Restarted INSΠRE system service.",
-    );
-    expect(runLauncher(["stop"], environment)).toContain(
-      "Stopped INSΠRE system service.",
-    );
-    expect(runLauncher(["service", "enable-host"], environment)).toContain(
-      "Enabled and started (with daily idle maintenance) INSΠRE system service.",
-    );
-    expect(runLauncher(["service", "disable-host"], environment)).toContain(
-      "Disabled and stopped (with daily idle maintenance) INSΠRE system service.",
-    );
-    const log = await readFile(environment.FAKE_SYSTEMD_LOG!, "utf8");
-    expect(log).toContain("--user start inspire-host.service");
-    expect(log).toContain("--user restart inspire-host.service");
-    expect(log).toContain("--user stop inspire-host.service");
-    expect(log).toContain("--user enable --now inspire-host.service");
-    expect(log).toContain("--user disable --now inspire-host.service");
-    expect(log).toContain(
-      "--user enable --now inspire-idle-maintenance-restart.timer",
-    );
-    expect(log).toContain(
-      "--user disable --now inspire-idle-maintenance-restart.timer",
-    );
-  });
+      expect(runLauncher([], environment)).toContain(
+        "Started INSΠRE system service.",
+      );
+      expect(runLauncher(["service", "status-host"], environment)).toContain(
+        "INSΠRE system service is running (enabled).",
+      );
+      expect(() => runLauncher(["status"], environment)).toThrow(
+        /Host is not reachable/u,
+      );
+      expect(runLauncher(["restart"], environment)).toContain(
+        "Restarted INSΠRE system service.",
+      );
+      expect(runLauncher(["stop"], environment)).toContain(
+        "Stopped INSΠRE system service.",
+      );
+      expect(runLauncher(["service", "enable-host"], environment)).toContain(
+        "Enabled and started (with daily idle maintenance) INSΠRE system service.",
+      );
+      expect(runLauncher(["service", "disable-host"], environment)).toContain(
+        "Disabled and stopped (with daily idle maintenance) INSΠRE system service.",
+      );
+      const log = await readFile(environment.FAKE_SYSTEMD_LOG!, "utf8");
+      expect(log).toContain("--user start inspire-host.service");
+      expect(log).toContain("--user restart inspire-host.service");
+      expect(log).toContain("--user stop inspire-host.service");
+      expect(log).toContain("--user enable --now inspire-host.service");
+      expect(log).toContain("--user disable --now inspire-host.service");
+      expect(log).toContain(
+        "--user enable --now inspire-idle-maintenance-restart.timer",
+      );
+      expect(log).toContain(
+        "--user disable --now inspire-idle-maintenance-restart.timer",
+      );
+    },
+  );
 
-  it("installs a readiness-gated host unit", async () => {
+  linuxIt("installs a readiness-gated host unit", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-install-"));
     temporaryDirectories.push(directory);
     const environment = await serviceLauncherEnv(directory);
@@ -233,7 +244,7 @@ describe("production launcher", () => {
       ),
       "utf8",
     );
-    expect(unit).toContain(`ExecStartPost=${launcher} wait-ready`);
+    expect(unit).toContain(`ExecStartPost=${unixLauncher} wait-ready`);
     expect(unit).toContain("TimeoutStartSec=5min");
   });
 
@@ -252,32 +263,54 @@ describe("production launcher", () => {
     );
   });
 
-  it("rejects an installed host unit without the readiness gate", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-old-"));
-    temporaryDirectories.push(directory);
-    const environment = await serviceLauncherEnv(directory);
-    environment.FAKE_SYSTEMD_OUTDATED = "1";
+  linuxIt(
+    "rejects an installed host unit without the readiness gate",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-old-"));
+      temporaryDirectories.push(directory);
+      const environment = await serviceLauncherEnv(directory);
+      environment.FAKE_SYSTEMD_OUTDATED = "1";
 
-    expect(() => runLauncher(["status"], environment)).toThrow(
-      /unit is outdated/u,
-    );
-  });
+      expect(() => runLauncher(["status"], environment)).toThrow(
+        /unit is outdated/u,
+      );
+    },
+  );
 
   it("keeps explicit local instances out of systemd delegation", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-direct-"));
     temporaryDirectories.push(directory);
-    const environment = await serviceLauncherEnv(directory);
+    const environment =
+      process.platform === "linux"
+        ? await serviceLauncherEnv(directory)
+        : launcherEnv(
+            join(directory, "instance.json"),
+            4589,
+            join(directory, "home"),
+          );
     environment.INSPIRE_HOST = "127.0.0.1";
     environment.INSPIRE_PORT = "4589";
     environment.INSPIRE_STATE_PATH = join(directory, "instance.json");
 
     expect(() => runLauncher(["status"], environment)).toThrow();
-    await expect(
-      readFile(environment.FAKE_SYSTEMD_LOG!, "utf8"),
-    ).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    if (process.platform === "linux") {
+      await expect(
+        readFile(environment.FAKE_SYSTEMD_LOG!, "utf8"),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
   });
+
+  it.runIf(process.platform !== "linux")(
+    "keeps Linux system-service commands explicit on other systems",
+    () => {
+      const environment = { ...process.env, INSPIRE_OPEN: "0" };
+      expect(() =>
+        runLauncher(["service", "status-host"], environment),
+      ).toThrow(/require Linux systemd/u);
+    },
+  );
 
   it("restarts without an existing instance and owns one isolated lifecycle", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-launcher-"));
@@ -293,7 +326,7 @@ describe("production launcher", () => {
     // stale build is rebuilt once, without competing with all Vitest workers.
     await rm(join(root, ".inspire-build"), { force: true });
     const output: Buffer[] = [];
-    const child = spawn(launcher, ["restart"], {
+    const child = spawn(process.execPath, [launcher, "restart"], {
       cwd: root,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -331,7 +364,7 @@ describe("production launcher", () => {
       code: "ENOENT",
     });
 
-    const restarted = spawn(launcher, ["start"], {
+    const restarted = spawn(process.execPath, [launcher, "start"], {
       cwd: root,
       env,
       stdio: ["ignore", "pipe", "pipe"],
