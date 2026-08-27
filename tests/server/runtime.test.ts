@@ -155,6 +155,7 @@ function pendingState(
 }
 
 const TEST_CWD = realpathSync(tmpdir());
+const HIDDEN_FOLDER_CWD = resolve("/folder");
 
 function record(id: string, cwd: string): SessionRecord {
   return {
@@ -3036,7 +3037,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).resolves.toEqual({
       deleted: [
         { sessionId: "a", disposition: "trashed" },
@@ -3073,7 +3074,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b"], [], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b"], [], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({ status: 409, message: "session b changed" });
     expect(validate).toHaveBeenCalledTimes(2);
     expect(remove).not.toHaveBeenCalled();
@@ -3095,7 +3096,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await expect(
-      runtime.clearHiddenSessions(["a"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({
       status: 409,
       message: "Hidden changed; review it before clearing",
@@ -3120,7 +3121,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
 
     await expect(
-      runtime.clearHiddenSessions(["a", "b"], ["a"], ["/folder"]),
+      runtime.clearHiddenSessions(["a", "b"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({
       status: 409,
       message: "Switch to another session before clearing Hidden",
