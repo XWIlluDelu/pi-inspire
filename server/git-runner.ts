@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import {
+  terminateProcessTree,
+  usesIsolatedProcessGroup,
+} from "./process-tree.js";
 
 export const GIT_TIMEOUT_MS = 4_000;
 export const GIT_STDERR_BYTES = 64 * 1024;
@@ -87,7 +91,7 @@ export const spawnGit: GitRunner = (args, options) =>
       reject(new GitInspectionError("Git inspection was cancelled", 499));
       return;
     }
-    const isolatedGroup = process.platform === "linux";
+    const isolatedGroup = usesIsolatedProcessGroup();
     const child = spawn("git", [...args], {
       shell: false,
       detached: isolatedGroup,
@@ -105,29 +109,15 @@ export const spawnGit: GitRunner = (args, options) =>
     let outputFailed = false;
     let settled = false;
     const stderrLimit = options.stderrLimit ?? GIT_STDERR_BYTES;
-    const kill = () => {
-      if (isolatedGroup && child.pid) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-          return;
-        } catch {
-          /* raced exit */
-        }
-      }
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* close/error settles */
-      }
-    };
+    const kill = () => terminateProcessTree(child, "SIGKILL");
     const onAbort = () => {
       aborted = true;
       kill();
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     // AbortSignal does not replay an abort that races between the initial
-    // check and listener registration. Recheck after subscribing so that
-    // every cancellation either reaches the listener or is observed here.
+    // check and listener registration. Recheck after subscribing so every
+    // cancellation is either delivered or observed here.
     if (options.signal?.aborted) onAbort();
     const timer = setTimeout(() => {
       timedOut = true;

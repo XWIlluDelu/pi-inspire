@@ -383,6 +383,9 @@ interface AppDependencies {
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
+  /** Authenticated local launcher shutdown. System service policy remains
+   * outside the HTTP server; this callback only closes this exact Host. */
+  shutdown?: () => void | Promise<void>;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
@@ -632,6 +635,19 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  app.post("/api/host/shutdown", (_request, response) => {
+    if (!deps.shutdown)
+      return response
+        .status(503)
+        .json({ error: "Host shutdown is unavailable" });
+    response.status(202).end();
+    setImmediate(() => {
+      Promise.resolve(deps.shutdown?.()).catch((error) => {
+        console.error("Authenticated host shutdown failed", error);
+      });
+    });
   });
 
   app.get("/api/update", async (request, response) => {

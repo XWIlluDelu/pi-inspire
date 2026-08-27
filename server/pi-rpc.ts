@@ -4,6 +4,10 @@ import { StringDecoder } from "node:string_decoder";
 import { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 import type { DiagnosticLevel } from "./diagnostics.js";
 import { piInstallation } from "./pi-runtime.js";
+import {
+  terminateProcessTree,
+  usesIsolatedProcessGroup,
+} from "./process-tree.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
@@ -133,7 +137,7 @@ export class PiRpcProcess extends EventEmitter {
         // Pi and every tool it launches own an isolated process group on
         // POSIX. Host eviction can then terminate the whole worker tree rather
         // than orphaning a long-running shell/tool grandchild.
-        detached: process.platform !== "win32",
+        detached: usesIsolatedProcessGroup(),
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
@@ -149,9 +153,10 @@ export class PiRpcProcess extends EventEmitter {
     child.stdin.on("error", (error) => this.handleExit(child, error));
     child.once("error", (error) => this.handleExit(child, error));
     child.once("exit", (code, signal) => {
-      // The group can outlive its leader when a tool ignores SIGTERM. Once Pi
-      // is gone there is no owner left for such descendants, so reap them.
-      if (process.platform !== "win32") this.signalWorkerTree(child, "SIGKILL");
+      // The worker tree can outlive its leader when a tool ignores SIGTERM.
+      // Once Pi is gone there is no owner left for such descendants, so reap
+      // them through the platform-specific whole-tree boundary.
+      this.signalWorkerTree(child, "SIGKILL");
       if (this.stopping) return;
       this.handleExit(
         child,
@@ -167,15 +172,7 @@ export class PiRpcProcess extends EventEmitter {
     child: ChildProcessWithoutNullStreams,
     signal: NodeJS.Signals,
   ): void {
-    if (process.platform !== "win32" && child.pid) {
-      try {
-        process.kill(-child.pid, signal);
-        return;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
-      }
-    }
-    child.kill(signal);
+    terminateProcessTree(child, signal);
   }
 
   private attachLineReader(child: ChildProcessWithoutNullStreams): void {

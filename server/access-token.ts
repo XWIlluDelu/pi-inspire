@@ -10,8 +10,11 @@ import {
   rm,
   stat,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  inspireStateDirectory,
+  supportsPosixPermissions,
+} from "./platform-paths.mjs";
 
 const TOKEN_LENGTH = 64;
 const TOKEN_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
@@ -36,11 +39,8 @@ export function defaultAccessTokenPath(
   host: string,
   port: number,
 ): string {
-  const stateHome =
-    process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
   return join(
-    stateHome,
-    "inspire",
+    inspireStateDirectory(),
     `${accessTokenKey(root, host, port)}.token`,
   );
 }
@@ -58,7 +58,8 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
       `The Inspire access-token directory is not owned by the current user: ${path}`,
     );
   }
-  if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_DIRECTORY_MODE);
+  if (supportsPosixPermissions() && (info.mode & 0o077) !== 0)
+    await chmod(path, PRIVATE_DIRECTORY_MODE);
 }
 
 interface StoredToken {
@@ -81,7 +82,7 @@ async function readPrivateToken(path: string): Promise<StoredToken> {
         `The Inspire access-token file is not owned by the current user: ${path}`,
       );
     }
-    if ((info.mode & 0o077) !== 0) {
+    if (supportsPosixPermissions() && (info.mode & 0o077) !== 0) {
       throw new Error(
         `The Inspire access-token file must not be accessible by other users: ${path}`,
       );

@@ -16,7 +16,14 @@ execFileSync(
   { cwd: root, stdio: "inherit" },
 );
 await mkdir(resolve(build, "server"), { recursive: true });
-await cp(
-  resolve(root, "server/instance-state.mjs"),
-  resolve(build, "server/instance-state.mjs"),
-);
+for (const supportModule of [
+  "file-lock.mjs",
+  "instance-state.mjs",
+  "npm-command.mjs",
+  "platform-paths.mjs",
+]) {
+  await cp(
+    resolve(root, "server", supportModule),
+    resolve(build, "server", supportModule),
+  );
+}

@@ -280,7 +280,11 @@ function ReadyResource({
         className="res__preview-fill res__preview-media"
         data-pane-scroll-active="true"
       >
-        <ImagePreview src={preview.objectUrl} alt={descriptor.name} />
+        <ImagePreview
+          src={preview.objectUrl}
+          alt={descriptor.name}
+          className="image-preview--file"
+        />
       </div>
     );
   if (descriptor.kind === "pdf" && preview.objectUrl)

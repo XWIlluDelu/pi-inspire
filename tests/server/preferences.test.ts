@@ -1,10 +1,19 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
 import { defaultPreferences } from "../../shared/contracts.js";
 
@@ -102,16 +111,45 @@ describe("PreferencesStore validation", () => {
     });
   });
 
-  it("continues after the kernel releases a dead process lock", async () => {
+  it("recovers an aged lock whose owning process no longer exists", async () => {
     const { path, store } = await fixture();
-    const lock = `${path}.flock`;
+    let deadPid = 999_999;
+    while (true) {
+      try {
+        process.kill(deadPid, 0);
+        deadPid += 1;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+        deadPid += 1;
+      }
+    }
+    const lock = `${path}.lock`;
+    await mkdir(lock);
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: deadPid }));
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+
+    await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
+      theme: "dark",
+    });
+  });
+  it("continues after a dead process releases its portable lock", async () => {
+    const { path, store } = await fixture();
+    const lock = `${path}.lock`;
+    const moduleUrl = pathToFileURL(
+      join(process.cwd(), "server", "file-lock.mjs"),
+    ).href;
     const holder = spawn(
-      "flock",
-      ["-x", lock, "-c", "printf ready; sleep 30"],
-      {
-        detached: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      },
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { acquireFileLock } from ${JSON.stringify(moduleUrl)};
+         await acquireFileLock(${JSON.stringify(lock)}, { waitMs: 500 });
+         process.stdout.write("ready\\n");
+         setInterval(() => undefined, 1_000);`,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
     );
     let stopped = false;
     try {
@@ -129,34 +167,21 @@ describe("PreferencesStore validation", () => {
       await delay(50);
       expect(settled).toBe(false);
 
-      process.kill(-holder.pid!, "SIGKILL");
+      holder.kill("SIGKILL");
       await once(holder, "close");
       stopped = true;
       await expect(patching).resolves.toMatchObject({ theme: "dark" });
     } finally {
-      if (!stopped) {
-        try {
-          process.kill(-holder.pid!, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-        if (holder.exitCode === null && holder.signalCode === null)
-          await once(holder, "close");
+      if (!stopped && holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+        await once(holder, "close");
       }
     }
   });
 
-  it("holds the kernel lock through the preferences rename", async () => {
+  it("holds the portable lock through the preferences rename", async () => {
     const { path, store } = await fixture();
-    const lock = `${path}.flock`;
-    const contend = () =>
-      new Promise<number | null>((resolveExit, rejectExit) => {
-        const child = spawn("flock", ["-n", lock, "-c", "true"], {
-          stdio: "ignore",
-        });
-        child.once("error", rejectExit);
-        child.once("close", resolveExit);
-      });
+    const lock = `${path}.lock`;
     const mutable = store as unknown as {
       persist: (
         preferences: typeof defaultPreferences,
@@ -165,7 +190,9 @@ describe("PreferencesStore validation", () => {
     };
     const persist = mutable.persist.bind(store);
     mutable.persist = async (preferences, assertOwned) => {
-      await expect(contend()).resolves.toBe(1);
+      await expect(
+        acquireFileLock(lock, { waitMs: 50, retryMs: 10 }),
+      ).rejects.toMatchObject({ code: "ELOCKTIMEOUT" });
       await assertOwned();
       await persist(preferences, assertOwned);
     };
@@ -173,12 +200,13 @@ describe("PreferencesStore validation", () => {
     await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
       theme: "dark",
     });
-    await expect(contend()).resolves.toBe(0);
+    const lease = await acquireFileLock(lock, { waitMs: 100 });
+    await lease.release();
   });
 
-  it("fails closed when the kernel-lock path is replaced", async () => {
+  it("fails closed when the portable-lock path is replaced", async () => {
     const { path, store } = await fixture();
-    const lock = `${path}.flock`;
+    const lock = `${path}.lock`;
     const replacement = "replacement lock inode\n";
     const mutable = store as unknown as {
       persist: (

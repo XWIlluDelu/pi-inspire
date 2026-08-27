@@ -1,8 +1,20 @@
+import { execFile as execFileCallback } from "node:child_process";
+import {
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
-import { mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+const execFile = promisify(execFileCallback);
 export const INSTANCE_STATE_VERSION = 1;
 
 function displayHost(host) {
@@ -42,8 +54,7 @@ async function readState(path) {
   try {
     const value = JSON.parse(await readFile(path, "utf8"));
     return validState(value) ? value : null;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
+  } catch {
     return null;
   }
 }
@@ -76,15 +87,64 @@ export async function consumeStopRequest(path) {
   }
 }
 
+async function darwinProcessStartIdentity(pid) {
+  const { stdout } = await execFile(
+    "/bin/ps",
+    ["-p", String(pid), "-o", "lstart="],
+    { encoding: "utf8", timeout: 1_500, maxBuffer: 4_096 },
+  );
+  const value = stdout.trim();
+  if (!value) throw new Error(`Unable to read process start time for ${pid}`);
+  return `darwin:${value}`;
+}
+
+async function windowsProcessStartIdentity(pid) {
+  const command = process.env.SystemRoot
+    ? join(
+        process.env.SystemRoot,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      )
+    : "powershell.exe";
+  const { stdout } = await execFile(
+    command,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+    ],
+    // A cold Windows PowerShell process can take several seconds to start on
+    // hosted runners. This probe is part of startup authority, not a health
+    // request, so avoid killing a valid identity check at the old 2s boundary.
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4_096 },
+  );
+  const value = stdout.trim();
+  if (!/^\d+$/u.test(value))
+    throw new Error(`Unable to read process start time for ${pid}`);
+  return `win32:${value}`;
+}
+
+/** A PID alone is reusable. Record an OS process-birth identity wherever the
+ * host exposes one, and retain a conservative PID identity on other systems. */
 export async function processStartIdentity(pid) {
-  if (process.platform !== "linux") return `pid:${pid}`;
-  const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
-  const closing = processStat.lastIndexOf(")");
-  if (closing < 0) throw new Error(`Unable to read process identity for ${pid}`);
-  const fields = processStat.slice(closing + 2).trim().split(/\s+/);
-  const startTime = fields[19];
-  if (!startTime) throw new Error(`Unable to read process start time for ${pid}`);
-  return startTime;
+  if (process.platform === "linux") {
+    const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
+    const closing = processStat.lastIndexOf(")");
+    if (closing < 0)
+      throw new Error(`Unable to read process identity for ${pid}`);
+    const fields = processStat.slice(closing + 2).trim().split(/\s+/);
+    const startTime = fields[19];
+    if (!startTime)
+      throw new Error(`Unable to read process start time for ${pid}`);
+    return `linux:${startTime}`;
+  }
+  if (process.platform === "darwin") return darwinProcessStartIdentity(pid);
+  if (process.platform === "win32") return windowsProcessStartIdentity(pid);
+  return `pid:${pid}`;
 }
 
 async function processAlive(pid) {
@@ -93,25 +153,37 @@ async function processAlive(pid) {
     if (process.platform === "linux") {
       const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
       const closing = processStat.lastIndexOf(")");
-      if (closing >= 0 && processStat.slice(closing + 2, closing + 3) === "Z") return false;
+      if (
+        closing >= 0 &&
+        processStat.slice(closing + 2, closing + 3) === "Z"
+      )
+        return false;
     }
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return error?.code === "EPERM";
   }
 }
 
-async function verifyManagedProcess(state, processMarker = "server/index.ts") {
+/** Exact process inspection is the authority for signal fallback. Normal
+ * cross-platform lifecycle uses authenticated HTTP, so unsupported systems
+ * fail closed instead of killing a merely matching PID. */
+async function verifyManagedProcess(
+  state,
+  processMarker = "server/index.ts",
+) {
   if (!(await processAlive(state.pid))) return false;
   if (process.platform !== "linux") return false;
   try {
-    const [workingDirectory, commandLine, processInfo, processStartTime] = await Promise.all([
-      readlink(`/proc/${state.pid}/cwd`),
-      readFile(`/proc/${state.pid}/cmdline`, "utf8"),
-      stat(`/proc/${state.pid}`),
-      processStartIdentity(state.pid),
-    ]);
-    const ownUid = typeof process.getuid === "function" ? process.getuid() : processInfo.uid;
+    const [workingDirectory, commandLine, processInfo, processStartTime] =
+      await Promise.all([
+        readlink(`/proc/${state.pid}/cwd`),
+        readFile(`/proc/${state.pid}/cmdline`, "utf8"),
+        stat(`/proc/${state.pid}`),
+        processStartIdentity(state.pid),
+      ]);
+    const ownUid =
+      typeof process.getuid === "function" ? process.getuid() : processInfo.uid;
     return (
       processInfo.uid === ownUid &&
       workingDirectory === state.root &&
@@ -123,57 +195,170 @@ async function verifyManagedProcess(state, processMarker = "server/index.ts") {
   }
 }
 
-function expectedState(state, expected) {
-  return state.root === expected.root && state.host === expected.host && state.port === expected.port;
+function comparablePath(path) {
+  return process.platform === "win32" ? path.toLowerCase() : path;
 }
 
-export async function inspectInstance(path, expected, options = {}) {
-  const state = await readState(path);
-  if (!state) return { kind: "absent" };
-  if (!expectedState(state, expected)) return { kind: "stale" };
-  if (!(await verifyManagedProcess(state, options.processMarker))) return { kind: "stale" };
-  if (!modeMatches(state, expected)) return { kind: "mode-conflict", state };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.healthTimeoutMs ?? 1_500);
+async function sameRoot(left, right) {
+  if (comparablePath(left) === comparablePath(right)) return true;
   try {
-    const response = await fetch(`http://${displayHost(state.host)}:${state.port}/api/health`, {
-      headers: { Authorization: `Bearer ${state.token}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) return { kind: "unavailable", state };
-    const body = await response.json();
-    if (body?.appName !== "inspire" || body?.mock !== state.mock) return { kind: "unavailable", state };
-    return { kind: "healthy", state, url: instanceUrl(state) };
+    const [physicalLeft, physicalRight] = await Promise.all([
+      realpath(left),
+      realpath(right),
+    ]);
+    return comparablePath(physicalLeft) === comparablePath(physicalRight);
   } catch {
-    return { kind: "unavailable", state };
+    return false;
+  }
+}
+
+async function expectedState(state, expected) {
+  return (
+    state.host === expected.host &&
+    state.port === expected.port &&
+    (await sameRoot(state.root, expected.root))
+  );
+}
+
+async function authenticatedHealth(state, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  try {
+    const response = await fetch(
+      `http://${displayHost(state.host)}:${state.port}/api/health`,
+      {
+        headers: { Authorization: `Bearer ${state.token}` },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body?.appName === "inspire" && body?.mock === state.mock;
+  } catch {
+    return false;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function stopManagedInstance(path, expected, options = {}) {
+export async function inspectInstance(path, expected, options = {}) {
   const state = await readState(path);
   if (!state) return { kind: "absent" };
-  if (!expectedState(state, expected) || !(await verifyManagedProcess(state, options.processMarker))) {
-    await rm(path, { force: true });
+  if (!(await expectedState(state, expected))) return { kind: "stale" };
+
+  if (await authenticatedHealth(state, options.healthTimeoutMs ?? 1_500)) {
+    if (!modeMatches(state, expected)) return { kind: "mode-conflict", state };
+    return { kind: "healthy", state, url: instanceUrl(state) };
+  }
+
+  if (!(await processAlive(state.pid))) return { kind: "stale" };
+  try {
+    if ((await processStartIdentity(state.pid)) !== state.processStartTime)
+      return { kind: "stale" };
+  } catch {
+    return { kind: "unavailable", state };
+  }
+  if (
+    process.platform === "linux" &&
+    !(await verifyManagedProcess(state, options.processMarker))
+  )
+    return { kind: "stale" };
+  return { kind: "unavailable", state };
+}
+
+async function requestAuthenticatedShutdown(state, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  try {
+    const response = await fetch(
+      `http://${displayHost(state.host)}:${state.port}/api/host/shutdown`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${state.token}` },
+        signal: controller.signal,
+      },
+    );
+    return response.status === 202 || response.status === 204;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function waitForProcessExit(path, state, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let nextIdentityCheck = 0;
+  while (Date.now() < deadline) {
+    const published = await readState(path);
+    if (!published || published.pid !== state.pid) return true;
+    if (!(await processAlive(state.pid))) {
+      await removeInstanceState(path, state.pid);
+      return true;
+    }
+    if (Date.now() >= nextIdentityCheck) {
+      nextIdentityCheck = Date.now() + 500;
+      try {
+        if (
+          (await processStartIdentity(state.pid)) !== state.processStartTime
+        ) {
+          await removeInstanceState(path, state.pid);
+          return true;
+        }
+      } catch {
+        // An inaccessible process identity is not proof of exit. Continue to
+        // wait for either the state file or the PID to disappear.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+export async function stopManagedInstance(path, expected, options = {}) {
+  const state = await readState(path);
+  if (!state) return { kind: "absent" };
+  if (!(await expectedState(state, expected))) {
+    await removeInstanceState(path, state.pid);
     return { kind: "stale" };
   }
 
+  const healthTimeoutMs = options.healthTimeoutMs ?? 1_500;
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  if (
+    (await authenticatedHealth(state, healthTimeoutMs)) &&
+    (await requestAuthenticatedShutdown(state, healthTimeoutMs))
+  ) {
+    return (await waitForProcessExit(path, state, timeoutMs))
+      ? { kind: "stopped", state }
+      : { kind: "timeout", state };
+  }
+
+  if (!(await processAlive(state.pid))) {
+    await removeInstanceState(path, state.pid);
+    return { kind: "stale" };
+  }
+  try {
+    if ((await processStartIdentity(state.pid)) !== state.processStartTime) {
+      await removeInstanceState(path, state.pid);
+      return { kind: "stale" };
+    }
+  } catch {
+    return { kind: "unavailable", state };
+  }
+  if (!(await verifyManagedProcess(state, options.processMarker))) {
+    return { kind: "unavailable", state };
+  }
   try {
     process.kill(state.pid, "SIGTERM");
   } catch {
     return { kind: "unavailable", state };
   }
-  const deadline = Date.now() + (options.timeoutMs ?? 15_000);
-  while (Date.now() < deadline) {
-    if (!(await processAlive(state.pid))) {
-      await removeInstanceState(path, state.pid);
-      return { kind: "stopped", state };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return { kind: "timeout", state };
+  return (await waitForProcessExit(path, state, timeoutMs))
+    ? { kind: "stopped", state }
+    : { kind: "timeout", state };
 }
 
 export async function portAvailable(host, port) {
@@ -207,7 +392,9 @@ async function cli() {
     port,
     mock: mockText === undefined ? undefined : mockText === "1",
   };
-  const processMarker = fileURLToPath(import.meta.url).includes("/build/server/")
+  const processMarker = fileURLToPath(import.meta.url).includes(
+    `${join("build", "server")}`,
+  )
     ? "build/server/index.js"
     : "server/index.ts";
 
@@ -217,7 +404,8 @@ async function cli() {
       console.log(result.url);
       return;
     }
-    if (result.kind === "stale") await rm(path, { force: true });
+    // Inspect is observational. A launcher that owns the instance lock may
+    // replace a stale publication; this standalone probe must not race it.
     if (result.kind === "unavailable") process.exitCode = 4;
     else if (result.kind === "mode-conflict") process.exitCode = 5;
     else process.exitCode = 3;

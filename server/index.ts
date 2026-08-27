@@ -241,6 +241,7 @@ const application = createInspireServer({
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),
+  shutdown: () => shutdown("authenticated host shutdown"),
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;

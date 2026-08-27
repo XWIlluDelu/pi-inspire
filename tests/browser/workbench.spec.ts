@@ -68,6 +68,9 @@ async function attachFontTransfer(
   testInfo: import("@playwright/test").TestInfo,
   label: string,
 ) {
+  if (testInfo.project.name !== "chromium") {
+    return async () => undefined;
+  }
   const stop = await measureColdStartFonts(page);
   return async () => {
     const report = await stop();
@@ -109,7 +112,8 @@ test("mock workbench pairs, clears its URL token, and opens context surfaces", a
   ).toBeVisible();
   expect(externalRequests).toEqual([]);
   const fontTransfer = await stopFontTransfer();
-  expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+  if (fontTransfer)
+    expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
 });
 
 test("activity folds move through the manual density ladder", async ({
@@ -123,9 +127,12 @@ test("activity folds move through the manual density ladder", async ({
     "data-activity-fold-presentation",
     "collapsed",
   );
-  await fold
-    .getByRole("button", { name: "Expand assistant activity", exact: true })
-    .click();
+  const expand = fold.getByRole("button", {
+    name: "Expand assistant activity",
+    exact: true,
+  });
+  await expand.focus();
+  await expand.press("Enter");
   await expect(fold).toHaveAttribute(
     "data-activity-fold-presentation",
     "compact",
@@ -133,11 +140,11 @@ test("activity folds move through the manual density ladder", async ({
   await expect(
     fold.getByText("Earlier activity is available on demand"),
   ).toHaveCount(0);
-  await fold
-    .getByRole("button", {
-      name: "Collapse assistant activity from the upper boundary",
-    })
-    .click();
+  const collapse = fold.getByRole("button", {
+    name: "Collapse assistant activity from the upper boundary",
+  });
+  await collapse.focus();
+  await collapse.press("Enter");
   await expect(fold).toHaveAttribute(
     "data-activity-fold-presentation",
     "collapsed",
@@ -598,22 +605,29 @@ test("session transitions cannot accept input for the previous session", async (
   const openGate = new Promise<void>((resolve) => {
     releaseOpen = resolve;
   });
-  await page.route("**/api/sessions/open", async (route) => {
+  let confirmOpenStarted!: () => void;
+  const openStarted = new Promise<void>((resolve) => {
+    confirmOpenStarted = resolve;
+  });
+  await page.route(/\/api\/sessions\/open(?:\?|$)/, async (route) => {
+    confirmOpenStarted();
     await openGate;
     await route.continue();
   });
 
   const composer = page.getByRole("form", { name: "Message composer" });
   const message = page.getByRole("textbox", { name: "Message" });
+  const switchSession = page
+    .locator(".nav__row-main")
+    .filter({ hasText: /Review extension event lifecycle/ })
+    .click();
   try {
-    await page
-      .locator(".nav__row-main")
-      .filter({ hasText: /Review extension event lifecycle/ })
-      .click();
+    await openStarted;
     await expect(composer).toHaveAttribute("aria-busy", "true");
     await expect(message).toBeDisabled();
   } finally {
     releaseOpen();
+    await switchSession;
   }
 
   await expect(page.locator(".topbar__title-button")).toHaveText(
@@ -671,15 +685,37 @@ test("running composer exposes steer, queue, and abort controls", async ({
         shadow !== "none",
     ),
   ).toBe(true);
-  const firstBreath = await page
-    .locator(".composer")
-    .evaluate((composer) => getComputedStyle(composer).boxShadow);
+  const composerAnimation = page.locator(".composer");
+  const firstBreath = await composerAnimation.evaluate((composer) => {
+    const animation = composer
+      .getAnimations()
+      .find(
+        (candidate) =>
+          candidate instanceof CSSAnimation &&
+          candidate.animationName === "composer-running-breathe",
+      );
+    return {
+      currentTime: Number(animation?.currentTime ?? 0),
+      playState: animation?.playState ?? "missing",
+    };
+  });
   await page.waitForTimeout(700);
-  expect(
-    await page
-      .locator(".composer")
-      .evaluate((composer) => getComputedStyle(composer).boxShadow),
-  ).not.toBe(firstBreath);
+  const secondBreath = await composerAnimation.evaluate((composer) => {
+    const animation = composer
+      .getAnimations()
+      .find(
+        (candidate) =>
+          candidate instanceof CSSAnimation &&
+          candidate.animationName === "composer-running-breathe",
+      );
+    return {
+      currentTime: Number(animation?.currentTime ?? 0),
+      playState: animation?.playState ?? "missing",
+    };
+  });
+  expect(firstBreath.playState).toBe("running");
+  expect(secondBreath.playState).toBe("running");
+  expect(secondBreath.currentTime).toBeGreaterThan(firstBreath.currentTime);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedMotionAppearance = await page
     .locator(".composer")
@@ -767,7 +803,8 @@ test("narrow workbench keeps runtime status readable to accessibility tooling", 
     .analyze();
   expect(results.violations).toEqual([]);
   const fontTransfer = await stopFontTransfer();
-  expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
+  if (fontTransfer)
+    expect(fontTransfer.totalEncodedBytes).toBeGreaterThanOrEqual(0);
 });
 
 test("narrow running composer contains a long model label at 360px", async ({
@@ -829,12 +866,14 @@ test("narrow running composer contains a long model label at 360px", async ({
 });
 
 test.describe("touch narrow workbench", () => {
-  test.use({ hasTouch: true, isMobile: true });
+  test.use({
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
 
   test("keeps control hit areas separate and honors simulated safe edges", async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
     await pairedPage(page);
     await page.evaluate(() => {
       const root = document.documentElement.style;

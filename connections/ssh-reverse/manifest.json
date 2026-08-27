@@ -9,5 +9,8 @@
     "status",
     "supervise",
     "install-service"
+  ],
+  "platforms": [
+    "linux"
   ]
 }

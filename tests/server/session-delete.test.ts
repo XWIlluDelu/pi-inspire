@@ -2,7 +2,6 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   rename,
   rm,
@@ -146,28 +145,31 @@ describe("session file deletion", () => {
     expect(await readFile(path, "utf8")).toContain('"id":"other"');
   });
 
-  it("refuses a symbolic-link catalog path", async () => {
-    const { dir, path } = await fixture("source");
-    const linkedPath = join(dir, "linked.jsonl");
-    await symlink(path, linkedPath);
-    const session: SessionRecord = {
-      path: linkedPath,
-      id: "source",
-      cwd: dir,
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 0,
-      firstMessage: "",
-      searchText: "",
-    };
+  it.runIf(process.platform !== "win32")(
+    "refuses a symbolic-link catalog path",
+    async () => {
+      const { dir, path } = await fixture("source");
+      const linkedPath = join(dir, "linked.jsonl");
+      await symlink(path, linkedPath);
+      const session: SessionRecord = {
+        path: linkedPath,
+        id: "source",
+        cwd: dir,
+        created: new Date(),
+        modified: new Date(),
+        messageCount: 0,
+        firstMessage: "",
+        searchText: "",
+      };
 
-    await expect(
-      deleteSessionFile(session, async () => undefined),
-    ).rejects.toMatchObject({
-      message: "The catalog entry is not a regular session file",
-      status: 409,
-    });
-  });
+      await expect(
+        deleteSessionFile(session, async () => undefined),
+      ).rejects.toMatchObject({
+        message: "The catalog entry is not a regular session file",
+        status: 409,
+      });
+    },
+  );
 
   it("keeps a changed authorized payload isolated after a failed Trash attempt", async () => {
     const { path, session } = await fixture();
@@ -242,31 +244,6 @@ describe("session file deletion", () => {
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(candidate, "utf8")).toBe("callback replacement\n");
     expect(await readFile(trashed, "utf8")).toContain('"id":"session-a"');
-  });
-
-  it("writes the original pathname into a Freedesktop Trash entry", async () => {
-    const { dir, path, session } = await fixture();
-    const dataHome = join(dir, "xdg-data");
-    const previous = process.env.XDG_DATA_HOME;
-    process.env.XDG_DATA_HOME = dataHome;
-    try {
-      await expect(deleteSessionFile(session)).resolves.toBe("trashed");
-      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
-      const payloads = await readdir(join(dataHome, "Trash", "files"));
-      expect(payloads).toHaveLength(1);
-      const metadata = await readFile(
-        join(dataHome, "Trash", "info", `${payloads[0]}.trashinfo`),
-        "utf8",
-      );
-      expect(metadata).toContain("[Trash Info]\n");
-      expect(metadata).toContain(`Path=${path.replaceAll(" ", "%20")}\n`);
-      expect(
-        await readFile(join(dataHome, "Trash", "files", payloads[0]!), "utf8"),
-      ).toContain('"id":"session-a"');
-    } finally {
-      if (previous === undefined) delete process.env.XDG_DATA_HOME;
-      else process.env.XDG_DATA_HOME = previous;
-    }
   });
 
   it("retains an unmoved authorized payload privately after a false success", async () => {

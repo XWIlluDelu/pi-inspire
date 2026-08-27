@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from "node:child_process";
+import { join } from "node:path";
 
 interface DetachedChild {
   once(event: "error", listener: (error: Error) => void): unknown;
@@ -22,17 +23,22 @@ export function openBrowser(
   onError: (error: Error) => void,
   platform = process.platform,
   spawnDetached: SpawnDetached = spawn as unknown as SpawnDetached,
+  environment: NodeJS.ProcessEnv = process.env,
 ): void {
+  const windowsOpener = environment.SystemRoot
+    ? join(environment.SystemRoot, "System32", "rundll32.exe")
+    : "rundll32.exe";
   const [command, args] =
     platform === "darwin"
       ? ["open", [url]]
       : platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
+        ? [windowsOpener, ["url.dll,FileProtocolHandler", url]]
         : ["xdg-open", [url]];
   try {
     const child = spawnDetached(command, args, {
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
     });
     let reported = false;
     const report = (error: Error): void => {

@@ -9,8 +9,11 @@ import {
   rm,
   type FileHandle,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  inspireStateDirectory,
+  supportsPosixPermissions,
+} from "./platform-paths.mjs";
 
 export type DiagnosticLevel = "debug" | "info" | "warning" | "error";
 
@@ -63,11 +66,8 @@ export function defaultDiagnosticLogPath(
   host: string,
   port: number,
 ): string {
-  const stateHome =
-    process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
   return join(
-    stateHome,
-    "inspire",
+    inspireStateDirectory(),
     "logs",
     `${installationKey(root, host, port)}.jsonl`,
   );
@@ -123,7 +123,7 @@ async function verifyPrivateDirectory(
       `The Inspire diagnostics directory is not owned by the current user: ${path}`,
     );
   }
-  if ((info.mode & 0o077) !== 0) {
+  if (supportsPosixPermissions() && (info.mode & 0o077) !== 0) {
     if (!create)
       throw new Error(
         `The Inspire diagnostics directory must not be accessible by other users: ${path}`,
@@ -151,7 +151,8 @@ async function openPrivateAppend(path: string): Promise<FileHandle> {
         `The Inspire diagnostics file is not owned by the current user: ${path}`,
       );
     }
-    if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_FILE_MODE);
+    if (supportsPosixPermissions() && (info.mode & 0o077) !== 0)
+      await chmod(path, PRIVATE_FILE_MODE);
     return handle;
   } catch (error) {
     await handle.close();

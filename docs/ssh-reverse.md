@@ -1,5 +1,9 @@
 # SSH reverse connection
 
+This optional module targets Linux hosts with systemd user services. The core
+INSΠRE Host and browser workbench support macOS and Windows independently; the
+connection dispatcher rejects this module explicitly on those systems.
+
 The `ssh-reverse` connection module exposes one local INSΠRE host through a server you control without binding INSΠRE to a public interface. INSΠRE and Pi remain on the local machine; the module owns only the local SSH tunnel.
 
 ```text
@@ -17,13 +21,13 @@ The server-side HTTPS proxy is a user-controlled edge. It terminates HTTPS and c
 Start the local host normally:
 
 ```bash
-./inspire
+inspire
 ```
 
 Create the module configuration:
 
 ```bash
-./inspire connection ssh-reverse init
+inspire connection ssh-reverse init
 ```
 
 For a source checkout, the command creates the ignored file `.inspire/connections/ssh-reverse.env`. An installed release uses `${XDG_CONFIG_HOME:-~/.config}/inspire/connections/ssh-reverse.env` instead. Both locations must remain private to the current user.
@@ -50,10 +54,10 @@ ssh -N -R 127.0.0.1:14587:127.0.0.1:4587 relay-user@relay-host
 ## Connection lifecycle
 
 ```bash
-./inspire connection ssh-reverse start
-./inspire connection ssh-reverse status
-./inspire connection ssh-reverse restart
-./inspire connection ssh-reverse stop
+inspire connection ssh-reverse start
+inspire connection ssh-reverse status
+inspire connection ssh-reverse restart
+inspire connection ssh-reverse stop
 ```
 
 The connection commands manage only the verified SSH tunnel. They do not stop, replace, or otherwise own the local INSΠRE host. A tunnel start requires that the configured local loopback port is already listening.

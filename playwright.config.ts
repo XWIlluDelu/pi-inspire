@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "tests/browser",
@@ -14,16 +14,51 @@ export default defineConfig({
         ["html", { outputFolder: "output/playwright/report", open: "never" }],
       ]
     : "list",
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: "http://127.0.0.1:4592",
+      },
+    },
+    {
+      name: "firefox",
+      use: {
+        ...devices["Desktop Firefox"],
+        baseURL: "http://127.0.0.1:4593",
+      },
+    },
+    {
+      name: "webkit",
+      use: {
+        ...devices["Desktop Safari"],
+        baseURL: "http://127.0.0.1:4594",
+      },
+    },
+  ],
   use: {
-    baseURL: "http://127.0.0.1:4592",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  webServer: {
-    command:
-      "mkdir -p output/playwright && rm -f output/playwright/preferences.json && INSPIRE_INSTALLATION_ROOT=. INSPIRE_TOKEN=inspire-browser-test-token INSPIRE_PI_COMMAND=./node_modules/.bin/pi INSPIRE_MOCK=1 INSPIRE_MOCK_WORKSPACE=. INSPIRE_MOCK_STREAM_INTERVAL_MS=250 INSPIRE_PREFERENCES_PATH=output/playwright/preferences.json INSPIRE_PORT=4592 npx tsx server/index.ts",
-    url: "http://127.0.0.1:4592/",
-    reuseExistingServer: false,
-    timeout: 30_000,
-  },
+  webServer: [
+    {
+      command: "node scripts/start-browser-test-host.mjs chromium 4592",
+      url: "http://127.0.0.1:4592/",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: "node scripts/start-browser-test-host.mjs firefox 4593",
+      url: "http://127.0.0.1:4593/",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: "node scripts/start-browser-test-host.mjs webkit 4594",
+      url: "http://127.0.0.1:4594/",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
 });

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,9 @@ const temporaryDirectories: string[] = [];
 let resources = new ResourceStore();
 
 async function workspace() {
-  const root = await mkdtemp(join(tmpdir(), "inspire-resources-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-resources-")),
+  );
   temporaryDirectories.push(root);
   const project = join(root, "project");
   await mkdir(project);
@@ -335,55 +337,58 @@ describe("ResourceStore", () => {
     expect(messageLoads).toBe(0);
   });
 
-  it("anchors serving to the resolved inode while observing same-file rewrites", async () => {
-    const { root, project } = await workspace();
-    await writeFile(join(project, "report.md"), "# Result\n");
-    await writeFile(join(root, "secret.txt"), "SECRET\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "[report](report.md)" }],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      "report.md",
-    );
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-    const opened = await resources.openForServing(resource);
-    expect(opened.size).toBe("# Result\n".length);
-    const original = await opened.handle.readFile("utf8");
-    expect(original).toBe("# Result\n");
-    await opened.handle.close();
+  it.runIf(process.platform !== "win32")(
+    "anchors serving to the resolved inode while observing same-file rewrites",
+    async () => {
+      const { root, project } = await workspace();
+      await writeFile(join(project, "report.md"), "# Result\n");
+      await writeFile(join(root, "secret.txt"), "SECRET\n");
+      const messages = [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "[report](report.md)" }],
+        },
+      ];
+      const descriptor = await resources.resolve(
+        { ...resourceIdentity(), cwd: project, messages },
+        "report.md",
+      );
+      const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
+      const opened = await resources.openForServing(resource);
+      expect(opened.size).toBe("# Result\n".length);
+      const original = await opened.handle.readFile("utf8");
+      expect(original).toBe("# Result\n");
+      await opened.handle.close();
 
-    // A legitimate rewrite retains the authorized filesystem object. Serving
-    // opens a fresh handle, so it reports current bytes rather than stale
-    // resolve-time metadata.
-    await writeFile(join(project, "report.md"), "# Rewritten in place\n");
-    const rewritten = await resources.openForServing(resource);
-    expect(await rewritten.handle.readFile("utf8")).toBe(
-      "# Rewritten in place\n",
-    );
-    await rewritten.handle.close();
+      // A legitimate rewrite retains the authorized filesystem object. Serving
+      // opens a fresh handle, so it reports current bytes rather than stale
+      // resolve-time metadata.
+      await writeFile(join(project, "report.md"), "# Rewritten in place\n");
+      const rewritten = await resources.openForServing(resource);
+      expect(await rewritten.handle.readFile("utf8")).toBe(
+        "# Rewritten in place\n",
+      );
+      await rewritten.handle.close();
 
-    // Swapping the file for a symlink to an outside secret is rejected before
-    // following the link.
-    const { rm } = await import("node:fs/promises");
-    await rm(join(project, "report.md"));
-    await symlink(join(root, "secret.txt"), join(project, "report.md"));
-    await expect(resources.openForServing(resource)).rejects.toMatchObject({
-      status: 409,
-    });
+      // Swapping the file for a symlink to an outside secret is rejected before
+      // following the link.
+      const { rm } = await import("node:fs/promises");
+      await rm(join(project, "report.md"));
+      await symlink(join(root, "secret.txt"), join(project, "report.md"));
+      await expect(resources.openForServing(resource)).rejects.toMatchObject({
+        status: 409,
+      });
 
-    // Same-path regeneration would otherwise be able to reuse an inode on
-    // some filesystems. The retained anchor keeps the original inode live, so
-    // the stale handle must be re-resolved rather than serving new bytes.
-    await rm(join(project, "report.md"));
-    await writeFile(join(project, "report.md"), "# Regenerated\n");
-    await expect(resources.openForServing(resource)).rejects.toMatchObject({
-      status: 409,
-    });
-  });
+      // Same-path regeneration would otherwise be able to reuse an inode on
+      // some filesystems. The retained anchor keeps the original inode live, so
+      // the stale handle must be re-resolved rather than serving new bytes.
+      await rm(join(project, "report.md"));
+      await writeFile(join(project, "report.md"), "# Regenerated\n");
+      await expect(resources.openForServing(resource)).rejects.toMatchObject({
+        status: 409,
+      });
+    },
+  );
 
   it("allows a file only when the owning session explicitly references it", async () => {
     const { root, project } = await workspace();
@@ -517,38 +522,44 @@ describe("ResourceStore", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("does not treat a project symlink as authority for an outside file", async () => {
-    const { root, project } = await workspace();
-    const secret = join(root, "outside.txt");
-    await writeFile(secret, "outside");
-    await symlink(secret, join(project, "linked.txt"));
+  it.runIf(process.platform !== "win32")(
+    "does not treat a project symlink as authority for an outside file",
+    async () => {
+      const { root, project } = await workspace();
+      const secret = join(root, "outside.txt");
+      await writeFile(secret, "outside");
+      await symlink(secret, join(project, "linked.txt"));
 
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        "linked.txt",
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-  });
+      await expect(
+        resources.resolve(
+          { ...resourceIdentity(), cwd: project, messages: [] },
+          "linked.txt",
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+    },
+  );
 
-  it("keeps a git-indexed symlink inside the workspace boundary", async () => {
-    const { root, project } = await workspace();
-    const secret = join(root, "outside.txt");
-    await writeFile(secret, "outside");
-    await symlink(secret, join(project, "linked.txt"));
-    // A git cwd indexes the symlink itself (ls-files -co), unlike the
-    // bounded walk — index membership must still not follow it outside.
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    await promisify(execFile)("git", ["-C", project, "init", "-q"]);
+  it.runIf(process.platform !== "win32")(
+    "keeps a git-indexed symlink inside the workspace boundary",
+    async () => {
+      const { root, project } = await workspace();
+      const secret = join(root, "outside.txt");
+      await writeFile(secret, "outside");
+      await symlink(secret, join(project, "linked.txt"));
+      // A git cwd indexes the symlink itself (ls-files -co), unlike the
+      // bounded walk — index membership must still not follow it outside.
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      await promisify(execFile)("git", ["-C", project, "init", "-q"]);
 
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        "linked.txt",
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-  });
+      await expect(
+        resources.resolve(
+          { ...resourceIdentity(), cwd: project, messages: [] },
+          "linked.txt",
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+    },
+  );
 
   it("recovers a bare mention when exactly one indexed file carries that name", async () => {
     const { project } = await workspace();

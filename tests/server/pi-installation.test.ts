@@ -2,12 +2,13 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolvePiInstallation } from "../../server/pi-installation.js";
 
@@ -48,10 +49,21 @@ async function fakePi(
     "#!/usr/bin/env node\n",
     { mode: 0o755 },
   );
-  const commandPath = join(binDirectory, "pi");
-  await symlink(join(packageRoot, entryDirectory, "cli.js"), commandPath);
-  await chmod(commandPath, 0o755);
-  return { packageRoot, binDirectory, commandPath };
+  const commandPath = join(
+    binDirectory,
+    process.platform === "win32" ? "pi.cmd" : "pi",
+  );
+  if (process.platform === "win32") {
+    await writeFile(commandPath, "@echo off\r\n", { mode: 0o755 });
+  } else {
+    await symlink(join(packageRoot, entryDirectory, "cli.js"), commandPath);
+    await chmod(commandPath, 0o755);
+  }
+  return {
+    packageRoot: await realpath(packageRoot),
+    binDirectory,
+    commandPath,
+  };
 }
 
 afterEach(async () => {
@@ -117,7 +129,7 @@ describe("Pi installation authority", () => {
     try {
       const installation = await resolvePiInstallation({
         installationRoot: checkout,
-        path: `${local.binDirectory}:${external.binDirectory}`,
+        path: [local.binDirectory, external.binDirectory].join(delimiter),
       });
 
       expect(installation.packageRoot).toBe(external.packageRoot);
@@ -128,4 +140,23 @@ describe("Pi installation authority", () => {
       else process.env.INSPIRE_PI_COMMAND = configuredCommand;
     }
   });
+
+  it.runIf(process.platform === "win32")(
+    "resolves an npm-style pi.cmd shim beside the external package",
+    async () => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-pi-windows-shim-"),
+      );
+      directories.push(directory);
+      const pi = await fakePi(directory, "3.0.0");
+
+      const installation = await resolvePiInstallation({
+        path: pi.binDirectory,
+        installationRoot: join(directory, "inspire"),
+      });
+
+      expect(installation.commandPath).toBe(pi.commandPath);
+      expect(installation.packageRoot).toBe(pi.packageRoot);
+    },
+  );
 });

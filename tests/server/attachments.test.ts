@@ -3,6 +3,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -46,7 +47,9 @@ describe("attachment consumption lifecycle", () => {
   let store: AttachmentStore;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "inspire-attachments-"));
+    root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-attachments-")),
+    );
     store = new AttachmentStore(join(root, "uploads"));
   });
 
@@ -191,32 +194,35 @@ describe("attachment consumption lifecycle", () => {
     await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/expired/);
   });
 
-  it("revalidates project-index authority after a selected symlink is retargeted", async () => {
-    const project = join(root, "project");
-    await mkdir(project);
-    await execFileAsync("git", ["-C", project, "init", "-q"]);
-    await writeFile(join(project, ".gitignore"), "secret.txt\n");
-    await writeFile(join(project, "tracked.txt"), "tracked\n");
-    await writeFile(join(project, "secret.txt"), "secret\n");
-    await symlink("tracked.txt", join(project, "selected.txt"));
-    await execFileAsync("git", [
-      "-C",
-      project,
-      "add",
-      ".gitignore",
-      "tracked.txt",
-      "selected.txt",
-    ]);
+  it.runIf(process.platform !== "win32")(
+    "revalidates project-index authority after a selected symlink is retargeted",
+    async () => {
+      const project = join(root, "project");
+      await mkdir(project);
+      await execFileAsync("git", ["-C", project, "init", "-q"]);
+      await writeFile(join(project, ".gitignore"), "secret.txt\n");
+      await writeFile(join(project, "tracked.txt"), "tracked\n");
+      await writeFile(join(project, "secret.txt"), "secret\n");
+      await symlink("tracked.txt", join(project, "selected.txt"));
+      await execFileAsync("git", [
+        "-C",
+        project,
+        "add",
+        ".gitignore",
+        "tracked.txt",
+        "selected.txt",
+      ]);
 
-    await rm(join(project, "selected.txt"));
-    await symlink("secret.txt", join(project, "selected.txt"));
-    await expect(
-      resolveProjectFiles(project, ["selected.txt"]),
-    ).rejects.toThrow(/no longer in the project index/);
-    await expect(
-      resolveProjectFiles(project, ["tracked.txt"]),
-    ).resolves.toEqual([join(project, "tracked.txt")]);
-  });
+      await rm(join(project, "selected.txt"));
+      await symlink("secret.txt", join(project, "selected.txt"));
+      await expect(
+        resolveProjectFiles(project, ["selected.txt"]),
+      ).rejects.toThrow(/no longer in the project index/);
+      await expect(
+        resolveProjectFiles(project, ["tracked.txt"]),
+      ).resolves.toEqual([join(project, "tracked.txt")]);
+    },
+  );
 
   it("encodes unusual file names as structural JSON path items", () => {
     const prompt = addAttachmentContext(
