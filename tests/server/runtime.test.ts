@@ -238,61 +238,66 @@ afterEach(async () => {
 });
 
 describe("browser-safe runtime projection", () => {
-  it("freezes one physical workspace root before starting slot-owned operations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-runtime-workspace-"));
-    workspaceDirectories.push(root);
-    const physicalOne = join(root, "one");
-    const physicalTwo = join(root, "two");
-    const alias = join(root, "selected");
-    await mkdir(physicalOne);
-    await mkdir(physicalTwo);
-    await writeFile(join(physicalOne, "marker.txt"), "one");
-    await writeFile(join(physicalTwo, "marker.txt"), "two");
-    await symlink(physicalOne, alias, "dir");
-    const sessionPath = join(root, "a.jsonl");
-    const session = record("a", alias);
-    session.path = sessionPath;
-    await writeFile(
-      sessionPath,
-      `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: alias })}\n${JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: "hello", timestamp: 1 } })}\n`,
-    );
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([session]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-    );
-    try {
-      const initial = await runtime.openSession("a");
-      const physical = await realpath(alias);
-      await vi.waitFor(() => expect(worker?.starts).toBe(1));
-      expect(physical).toBe(physicalOne);
-      expect(worker?.options.cwd).toBe(physicalOne);
-      expect(initial.active?.cwd).toBe(physicalOne);
-      expect(runtime.sessionCwd("a")).toBe(physicalOne);
-
-      await rm(alias);
-      await symlink(physicalTwo, alias, "dir");
-      await runtime.prompt({
-        sessionId: "a",
-        message: "use marker",
-        projectFiles: ["marker.txt"],
-      });
-      const prompt = worker?.commands.find(
-        (command) => command.type === "prompt",
+  it.runIf(process.platform !== "win32")(
+    "freezes one physical workspace root before starting slot-owned operations",
+    async () => {
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), "inspire-runtime-workspace-")),
       );
-      expect(prompt?.message).toContain(join(physicalOne, "marker.txt"));
-      expect(prompt?.message).not.toContain(join(physicalTwo, "marker.txt"));
-      expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
-    } finally {
-      await runtime.close();
-    }
-  });
+      workspaceDirectories.push(root);
+      const physicalOne = join(root, "one");
+      const physicalTwo = join(root, "two");
+      const alias = join(root, "selected");
+      await mkdir(physicalOne);
+      await mkdir(physicalTwo);
+      await writeFile(join(physicalOne, "marker.txt"), "one");
+      await writeFile(join(physicalTwo, "marker.txt"), "two");
+      await symlink(physicalOne, alias, "dir");
+      const sessionPath = join(root, "a.jsonl");
+      const session = record("a", alias);
+      session.path = sessionPath;
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: alias })}\n${JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: "hello", timestamp: 1 } })}\n`,
+      );
+      const store = new AttachmentStore();
+      attachments.push(store);
+      let worker: FakeRpc | undefined;
+      const runtime = new RuntimeController(
+        catalog([session]),
+        store,
+        (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+      );
+      try {
+        const initial = await runtime.openSession("a");
+        const physical = await realpath(alias);
+        await vi.waitFor(() => expect(worker?.starts).toBe(1));
+        expect(physical).toBe(physicalOne);
+        expect(worker?.options.cwd).toBe(physicalOne);
+        expect(initial.active?.cwd).toBe(physicalOne);
+        expect(runtime.sessionCwd("a")).toBe(physicalOne);
+
+        await rm(alias);
+        await symlink(physicalTwo, alias, "dir");
+        await runtime.prompt({
+          sessionId: "a",
+          message: "use marker",
+          projectFiles: ["marker.txt"],
+        });
+        const prompt = worker?.commands.find(
+          (command) => command.type === "prompt",
+        );
+        expect(prompt?.message).toContain(join(physicalOne, "marker.txt"));
+        expect(prompt?.message).not.toContain(join(physicalTwo, "marker.txt"));
+        expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
 
   it("redacts credential-shaped fields and bounds oversized values", () => {
     const projected = safeProjection({
@@ -970,7 +975,9 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("resends all recalled prompt artifacts from the current branch view", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-history-artifacts-"));
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-history-artifacts-")),
+    );
     workspaceDirectories.push(root);
     const workspace = join(root, "project");
     const projectFile = join(workspace, "source.ts");
@@ -1073,7 +1080,9 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects a forged recalled attachment path outside the active workspace", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-forged-history-"));
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-forged-history-")),
+    );
     workspaceDirectories.push(root);
     const workspace = join(root, "project");
     const forgedFile = join(root, "host-secret.txt");

@@ -1,7 +1,7 @@
 {
   "name": "inspire-pi-gui",
   "version": "0.3.0",
-  "description": "A Linux-first local web workbench for Pi Coding Agent",
+  "description": "A cross-platform local web workbench for Pi Coding Agent",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
     "web-ui"
   ],
   "bin": {
-    "inspire": "inspire"
+    "inspire": "inspire.mjs"
   },
   "files": [
     "build/",
@@ -38,18 +38,17 @@
     "docs/ssh-reverse.md",
     "docs/tool-presentations.md",
     "inspire",
+    "inspire.mjs",
     "LICENSE",
     "README.md",
     "src/assets/licenses/"
-  ],
-  "os": [
-    "linux"
   ],
   "engines": {
     "node": ">=22.19.0"
   },
   "knip": {
     "entry": [
+      "server/index.ts",
       "deploy/systemd/*.mjs",
       "scripts/*.mjs",
       "public/service-worker.js",
@@ -58,21 +57,24 @@
       "tests/benchmarks/*.ts"
     ],
     "ignore": [
-      "server/instance-state.d.mts"
+      "server/instance-state.d.mts",
+      "server/file-lock.d.mts",
+      "server/platform-paths.d.mts",
+      "server/process-tree.d.mts"
     ]
   },
   "scripts": {
     "dev": "concurrently -k -n host,web -c cyan,magenta \"npm:dev:host\" \"npm:dev:web\"",
-    "dev:host": "INSPIRE_TOKEN=inspire-dev-token tsx watch server/index.ts",
+    "dev:host": "node scripts/start-dev-host.mjs",
     "dev:web": "vite",
     "build:web": "vite build && node scripts/write-build-stamp.mjs",
     "build": "npm run typecheck && npm run build:web",
     "release:build": "npm run build && node scripts/build-release.mjs",
     "release:verify": "node scripts/verify-release-package.mjs",
     "prepack": "npm run release:build",
-    "start": "./inspire",
-    "start:mock": "./inspire mock",
-    "inspire": "./inspire",
+    "start": "node inspire.mjs",
+    "start:mock": "node inspire.mjs mock",
+    "inspire": "node inspire.mjs",
     "test": "vitest run --exclude tests/launcher.test.ts",
     "test:launcher": "vitest run tests/launcher.test.ts --maxWorkers=1",
     "test:watch": "vitest",
@@ -83,8 +85,10 @@
     "typecheck": "tsc -b",
     "test:browser": "playwright test",
     "size:report": "npm run release:build && node scripts/size-report.mjs",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run check:unused && npm run build:web && npm test && npm run test:launcher",
-    "ci": "npm run check && npm run test:browser"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run check:unused && npm run build:web && npm run test:portable && npm test && npm run test:launcher",
+    "ci": "npm run check && npm run test:browser",
+    "test:browser:chromium": "playwright test --project=chromium",
+    "test:portable": "node --test tests/portable/*.test.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",

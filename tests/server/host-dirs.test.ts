@@ -63,16 +63,19 @@ describe("listHostDirectories", () => {
     ]);
   });
 
-  it("includes symlinks that resolve to directories and skips broken ones", async () => {
-    await symlink(join(root, "alpha"), join(root, "linked"));
-    await symlink(join(root, "vanished"), join(root, "broken"));
-    const listing = await listHostDirectories(root);
-    expect(listing.dirs.map((entry) => entry.name)).toEqual([
-      "alpha",
-      "beta",
-      "linked",
-    ]);
-  });
+  it.runIf(process.platform !== "win32")(
+    "includes symlinks that resolve to directories and skips broken ones",
+    async () => {
+      await symlink(join(root, "alpha"), join(root, "linked"));
+      await symlink(join(root, "vanished"), join(root, "broken"));
+      const listing = await listHostDirectories(root);
+      expect(listing.dirs.map((entry) => entry.name)).toEqual([
+        "alpha",
+        "beta",
+        "linked",
+      ]);
+    },
+  );
 
   it("defaults to the host home directory", async () => {
     const listing = await listHostDirectories();

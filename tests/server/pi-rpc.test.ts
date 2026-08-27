@@ -532,16 +532,14 @@ process.stdin.on("data", chunk => {
     );
   });
 
-  it.runIf(process.platform !== "win32")(
-    "terminates tool descendants with their Pi worker",
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-tree-"));
-      directories.push(directory);
-      const marker = join(directory, "child.pid");
-      const cliPath = join(directory, "fake-pi.mjs");
-      await writeFile(
-        cliPath,
-        `import { spawn } from "node:child_process";
+  it("terminates tool descendants with their Pi worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-tree-"));
+    directories.push(directory);
+    const marker = join(directory, "child.pid");
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const tool = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
 writeFileSync(${JSON.stringify(marker)}, String(tool.pid));
@@ -556,30 +554,29 @@ process.stdin.on("data", chunk => {
     process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
   }
 });`,
-        "utf8",
-      );
-      const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-      processes.push(rpc);
-      await rpc.start();
-      const childPid = Number(await readFile(marker, "utf8"));
+      "utf8",
+    );
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const childPid = Number(await readFile(marker, "utf8"));
 
-      await rpc.stop();
-      let alive = true;
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        try {
-          process.kill(childPid, 0);
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-            alive = false;
-            break;
-          }
-          throw error;
+    await rpc.stop();
+    let alive = true;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        process.kill(childPid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          alive = false;
+          break;
         }
+        throw error;
       }
-      expect(alive).toBe(false);
-    },
-  );
+    }
+    expect(alive).toBe(false);
+  });
 
   it("starts the installed Pi RPC runtime without invoking a model", async () => {
     const rpc = new PiRpcProcess({

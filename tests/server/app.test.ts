@@ -3,6 +3,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -36,10 +37,11 @@ describe("local host API", () => {
   let runtime: MockRuntime;
   let attachments: AttachmentStore;
   let git: GitInspectionLike;
+  let shutdown: ReturnType<typeof vi.fn<() => void>>;
   let baseUrl: string;
 
   beforeEach(async () => {
-    temporary = await mkdtemp(join(tmpdir(), "inspire-test-"));
+    temporary = await realpath(await mkdtemp(join(tmpdir(), "inspire-test-")));
     resources = new ResourceStore();
     runtime = new MockRuntime();
     git = {
@@ -57,6 +59,7 @@ describe("local host API", () => {
       })),
     };
     attachments = new AttachmentStore(join(temporary, "uploads"));
+    shutdown = vi.fn<() => void>();
     application = createInspireServer({
       token,
       runtime,
@@ -120,6 +123,7 @@ describe("local host API", () => {
         thinkingLevel: "high",
       }),
       distDir: join(temporary, "missing-dist"),
+      shutdown,
     });
     await new Promise<void>((resolve) =>
       application.server.listen(0, "127.0.0.1", resolve),
@@ -166,6 +170,15 @@ describe("local host API", () => {
       blocks: [{ type: "markdown" }],
     });
     expect(response.body.toolPresentationsWarning).toBeUndefined();
+  });
+
+  it("keeps Host shutdown behind authentication and acknowledges before dispatch", async () => {
+    await request(application.server).post("/api/host/shutdown").expect(401);
+    await request(application.server)
+      .post("/api/host/shutdown")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(202);
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1));
   });
 
   it("keeps maintenance restart coordination behind local authentication", async () => {
@@ -1962,9 +1975,11 @@ describe("local host API", () => {
     expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
     const storedFiles = await readdir(join(temporary, "uploads"));
     expect(storedFiles).toHaveLength(1);
-    expect(
-      (await stat(join(temporary, "uploads", storedFiles[0]!))).mode & 0o777,
-    ).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(
+        (await stat(join(temporary, "uploads", storedFiles[0]!))).mode & 0o777,
+      ).toBe(0o600);
+    }
 
     const events: Array<Record<string, unknown>> = [];
     const socket = new WebSocket(

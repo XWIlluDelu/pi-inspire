@@ -1,19 +1,9 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-  type FileHandle,
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { acquireFileLock } from "./file-lock.mjs";
+import { inspireConfigDirectory } from "./platform-paths.mjs";
 import {
   CONTENT_TEXT_SIZES,
   defaultPreferences,
@@ -88,85 +78,6 @@ interface PreferencesInspection {
   warning?: string;
 }
 
-const LOCK_WAIT_SECONDS = 5;
-
-interface LockIdentity {
-  dev: number;
-  ino: number;
-}
-
-function sameLockIdentity(left: LockIdentity, right: LockIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function compromisedLockError(): Error {
-  return Object.assign(
-    new Error("Saved preferences lock changed while being updated"),
-    { status: 503 },
-  );
-}
-
-async function acquireKernelLock(fd: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const child = spawn("flock", ["-x", "-w", String(LOCK_WAIT_SECONDS), "3"], {
-      stdio: ["ignore", "ignore", "ignore", fd],
-      windowsHide: true,
-    });
-    child.once("error", (error: NodeJS.ErrnoException) => {
-      if (settled) return;
-      settled = true;
-      reject(
-        Object.assign(
-          new Error(
-            error.code === "ENOENT"
-              ? "flock is required to update saved preferences"
-              : "Could not acquire the saved preferences lock",
-          ),
-          { status: 503 },
-        ),
-      );
-    });
-    child.once("close", (code) => {
-      if (settled) return;
-      settled = true;
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        Object.assign(
-          new Error(
-            code === 1
-              ? "Timed out waiting to update saved preferences"
-              : "Could not acquire the saved preferences lock",
-          ),
-          { status: 503 },
-        ),
-      );
-    });
-  });
-}
-
-async function assertOwnedLock(
-  lock: string,
-  handle: FileHandle,
-  identity: LockIdentity,
-): Promise<void> {
-  const [pathStat, handleStat] = await Promise.all([
-    stat(lock).catch(() => null),
-    handle.stat().catch(() => null),
-  ]);
-  if (
-    !pathStat ||
-    !handleStat ||
-    !sameLockIdentity(identity, { dev: pathStat.dev, ino: pathStat.ino }) ||
-    !sameLockIdentity(identity, { dev: handleStat.dev, ino: handleStat.ino })
-  ) {
-    throw compromisedLockError();
-  }
-}
-
 function projectPreferences(value: unknown): {
   preferences: InspirePreferences;
   warning?: string;
@@ -213,9 +124,7 @@ export class PreferencesStore {
   readonly path: string;
   private writes: Promise<void> = Promise.resolve();
 
-  constructor(
-    path = join(homedir(), ".config", "inspire", "preferences.json"),
-  ) {
+  constructor(path = join(inspireConfigDirectory(), "preferences.json")) {
     this.path = path;
   }
 
@@ -276,38 +185,14 @@ export class PreferencesStore {
   private async withWriteLock<T>(
     operation: (assertOwned: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    // The launcher already requires Linux `flock`; use the same kernel-owned
-    // primitive here instead of reconstructing conditional rename/unlink in
-    // userspace. The persistent inode is harmless after a crash because the
-    // kernel releases its lease with the final open file description.
-    const lock = `${this.path}.flock`;
-    let handle: FileHandle;
+    const lease = await acquireFileLock(`${this.path}.flock`, {
+      label: "saved preferences",
+    });
     try {
-      handle = await open(
-        lock,
-        constants.O_RDWR |
-          constants.O_APPEND |
-          constants.O_CREAT |
-          constants.O_NONBLOCK |
-          constants.O_NOFOLLOW,
-        0o600,
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOOP")
-        throw compromisedLockError();
-      throw error;
-    }
-    try {
-      await acquireKernelLock(handle.fd);
-      const lockStat = await handle.stat();
-      if (!lockStat.isFile()) throw compromisedLockError();
-      const identity = { dev: lockStat.dev, ino: lockStat.ino };
-      const assertOwned = () => assertOwnedLock(lock, handle, identity);
-      await assertOwned();
-      return await operation(assertOwned);
+      await lease.assertOwned();
+      return await operation(lease.assertOwned);
     } finally {
-      await handle.close();
+      await lease.release();
     }
   }
 

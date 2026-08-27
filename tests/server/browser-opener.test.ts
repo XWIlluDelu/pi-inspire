@@ -21,6 +21,7 @@ describe("openBrowser", () => {
     expect(spawn).toHaveBeenCalledWith("xdg-open", ["http://127.0.0.1:4587"], {
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
     });
     expect(child.unref).toHaveBeenCalledOnce();
   });
@@ -43,5 +44,43 @@ describe("openBrowser", () => {
       throw error;
     });
     expect(onError).toHaveBeenCalledWith(error);
+  });
+
+  it.each([
+    ["darwin", "open", ["http://127.0.0.1:4587"]],
+    [
+      "win32",
+      "rundll32.exe",
+      ["url.dll,FileProtocolHandler", "http://127.0.0.1:4587"],
+    ],
+  ] as const)("uses the native %s opener", (platform, command, args) => {
+    const child = new FakeChild();
+    const spawn = vi.fn(() => child);
+    openBrowser("http://127.0.0.1:4587", vi.fn(), platform, spawn);
+
+    expect(spawn).toHaveBeenCalledWith(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+  });
+
+  it("uses the system Windows opener without shell-interpreting the URL", () => {
+    const child = new FakeChild();
+    const spawn = vi.fn(() => child);
+    const url = "http://127.0.0.1:4587/?token=value&next=calc.exe";
+    openBrowser(url, vi.fn(), "win32", spawn, {
+      SystemRoot: "C:\\Windows",
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "C:\\Windows\\System32\\rundll32.exe",
+      ["url.dll,FileProtocolHandler", url],
+      {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
   });
 });

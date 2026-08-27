@@ -50,10 +50,12 @@ describe("diagnostic logging", () => {
     });
     await logger.close();
 
-    const directoryMode = (await stat(directory)).mode & 0o777;
-    const fileMode = (await stat(path)).mode & 0o777;
-    expect(directoryMode).toBe(0o700);
-    expect(fileMode).toBe(0o600);
+    if (process.platform !== "win32") {
+      const directoryMode = (await stat(directory)).mode & 0o777;
+      const fileMode = (await stat(path)).mode & 0o777;
+      expect(directoryMode).toBe(0o700);
+      expect(fileMode).toBe(0o600);
+    }
     const line = JSON.parse((await readFile(path, "utf8")).trim()) as Record<
       string,
       unknown
@@ -107,14 +109,17 @@ describe("diagnostic logging", () => {
     }
   });
 
-  it("refuses a symlink log target", async () => {
-    const directory = await privateDirectory();
-    const target = join(directory, "target.jsonl");
-    const link = join(directory, "runtime.jsonl");
-    await writeFile(target, "");
-    await symlink(target, link);
-    await expect(openDiagnosticLogger({ path: link })).rejects.toThrow(
-      /regular file|symlink|symbolic links/i,
-    );
-  });
+  it.runIf(process.platform !== "win32")(
+    "refuses a symlink log target",
+    async () => {
+      const directory = await privateDirectory();
+      const target = join(directory, "target.jsonl");
+      const link = join(directory, "runtime.jsonl");
+      await writeFile(target, "");
+      await symlink(target, link);
+      await expect(openDiagnosticLogger({ path: link })).rejects.toThrow(
+        /regular file|symlink|symbolic links/i,
+      );
+    },
+  );
 });

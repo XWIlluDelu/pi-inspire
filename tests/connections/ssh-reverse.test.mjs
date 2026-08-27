@@ -83,75 +83,78 @@ describe("ssh-reverse connection module", () => {
     ).toBe(true);
   });
 
-  it("does not control an active user service owned by another checkout", async () => {
-    const fixture = await mkdtemp(join(tmpdir(), "inspire ssh service-"));
-    temporary.push(fixture);
-    const root = join(fixture, "current");
-    const configHome = join(fixture, "config");
-    const bin = join(fixture, "bin");
-    const log = join(fixture, "systemctl.log");
-    await Promise.all([
-      mkdir(join(root, ".inspire", "connections"), { recursive: true }),
-      mkdir(join(configHome, "systemd", "user"), { recursive: true }),
-      mkdir(bin, { recursive: true }),
-    ]);
-    const config = join(root, ".inspire", "connections", "ssh-reverse.env");
-    await writeFile(
-      config,
-      "INSPIRE_SSH_TARGET=example\nINSPIRE_SSH_REMOTE_PORT=14587\nINSPIRE_SSH_LOCAL_PORT=65534\n",
-      { mode: 0o600 },
-    );
-    await writeFile(
-      join(
-        configHome,
-        "systemd",
-        "user",
-        "inspire-connection-ssh-reverse.service",
-      ),
-      "[Service]\nWorkingDirectory=/another/checkout\nExecStart=/another/runner\n",
-    );
-    const systemctl = join(bin, "systemctl");
-    await writeFile(
-      systemctl,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"\ncase "$*" in\n  *is-active*) exit 0 ;;\nesac\nexit 0\n`,
-    );
-    await chmod(systemctl, 0o700);
-    const environment = {
-      ...process.env,
-      HOME: fixture,
-      XDG_CONFIG_HOME: configHome,
-      XDG_RUNTIME_DIR: join(fixture, "runtime"),
-      INSPIRE_SSH_REVERSE_CONFIG: config,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      SYSTEMCTL_LOG: log,
-    };
-
-    for (const action of ["start", "stop", "restart", "install-service"]) {
-      const result = spawnSync(
-        process.execPath,
-        [runner, "--root", root, action],
-        {
-          encoding: "utf8",
-          env: environment,
-        },
+  it.runIf(process.platform === "linux")(
+    "does not control an active user service owned by another checkout",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "inspire ssh service-"));
+      temporary.push(fixture);
+      const root = join(fixture, "current");
+      const configHome = join(fixture, "config");
+      const bin = join(fixture, "bin");
+      const log = join(fixture, "systemctl.log");
+      await Promise.all([
+        mkdir(join(root, ".inspire", "connections"), { recursive: true }),
+        mkdir(join(configHome, "systemd", "user"), { recursive: true }),
+        mkdir(bin, { recursive: true }),
+      ]);
+      const config = join(root, ".inspire", "connections", "ssh-reverse.env");
+      await writeFile(
+        config,
+        "INSPIRE_SSH_TARGET=example\nINSPIRE_SSH_REMOTE_PORT=14587\nINSPIRE_SSH_LOCAL_PORT=65534\n",
+        { mode: 0o600 },
       );
-      expect(result.status, `${action}: ${result.stderr}`).not.toBe(0);
-    }
-    const status = spawnSync(
-      process.execPath,
-      [runner, "--root", root, "status"],
-      { encoding: "utf8", env: environment },
-    );
-    expect(status.status).not.toBe(0);
-    expect(status.stdout, status.stderr).toContain(
-      "SSH reverse connection: not running.",
-    );
-    expect(status.stderr).toContain("active for another installation");
+      await writeFile(
+        join(
+          configHome,
+          "systemd",
+          "user",
+          "inspire-connection-ssh-reverse.service",
+        ),
+        "[Service]\nWorkingDirectory=/another/checkout\nExecStart=/another/runner\n",
+      );
+      const systemctl = join(bin, "systemctl");
+      await writeFile(
+        systemctl,
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"\ncase "$*" in\n  *is-active*) exit 0 ;;\nesac\nexit 0\n`,
+      );
+      await chmod(systemctl, 0o700);
+      const environment = {
+        ...process.env,
+        HOME: fixture,
+        XDG_CONFIG_HOME: configHome,
+        XDG_RUNTIME_DIR: join(fixture, "runtime"),
+        INSPIRE_SSH_REVERSE_CONFIG: config,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        SYSTEMCTL_LOG: log,
+      };
 
-    const calls = (await readFile(log, "utf8")).trim().split("\n");
-    expect(calls).toHaveLength(5);
-    expect(calls.every((call) => call.includes("is-active"))).toBe(true);
-  });
+      for (const action of ["start", "stop", "restart", "install-service"]) {
+        const result = spawnSync(
+          process.execPath,
+          [runner, "--root", root, action],
+          {
+            encoding: "utf8",
+            env: environment,
+          },
+        );
+        expect(result.status, `${action}: ${result.stderr}`).not.toBe(0);
+      }
+      const status = spawnSync(
+        process.execPath,
+        [runner, "--root", root, "status"],
+        { encoding: "utf8", env: environment },
+      );
+      expect(status.status).not.toBe(0);
+      expect(status.stdout, status.stderr).toContain(
+        "SSH reverse connection: not running.",
+      );
+      expect(status.stderr).toContain("active for another installation");
+
+      const calls = (await readFile(log, "utf8")).trim().split("\n");
+      expect(calls).toHaveLength(5);
+      expect(calls.every((call) => call.includes("is-active"))).toBe(true);
+    },
+  );
 
   it("always requests a loopback-only remote listener", () => {
     const arguments_ = sshCommandArguments(

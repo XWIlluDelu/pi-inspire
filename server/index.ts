@@ -34,7 +34,6 @@ import {
   availableModelOptions,
   resolveNewSessionDefaults,
 } from "./model-catalog.js";
-import { PiUpdateChecker } from "./pi-update-checker.js";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -42,6 +41,7 @@ import {
   piInstallation,
   SettingsManager,
 } from "./pi-runtime.js";
+import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
@@ -241,11 +241,13 @@ const application = createInspireServer({
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),
+  shutdown: () => shutdown("authenticated host shutdown"),
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;
 const stopRequestPath = process.env.INSPIRE_STOP_REQUEST_PATH;
 let statePublication: Promise<void> | null = null;
+let publishedState: InstanceState | null = null;
 let shuttingDown = false;
 
 async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
@@ -268,7 +270,8 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
       exitCode = 1;
     }
     try {
-      if (statePath) await removeInstanceState(statePath, process.pid);
+      if (statePath && publishedState)
+        await removeInstanceState(statePath, publishedState);
     } catch (error) {
       console.error("Failed to remove the Inspire instance state", error);
       exitCode = 1;
@@ -309,6 +312,7 @@ async function announceStarted(): Promise<void> {
     mock,
   };
   if (statePath) {
+    publishedState = instanceState;
     statePublication = writeInstanceState(statePath, instanceState);
     try {
       await statePublication;
