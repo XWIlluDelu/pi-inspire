@@ -435,23 +435,27 @@ function bearerToken(request: Request): string | undefined {
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
 }
 
-function cookieToken(
+function accessCookieValues(
   header: string | undefined,
   host: string | undefined,
-): string | undefined {
-  if (!header) return undefined;
+): { present: boolean; values: string[] } {
+  if (!header) return { present: false, values: [] };
   const expectedName = accessCookieName(host);
+  let present = false;
+  const values: string[] = [];
   for (const segment of header.split(";")) {
     const separator = segment.indexOf("=");
     if (separator < 0 || segment.slice(0, separator).trim() !== expectedName)
       continue;
+    present = true;
     try {
-      return decodeURIComponent(segment.slice(separator + 1).trim());
+      values.push(decodeURIComponent(segment.slice(separator + 1).trim()));
     } catch {
-      return undefined;
+      // A malformed stale value cannot shadow a later valid cookie with the
+      // same name. The unauthorized HTTP response expires this origin's copy.
     }
   }
-  return undefined;
+  return { present, values };
 }
 
 function tokenMatches(
@@ -475,6 +479,15 @@ function setAccessCookie(
     secure: request.secure,
     path: "/",
     maxAge: ACCESS_COOKIE_MAX_AGE_MS,
+  });
+}
+
+function clearAccessCookie(request: Request, response: Response): void {
+  response.clearCookie(accessCookieName(request.get("host")), {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: request.secure,
+    path: "/",
   });
 }
 
@@ -650,16 +663,21 @@ export function createInspireServer(deps: AppDependencies): {
       return response.status(403).json({ error: "Origin is not allowed" });
     }
     const bearer = bearerToken(request);
-    const cookie = cookieToken(request.get("cookie"), request.get("host"));
-    if (
-      !tokenMatches(bearer, deps.token) &&
-      !tokenMatches(cookie, deps.token)
-    ) {
+    const cookies = accessCookieValues(
+      request.get("cookie"),
+      request.get("host"),
+    );
+    const bearerAuthenticated = tokenMatches(bearer, deps.token);
+    const cookieAuthenticated = cookies.values.some((candidate) =>
+      tokenMatches(candidate, deps.token),
+    );
+    if (!bearerAuthenticated && !cookieAuthenticated) {
+      if (cookies.present) clearAccessCookie(request, response);
       return response.status(401).json({ error: "Authentication required" });
     }
     // Existing token URLs and non-cookie clients transparently establish the
     // browser pairing on their first authenticated API request.
-    if (tokenMatches(bearer, deps.token) && !tokenMatches(cookie, deps.token)) {
+    if (bearerAuthenticated && !cookieAuthenticated) {
       setAccessCookie(request, response, deps.token);
     }
     next();
@@ -1343,17 +1361,17 @@ export function createInspireServer(deps: AppDependencies): {
       return;
     }
     const queryToken = url.searchParams.get("token") ?? undefined;
-    const pairedToken = cookieToken(
+    const pairedTokens = accessCookieValues(
       request.headers.cookie,
       request.headers.host,
-    );
-    const queryTokenAllowed =
-      !trustedForwardedHttps(request) || queryToken === undefined;
+    ).values;
+    const forwardedHttps = trustedForwardedHttps(request);
+    const authenticated =
+      pairedTokens.some((candidate) => tokenMatches(candidate, deps.token)) ||
+      (!forwardedHttps && tokenMatches(queryToken, deps.token));
     if (
       url.pathname !== "/events" ||
-      !queryTokenAllowed ||
-      (!tokenMatches(queryToken, deps.token) &&
-        !tokenMatches(pairedToken, deps.token)) ||
+      !authenticated ||
       !originAllowed(request.headers.origin, request.headers.host)
     ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
