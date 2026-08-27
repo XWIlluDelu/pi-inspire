@@ -422,14 +422,15 @@ describe("SessionProjection framing and last-good state", () => {
     const { path, projection } = await fixture([
       message("u1", null, "user", "good", 1),
     ]);
+    await projection.suspendReconciliation();
     try {
       const committed = projection.committedBytes;
       await appendFile(path, '{"type":"message"');
-      await projection.reconcile(true);
+      await projection.reconcileSuspended(true);
       expect(projection.uncommittedBytes).toBeGreaterThan(0);
 
       await truncate(path, committed);
-      const truncated = await projection.reconcile(true);
+      const truncated = await projection.reconcileSuspended(true);
       expect(truncated).toMatchObject({
         changed: false,
         sourceChanged: true,
@@ -438,17 +439,18 @@ describe("SessionProjection framing and last-good state", () => {
       });
 
       await appendFile(path, "partial-a");
-      await projection.reconcile(true);
+      await projection.reconcileSuspended(true);
       await writeFile(
         path,
         `${(await readFile(path)).subarray(0, committed).toString()}partial-b`,
       );
-      const rewritten = await projection.reconcile(true);
+      const rewritten = await projection.reconcileSuspended(true);
       expect(rewritten).toMatchObject({
         sourceChanged: true,
         previousTailVerified: false,
       });
     } finally {
+      projection.resumeReconciliation();
       await projection.close();
     }
   });
@@ -682,6 +684,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       "session-a",
       hooks,
     );
+    await projection.suspendReconciliation();
     try {
       prefixChunks = 0;
       fullChunks = 0;
@@ -689,7 +692,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         path,
         `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "new and longer", 1))}\n`,
       );
-      expect(await projection.reconcile(true)).toMatchObject({
+      expect(await projection.reconcileSuspended(true)).toMatchObject({
         changed: true,
         kind: "rewrite",
       });
@@ -699,6 +702,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         content: "new and longer",
       });
     } finally {
+      projection.resumeReconciliation();
       await projection.close();
     }
   });
@@ -738,23 +742,24 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     const { directory, path, projection } = await fixture([
       message("u1", null, "user", "one", 1),
     ]);
+    await projection.suspendReconciliation();
     try {
       await appendFile(
         path,
         `${JSON.stringify(message("a1", "u1", "assistant", "two", 2))}\n`,
       );
-      const append = await projection.reconcile(true);
+      const append = await projection.reconcileSuspended(true);
       expect(append).toMatchObject({ changed: true, kind: "append" });
       expect(projection.messages).toHaveLength(2);
 
       const sameSize = `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "ONE", 1))}\n`;
       await writeFile(path, sameSize);
-      const rewrite = await projection.reconcile(true);
+      const rewrite = await projection.reconcileSuspended(true);
       expect(rewrite).toMatchObject({ changed: true, kind: "rewrite" });
       expect(projection.messages[0]).toMatchObject({ content: "ONE" });
 
       await truncate(path, Buffer.byteLength(JSON.stringify(header())) + 1);
-      const truncation = await projection.reconcile(true);
+      const truncation = await projection.reconcileSuspended(true);
       expect(truncation).toMatchObject({ changed: true, kind: "rewrite" });
       expect(projection.messages).toEqual([]);
 
@@ -764,10 +769,11 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         `${JSON.stringify(header())}\n${JSON.stringify(message("u2", null, "user", "atomic", 3))}\n`,
       );
       await rename(replacement, path);
-      const atomic = await projection.reconcile(true);
+      const atomic = await projection.reconcileSuspended(true);
       expect(atomic).toMatchObject({ changed: true, kind: "rewrite" });
       expect(projection.messages[0]).toMatchObject({ content: "atomic" });
     } finally {
+      projection.resumeReconciliation();
       await projection.close();
     }
   });
@@ -796,13 +802,14 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       "session-a",
       hooks,
     );
+    await projection.suspendReconciliation();
     try {
       await writeFile(
         path,
         `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "B".repeat(size), 1))}\n`,
       );
       armed = true;
-      const reconciling = projection.reconcile(true);
+      const reconciling = projection.reconcileSuspended(true);
       await reading;
       await writeFile(
         path,
@@ -819,6 +826,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       expect(projection.health.status).toBe("ok");
     } finally {
       release();
+      projection.resumeReconciliation();
       await projection.close();
     }
   });
@@ -847,13 +855,14 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       "session-a",
       hooks,
     );
+    await projection.suspendReconciliation();
     try {
       await writeFile(
         path,
         `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "B".repeat(size + 100), 1))}\n`,
       );
       armed = true;
-      const reconciling = projection.reconcile(true);
+      const reconciling = projection.reconcileSuspended(true);
       await reading;
       await writeFile(
         path,
@@ -869,6 +878,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       expect(/^C+$/u.test(content)).toBe(true);
     } finally {
       release();
+      projection.resumeReconciliation();
       await projection.close();
     }
   });
