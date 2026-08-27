@@ -5,11 +5,11 @@ import {
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
+import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
 } from "./session-projection.js";
-import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
 
 export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 
@@ -300,18 +300,33 @@ export class RuntimeProjectionCoordinator {
     };
 
     if (slot.process && result.uncommittedBytes > 0) {
+      // A delayed watcher hint may re-observe the creator's identical partial
+      // header after attachment. Preserve its original completion deadline.
+      const repeatedInitialPartial =
+        initialMaterialization &&
+        priorPartial !== null &&
+        !result.changed &&
+        result.committedBytes === priorPartial.committedBytes &&
+        result.uncommittedBytes === priorPartial.bytes &&
+        result.uncommittedFingerprint === priorPartial.fingerprint &&
+        result.sourceIdentity === priorPartial.sourceIdentity &&
+        result.previousTailVerified;
       const initiallyOwned =
         priorPartial !== null ||
         isBusyRunState(slot.runState) ||
         slot.persistenceExpectations.length > 0;
       const exactPrior =
         !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
-      let owned = false;
-      if (!initiallyOwned)
+      let owned = repeatedInitialPartial;
+      if (repeatedInitialPartial) {
+        this.captureWriterResult(slot, result);
+      } else if (!initiallyOwned) {
         lastOwnership = { owned: false, reason: "missing-claim" };
-      else if (!exactPrior)
+      } else if (!exactPrior) {
         lastOwnership = { owned: false, reason: "source-version-mismatch" };
-      else owned = await acceptOwnedAppend();
+      } else {
+        owned = await acceptOwnedAppend();
+      }
       if (!owned) {
         await this.failPartialPersistence(
           slot,

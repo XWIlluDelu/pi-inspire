@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1814,17 +1815,22 @@ describe("RuntimeController concurrent sessions", () => {
       await expect(runtime.newSession(TEST_CWD)).resolves.toMatchObject({
         active: { sessionId: "new-id" },
       });
-      const slot = (
-        runtime as unknown as {
-          slots: Map<
-            string,
-            {
-              projection: { uncommittedBytes: number };
-            }
-          >;
-        }
-      ).slots.get("new-id")!;
+      const internals = runtime as unknown as {
+        slots: Map<
+          string,
+          {
+            projection: { uncommittedBytes: number };
+          }
+        >;
+        reconcileSlot(slot: unknown, force: boolean): Promise<unknown>;
+      };
+      const slot = internals.slots.get("new-id")!;
       expect(slot.projection.uncommittedBytes).toBeGreaterThan(0);
+
+      const touchedAt = new Date(Date.now() + 10_000);
+      await utimes(sessionPath, touchedAt, touchedAt);
+      await internals.reconcileSlot(slot, true);
+      expect(worker?.stops).toBe(0);
 
       await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
       await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0), {
