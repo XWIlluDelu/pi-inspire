@@ -11,6 +11,7 @@ import type { ResourceRow } from "../resources";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import { gitChangeForWorkspacePath, store } from "../store";
 import { ContextSplitBody } from "./ContextSplitBody";
+import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview } from "./FilePreview";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -19,8 +20,6 @@ import {
   WorkspaceSearchResults,
   WorkspaceTree,
 } from "./WorkspaceBrowser";
-
-type AppState = ReturnType<typeof store.getState>;
 
 type ResourceStanding = ResourceProbeResult | undefined;
 
@@ -115,7 +114,7 @@ function FileBrowser({
   onRetry,
   savedScrollTop,
 }: {
-  state: AppState;
+  state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
@@ -220,7 +219,7 @@ function FileBrowser({
   );
 }
 
-function WorkspaceIndexHeader({ state }: { state: AppState }) {
+function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
   const projectLabel = state.project ?? "Project files";
   return (
     <button
@@ -243,7 +242,7 @@ export function FilesPane({
   error,
   onRetry,
 }: {
-  state: AppState;
+  state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;

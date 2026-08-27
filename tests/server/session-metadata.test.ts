@@ -1,4 +1,11 @@
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  chmod,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,6 +51,45 @@ afterEach(async () => {
 });
 
 describe("SessionMetadataIndex", () => {
+  it("does not promote a symlinked JSONL into the session catalog", async () => {
+    const root = await directory();
+    const outside = await directory();
+    const target = join(outside, "target.jsonl");
+    await writeFile(target, `${JSON.stringify(header("outside"))}\n`);
+    await symlink(target, join(root, "linked.jsonl"));
+
+    await expect(new SessionMetadataIndex().list(root)).resolves.toEqual([]);
+  });
+
+  it("distinguishes a missing catalog from an unreadable catalog root", async () => {
+    const root = await directory();
+    await expect(
+      new SessionMetadataIndex().list(join(root, "missing")),
+    ).resolves.toEqual([]);
+
+    const notDirectory = join(root, "catalog-file");
+    await writeFile(notDirectory, "not a directory");
+    await expect(
+      new SessionMetadataIndex().list(notDirectory),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+  });
+
+  it("fails a catalog scan rather than omitting an unreadable regular file", async () => {
+    const root = await directory();
+    const path = join(root, "unreadable.jsonl");
+    await writeFile(path, `${JSON.stringify(header())}\n`);
+    await chmod(path, 0o000);
+    try {
+      if (process.getuid?.() !== 0) {
+        await expect(
+          new SessionMetadataIndex().list(root),
+        ).rejects.toMatchObject({ code: "EACCES" });
+      }
+    } finally {
+      await chmod(path, 0o600);
+    }
+  });
+
   it("projects only bounded catalog metadata from Pi JSONL", async () => {
     const root = await directory();
     const path = join(root, "session.jsonl");
@@ -124,7 +170,25 @@ describe("SessionMetadataIndex", () => {
     });
   });
 
-  it("omits a stable malformed file and discovers it after a valid rewrite", async () => {
+  it("rejects malformed session authority instead of inventing catalog identity", async () => {
+    const root = await directory();
+    await writeFile(
+      join(root, "missing-cwd.jsonl"),
+      `${JSON.stringify({ ...header("missing-cwd"), cwd: undefined })}\n`,
+    );
+    await writeFile(
+      join(root, "relative-cwd.jsonl"),
+      `${JSON.stringify({ ...header("relative-cwd"), cwd: "project" })}\n`,
+    );
+    await writeFile(
+      join(root, "second-header.jsonl"),
+      `${JSON.stringify(header("first"))}\n${JSON.stringify(header("second"))}\n`,
+    );
+
+    await expect(new SessionMetadataIndex().list(root)).resolves.toEqual([]);
+  });
+
+  it("omits a new malformed file and discovers it after a valid rewrite", async () => {
     const root = await directory();
     const path = join(root, "session.jsonl");
     await writeFile(path, `${JSON.stringify(header())}\n{broken}\n`);
@@ -141,6 +205,25 @@ describe("SessionMetadataIndex", () => {
     expect((await index.list(root))[0]).toMatchObject({
       id: "session-a",
       firstMessage: "repaired",
+    });
+  });
+
+  it("retains the last complete record while a present session is malformed", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    await writeFile(
+      path,
+      `${JSON.stringify(header("known"))}\n${JSON.stringify(
+        message("u1", "user", "known prompt", 1_767_225_601_000),
+      )}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    expect((await index.list(root))[0]).toMatchObject({ id: "known" });
+
+    await writeFile(path, `${JSON.stringify(header("known"))}\n{broken}\n`);
+    expect((await index.list(root))[0]).toMatchObject({
+      id: "known",
+      firstMessage: "known prompt",
     });
   });
 

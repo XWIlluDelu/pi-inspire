@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  memo,
   useRef,
   useState,
 } from "react";
@@ -23,7 +24,7 @@ import {
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { Dropdown } from "./Dropdown";
@@ -33,8 +34,8 @@ import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-function ContextMeter() {
-  const usage = useAppState().contextUsage;
+const ContextMeter = memo(function ContextMeter() {
+  const usage = useAppState((state) => state.contextUsage);
   if (!usage || usage.percent === null) return null;
   const percent = Math.max(0, Math.min(100, usage.percent));
   const tone =
@@ -67,10 +68,30 @@ function ContextMeter() {
       <span aria-hidden>{Math.round(percent)}%</span>
     </div>
   );
-}
+});
 
-export function Composer() {
-  const state = useAppState();
+export const Composer = memo(function Composer() {
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      transcriptViewId: source.transcriptViewId,
+      transcriptIncarnation: source.transcriptIncarnation,
+      transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
+      runState: source.runState,
+      sessionSelectionPending: source.sessionSelectionPending,
+      editorText: source.editorText,
+      attachments: source.attachments,
+      projectFiles: source.projectFiles,
+      sending: source.sending,
+      model: source.model,
+      availableModels: source.availableModels,
+      commands: source.commands,
+      thinkingLevel: source.thinkingLevel,
+      desktopSendKey: source.prefs.desktopSendKey,
+      recentModelIds: source.prefs.recentModelIds,
+    }),
+    shallowEqual,
+  );
   const sessionId = state.sessionId;
   const historyScope = useMemo<ComposerHistoryScope | null>(
     () =>
@@ -271,9 +292,7 @@ export function Composer() {
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      !shouldSubmitComposerEnter(event.nativeEvent, state.prefs.desktopSendKey)
-    )
+    if (!shouldSubmitComposerEnter(event.nativeEvent, state.desktopSendKey))
       return;
     event.preventDefault();
     void submit(activeBehavior);
@@ -395,7 +414,7 @@ export function Composer() {
           key={`model-${sessionId ?? "none"}`}
           value={activeModel}
           models={state.availableModels}
-          recent={state.prefs.recentModelIds}
+          recent={state.recentModelIds}
           disabled={sessionOpening}
           onChange={(provider, id) => void store.setModel(provider, id)}
         />
@@ -506,4 +525,4 @@ export function Composer() {
       ) : null}
     </form>
   );
-}
+});

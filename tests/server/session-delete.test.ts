@@ -6,6 +6,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   symlink,
   unlink,
   writeFile,
@@ -17,6 +18,17 @@ import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 
 const temporary: string[] = [];
+
+async function source(path: string): Promise<SessionRecord["source"]> {
+  const details = await stat(path, { bigint: true });
+  return {
+    dev: details.dev,
+    ino: details.ino,
+    size: details.size,
+    mtimeNs: details.mtimeNs,
+    ctimeNs: details.ctimeNs,
+  };
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -48,6 +60,7 @@ async function fixture(
       messageCount: 0,
       firstMessage: "",
       searchText: dir.toLowerCase(),
+      source: await source(path),
     },
   };
 }
@@ -126,12 +139,29 @@ describe("session file deletion", () => {
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("refuses a session that changed since its catalog record", async () => {
+    const { path, session } = await fixture();
+    await appendFile(
+      path,
+      `${JSON.stringify({ type: "message", id: "external" })}\n`,
+    );
+
+    await expect(
+      deleteSessionFile(session, async () => undefined),
+    ).rejects.toMatchObject({
+      message: "The session changed since the catalog was loaded",
+      status: 409,
+    });
+    await expect(readFile(path, "utf8")).resolves.toContain('"external"');
+  });
+
   it("refuses a mismatched session header without invoking Trash", async () => {
     const { path, session } = await fixture();
     await writeFile(
       path,
       `${JSON.stringify({ type: "session", version: 3, id: "other" })}\n`,
     );
+    session.source = await source(path);
     let invoked = false;
 
     await expect(
@@ -144,6 +174,27 @@ describe("session file deletion", () => {
     });
     expect(invoked).toBe(false);
     expect(await readFile(path, "utf8")).toContain('"id":"other"');
+  });
+
+  it("refuses a header whose working directory no longer matches the catalog", async () => {
+    const { path, session } = await fixture();
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: session.id,
+        cwd: join(session.cwd, "moved"),
+      })}\n`,
+    );
+    session.source = await source(path);
+
+    await expect(
+      deleteSessionFile(session, async () => undefined),
+    ).rejects.toMatchObject({
+      message: "The session file identity does not match the catalog",
+      status: 409,
+    });
   });
 
   it("refuses a symbolic-link catalog path", async () => {
@@ -159,6 +210,7 @@ describe("session file deletion", () => {
       messageCount: 0,
       firstMessage: "",
       searchText: "",
+      source: await source(path),
     };
 
     await expect(

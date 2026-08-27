@@ -283,9 +283,14 @@ export class AttachmentStore {
       for (const file of files) added.push(await this.storeFile(file));
       return added;
     } catch (error) {
-      await Promise.all([
+      await Promise.allSettled([
         ...files.map((file) => this.discardUpload(file)),
-        ...added.map((item) => this.remove(item.id)),
+        ...added.map(async (item) => {
+          const value = this.values.get(item.id);
+          if (value?.state !== "staged") return;
+          this.values.delete(item.id);
+          await rm(value.path, { force: true });
+        }),
       ]);
       throw error;
     }
@@ -304,7 +309,10 @@ export class AttachmentStore {
       .map((id) => this.values.get(id))
       .filter((item): item is StoredAttachment => Boolean(item));
     if (files.length !== unique.length)
-      throw new Error("One or more attachments expired; add them again");
+      throw Object.assign(
+        new Error("One or more attachments expired; add them again"),
+        { status: 409 },
+      );
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
       throw payloadTooLarge(
@@ -321,8 +329,9 @@ export class AttachmentStore {
     // One staging, one send: a file already leased to an in-flight prompt or
     // consumed by a delivered one cannot join a second message.
     if (files.some((file) => file.state !== "staged")) {
-      throw new Error(
-        "One or more attachments already belong to another message",
+      throw Object.assign(
+        new Error("One or more attachments already belong to another message"),
+        { status: 409 },
       );
     }
     // Lease before the first await: from here the prompt owns these files,
@@ -360,20 +369,24 @@ export class AttachmentStore {
     const value = this.values.get(id);
     if (value?.state !== "staged") return;
     this.values.delete(id);
-    await rm(value.path, { force: true });
+    try {
+      await rm(value.path, { force: true });
+    } catch (error) {
+      // Keep a failed withdrawal retryable without allowing a concurrent
+      // prompt to lease the file while unlink is in flight.
+      if (!this.values.has(id)) this.values.set(id, value);
+      throw error;
+    }
   }
 
   private promptFile(path: string): StoredAttachment | null {
     const candidate = resolve(path);
-    for (const value of this.values.values()) {
-      if (
-        value.kind === "file" &&
-        value.path === candidate &&
-        value.state !== "staged"
-      )
-        return value;
-    }
-    return null;
+    const value = this.values.get(basename(candidate).slice(0, 36));
+    return value?.kind === "file" &&
+      value.path === candidate &&
+      value.state !== "staged"
+      ? value
+      : null;
   }
 
   /** A persisted prompt may recall an ordinary attachment only while this
@@ -434,14 +447,19 @@ export async function resolveProjectFiles(
   cwd: string,
   requested: string[] = [],
 ): Promise<string[]> {
-  const unique = [...new Set(requested)].slice(0, MAX_PROJECT_FILES);
+  const unique = [...new Set(requested)];
+  if (unique.length > MAX_PROJECT_FILES) {
+    throw payloadTooLarge(
+      `At most ${MAX_PROJECT_FILES} project files per message`,
+    );
+  }
   if (unique.length === 0) return [];
   const root = await realpath(cwd);
   // Selection and send are separate user actions. Force a fresh authority
   // check so a path deleted, ignored, or retargeted between them cannot be
   // promoted into the prompt merely because it was offered earlier.
   invalidateProjectIndex(root);
-  return Promise.all(
+  const resolved = await Promise.all(
     unique.map(async (raw) => {
       const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
       const actual = await realpath(candidate);
@@ -456,6 +474,7 @@ export async function resolveProjectFiles(
       return actual;
     }),
   );
+  return [...new Set(resolved)];
 }
 
 const REFERENCE_CONTEXT_HEADING =
@@ -474,7 +493,8 @@ export function addAttachmentContext(
   // JSON string literals keep newlines, bullet prefixes, and other legal
   // filename characters inside one unambiguous structural item.
   const lines = references.map((path) => `- ${JSON.stringify(path)}`);
-  return `${message.trim()}\n\n${REFERENCE_CONTEXT_HEADING}\n${lines.join("\n")}`.trim();
+  const context = `${REFERENCE_CONTEXT_HEADING}\n${lines.join("\n")}`;
+  return message ? `${message}\n\n${context}` : context;
 }
 
 interface ParsedAttachmentContext {
@@ -516,7 +536,7 @@ export function parseAttachmentContext(
   )
     return { text: prompt, references: [] };
   return {
-    text: (contextStart === 0 ? "" : prompt.slice(0, contextStart)).trim(),
+    text: contextStart === 0 ? "" : prompt.slice(0, contextStart),
     references,
   };
 }

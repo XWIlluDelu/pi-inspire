@@ -227,15 +227,19 @@ function referenceKey(value: string): string {
   return trimReference(value).replace(/^file:\/\//i, "");
 }
 
-function contentParts(
-  message: Record<string, unknown>,
-): Array<Record<string, unknown>> {
+function contentParts(message: Record<string, unknown>): Array<{
+  part: Record<string, unknown>;
+  index: number;
+}> {
   const content = message.content;
   if (Array.isArray(content))
-    return content.filter((item): item is Record<string, unknown> =>
-      Boolean(item && typeof item === "object"),
+    return content.flatMap((item, index) =>
+      item && typeof item === "object"
+        ? [{ part: item as Record<string, unknown>, index }]
+        : [],
     );
-  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (typeof content === "string")
+    return [{ part: { type: "text", text: content }, index: 0 }];
   return [];
 }
 
@@ -316,11 +320,11 @@ export function collectSessionResourceReferences(
     if (message.display === false) continue;
     const parts = contentParts(message);
     for (
-      let partIndex = parts.length - 1;
-      partIndex >= 0 && resources.length < limit;
-      partIndex -= 1
+      let partPosition = parts.length - 1;
+      partPosition >= 0 && resources.length < limit;
+      partPosition -= 1
     ) {
-      const part = parts[partIndex]!;
+      const { part, index: partIndex } = parts[partPosition]!;
       if (
         part.type === "image" &&
         (typeof part.data === "string" ||

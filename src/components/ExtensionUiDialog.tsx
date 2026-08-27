@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { ExtensionUiRequest } from "../../shared/contracts";
-import { store, useAppState } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 function cancel(request: ExtensionUiRequest): void {
@@ -188,10 +188,17 @@ function DialogBody({
 }
 
 /** Web-native presentation of Pi extension_ui_request dialogs. */
-export function ExtensionUiDialog() {
-  const state = useAppState();
-  const request = state.extensionUiRequests[0] ?? null;
-  const responding = Boolean(state.extensionUiRespondingId);
+export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
+  const { requests, respondingId, runState } = useAppState(
+    (state) => ({
+      requests: state.extensionUiRequests,
+      respondingId: state.extensionUiRespondingId,
+      runState: state.runState,
+    }),
+    shallowEqual,
+  );
+  const request = requests[0] ?? null;
+  const responding = Boolean(respondingId);
   const dialogRef = useModalFocus<HTMLDivElement>(
     Boolean(request),
     request ? `${request.sessionId}:${request.id}` : null,
@@ -199,7 +206,7 @@ export function ExtensionUiDialog() {
       ? () => {
           // Conflict recovery is a host-owned Escape path and must remain
           // available even when this extension request is still visible.
-          if (state.runState === "conflict") return false;
+          if (runState === "conflict") return false;
           if (!responding) cancel(request);
         }
       : undefined,
@@ -225,4 +232,4 @@ export function ExtensionUiDialog() {
       </div>
     </div>
   );
-}
+});

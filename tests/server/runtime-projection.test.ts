@@ -46,6 +46,9 @@ class ProjectionRpc extends EventEmitter {
   startupEntries: unknown[] = [];
   startupLeafId: string | null | undefined;
   stateThinkingLevel = "off";
+  get available(): boolean {
+    return true;
+  }
   constructor(
     readonly options: PiRpcOptions,
     private readonly sequence: string[],
@@ -105,8 +108,13 @@ class NewSessionRpc extends EventEmitter {
   materializationCuts: number[] = [];
   onMaterializationCut: ((lineCount: number) => Promise<void>) | null = null;
   reusePromptTimestamps = false;
+  unavailable = false;
   private promptCount = 0;
   private materialized = false;
+
+  get available(): boolean {
+    return !this.unavailable;
+  }
   private promptMessages: {
     user: Record<string, unknown>;
     assistant: Record<string, unknown>;
@@ -333,6 +341,7 @@ async function setup(
     id: "session-a",
     cwd: directory,
     path,
+    source: null,
     created: new Date(),
     modified: new Date(),
     messageCount: includeUser ? 1 : 0,
@@ -494,6 +503,29 @@ describe("RuntimeController new-session materialization", () => {
     }
   });
 
+  it("does not commit a new session after an optional read loses its worker", async () => {
+    const fixture = await setupNewSession((worker) => {
+      const request = worker.request.bind(worker);
+      worker.request = async <T>(command: Record<string, unknown>) => {
+        if (command.type === "get_commands") {
+          worker.unavailable = true;
+          throw new Error("worker transport lost");
+        }
+        return request<T>(command);
+      };
+    });
+
+    try {
+      await expect(
+        fixture.runtime.newSession(fixture.directory),
+      ).rejects.toThrow("worker transport lost");
+      expect(fixture.worker.stops).toBe(1);
+      expect((await fixture.runtime.snapshot()).active).toBeNull();
+    } finally {
+      await fixture.runtime.close();
+    }
+  });
+
   it("bounds idle unmaterialized workers with the existing LRU", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-runtime-pending-lru-"),
@@ -561,7 +593,7 @@ describe("RuntimeController new-session materialization", () => {
     }
   });
 
-  it("fails closed when the first file differs from the creating worker", async () => {
+  it("stops safely without making an accepted first prompt retryable when its file differs", async () => {
     const fixture = await setupNewSession((worker) => {
       const request = worker.request.bind(worker);
       worker.request = async <T>(command: Record<string, unknown>) => {
@@ -599,7 +631,7 @@ describe("RuntimeController new-session materialization", () => {
           attachmentIds: [image.id],
           projectFiles: [],
         }),
-      ).rejects.toMatchObject({ status: 409 });
+      ).resolves.toBeNull();
       await expect(
         fixture.attachments.resolveForPrompt([image.id]),
       ).rejects.toThrow(/expired/);
@@ -1051,9 +1083,7 @@ describe("RuntimeController projection ownership gate", () => {
         sessionId: "session-a",
         message: "/compact",
       });
-      const rejected = expect(compacting).rejects.toThrow(
-        /could not verify ownership/,
-      );
+      const accepted = expect(compacting).resolves.toBeNull();
       await started;
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
       await appendFile(
@@ -1072,7 +1102,7 @@ describe("RuntimeController projection ownership gate", () => {
       );
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
       release!();
-      await rejected;
+      await accepted;
       expect((await runtime.snapshot()).runState).toBe("conflict");
     } finally {
       release?.();

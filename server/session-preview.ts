@@ -16,7 +16,7 @@ export async function loadSessionPreview(
       sessionId: session.id,
       sessionFile: resolve(session.path),
       sessionName: session.name,
-      cwd: resolve(session.cwd || process.cwd()),
+      cwd: resolve(session.cwd),
       model: projection.model,
       thinkingLevel: projection.thinkingLevel,
       isStreaming: false,

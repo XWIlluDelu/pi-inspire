@@ -1,5 +1,5 @@
 ---
-purpose: The single current visual contract for Inspire: Amber/Jade palette roles, typography, geometric scale, responsive workbench anatomy, and bounded interaction motion implemented by shared CSS tokens.
+purpose: The single current visual contract for Inspire: Amber/Jade palette roles, typography, geometric scale, responsive workbench anatomy, and bounded interaction motion implemented by the shared CSS entrypoint and its responsibility-scoped modules.
 covers:
   - index.html
   - public/favicon.svg
@@ -11,6 +11,7 @@ covers:
   - public/apple-touch-icon.png
   - public/theme-init.js
   - src/styles.css
+  - src/styles/*.css
   - src/assets/fonts/**
   - src/assets/licenses/**
   - scripts/import-ibm-plex-sans-sc.mjs
@@ -31,9 +32,11 @@ covers:
 ## Goal
 
 Give INSΠRE a coherent, medium-density scientific-workbench character while
-keeping conversation content dominant. `src/styles.css` is the executable token
-source; this spec states the roles, values whose identity matters, and component
-anatomy that must remain stable rather than duplicating every declaration.
+keeping conversation content dominant. `src/styles.css` is the ordered entrypoint
+for responsibility-scoped modules under `src/styles/`; `foundation.css` owns the
+shared tokens. This spec states the roles, values whose identity matters, and
+component anatomy that must remain stable rather than duplicating every
+declaration.
 
 ## Identity and palette
 
@@ -121,15 +124,13 @@ anatomy that must remain stable rather than duplicating every declaration.
 - Files, Changes, and History share the contextual pane rather than creating a
   fourth workbench column. File/resource safety and change semantics belong to
   [[resource-preview]]; branch behavior belongs to [[session-continuity]].
-- `ResourcePathLabel` owns semantic path elision throughout the product. It
-  measures the actual available inline width and selects the richest projection
-  that fits: preserve the filename and extension, then its nearest parent and
-  useful root context, while collapsing interior segments. Only an extreme
-  width may elide the filename itself, at grapheme boundaries. The visual label
-  stays one line while the component exposes the complete original path to
-  assistive technology and its tooltip; containing controls retain that same
-  value for copying and navigation. Ordinary titles and bare filenames do not
-  enter this path-specific treatment.
+- `ResourcePathLabel` owns semantic path presentation throughout the product.
+  It preserves one complete path value and lets the actual flex/grid container
+  and shared CSS perform single-line overflow elision; it does not maintain a
+  parallel measured or segment-rewritten path. The complete value remains
+  available to assistive technology and the tooltip, and containing controls
+  retain that same value for copying and navigation. Ordinary titles and bare
+  filenames do not enter this path-specific treatment.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: a 6px surface, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short

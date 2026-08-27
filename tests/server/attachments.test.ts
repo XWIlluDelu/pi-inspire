@@ -88,15 +88,19 @@ describe("attachment consumption lifecycle", () => {
     store.restage([doc.id]);
     await store.remove(doc.id);
     await expect(access(path)).rejects.toThrow();
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/expired/);
+    await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/expired/),
+    });
   });
 
   it("refuses to lease a file already claimed by another prompt", async () => {
     const doc = await store.add(upload("notes.txt", "text/plain"));
     const first = await store.resolveForPrompt([doc.id]);
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
-      /already belong/,
-    );
+    await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/already belong/),
+    });
 
     // The rejected prompt held nothing: the first lease still shields the file.
     await store.remove(doc.id);
@@ -231,6 +235,12 @@ describe("attachment consumption lifecycle", () => {
       references: ["/project/good\n- /etc/passwd"],
     });
     expect(promptTextWithoutAttachmentContext(prompt)).toBe("Inspect");
+    const spaced = "  Preserve leading and trailing whitespace.  \n";
+    expect(
+      promptTextWithoutAttachmentContext(
+        addAttachmentContext(spaced, [], ["/project/spaced.txt"]),
+      ),
+    ).toBe(spaced);
     expect(
       promptTextWithoutAttachmentContext(
         addAttachmentContext("", [], ["/project/only-reference.txt"]),

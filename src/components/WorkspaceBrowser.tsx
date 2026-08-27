@@ -22,12 +22,20 @@ import {
   gitDecorationForDirectory,
   presentGitFacet,
 } from "../git-presentation";
-import { gitChangeForWorkspacePath, store, useAppState } from "../store";
+import {
+  gitChangeForWorkspacePath,
+  shallowEqual,
+  store,
+  useAppState,
+} from "../store";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
-export function selectedWorkspacePath(
-  state: ReturnType<typeof store.getState>,
-) {
+type WorkspaceSelectionState = Pick<
+  ReturnType<typeof store.getState>,
+  "selectedResourceReference" | "resourcePreview" | "resourceWorkspacePaths"
+>;
+
+export function selectedWorkspacePath(state: WorkspaceSelectionState) {
   const selected = state.selectedResourceReference;
   if (!selected) return null;
   const previewPath =
@@ -38,7 +46,15 @@ export function selectedWorkspacePath(
 }
 
 export function WorkspaceFileSearch() {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      cwd: source.cwd,
+      sessionId: source.sessionId,
+      workspaceQuery: source.workspaceQuery,
+      workspaceSearchLoading: source.workspaceSearchLoading,
+    }),
+    shallowEqual,
+  );
   useEffect(() => {
     store.resumeWorkspaceSearch();
   }, [state.cwd, state.sessionId]);
@@ -138,7 +154,22 @@ export function WorkspaceTree({
   className?: string;
   revealRequests?: boolean;
 }) {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      cwd: source.cwd,
+      workspaceExpandedDirs: source.workspaceExpandedDirs,
+      workspaceLevels: source.workspaceLevels,
+      workspaceLoadingDirs: source.workspaceLoadingDirs,
+      workspaceDirectoryErrors: source.workspaceDirectoryErrors,
+      workspaceRevealRequest: source.workspaceRevealRequest,
+      selectedResourceReference: source.selectedResourceReference,
+      resourcePreview: source.resourcePreview,
+      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      gitStatus: source.gitStatus,
+    }),
+    shallowEqual,
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const expanded = useMemo(
     () => new Set(state.workspaceExpandedDirs),
@@ -287,7 +318,19 @@ export function WorkspaceSearchResults({
 }: {
   className?: string;
 }) {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      workspaceQuery: source.workspaceQuery,
+      workspaceSearchError: source.workspaceSearchError,
+      workspaceSearchLoading: source.workspaceSearchLoading,
+      workspaceMatches: source.workspaceMatches,
+      selectedResourceReference: source.selectedResourceReference,
+      resourcePreview: source.resourcePreview,
+      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      gitStatus: source.gitStatus,
+    }),
+    shallowEqual,
+  );
   const normalized = state.workspaceQuery.trim();
   const selectedPath = selectedWorkspacePath(state);
   return (

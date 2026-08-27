@@ -183,6 +183,7 @@ describe("installed Pi compatibility boundary", () => {
     const before = await readFile(sessionFile);
     const preview = await loadSessionPreview({
       path: sessionFile,
+      source: null,
       id: SOURCE_ID,
       cwd: dirname(sessionFile),
       created: new Date(0),

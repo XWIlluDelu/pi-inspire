@@ -520,6 +520,59 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
     .toBeGreaterThan(0);
 });
 
+test("long Changes lists do not make the document scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const files = Array.from({ length: 120 }, (_, index) => {
+    const path = `src/generated/change-${index.toString().padStart(3, "0")}.ts`;
+    return {
+      path: {
+        id: Buffer.from(path).toString("base64url"),
+        display: path,
+        utf8Path: path,
+        workspacePath: path,
+      },
+      unstaged: { kind: "modified" as const },
+      untracked: false,
+    };
+  });
+  await page.route("**/api/git/status**", (route) =>
+    route.fulfill({
+      json: {
+        kind: "repository",
+        head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
+        files,
+        groups: {
+          conflicted: [],
+          staged: [],
+          unstaged: files.map(({ path }) => path.id),
+          untracked: [],
+        },
+        total: files.length,
+        truncated: false,
+      },
+    }),
+  );
+
+  await pairedPage(page);
+  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const resources = page.getByRole("complementary", {
+    name: "Context panel",
+  });
+  await resources.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(resources.locator(".res__body--changes .res__row")).toHaveCount(
+    files.length,
+  );
+
+  const layout = await page.evaluate(() => ({
+    viewportHeight: window.innerHeight,
+    documentHeight: document.documentElement.scrollHeight,
+    windowScrollY: window.scrollY,
+  }));
+  expect(layout.documentHeight).toBeLessThanOrEqual(layout.viewportHeight);
+  expect(layout.windowScrollY).toBe(0);
+});
+
 test("files navigation preserves context across desktop and narrow workspaces", async ({
   page,
 }) => {

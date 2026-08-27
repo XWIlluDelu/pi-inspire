@@ -13,13 +13,12 @@ import { resourceReferenceLine } from "../../shared/resource-references";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
+import type { ContextPaneView } from "./context-pane-view";
 import { ContextPaneState } from "./ContextPaneState";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import { RichText } from "./RichText";
-
-type AppState = ReturnType<typeof store.getState>;
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -191,7 +190,7 @@ function ReadyResource({
   jump,
   viewMode,
 }: {
-  state: AppState;
+  state: ContextPaneView;
   jump: LineJump | null;
   viewMode: FileViewMode;
 }) {
@@ -317,7 +316,7 @@ export function ResourcePreviewContent({
   jump = null,
   viewMode = "preview",
 }: {
-  state: AppState;
+  state: ContextPaneView;
   jump?: LineJump | null;
   viewMode?: FileViewMode;
 }) {
@@ -352,7 +351,7 @@ export function ResourcePreviewContent({
               className="res__more res__choice"
               key={match}
               title={match}
-              onClick={() => void store.openResource(match)}
+              onClick={() => void store.openResource(match, "files", match)}
             >
               {match}
             </button>
@@ -373,7 +372,13 @@ export function ResourcePreviewContent({
           <button
             type="button"
             className="res__more res__state-action"
-            onClick={() => void store.openResource(preview.reference)}
+            onClick={() =>
+              void store.openResource(
+                preview.reference,
+                "files",
+                state.selectedResourceWorkspacePath ?? undefined,
+              )
+            }
           >
             <RotateCw size={12} aria-hidden /> Retry
           </button>
@@ -391,7 +396,7 @@ function downloadHref(
   return `/api/resources/${encodeURIComponent(descriptor.id)}/content?sessionId=${encodeURIComponent(sessionId)}&download=1`;
 }
 
-export function FilePreview({ state }: { state: AppState }) {
+export function FilePreview({ state }: { state: ContextPaneView }) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
   const displayPath =
@@ -424,9 +429,11 @@ export function FilePreview({ state }: { state: AppState }) {
       ? preview.text.split("\n").length
       : 0;
   useEffect(() => {
-    const referencedLine = resourceReferenceLine(
-      preview?.reference ?? state.selectedResourceReference ?? "",
-    );
+    const referencedLine = state.selectedResourceWorkspacePath
+      ? null
+      : resourceReferenceLine(
+          preview?.reference ?? state.selectedResourceReference ?? "",
+        );
     if (!referencedLine || lineCount === 0) {
       setJump(null);
       return;
@@ -440,6 +447,7 @@ export function FilePreview({ state }: { state: AppState }) {
     lineCount,
     preview?.reference,
     state.selectedResourceReference,
+    state.selectedResourceWorkspacePath,
   ]);
   const href =
     descriptor && state.sessionId

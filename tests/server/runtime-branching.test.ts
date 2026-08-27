@@ -64,9 +64,16 @@ class BranchRpc extends EventEmitter {
   stateRequestStarted: (() => void) | null = null;
   forkEventCount = 0;
   lateForkEventCount = 0;
+  loseWorkerDuringForkExtras = false;
+  unavailable = false;
   treeDialog = false;
   forkDialog = false;
   extensionResponses: Array<Record<string, unknown>> = [];
+
+  get available(): boolean {
+    return !this.unavailable;
+  }
+
   private readonly dialogResolvers = new Map<string, () => void>();
 
   emitLateForkEvents(): void {
@@ -173,6 +180,13 @@ class BranchRpc extends EventEmitter {
         isStreaming: false,
         isCompacting: false,
       };
+    } else if (command.type === "get_session_stats") {
+      if (
+        this.loseWorkerDuringForkExtras &&
+        this.sessionId === this.forkSessionId
+      ) {
+        this.unavailable = true;
+      }
     } else if (command.type === "get_available_models") value = { models: [] };
     else if (command.type === "get_commands")
       value = {
@@ -275,6 +289,7 @@ async function setup(
     id: SESSION_ID,
     cwd: directory,
     path,
+    source: null,
     created: new Date(),
     modified: new Date(),
     messageCount: 4,
@@ -559,6 +574,31 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
+  it("rejects a fork destination already reserved by an in-flight projection load", async () => {
+    const { runtime, worker, directory } = await setup();
+    worker.forkPath = join(directory, "forked-loading-collision.jsonl");
+    const loadingPaths = (
+      runtime as unknown as {
+        loadingPaths: Map<string, Promise<unknown>>;
+      }
+    ).loadingPaths;
+    loadingPaths.set(resolve(worker.forkPath), Promise.resolve({}));
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      await expect(
+        runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "u2",
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(worker.stops).toBeGreaterThan(0);
+    } finally {
+      loadingPaths.delete(resolve(worker.forkPath));
+      await runtime.close();
+    }
+  });
+
   it("keeps source snapshot identity stable while a concurrent read straddles fork replacement", async () => {
     const { runtime, worker, workers, directory, path } = await setup();
     worker.forkPath = join(directory, "forked-concurrent-snapshot.jsonl");
@@ -724,6 +764,7 @@ describe("stock RPC branch bridge", () => {
       id: worker.forkSessionId,
       cwd: directory,
       path: worker.forkPath,
+      source: null,
       created: new Date(),
       modified: new Date(),
       messageCount: 3,
@@ -752,6 +793,34 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
+  it("commits an accepted fork read-only when its worker exits during optional reads", async () => {
+    const { runtime, worker, workers, directory } = await setup();
+    worker.forkPath = join(directory, "forked-worker-exit.jsonl");
+    worker.loseWorkerDuringForkExtras = true;
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      const forked = await runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      });
+      expect(forked).toMatchObject({
+        sessionId: worker.forkSessionId,
+        snapshot: {
+          active: { sessionId: worker.forkSessionId },
+          runState: "failed",
+        },
+      });
+      expect(await runtime.snapshot()).toMatchObject({
+        active: { sessionId: worker.forkSessionId },
+        runState: "failed",
+      });
+      expect(workers).toHaveLength(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("releases a failed fork reservation so destination open can recover with one fresh worker", async () => {
     let fail!: () => void;
     let started!: () => void;
@@ -772,6 +841,7 @@ describe("stock RPC branch bridge", () => {
       id: worker.forkSessionId,
       cwd: directory,
       path: worker.forkPath,
+      source: null,
       created: new Date(),
       modified: new Date(),
       messageCount: 3,
@@ -960,6 +1030,7 @@ describe("stock RPC branch bridge", () => {
       id: worker.forkSessionId,
       cwd: directory,
       path: worker.forkPath,
+      source: null,
       created: new Date(),
       modified: new Date(),
       messageCount: 3,

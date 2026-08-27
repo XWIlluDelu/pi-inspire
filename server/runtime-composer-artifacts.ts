@@ -14,6 +14,10 @@ import {
   parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
+import {
+  canonicalBase64DecodedSize,
+  isSupportedPromptImageMimeType,
+} from "./image-content.js";
 import { escapesBase } from "./paths.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -138,26 +142,19 @@ function recalledImages(
     if (
       typeof data !== "string" ||
       typeof mimeType !== "string" ||
-      !/^image\/(png|jpe?g|gif|webp)$/i.test(mimeType)
+      !isSupportedPromptImageMimeType(mimeType)
     ) {
       throw requestError("A recalled image is invalid", 422);
     }
-    if (
-      Buffer.byteLength(data) >
-      4 * Math.ceil(MAX_ATTACHMENT_FILE_BYTES / 3)
-    ) {
+    const decodedSize = canonicalBase64DecodedSize(data);
+    if (decodedSize === null || decodedSize === 0) {
+      throw requestError("A recalled image is invalid", 422);
+    }
+    if (decodedSize > MAX_ATTACHMENT_FILE_BYTES) {
       throw requestError(
         `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
         413,
       );
-    }
-    const normalized = data.replace(/=+$/u, "");
-    const decoded = Buffer.from(data, "base64");
-    if (
-      decoded.length === 0 ||
-      decoded.toString("base64").replace(/=+$/u, "") !== normalized
-    ) {
-      throw requestError("A recalled image is invalid", 422);
     }
     return { type: "image", data, mimeType };
   });
@@ -221,8 +218,7 @@ async function recalledFiles(
   for (const path of paths) {
     const candidate = resolve(path);
     const outsideWorkspace = escapesBase(relative(workspaceRoot, candidate));
-    const ownedAttachment =
-      outsideWorkspace && attachments.ownsPromptFile(candidate);
+    const ownedAttachment = attachments.ownsPromptFile(candidate);
     // Persisted path text is descriptive, not a capability. Reject an external
     // path before touching it unless this Host still owns that upload.
     if (outsideWorkspace && !ownedAttachment) {
@@ -232,6 +228,12 @@ async function recalledFiles(
       );
     }
 
+    if (!ownedAttachment) {
+      // Project files are canonicalized, confined, and index-authorized as one
+      // fresh batch below. Do not stat an untrusted symlink target first.
+      projectFiles.push(candidate);
+      continue;
+    }
     const actual = await realpath(candidate).catch(() => null);
     if (!actual || actual !== candidate) {
       throw requestError("A recalled file is no longer available", 409);
@@ -239,10 +241,6 @@ async function recalledFiles(
     const details = await stat(actual).catch(() => null);
     if (!details?.isFile()) {
       throw requestError("A recalled file is no longer available", 409);
-    }
-    if (!outsideWorkspace) {
-      projectFiles.push(actual);
-      continue;
     }
     if (details.size > MAX_ATTACHMENT_FILE_BYTES) {
       throw requestError(
@@ -324,7 +322,7 @@ export async function resolveComposerHistoryArtifacts(
 
 export function assertPromptArtifactBudget(
   attachmentCount: number,
-  rawAttachmentBytes: number,
+  ordinaryFileBytes: number,
   images: readonly { data: string }[],
 ): void {
   if (attachmentCount > MAX_ATTACHMENTS) {
@@ -333,15 +331,21 @@ export function assertPromptArtifactBudget(
       413,
     );
   }
-  if (rawAttachmentBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
+  const imageBytes = images.map((image) => {
+    const size = canonicalBase64DecodedSize(image.data);
+    if (size === null || size === 0)
+      throw requestError("A prompt image is invalid", 422);
+    return size;
+  });
+  if (
+    ordinaryFileBytes + imageBytes.reduce((sum, bytes) => sum + bytes, 0) >
+    MAX_ATTACHMENT_UPLOAD_BYTES
+  ) {
     throw requestError(
       `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
       413,
     );
   }
-  const imageBytes = images.map((image) =>
-    Buffer.byteLength(image.data, "base64"),
-  );
   if (imageBytes.some((bytes) => bytes > MAX_ATTACHMENT_FILE_BYTES)) {
     throw requestError(
       `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,

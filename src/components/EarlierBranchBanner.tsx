@@ -1,21 +1,30 @@
 import { GitBranch, Loader2 } from "lucide-react";
-import { store, useAppState } from "../store";
+import { memo } from "react";
+import { shallowEqual, store, useAppState } from "../store";
 
 /**
  * The transcript remains the primary context surface while inspecting an
  * earlier branch. This banner intentionally does not live in the optional
  * History pane, so returning to the durable leaf never depends on a drawer.
  */
-export function EarlierBranchBanner() {
-  const state = useAppState();
-  const durableLeafId = state.transcriptDurableLeafId;
-  const effectiveLeafId = state.transcriptEffectiveLeafId;
+export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
+  const { durableLeafId, effectiveLeafId, treeLoading, actionId, treeError } =
+    useAppState(
+      (state) => ({
+        durableLeafId: state.transcriptDurableLeafId,
+        effectiveLeafId: state.transcriptEffectiveLeafId,
+        treeLoading: state.branchTreeLoading,
+        actionId: state.branchActionId,
+        treeError: state.branchTreeError,
+      }),
+      shallowEqual,
+    );
   const viewingEarlierBranch = Boolean(
     durableLeafId && effectiveLeafId && durableLeafId !== effectiveLeafId,
   );
   if (!viewingEarlierBranch) return null;
 
-  const busy = state.branchTreeLoading || state.branchActionId !== null;
+  const busy = treeLoading || actionId !== null;
   return (
     <section
       className="earlier-branch-banner"
@@ -28,9 +37,9 @@ export function EarlierBranchBanner() {
           New messages continue from this point until you return to the latest
           branch.
         </span>
-        {state.branchTreeError ? (
+        {treeError ? (
           <span className="earlier-branch-banner__error" role="alert">
-            {state.branchTreeError}
+            {treeError}
           </span>
         ) : null}
       </div>
@@ -55,4 +64,4 @@ export function EarlierBranchBanner() {
       </div>
     </section>
   );
-}
+});

@@ -7,6 +7,7 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  memo,
   Profiler,
   useCallback,
   useEffect,
@@ -31,7 +32,7 @@ import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
-import { store, useAppState } from "./store";
+import { shallowEqual, store, useAppState } from "./store";
 import { type AvailableUpdates, availableUpdates } from "./update-availability";
 import { hasActiveModal } from "./use-modal-focus";
 import { cacheVisualPreferences } from "./visual-preferences";
@@ -332,8 +333,22 @@ function UpdateNotice({
   );
 }
 
-function Notices({ onViewUpdates }: { onViewUpdates: () => void }) {
-  const state = useAppState();
+const Notices = memo(function Notices({
+  onViewUpdates,
+}: {
+  onViewUpdates: () => void;
+}) {
+  const state = useAppState(
+    (source) => ({
+      notices: source.notices,
+      inspireUpdateChecking: source.inspireUpdateChecking,
+      piUpdateChecking: source.piUpdateChecking,
+      updateSnoozedUntil: source.updateSnoozedUntil,
+      availableUpdate: source.availableUpdate,
+      piUpdateCheck: source.piUpdateCheck,
+    }),
+    shallowEqual,
+  );
   const updates =
     !state.inspireUpdateChecking &&
     !state.piUpdateChecking &&
@@ -351,7 +366,7 @@ function Notices({ onViewUpdates }: { onViewUpdates: () => void }) {
       ) : null}
     </div>
   );
-}
+});
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(
@@ -367,8 +382,132 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
+const ConversationStage = memo(function ConversationStage() {
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      messages: source.messages,
+      transcriptActivityRanges: source.transcriptActivityRanges,
+      promptMapTurns: source.promptMapTurns,
+      promptMapTotal: source.promptMapTotal,
+      promptMapLoadedStarts: source.promptMapLoadedStarts,
+      promptMapLoadingStarts: source.promptMapLoadingStarts,
+      promptMapError: source.promptMapError,
+      promptMapNavigatingOrdinal: source.promptMapNavigatingOrdinal,
+      streaming: source.streaming,
+      runState: source.runState,
+      activeAssistantMessageKey: source.activeAssistantMessageKey,
+      tools: source.tools,
+      transcriptViewId: source.transcriptViewId,
+      transcriptIncarnation: source.transcriptIncarnation,
+      transcriptDurableLeafId: source.transcriptDurableLeafId,
+      transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
+      queue: source.queue,
+      pendingAction: source.pendingAction,
+      extensionDisplays: source.extensionDisplays,
+      thinkingVisibility: source.prefs.thinkingVisibility,
+      toolVisibility: source.prefs.toolVisibility,
+      activityFoldVisibility: source.prefs.activityFoldVisibility,
+      assistantRoundDisplay: source.prefs.assistantRoundDisplay,
+      hasOlderMessages: source.hasOlderMessages,
+      loadingOlderMessages: source.loadingOlderMessages,
+      olderMessagesError: source.olderMessagesError,
+    }),
+    shallowEqual,
+  );
+  if (!state.sessionId) return null;
+
+  const transcript = (
+    <Transcript
+      messages={state.messages}
+      activityRanges={state.transcriptActivityRanges}
+      promptMapTurns={state.promptMapTurns}
+      promptMapTotal={state.promptMapTotal}
+      promptMapLoadedStarts={state.promptMapLoadedStarts}
+      promptMapLoadingStarts={state.promptMapLoadingStarts}
+      promptMapError={state.promptMapError}
+      promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}
+      streaming={state.streaming}
+      runState={state.runState}
+      activeAssistantMessageKey={state.activeAssistantMessageKey}
+      toolActivity={state.tools}
+      sessionId={state.sessionId}
+      viewId={state.transcriptViewId ?? ""}
+      projectionIncarnation={state.transcriptIncarnation ?? ""}
+      viewingEarlierBranch={Boolean(
+        state.transcriptDurableLeafId &&
+          state.transcriptEffectiveLeafId &&
+          state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
+      )}
+      queue={state.queue}
+      pendingAction={state.pendingAction}
+      onManagePending={store.managePending}
+      onPendingMessageTexts={store.pendingMessageTexts}
+      extensionDisplays={state.extensionDisplays}
+      thinkingVisibility={state.thinkingVisibility}
+      toolVisibility={state.toolVisibility}
+      activityFoldVisibility={state.activityFoldVisibility ?? "dynamic"}
+      assistantRoundDisplay={state.assistantRoundDisplay}
+      hasOlder={state.hasOlderMessages}
+      loadingOlder={state.loadingOlderMessages}
+      olderError={state.olderMessagesError}
+    />
+  );
+  const composer = (
+    <div className="composer-dock">
+      <ActivityBar />
+      <ExtensionDisplayDock
+        displays={state.extensionDisplays}
+        placement="aboveEditor"
+      />
+      <Composer />
+      <ExtensionDisplayDock
+        displays={state.extensionDisplays}
+        placement="belowEditor"
+      />
+    </div>
+  );
+  return (
+    <section className="reading-stage">
+      {MAINTENANCE_BENCHMARK ? (
+        <Profiler id="transcript" onRender={recordBenchmarkCommit}>
+          {transcript}
+        </Profiler>
+      ) : (
+        transcript
+      )}
+      {MAINTENANCE_BENCHMARK ? (
+        <Profiler id="composer" onRender={recordBenchmarkCommit}>
+          {composer}
+        </Profiler>
+      ) : (
+        composer
+      )}
+    </section>
+  );
+});
+
 export function App() {
-  const state = useAppState();
+  const state = useAppState(
+    (source) => ({
+      needsToken: source.needsToken,
+      bootstrapped: source.bootstrapped,
+      connection: source.connection,
+      connectionProblem: source.connectionProblem,
+      extensionOverlayOpen: source.extensionUiRequests.length > 0,
+      resourcesOpen: source.resourcesOpen,
+      prefs: source.prefs,
+      windowTitle: source.windowTitle,
+      sessionName: source.sessionName,
+      attentionCount: source.attentionSessionIds.length,
+      sessionId: source.sessionId,
+      runState: source.runState,
+      error: source.error,
+      errorSeverity: source.errorSeverity,
+      projectionConflict: source.projectionConflict,
+    }),
+    shallowEqual,
+  );
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
@@ -376,18 +515,18 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("display");
-  const extensionOverlayOpen = state.extensionUiRequests.length > 0;
+  const extensionOverlayOpen = state.extensionOverlayOpen;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
 
-  const openSession = (id: string) => {
+  const openSession = useCallback((id: string) => {
     setPaletteOpen(false);
     setSettingsOpen(false);
     setMobileNavOpen(false);
     void store.openSession(id);
-  };
+  }, []);
 
-  const newSession = () => {
+  const newSession = useCallback(() => {
     setPaletteOpen(false);
     setSettingsOpen(false);
     setMobileNavOpen(false);
@@ -406,11 +545,20 @@ export function App() {
       if (!deselected) return;
       store.setResourcesOpen(false);
     });
-  };
+  }, []);
 
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
   }, [state.sessionId]);
+
+  const closeMobileNavigation = useCallback(() => {
+    setMobileNavOpen(false);
+  }, []);
+  const closeResources = useCallback(() => {
+    store.setResourcesOpen(false);
+  }, []);
+  const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const toggleNavigation = useCallback(() => {
     if (narrowViewport) {
@@ -441,10 +589,10 @@ export function App() {
   // chrome. It supersedes the two app-level overlays instead of competing for
   // focus or Escape ownership.
   useEffect(() => {
-    if (state.extensionUiRequests.length === 0) return;
+    if (!extensionOverlayOpen) return;
     setPaletteOpen(false);
     setSettingsOpen(false);
-  }, [state.extensionUiRequests.length]);
+  }, [extensionOverlayOpen]);
 
   const openCommandPalette = useCallback(() => {
     if (extensionOverlayOpen || hasActiveModal()) return;
@@ -509,9 +657,9 @@ export function App() {
     document.title = composeDocumentTitle(
       state.windowTitle,
       state.sessionName,
-      state.attentionSessionIds.length,
+      state.attentionCount,
     );
-  }, [state.windowTitle, state.sessionName, state.attentionSessionIds.length]);
+  }, [state.windowTitle, state.sessionName, state.attentionCount]);
 
   useEffect(() => {
     const acknowledge = () => store.acknowledgeVisibleSession();
@@ -592,67 +740,14 @@ export function App() {
       <Nav
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
-        onClose={() => setMobileNavOpen(false)}
+        onClose={closeMobileNavigation}
         selectedSessionId={state.sessionId}
         onNewSession={newSession}
         onSelectSession={openSession}
       />
     );
-  const transcriptContent = state.sessionId ? (
-    <Transcript
-      messages={state.messages}
-      activityRanges={state.transcriptActivityRanges}
-      promptMapTurns={state.promptMapTurns}
-      promptMapTotal={state.promptMapTotal}
-      promptMapLoadedStarts={state.promptMapLoadedStarts}
-      promptMapLoadingStarts={state.promptMapLoadingStarts}
-      promptMapError={state.promptMapError}
-      promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}
-      streaming={state.streaming}
-      runState={state.runState}
-      activeAssistantMessageKey={state.activeAssistantMessageKey}
-      toolActivity={state.tools}
-      sessionId={state.sessionId}
-      viewId={state.transcriptViewId ?? ""}
-      projectionIncarnation={state.transcriptIncarnation ?? ""}
-      viewingEarlierBranch={Boolean(
-        state.transcriptDurableLeafId &&
-          state.transcriptEffectiveLeafId &&
-          state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
-      )}
-      queue={state.queue}
-      pendingAction={state.pendingAction}
-      onManagePending={store.managePending}
-      onPendingMessageTexts={store.pendingMessageTexts}
-      extensionDisplays={state.extensionDisplays}
-      thinkingVisibility={state.prefs.thinkingVisibility}
-      toolVisibility={state.prefs.toolVisibility}
-      activityFoldVisibility={state.prefs.activityFoldVisibility ?? "dynamic"}
-      assistantRoundDisplay={state.prefs.assistantRoundDisplay}
-      hasOlder={state.hasOlderMessages}
-      loadingOlder={state.loadingOlderMessages}
-      olderError={state.olderMessagesError}
-    />
-  ) : null;
-  const composerContent = state.sessionId ? (
-    <div className="composer-dock">
-      <ActivityBar />
-      <ExtensionDisplayDock
-        displays={state.extensionDisplays}
-        placement="aboveEditor"
-      />
-      <Composer />
-      <ExtensionDisplayDock
-        displays={state.extensionDisplays}
-        placement="belowEditor"
-      />
-    </div>
-  ) : null;
   const resourcesContent = state.resourcesOpen ? (
-    <ContextPane
-      isModal={isResourcesModal}
-      onClose={() => store.setResourcesOpen(false)}
-    />
+    <ContextPane isModal={isResourcesModal} onClose={closeResources} />
   ) : null;
 
   return (
@@ -740,26 +835,11 @@ export function App() {
         {settingsOpen && !extensionOverlayOpen ? (
           <Settings
             initialCategory={settingsCategory}
-            onClose={() => setSettingsOpen(false)}
+            onClose={closeSettings}
           />
         ) : null}
         {state.sessionId ? (
-          <section className="reading-stage">
-            {MAINTENANCE_BENCHMARK ? (
-              <Profiler id="transcript" onRender={recordBenchmarkCommit}>
-                {transcriptContent}
-              </Profiler>
-            ) : (
-              transcriptContent
-            )}
-            {MAINTENANCE_BENCHMARK ? (
-              <Profiler id="composer" onRender={recordBenchmarkCommit}>
-                {composerContent}
-              </Profiler>
-            ) : (
-              composerContent
-            )}
-          </section>
+          <ConversationStage />
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
@@ -800,7 +880,7 @@ export function App() {
       ) : null}
       {paletteOpen && !extensionOverlayOpen ? (
         <CommandPalette
-          onClose={() => setPaletteOpen(false)}
+          onClose={closeCommandPalette}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}
           onNewSession={newSession}

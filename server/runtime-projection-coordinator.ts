@@ -57,13 +57,27 @@ export class RuntimeProjectionCoordinator {
         ) ||
           Boolean(slot.pendingPartialPersistence)),
     );
+    if (
+      slot.process &&
+      projection.uncommittedBytes > 0 &&
+      projection.uncommittedFingerprint
+    ) {
+      this.trackPartialPersistence(slot, {
+        committedBytes: projection.committedBytes,
+        uncommittedBytes: projection.uncommittedBytes,
+        uncommittedFingerprint: projection.uncommittedFingerprint,
+        sourceIdentity: projection.sourceIdentity,
+        sourceVersion: projection.sourceVersion,
+      });
+    }
     projection.on("update", (result) => {
       if (slot.projection !== projection || this.host.isClosing()) return;
+      const handleCurrentProjection = () => {
+        if (slot.projection !== projection || this.host.isClosing()) return;
+        return this.handle(slot, result);
+      };
       slot.projectionTail = slot.projectionTail
-        .then(
-          () => this.handle(slot, result),
-          () => this.handle(slot, result),
-        )
+        .then(handleCurrentProjection, handleCurrentProjection)
         .catch((error) => {
           if (!this.host.isClosing())
             this.host.logRuntimeError(
@@ -93,13 +107,10 @@ export class RuntimeProjectionCoordinator {
     slot.workerProjectionRevision = result.revision;
     slot.workerProjectionFingerprint = result.fingerprint;
     slot.workerProjectionSourceIdentity =
-      slot.workerProjectionSourceIdentity ??
-      slot.projection?.sourceIdentity ??
-      null;
+      slot.workerProjectionSourceIdentity ?? result.sourceIdentity;
     slot.workerProjectionSourceVersion = result.sourceVersion;
-    slot.workerProjectionObservedBytes = slot.projection
-      ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-      : null;
+    slot.workerProjectionObservedBytes =
+      result.committedBytes + result.uncommittedBytes;
   }
 
   clearWriterBaseline(slot: RuntimeSlot): void {
@@ -165,25 +176,29 @@ export class RuntimeProjectionCoordinator {
     return this.host.stopWriter(slot);
   }
 
-  private trackPartialPersistence(slot: RuntimeSlot): void {
-    const projection = slot.projection;
-    if (
-      !projection ||
-      projection.uncommittedBytes <= 0 ||
-      !projection.uncommittedFingerprint
-    )
-      return;
+  private trackPartialPersistence(
+    slot: RuntimeSlot,
+    result: Pick<
+      ProjectionReconcileResult,
+      | "committedBytes"
+      | "uncommittedBytes"
+      | "uncommittedFingerprint"
+      | "sourceIdentity"
+      | "sourceVersion"
+    >,
+  ): void {
+    if (result.uncommittedBytes <= 0 || !result.uncommittedFingerprint) return;
     const prior = slot.pendingPartialPersistence;
     if (prior) clearTimeout(prior.timer);
     const deadline =
       prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
     const lease = {
-      committedBytes: projection.committedBytes,
-      bytes: projection.uncommittedBytes,
-      fingerprint: projection.uncommittedFingerprint,
-      sourceIdentity: projection.sourceIdentity,
-      sourceVersion: projection.sourceVersion,
-      observedBytes: projection.committedBytes + projection.uncommittedBytes,
+      committedBytes: result.committedBytes,
+      bytes: result.uncommittedBytes,
+      fingerprint: result.uncommittedFingerprint,
+      sourceIdentity: result.sourceIdentity,
+      sourceVersion: result.sourceVersion,
+      observedBytes: result.committedBytes + result.uncommittedBytes,
       deadline,
       timer: undefined as unknown as ReturnType<typeof setTimeout>,
     };
@@ -226,14 +241,13 @@ export class RuntimeProjectionCoordinator {
       priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
     const expectedObservedBytes =
       priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
-    const observedBytes =
-      projection.committedBytes + projection.uncommittedBytes;
+    const observedBytes = result.committedBytes + result.uncommittedBytes;
     const initialMaterialization = result.initialMaterialization;
     const strictPhysicalProgress =
       expectedObservedBytes !== null &&
       result.previousSourceVersion === expectedSourceVersion &&
       (initialMaterialization ||
-        projection.sourceIdentity ===
+        result.sourceIdentity ===
           (priorPartial?.sourceIdentity ??
             slot.workerProjectionSourceIdentity)) &&
       result.previousTailVerified &&
@@ -282,7 +296,6 @@ export class RuntimeProjectionCoordinator {
       );
       if (!lastOwnership.owned) return false;
       this.captureWriterResult(slot, result);
-      this.host.reconcileOverlay(slot, result.appendedEntries);
       return true;
     };
 
@@ -308,7 +321,7 @@ export class RuntimeProjectionCoordinator {
           { initiallyOwned, exactPrior, ...ownershipFields() },
         );
       } else {
-        this.trackPartialPersistence(slot);
+        this.trackPartialPersistence(slot, result);
       }
     } else if (priorPartial) {
       const exactPrior =
@@ -328,7 +341,7 @@ export class RuntimeProjectionCoordinator {
           ownershipFields(),
         );
     } else if (
-      projection.health.status === "error" &&
+      result.health.status === "error" &&
       slot.process &&
       (this.writerOwnershipActive(slot) ||
         slot.workerProjectionSourceIdentity === null)
@@ -336,7 +349,7 @@ export class RuntimeProjectionCoordinator {
       this.host.setProjectionConflict(
         slot,
         "projection-failure",
-        `Session projection failed while the Pi runtime was active: ${projection.health.message ?? "unknown error"}`,
+        `Session projection failed while the Pi runtime was active: ${result.health.message ?? "unknown error"}`,
       );
       await this.host.stopWriter(slot);
     } else if (
@@ -362,7 +375,6 @@ export class RuntimeProjectionCoordinator {
         );
         if (lastOwnership.owned) {
           this.captureWriterResult(slot, result);
-          this.host.reconcileOverlay(slot, result.appendedEntries);
         } else {
           this.host.setProjectionConflict(
             slot,
@@ -379,6 +391,7 @@ export class RuntimeProjectionCoordinator {
         await this.host.stopWriter(slot);
       }
     }
+    this.host.reconcileOverlay(slot, result.appendedEntries);
     if (!previousConflict && slot.conflict) {
       this.host.emitSlotEvent(slot, {
         type: "session_projection_conflict",
@@ -388,7 +401,7 @@ export class RuntimeProjectionCoordinator {
     this.host.emitSlotEvent(slot, {
       type: "session_projection_changed",
       revision: result.revision,
-      health: projection.health,
+      health: result.health,
       conflict: slot.conflict,
     });
   }
@@ -406,6 +419,10 @@ export class RuntimeProjectionCoordinator {
     const result = startupAttestation
       ? await slot.projection.reconcileSuspended(force)
       : await slot.projection.reconcile(force);
+    // A filesystem-hint reconcile that completed before this explicit read may
+    // have published its ownership task while the projection gate was busy.
+    // Drain that observation before exposing this later one to the caller.
+    await slot.projectionTail;
     if (
       startupAttestation ||
       result.changed ||
@@ -438,8 +455,9 @@ export class RuntimeProjectionCoordinator {
       (result.changed || result.healthChanged || result.sourceChanged)
     ) {
       await this.handle(slot, result);
+    } else {
+      this.host.reconcileOverlay(slot, result.appendedEntries);
     }
-    this.host.reconcileOverlay(slot, result.appendedEntries);
     return result;
   }
 }

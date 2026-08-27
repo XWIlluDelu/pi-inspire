@@ -30,6 +30,7 @@ export function AttachmentList({
                 <PersistedImage
                   sessionId={sessionId}
                   viewId={item.recalledArtifact.viewId}
+                  projectionKey={`${item.recalledArtifact.viewId}\u0000${item.recalledArtifact.incarnation}`}
                   reference={item.recalledArtifact.reference}
                   className="image-preview--attachment"
                 />

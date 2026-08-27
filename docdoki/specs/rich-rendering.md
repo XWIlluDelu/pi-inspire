@@ -3,7 +3,11 @@ purpose: One defensive rendering pipeline turns Pi text into stable Markdown, ma
 covers:
   - src/components/RichText.tsx
   - src/components/Transcript.tsx
+  - src/components/transcript-row-projection.tsx
+  - src/components/transcript-row-renderer.tsx
+  - src/components/transcript-rows.tsx
   - src/styles.css
+  - src/styles/*.css
   - tests/web/rich-text.test.tsx
 ---
 

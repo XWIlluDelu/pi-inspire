@@ -60,7 +60,10 @@ export class RuntimeWorkerLifecycle {
 
   async stop(slot: RuntimeSlot): Promise<void> {
     const rpc = slot.process;
-    if (!rpc) return;
+    if (!rpc) {
+      if (slot.stopping) await slot.stopping;
+      return;
+    }
     this.diagnostics.record("info", "slot_worker_stop", {
       sessionId: slot.id,
       slotIncarnation: slot.incarnationId,
@@ -87,6 +90,7 @@ export class RuntimeWorkerLifecycle {
     }
     slot.process = null;
     slot.ready = false;
+    slot.compactionReturnState = null;
     this.host.clearWriterBaseline(slot);
     slot.bridge = null;
     this.host.renewView(slot);
@@ -147,6 +151,9 @@ export class RuntimeWorkerLifecycle {
     }
     if (slot.conflict)
       throw Object.assign(new Error(slot.conflict.message), { status: 409 });
+    if (slot.process && slot.ready && !slot.process.available) {
+      await this.stop(slot);
+    }
     if (slot.process && slot.ready && !this.host.writerBaselineMatches(slot)) {
       if (this.host.writerOwnershipActive(slot)) {
         const conflict = this.host.setProjectionConflict(
@@ -257,9 +264,11 @@ export class RuntimeWorkerLifecycle {
       if (slot.process === rpc) {
         this.host.logRuntimeError(slot.id, failure, "worker_start_failed");
         await this.stop(slot);
-        slot.runState = "failed";
-        slot.attention =
-          this.host.selectedSessionId() === slot.id ? null : "failed";
+        slot.runState = slot.conflict ? "conflict" : "failed";
+        if (!slot.conflict) {
+          slot.attention =
+            this.host.selectedSessionId() === slot.id ? null : "failed";
+        }
         this.host.emitSlotEvent(slot, {
           type: "runtime_error",
           error: failure instanceof Error ? failure.message : String(failure),

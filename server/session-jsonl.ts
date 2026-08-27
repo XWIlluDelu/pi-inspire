@@ -3,19 +3,25 @@ import { Buffer } from "node:buffer";
 /** Persisted JSONL and child RPC frames are independent trust boundaries. */
 export const MAX_PERSISTED_ENTRY_BYTES = 32 * 1024 * 1024;
 
+export class PersistedJsonlError extends Error {}
+
 function decodeJsonlObject(line: Buffer): Record<string, unknown> {
   if (line.length === 0)
-    throw new Error("Persisted session contains an empty JSONL entry");
+    throw new PersistedJsonlError(
+      "Persisted session contains an empty JSONL entry",
+    );
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line));
   } catch (error) {
-    throw new Error(
+    throw new PersistedJsonlError(
       `Persisted session contains a malformed complete JSONL entry: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Persisted session entry must be a JSON object");
+    throw new PersistedJsonlError(
+      "Persisted session entry must be a JSON object",
+    );
   }
   return value as Record<string, unknown>;
 }
@@ -45,7 +51,7 @@ export class JsonlObjectDecoder {
         this.pending.push(remainder);
         this.pendingBytes += remainder.length;
         if (this.pendingBytes > MAX_PERSISTED_ENTRY_BYTES)
-          throw new Error(
+          throw new PersistedJsonlError(
             `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
           );
         break;
@@ -61,7 +67,7 @@ export class JsonlObjectDecoder {
             );
       const lineLength = frame.length - 1;
       if (lineLength > MAX_PERSISTED_ENTRY_BYTES)
-        throw new Error(
+        throw new PersistedJsonlError(
           `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
         );
       this.onFrame(frame);
