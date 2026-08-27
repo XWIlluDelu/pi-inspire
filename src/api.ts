@@ -206,6 +206,12 @@ function post<T>(
 
 export function createApi(token: string | null = null) {
   return {
+    /** A successful bearer-authenticated bootstrap establishes the pairing
+     * cookie. Retire the launch credential before any later API or event-stream
+     * request so a long-lived page cannot keep replaying it. */
+    retireBearer: () => {
+      token = null;
+    },
     bootstrap: (signal?: AbortSignal) =>
       request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
     update: (refresh = false) =>

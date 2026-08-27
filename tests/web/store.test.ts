@@ -92,6 +92,30 @@ describe("websocket lifecycle", () => {
     expect(socket.url).toBe("ws://localhost:3000/events");
   });
 
+  it("retires a launch bearer after bootstrap establishes the pairing cookie", async () => {
+    const fetch = installFetch(baseRoutes);
+    const store = new AppStore();
+    await store.init("launch-token");
+    await store.refreshSessions();
+
+    const bootstrapCall = fetch.mock.calls.find(([url]) =>
+      String(url).startsWith("/api/bootstrap"),
+    );
+    expect(bootstrapCall?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer launch-token",
+    });
+    const sessionCalls = fetch.mock.calls.filter(([url]) =>
+      String(url).startsWith("/api/sessions"),
+    );
+    expect(sessionCalls.length).toBeGreaterThan(0);
+    expect(
+      sessionCalls.every(([, init]) => requestToken(init ?? {}) === null),
+    ).toBe(true);
+    expect(FakeWebSocket.instances.at(-1)?.url).toBe(
+      "ws://localhost:3000/events",
+    );
+  });
+
   it("applies only the latest of concurrent bootstrap successes", async () => {
     const bootstraps = installDeferredBootstrapRoutes("old", "new");
     const store = new AppStore();
@@ -119,7 +143,7 @@ describe("websocket lifecycle", () => {
       needsToken: false,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(FakeWebSocket.instances[0]?.url).toContain("token=new");
+    expect(FakeWebSocket.instances[0]?.url).toBe("ws://localhost:3000/events");
   });
 
   it("ignores a superseded bootstrap authorization failure", async () => {
@@ -147,7 +171,7 @@ describe("websocket lifecycle", () => {
       needsToken: false,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(FakeWebSocket.instances[0]?.url).toContain("token=fresh");
+    expect(FakeWebSocket.instances[0]?.url).toBe("ws://localhost:3000/events");
   });
 
   it("prevents a superseded bootstrap from replacing current preferences or its socket", async () => {
@@ -193,6 +217,33 @@ describe("websocket lifecycle", () => {
         connection: "offline",
         connectionProblem: { kind: "host-unreachable" },
       });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns an established view to Pair when reconnect authentication expires", async () => {
+    vi.useFakeTimers();
+    try {
+      let expired = false;
+      installFetch((url, init) => {
+        if (expired && url.startsWith("/api/bootstrap"))
+          return { status: 401, body: { error: "pairing expired" } };
+        return baseRoutes(url, init);
+      });
+      const { store, socket } = await initStore();
+
+      expired = true;
+      socket.onclose?.();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(store.getState()).toMatchObject({
+        needsToken: true,
+        connection: "offline",
+        connectionProblem: null,
+      });
+      expect(FakeWebSocket.instances).toHaveLength(1);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -3784,6 +3835,7 @@ describe("resource previews", () => {
     const probeStarted = new Promise<void>((resolve) => {
       markProbeStarted = resolve;
     });
+    let probeRequests = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         const token = requestToken(init);
@@ -3795,7 +3847,8 @@ describe("resource previews", () => {
         };
       }
       if (url.startsWith("/api/resources/probe")) {
-        if (requestToken(init) === "old-token") {
+        probeRequests += 1;
+        if (probeRequests === 1) {
           markProbeStarted();
           return oldProbe.promise;
         }
@@ -3833,7 +3886,7 @@ describe("resource previews", () => {
       needsToken: false,
       connection: "open",
     });
-    expect(freshSocket.url).toContain("token=fresh-token");
+    expect(freshSocket.url).toBe("ws://localhost:3000/events");
     expect(store.getState().resourceAvailability).toEqual({});
   });
 

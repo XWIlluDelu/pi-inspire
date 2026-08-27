@@ -376,7 +376,21 @@ describe("local host API", () => {
     expect(setCookie[0]).toContain("Path=/");
     await agent.get("/api/bootstrap").expect(200);
 
+    const cookieName = accessCookieName(new URL(baseUrl).host);
     const cookie = setCookie[0]!.split(";", 1)[0]!;
+    await request(application.server)
+      .get("/api/bootstrap")
+      .set("Cookie", `${cookieName}=stale; ${cookie}`)
+      .expect(200);
+    const expired = await request(application.server)
+      .get("/api/bootstrap")
+      .set("Cookie", `${cookieName}=stale`)
+      .expect(401);
+    expect(String(expired.headers["set-cookie"])).toContain(`${cookieName}=`);
+    expect(String(expired.headers["set-cookie"])).toContain(
+      "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    );
+
     const socket = new WebSocket(`${baseUrl.replace("http", "ws")}/events`, {
       headers: { Cookie: cookie },
       origin: baseUrl,
@@ -627,6 +641,32 @@ describe("local host API", () => {
         rejected.once("close", () => resolveRejected());
         rejected.once("error", () => resolveRejected());
       });
+
+      // Forwarded query credentials remain ineligible, but a stale page may
+      // still append one after it has a valid pairing cookie. Ignore that
+      // parameter rather than vetoing the independently authenticated cookie.
+      const stalePageSocket = new WebSocket(
+        `ws://127.0.0.1:${address.port}/events?token=stale-page-token`,
+        {
+          headers: { Cookie: cookie, "X-Forwarded-Proto": "https" },
+          origin: forwardedOrigin,
+        },
+      );
+      try {
+        const firstFrame = await new Promise<Record<string, unknown>>(
+          (resolveFrame, rejectFrame) => {
+            stalePageSocket.once("message", (data) =>
+              resolveFrame(
+                JSON.parse(data.toString()) as Record<string, unknown>,
+              ),
+            );
+            stalePageSocket.once("error", rejectFrame);
+          },
+        );
+        expect(firstFrame.type).toBe("snapshot");
+      } finally {
+        stalePageSocket.close();
+      }
 
       const socket = new WebSocket(`ws://127.0.0.1:${address.port}/events`, {
         headers: { Cookie: cookie, "X-Forwarded-Proto": "https" },
