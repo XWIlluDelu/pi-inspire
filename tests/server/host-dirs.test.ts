@@ -7,7 +7,7 @@ import {
   realpath,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listHostDirectories, listHostRoots } from "../../server/host-dirs.js";
 
@@ -84,7 +84,7 @@ describe("listHostDirectories", () => {
 
   it("reports a filesystem root with a null parent", async () => {
     const listing = await listHostDirectories("/");
-    expect(listing.path).toBe("/");
+    expect(listing.path).toBe(resolve("/"));
     expect(listing.parent).toBeNull();
   });
 

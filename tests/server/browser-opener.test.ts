@@ -56,7 +56,7 @@ describe("openBrowser", () => {
   ] as const)("uses the native %s opener", (platform, command, args) => {
     const child = new FakeChild();
     const spawn = vi.fn(() => child);
-    openBrowser("http://127.0.0.1:4587", vi.fn(), platform, spawn);
+    openBrowser("http://127.0.0.1:4587", vi.fn(), platform, spawn, {});
 
     expect(spawn).toHaveBeenCalledWith(command, args, {
       detached: true,

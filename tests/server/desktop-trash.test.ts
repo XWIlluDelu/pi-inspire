@@ -56,7 +56,8 @@ describe("desktop Trash adapters", () => {
       join(dataHome, "Trash", "info", `${payloads[0]}.trashinfo`),
       "utf8",
     );
-    expect(metadata).toContain(`Path=${original}\n`);
+    const encodedOriginal = encodeURIComponent(original).replaceAll("%2F", "/");
+    expect(metadata).toContain(`Path=${encodedOriginal}\n`);
   });
 
   it("moves the exact payload into the macOS user Trash", async () => {

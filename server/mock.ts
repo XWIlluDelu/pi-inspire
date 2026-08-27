@@ -42,7 +42,7 @@ const mockWorkspace = resolve(
 );
 const mockHistoryWorkspace = process.env.INSPIRE_MOCK_WORKSPACE
   ? mockWorkspace
-  : "/home/demo/pi-extension";
+  : resolve("/home/demo/pi-extension");
 const RESOURCE_FIXTURE_SESSION_ID = "mock-resources";
 const PROMPT_MAP_FIXTURE_SESSION_ID = "mock-prompt-map";
 const BRANCH_FIXTURE_SESSION_ID = "mock-branch";

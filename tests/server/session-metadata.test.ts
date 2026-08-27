@@ -74,21 +74,24 @@ describe("SessionMetadataIndex", () => {
     ).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 
-  it("fails a catalog scan rather than omitting an unreadable regular file", async () => {
-    const root = await directory();
-    const path = join(root, "unreadable.jsonl");
-    await writeFile(path, `${JSON.stringify(header())}\n`);
-    await chmod(path, 0o000);
-    try {
-      if (process.getuid?.() !== 0) {
-        await expect(
-          new SessionMetadataIndex().list(root),
-        ).rejects.toMatchObject({ code: "EACCES" });
+  it.skipIf(process.platform === "win32")(
+    "fails a catalog scan rather than omitting an unreadable regular file",
+    async () => {
+      const root = await directory();
+      const path = join(root, "unreadable.jsonl");
+      await writeFile(path, `${JSON.stringify(header())}\n`);
+      await chmod(path, 0o000);
+      try {
+        if (process.getuid?.() !== 0) {
+          await expect(
+            new SessionMetadataIndex().list(root),
+          ).rejects.toMatchObject({ code: "EACCES" });
+        }
+      } finally {
+        await chmod(path, 0o600);
       }
-    } finally {
-      await chmod(path, 0o600);
-    }
-  });
+    },
+  );
 
   it("projects only bounded catalog metadata from Pi JSONL", async () => {
     const root = await directory();

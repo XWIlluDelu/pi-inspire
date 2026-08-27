@@ -388,7 +388,7 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(index + 1);
     const response = JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}});
     if (command.type === "final") {
-      process.stdout.end(response);
+      process.stdout.end(response, () => process.exit(0));
     } else {
       process.stdout.write(response + "\\n");
     }

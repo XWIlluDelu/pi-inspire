@@ -747,7 +747,7 @@ describe("ResourceStore", () => {
     // The descriptor reports where it actually resolved, never the shorthand.
     expect(descriptor).toMatchObject({
       name: "kernel.py",
-      reference: join("src", "kernel.py"),
+      reference: "src/kernel.py",
     });
     expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
       join(project, "src", "kernel.py"),
@@ -758,10 +758,9 @@ describe("ResourceStore", () => {
     const { project } = await workspace();
     const names = [
       "@literal",
-      "literal:12",
       "literal#L9",
-      "literal?draft",
       "%66oo.txt",
+      ...(process.platform === "win32" ? [] : ["literal:12", "literal?draft"]),
     ];
     await Promise.all(
       names.map((name) => writeFile(join(project, name), `${name}\n`)),
@@ -789,7 +788,7 @@ describe("ResourceStore", () => {
       promisify(execFile)("git", ["-C", project, ...args]);
     await git("init", "-q");
     await writeFile(join(project, "secret"), "other\n");
-    await writeFile(join(project, "secret:12"), "selected\n");
+    await writeFile(join(project, "secret#L12"), "selected\n");
     const context = {
       ...resourceIdentity(),
       cwd: project,
@@ -797,13 +796,13 @@ describe("ResourceStore", () => {
     };
     const descriptor = await resources.resolve(
       context,
-      "secret:12",
+      "secret#L12",
       true,
-      "secret:12",
+      "secret#L12",
     );
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
 
-    await writeFile(join(project, ".gitignore"), "secret:12\n");
+    await writeFile(join(project, ".gitignore"), "secret#L12\n");
 
     await expect(resources.revalidate(resource, context)).rejects.toMatchObject(
       { status: 403 },
@@ -845,10 +844,7 @@ describe("ResourceStore", () => {
       ),
     ).rejects.toMatchObject({
       status: 409,
-      matches: expect.arrayContaining([
-        join("a", "notes.md"),
-        join("b", "notes.md"),
-      ]),
+      matches: expect.arrayContaining(["a/notes.md", "b/notes.md"]),
     });
   });
 

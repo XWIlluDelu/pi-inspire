@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -29,6 +29,7 @@ import { ToolPresentationConfigStore } from "../../server/tool-presentation-conf
 import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
 
 const token = "test-local-token";
+const mockWorkspace = resolve("/home/demo/research");
 
 describe("local host API", () => {
   let temporary: string;
@@ -1154,7 +1155,7 @@ describe("local host API", () => {
       .expect(200);
     expect(status.body).toEqual({ kind: "not-repository" });
     expect(git.status).toHaveBeenCalledWith(
-      "/home/demo/research",
+      mockWorkspace,
       expect.any(AbortSignal),
     );
 
@@ -1187,7 +1188,7 @@ describe("local host API", () => {
       .expect(200);
     expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
     expect(git.diff).toHaveBeenCalledWith(
-      "/home/demo/research",
+      mockWorkspace,
       "ZmlsZS50eHQ",
       "unstaged",
       expect.any(AbortSignal),
@@ -1278,15 +1279,15 @@ describe("local host API", () => {
     const folder = await request(application.server)
       .post("/api/sessions/by-cwd")
       .set("Authorization", `Bearer ${token}`)
-      .send({ cwds: ["/home/demo/research", "/nowhere"] })
+      .send({ cwds: [mockWorkspace, resolve("/nowhere")] })
       .expect(200);
     expect(
       folder.body.sessions.map((session: { cwd: string }) => session.cwd),
-    ).toEqual(["/home/demo/research"]);
+    ).toEqual([mockWorkspace]);
     await request(application.server)
       .post("/api/sessions/by-cwd")
       .set("Authorization", `Bearer ${token}`)
-      .send({ cwds: "/home/demo/research" })
+      .send({ cwds: mockWorkspace })
       .expect(400);
 
     await request(application.server)
@@ -1562,9 +1563,11 @@ describe("local host API", () => {
   });
 
   it("serves transcript-referenced and workspace-indexed files, nothing else", async () => {
+    const quotedName =
+      process.platform === "win32" ? "quoted'(x).md" : "quoted'(*).md";
     await writeFile(join(temporary, "preview.md"), "# Host preview\n");
     await writeFile(join(temporary, "notes.txt"), "workspace note\n");
-    await writeFile(join(temporary, "quoted'(*).md"), "quoted\n");
+    await writeFile(join(temporary, quotedName), "quoted\n");
     await mkdir(join(temporary, "node_modules"));
     await writeFile(
       join(temporary, "node_modules", "mentioned.txt"),
@@ -1690,8 +1693,8 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId,
-        reference: "quoted'(*).md",
-        workspacePath: "quoted'(*).md",
+        reference: quotedName,
+        workspacePath: quotedName,
       })
       .expect(200);
     const quotedContent = await request(application.server)
@@ -1701,7 +1704,9 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(quotedContent.headers["content-disposition"]).toBe(
-      "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
+      process.platform === "win32"
+        ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
+        : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
     );
     // A transcript mention still reaches files the index ignores.
     await request(application.server)

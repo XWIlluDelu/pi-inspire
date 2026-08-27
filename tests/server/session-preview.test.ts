@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSessionPreview } from "../../server/session-preview.js";
@@ -25,7 +25,7 @@ describe("loadSessionPreview", () => {
         type: "session",
         id: "legacy",
         timestamp: "2026-07-22T00:00:00.000Z",
-        cwd: "/project",
+        cwd: resolve("/project"),
       }),
       JSON.stringify({
         type: "message",
@@ -37,7 +37,7 @@ describe("loadSessionPreview", () => {
     await writeFile(path, original);
     const record: SessionRecord = {
       id: "legacy",
-      cwd: "/project",
+      cwd: resolve("/project"),
       path,
       source: null,
       created: new Date(),
@@ -64,7 +64,7 @@ describe("loadSessionPreview", () => {
         version: 3,
         id: "session-a",
         timestamp: "2026-07-22T00:00:00.000Z",
-        cwd: "/project",
+        cwd: resolve("/project"),
       },
       {
         type: "message",
@@ -107,7 +107,7 @@ describe("loadSessionPreview", () => {
     await writeFile(path, original);
     const record: SessionRecord = {
       id: "session-a",
-      cwd: "/project",
+      cwd: resolve("/project"),
       path,
       source: null,
       name: "Preview session",
@@ -123,7 +123,7 @@ describe("loadSessionPreview", () => {
     expect(preview).toMatchObject({
       sessionId: "session-a",
       sessionName: "Preview session",
-      cwd: "/project",
+      cwd: resolve("/project"),
       model: { provider: "test", id: "model-a" },
       thinkingLevel: "high",
       isStreaming: false,

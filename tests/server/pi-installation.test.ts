@@ -150,13 +150,21 @@ describe("Pi installation authority", () => {
       directories.push(directory);
       const pi = await fakePi(directory, "3.0.0");
 
-      const installation = await resolvePiInstallation({
-        path: pi.binDirectory,
-        installationRoot: join(directory, "inspire"),
-      });
+      const configuredCommand = process.env.INSPIRE_PI_COMMAND;
+      delete process.env.INSPIRE_PI_COMMAND;
+      try {
+        const installation = await resolvePiInstallation({
+          path: pi.binDirectory,
+          installationRoot: join(directory, "inspire"),
+        });
 
-      expect(installation.commandPath).toBe(pi.commandPath);
-      expect(installation.packageRoot).toBe(pi.packageRoot);
+        expect(installation.commandPath).toBe(pi.commandPath);
+        expect(installation.packageRoot).toBe(pi.packageRoot);
+      } finally {
+        if (configuredCommand === undefined)
+          delete process.env.INSPIRE_PI_COMMAND;
+        else process.env.INSPIRE_PI_COMMAND = configuredCommand;
+      }
     },
   );
 });

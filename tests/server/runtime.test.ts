@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { realpathSync } from "node:fs";
 import {
   access,
   appendFile,
@@ -10,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentStore,
@@ -57,11 +58,9 @@ class FakeRpc extends EventEmitter {
     super();
     const marker = options.args?.indexOf("--session") ?? -1;
     this.sessionPath = marker >= 0 ? resolve(options.args![marker + 1]!) : null;
-    this.sessionId =
-      this.sessionPath
-        ?.split("/")
-        .pop()
-        ?.replace(/\.jsonl$/, "") ?? "new-id";
+    this.sessionId = this.sessionPath
+      ? basename(this.sessionPath, ".jsonl")
+      : "new-id";
   }
 
   async start(): Promise<void> {
@@ -155,11 +154,13 @@ function pendingState(
   };
 }
 
+const TEST_CWD = realpathSync(tmpdir());
+
 function record(id: string, cwd: string): SessionRecord {
   return {
     id,
-    cwd,
-    path: `/sessions/${id}.jsonl`,
+    cwd: cwd === "/tmp" ? TEST_CWD : resolve(cwd),
+    path: resolve("/sessions", `${id}.jsonl`),
     source: null,
     created: new Date("2026-07-22T00:00:00Z"),
     modified: new Date("2026-07-22T00:00:00Z"),
@@ -1340,9 +1341,9 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("c");
     expect(workers).toHaveLength(3);
     expect(workers.map((worker) => worker.options.cwd)).toEqual([
-      "/project/one",
-      "/project/one",
-      "/project/two",
+      resolve("/project/one"),
+      resolve("/project/one"),
+      resolve("/project/two"),
     ]);
     expect(workers.every((worker) => worker.stops === 0)).toBe(true);
 
@@ -1736,7 +1737,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
     try {
       const started = Date.now();
-      await expect(runtime.newSession("/tmp")).rejects.toThrow(
+      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
         PI_STARTUP_RESPONSE_UI_ERROR,
       );
       expect(Date.now() - started).toBeLessThan(1_000);
@@ -1772,7 +1773,7 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
     try {
-      const snapshot = await runtime.newSession("/tmp");
+      const snapshot = await runtime.newSession(TEST_CWD);
       expect(snapshot.active?.sessionId).toBe("new-id");
       expect(worker?.stops).toBe(0);
     } finally {
@@ -1789,7 +1790,7 @@ describe("RuntimeController concurrent sessions", () => {
       version: 3,
       id: "new-id",
       timestamp: "2026-08-01T00:00:00.000Z",
-      cwd: "/tmp",
+      cwd: TEST_CWD,
     });
     const store = new AttachmentStore();
     attachments.push(store);
@@ -1809,7 +1810,7 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
     try {
-      await expect(runtime.newSession("/tmp")).resolves.toMatchObject({
+      await expect(runtime.newSession(TEST_CWD)).resolves.toMatchObject({
         active: { sessionId: "new-id" },
       });
       const slot = (
@@ -1837,7 +1838,7 @@ describe("RuntimeController concurrent sessions", () => {
 
   it("rejects a new Pi worker that reports a path owned by another slot", async () => {
     const existing = record("a", "/tmp");
-    existing.path = "/sessions/a.jsonl";
+    existing.path = resolve("/sessions/a.jsonl");
     const store = new AttachmentStore();
     attachments.push(store);
     const workers: FakeRpc[] = [];
@@ -1859,7 +1860,7 @@ describe("RuntimeController concurrent sessions", () => {
       await runtime.openSession("a");
       await vi.waitFor(() => expect(workers).toHaveLength(1));
 
-      await expect(runtime.newSession("/tmp")).rejects.toThrow(
+      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
         "Pi created a duplicate session path",
       );
       expect(workers[1]?.stops).toBeGreaterThan(0);
@@ -1884,7 +1885,7 @@ describe("RuntimeController concurrent sessions", () => {
       throw new Error("post-commit snapshot must not run");
     };
     try {
-      const snapshot = await runtime.newSession("/tmp");
+      const snapshot = await runtime.newSession(TEST_CWD);
       expect(snapshot.active?.sessionId).toBe("new-id");
       expect(runtime.activeSessionId).toBe("new-id");
     } finally {
@@ -1903,7 +1904,7 @@ describe("RuntimeController concurrent sessions", () => {
         worker = new FakeRpc(options);
         // Match Pi's normal new-session behavior: it reserves a JSONL pathname
         // before the first prompt, but has not written a thinking-level entry.
-        worker.sessionPath = "/tmp/new-id.jsonl";
+        worker.sessionPath = join(TEST_CWD, "new-id.jsonl");
         const request = worker.request.bind(worker);
         worker.request = async <T>(
           command: Record<string, unknown>,
@@ -1922,7 +1923,7 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
     try {
-      const snapshot = await runtime.newSession("/tmp", {
+      const snapshot = await runtime.newSession(TEST_CWD, {
         name: "  Tuned session  ",
         model: { provider: "anthropic", id: "claude-sonnet-4" },
         thinkingLevel: "high",
@@ -2792,11 +2793,11 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    const creating = runtime.newSession("/tmp");
+    const creating = runtime.newSession(TEST_CWD);
     await vi.waitFor(() => expect(worker?.starts).toBe(1));
     const closing = runtime.close();
     await vi.waitFor(() => expect(worker.stops).toBe(1));
-    await expect(runtime.newSession("/tmp")).rejects.toThrow(/closing/);
+    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);
     releaseStart();
     await expect(creating).rejects.toThrow(/closing/);
     await expect(closing).resolves.toBeUndefined();
@@ -2833,7 +2834,7 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    const creating = runtime.newSession("/tmp");
+    const creating = runtime.newSession(TEST_CWD);
     await vi.waitFor(() =>
       expect(
         workers[0]?.commands.some((command) => command.type === "get_state"),
@@ -2871,7 +2872,9 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    await expect(runtime.newSession("/tmp")).rejects.toThrow(/startup failed/);
+    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
+      /startup failed/,
+    );
     const internal = runtime as unknown as {
       slots: Map<string, unknown>;
       provisionalSlots: Map<string, unknown>;
@@ -2918,7 +2921,7 @@ describe("RuntimeController concurrent sessions", () => {
       events.push(event as Record<string, unknown>),
     );
 
-    const created = await runtime.newSession("/tmp");
+    const created = await runtime.newSession(TEST_CWD);
     expect(created.active?.sessionId).toBe("new-id");
     expect(created.pendingExtensionUiRequests).toEqual([
       expect.objectContaining({
@@ -2964,7 +2967,7 @@ describe("RuntimeController concurrent sessions", () => {
       disposition: "trashed",
     });
     expect(remove).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "a", path: "/sessions/a.jsonl" }),
+      expect.objectContaining({ id: "a", path: resolve("/sessions/a.jsonl") }),
     );
     expect(source.refresh).not.toHaveBeenCalled();
     expect(source.invalidate).toHaveBeenCalledOnce();
@@ -3173,7 +3176,7 @@ describe("RuntimeController concurrent sessions", () => {
     const first = record("a", "/tmp");
     const second = {
       ...record("a", "/other"),
-      path: "/sessions/copied-a.jsonl",
+      path: resolve("/sessions/copied-a.jsonl"),
     };
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -3478,7 +3481,7 @@ describe("maintenance restart admission", () => {
 
     const decision = runtime.reserveMaintenanceRestart();
     expect(decision.kind).toBe("ready");
-    await expect(runtime.newSession("/tmp")).rejects.toMatchObject({
+    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
       status: 503,
     });
     await runtime.close();

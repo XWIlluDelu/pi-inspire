@@ -273,6 +273,23 @@ function sameVersion(left: FileIdentity, right: FileIdentity): boolean {
   );
 }
 
+async function sameDirectory(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftStat, rightStat] = await Promise.all([
+      stat(left, { bigint: true }),
+      stat(right, { bigint: true }),
+    ]);
+    return (
+      leftStat.isDirectory() &&
+      rightStat.isDirectory() &&
+      leftStat.dev === rightStat.dev &&
+      leftStat.ino === rightStat.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 function indexSessionEntries(
   entries: readonly SessionEntry[],
   existing: ReadonlyMap<string, SessionEntry> = new Map(),
@@ -1699,7 +1716,10 @@ export class SessionProjection
           throw new Error("Session file has an invalid Pi session header");
         if (header.id !== this.sessionId)
           throw new Error("Session file belongs to another session");
-        if (header.cwd !== this.initialCwd) {
+        if (
+          header.cwd !== this.initialCwd &&
+          !(await sameDirectory(header.cwd, this.initialCwd))
+        ) {
           throw Object.assign(
             new Error(
               "The session working directory changed since the catalog was loaded",

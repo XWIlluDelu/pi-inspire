@@ -65,23 +65,28 @@ describe("ssh-reverse connection module", () => {
     ).toThrow("UNSAFE");
   });
 
-  it("does not let one checkout claim another checkout's user service", () => {
-    const unit = [
-      "[Service]",
-      "WorkingDirectory=/srv/inspire-a",
-      "ExecStart=/usr/bin/node /srv/inspire-a/runner.mjs --root /srv/inspire-a supervise",
-      "",
-    ].join("\n");
+  it.runIf(process.platform !== "win32")(
+    "does not let one checkout claim another checkout's user service",
+    () => {
+      const unit = [
+        "[Service]",
+        "WorkingDirectory=/srv/inspire-a",
+        "ExecStart=/usr/bin/node /srv/inspire-a/runner.mjs --root /srv/inspire-a supervise",
+        "",
+      ].join("\n");
 
-    expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-a")).toBe(true);
-    expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-b")).toBe(false);
-    expect(
-      sshReverseServiceBelongsToRoot(
-        "[Service]\nWorkingDirectory=/srv/INS\\xce\\xa0RE\\x20review\n",
-        "/srv/INSΠRE review",
-      ),
-    ).toBe(true);
-  });
+      expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-a")).toBe(true);
+      expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-b")).toBe(
+        false,
+      );
+      expect(
+        sshReverseServiceBelongsToRoot(
+          "[Service]\nWorkingDirectory=/srv/INS\\xce\\xa0RE\\x20review\n",
+          "/srv/INSΠRE review",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it.runIf(process.platform === "linux")(
     "does not control an active user service owned by another checkout",
