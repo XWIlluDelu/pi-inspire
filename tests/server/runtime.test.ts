@@ -1819,9 +1819,17 @@ describe("RuntimeController concurrent sessions", () => {
         slots: Map<
           string,
           {
-            projection: { uncommittedBytes: number };
+            projection: {
+              uncommittedBytes: number;
+              suspendReconciliation(): Promise<void>;
+              reconcileSuspended(force: boolean): Promise<unknown>;
+              resumeReconciliation(): void;
+            };
           }
         >;
+        projectionCoordinator: {
+          handle(slot: unknown, result: unknown): Promise<void>;
+        };
         reconcileSlot(slot: unknown, force: boolean): Promise<unknown>;
       };
       const slot = internals.slots.get("new-id")!;
@@ -1832,10 +1840,19 @@ describe("RuntimeController concurrent sessions", () => {
       await internals.reconcileSlot(slot, true);
       expect(worker?.stops).toBe(0);
 
-      await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
-      await vi.waitFor(() => expect(slot.projection.uncommittedBytes).toBe(0), {
-        timeout: 5_000,
-      });
+      await slot.projection.suspendReconciliation();
+      try {
+        await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
+        const completed = await slot.projection.reconcileSuspended(true);
+        const completedTouch = new Date(Date.now() + 20_000);
+        await utimes(sessionPath, completedTouch, completedTouch);
+        const repeated = await slot.projection.reconcileSuspended(true);
+        await internals.projectionCoordinator.handle(slot, completed);
+        await internals.projectionCoordinator.handle(slot, repeated);
+      } finally {
+        slot.projection.resumeReconciliation();
+      }
+      expect(slot.projection.uncommittedBytes).toBe(0);
       expect(worker?.stops).toBe(0);
       expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
     } finally {

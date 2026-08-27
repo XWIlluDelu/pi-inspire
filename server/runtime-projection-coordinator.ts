@@ -299,28 +299,36 @@ export class RuntimeProjectionCoordinator {
       return true;
     };
 
-    if (slot.process && result.uncommittedBytes > 0) {
-      // A delayed watcher hint may re-observe the creator's identical partial
-      // header after attachment. Preserve its original completion deadline.
-      const repeatedInitialPartial =
-        initialMaterialization &&
-        priorPartial !== null &&
-        !result.changed &&
-        result.committedBytes === priorPartial.committedBytes &&
-        result.uncommittedBytes === priorPartial.bytes &&
-        result.uncommittedFingerprint === priorPartial.fingerprint &&
-        result.sourceIdentity === priorPartial.sourceIdentity &&
-        result.previousTailVerified;
+    const initialMetadataContinuation =
+      slot.process !== null &&
+      initialMaterialization &&
+      !result.changed &&
+      result.sourceChanged &&
+      result.previousRevision === slot.workerProjectionRevision &&
+      result.revision === slot.workerProjectionRevision &&
+      result.previousFingerprint === slot.workerProjectionFingerprint &&
+      result.fingerprint === slot.workerProjectionFingerprint &&
+      result.previousSourceVersion === slot.workerProjectionSourceVersion &&
+      result.sourceIdentity === slot.workerProjectionSourceIdentity &&
+      result.committedBytes + result.uncommittedBytes ===
+        slot.workerProjectionObservedBytes &&
+      result.previousTailVerified;
+
+    if (initialMetadataContinuation) {
+      // Delayed creation notifications can carry a newer source version after
+      // re-observing exactly the bytes already attributed to the new worker.
+      this.captureWriterResult(slot, result);
+      if (result.uncommittedBytes > 0)
+        this.trackPartialPersistence(slot, result);
+    } else if (slot.process && result.uncommittedBytes > 0) {
       const initiallyOwned =
         priorPartial !== null ||
         isBusyRunState(slot.runState) ||
         slot.persistenceExpectations.length > 0;
       const exactPrior =
         !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
-      let owned = repeatedInitialPartial;
-      if (repeatedInitialPartial) {
-        this.captureWriterResult(slot, result);
-      } else if (!initiallyOwned) {
+      let owned = false;
+      if (!initiallyOwned) {
         lastOwnership = { owned: false, reason: "missing-claim" };
       } else if (!exactPrior) {
         lastOwnership = { owned: false, reason: "source-version-mismatch" };
