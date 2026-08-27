@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addAttachmentContext } from "../../server/attachments.js";
 import {
@@ -171,18 +172,19 @@ describe("composer history projection", () => {
   });
 
   it("uses Host-owned display names without changing project-file names", () => {
-    const stored = "/cache/uploads/00000000-0000-4000-8000-report.pdf";
+    const workspace = resolve("/workspace");
+    const stored = resolve("/cache/uploads/00000000-0000-4000-8000-report.pdf");
     const message = {
       role: "user",
       content: addAttachmentContext(
         "review",
         [{ kind: "file", path: stored }],
-        ["/workspace/src/source.ts"],
+        [join(workspace, "src", "source.ts")],
       ),
     };
 
     expect(
-      composerHistoryEntries([message], "/workspace", (path) =>
+      composerHistoryEntries([message], workspace, (path) =>
         path === stored ? "report.pdf" : null,
       )[0]?.files,
     ).toEqual([

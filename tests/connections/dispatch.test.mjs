@@ -14,6 +14,7 @@ describe("connection dispatcher", () => {
         id: "ssh-reverse",
         entry: "runner.mjs",
         actions: expect.arrayContaining(["start", "stop", "status"]),
+        platforms: ["linux"],
       },
     });
   });

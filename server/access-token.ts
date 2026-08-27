@@ -1,17 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  chmod,
-  link,
-  lstat,
-  mkdir,
-  open,
-  rename,
-  rm,
-  stat,
-} from "node:fs/promises";
-import { homedir } from "node:os";
+import { chmod, link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  inspireStateDirectory,
+  supportsPosixPermissions,
+} from "./platform-paths.mjs";
 
 const TOKEN_LENGTH = 64;
 const TOKEN_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
@@ -36,11 +30,8 @@ export function defaultAccessTokenPath(
   host: string,
   port: number,
 ): string {
-  const stateHome =
-    process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
   return join(
-    stateHome,
-    "inspire",
+    inspireStateDirectory(),
     `${accessTokenKey(root, host, port)}.token`,
   );
 }
@@ -58,7 +49,8 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
       `The Inspire access-token directory is not owned by the current user: ${path}`,
     );
   }
-  if ((info.mode & 0o077) !== 0) await chmod(path, PRIVATE_DIRECTORY_MODE);
+  if (supportsPosixPermissions() && (info.mode & 0o077) !== 0)
+    await chmod(path, PRIVATE_DIRECTORY_MODE);
 }
 
 interface StoredToken {
@@ -67,21 +59,30 @@ interface StoredToken {
 }
 
 async function readPrivateToken(path: string): Promise<StoredToken> {
+  const pathInfo = await lstat(path);
+  if (!pathInfo.isFile() || pathInfo.isSymbolicLink())
+    throw new Error(
+      `The Inspire access-token path is not a regular file: ${path}`,
+    );
   const noFollow =
     process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0);
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
     const info = await handle.stat();
-    if (!info.isFile())
+    if (
+      !info.isFile() ||
+      info.dev !== pathInfo.dev ||
+      info.ino !== pathInfo.ino
+    )
       throw new Error(
-        `The Inspire access-token path is not a regular file: ${path}`,
+        `The Inspire access-token path changed while it was opened: ${path}`,
       );
     if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
       throw new Error(
         `The Inspire access-token file is not owned by the current user: ${path}`,
       );
     }
-    if ((info.mode & 0o077) !== 0) {
+    if (supportsPosixPermissions() && (info.mode & 0o077) !== 0) {
       throw new Error(
         `The Inspire access-token file must not be accessible by other users: ${path}`,
       );
@@ -170,7 +171,6 @@ export async function resolveAccessToken(
   }
   await ensurePrivateDirectory(dirname(path));
   try {
-    await stat(path);
     const stored = await readPrivateToken(path);
     return stored.legacy ? rotateLegacyToken(path) : stored.token;
   } catch (error) {

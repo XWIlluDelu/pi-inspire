@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { inspireConfigDirectory } from "./platform-paths.mjs";
 import {
   emptyToolPresentationConfiguration,
   type ToolPresentationConfiguration,
@@ -25,8 +25,7 @@ export interface ToolPresentationConfigLike {
 export function defaultToolPresentationConfigPath(root: string): string {
   if (existsSync(join(root, ".git")))
     return join(root, ".inspire", "tool-presentations.json");
-  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  return join(configHome, "inspire", "tool-presentations.json");
+  return join(inspireConfigDirectory(), "tool-presentations.json");
 }
 
 function warning(reason: string): ToolPresentationConfigurationState {

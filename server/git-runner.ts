@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 
 export const GIT_TIMEOUT_MS = 4_000;
 export const GIT_STDERR_BYTES = 64 * 1024;
@@ -87,11 +88,9 @@ export const spawnGit: GitRunner = (args, options) =>
       reject(new GitInspectionError("Git inspection was cancelled", 499));
       return;
     }
-    const isolatedGroup = process.platform === "linux";
     const child = spawn("git", [...args], {
       shell: false,
-      detached: isolatedGroup,
-      windowsHide: true,
+      ...isolatedProcessOptions(),
       stdio: ["ignore", "pipe", "pipe"],
       env: gitEnvironment(),
     });
@@ -105,20 +104,11 @@ export const spawnGit: GitRunner = (args, options) =>
     let outputFailed = false;
     let settled = false;
     const stderrLimit = options.stderrLimit ?? GIT_STDERR_BYTES;
+    let killStarted = false;
     const kill = () => {
-      if (isolatedGroup && child.pid) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-          return;
-        } catch {
-          /* raced exit */
-        }
-      }
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* close/error settles */
-      }
+      if (killStarted) return;
+      killStarted = true;
+      void signalProcessTree(child, "SIGKILL", { isolated: true });
     };
     const onAbort = () => {
       aborted = true;
@@ -126,8 +116,8 @@ export const spawnGit: GitRunner = (args, options) =>
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     // AbortSignal does not replay an abort that races between the initial
-    // check and listener registration. Recheck after subscribing so that
-    // every cancellation either reaches the listener or is observed here.
+    // check and listener registration. Recheck after subscribing so every
+    // cancellation is either delivered or observed here.
     if (options.signal?.aborted) onAbort();
     const timer = setTimeout(() => {
       timedOut = true;

@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -12,6 +13,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { npmInvocation } from "../server/npm-command.mjs";
+import {
+  isolatedProcessOptions,
+  signalProcessTree,
+} from "../server/process-tree.mjs";
 import {
   npmPackageRecord,
   parseNpmJsonOutput,
@@ -25,8 +31,26 @@ const fluxManifestDigest =
   "3c2b68ef00d466260b24b4db97d17cb0e552c2d4194a7c4432cff8f69f20181b";
 const fluxSumsDigest =
   "24612c6ced4a164a61f355bcc3e7a3acc5159b8bf5f921f0e2cae0b6b394c281";
+
+async function execNpm(args, options = {}) {
+  const invocation = npmInvocation(args, {
+    environment: options.env ?? process.env,
+    cwd: options.cwd ?? root,
+  });
+  return execFile(invocation.command, invocation.args, {
+    ...options,
+    env: invocation.environment,
+  });
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function reviewedText(value, label) {
+  if (value.includes(0x0d))
+    throw new Error(`${label} contains unsupported carriage returns`);
+  return value;
 }
 
 function parseSha256Sums(value, label) {
@@ -43,7 +67,10 @@ function parseSha256Sums(value, label) {
 async function verifySourceFonts() {
   const fontRoot = join(root, "src/assets/fonts");
   const splitRoot = join(fontRoot, "ibm-plex-sans-sc");
-  const manifestBytes = await readFile(join(splitRoot, "SHA256SUMS"));
+  const manifestBytes = reviewedText(
+    await readFile(join(splitRoot, "SHA256SUMS")),
+    "IBM Plex Sans SC manifest",
+  );
   if (sha256(manifestBytes) !== plexSansManifestDigest) {
     throw new Error(
       "IBM Plex Sans SC manifest does not match the reviewed official import",
@@ -82,7 +109,12 @@ async function verifySourceFonts() {
     );
   }
   for (const [filename, expected] of entries) {
-    const actual = sha256(await readFile(join(splitRoot, filename)));
+    const value = await readFile(join(splitRoot, filename));
+    const actual = sha256(
+      filename.endsWith(".woff2")
+        ? value
+        : reviewedText(value, `IBM Plex Sans SC ${filename}`),
+    );
     if (actual !== expected)
       throw new Error(`IBM Plex Sans SC provenance mismatch: ${filename}`);
   }
@@ -104,8 +136,14 @@ async function verifySourceFonts() {
   }
 
   const fluxRoot = join(fontRoot, "flux-mono-sc");
-  const fluxManifestBytes = await readFile(join(fluxRoot, "manifest.json"));
-  const fluxSumsBytes = await readFile(join(fluxRoot, "SHA256SUMS"));
+  const fluxManifestBytes = reviewedText(
+    await readFile(join(fluxRoot, "manifest.json")),
+    "Flux Mono SC release manifest",
+  );
+  const fluxSumsBytes = reviewedText(
+    await readFile(join(fluxRoot, "SHA256SUMS")),
+    "Flux Mono SC checksum manifest",
+  );
   if (
     sha256(fluxManifestBytes) !== fluxManifestDigest ||
     sha256(fluxSumsBytes) !== fluxSumsDigest
@@ -150,7 +188,13 @@ async function verifySourceFonts() {
     );
   }
   for (const [filename, expected] of fluxEntries) {
-    if (sha256(await readFile(join(fluxRoot, filename))) !== expected) {
+    const value = await readFile(join(fluxRoot, filename));
+    const actual = sha256(
+      filename.endsWith(".woff2")
+        ? value
+        : reviewedText(value, `Flux Mono SC ${filename}`),
+    );
+    if (actual !== expected) {
       throw new Error(`Flux Mono SC provenance mismatch: ${filename}`);
     }
   }
@@ -240,6 +284,24 @@ async function waitForHealth(url, token, expectedMock, timeoutMs = 20_000) {
   throw new Error(`Packaged host did not become healthy at ${url}`);
 }
 
+async function waitForInstanceState(path, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = JSON.parse(await readFile(path, "utf8"));
+      if (
+        Number.isInteger(state?.pid) &&
+        state.pid > 0 &&
+        typeof state.processStartTime === "string" &&
+        state.processStartTime.length > 0
+      )
+        return;
+    } catch {}
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Packaged host did not publish instance state at ${path}`);
+}
+
 async function waitForExit(child, timeoutMs = 10_000) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise((resolveExit, reject) => {
@@ -279,6 +341,8 @@ try {
     mkdir(installDirectory),
     mkdir(stateDirectory, { mode: 0o700 }),
     mkdir(homeDirectory, { mode: 0o700 }),
+    mkdir(join(homeDirectory, "AppData", "Roaming"), { recursive: true }),
+    mkdir(join(homeDirectory, "AppData", "Local"), { recursive: true }),
     mkdir(agentDirectory, { mode: 0o700 }),
   ]);
   // Keep the release smoke independent of the runner's Pi credentials and
@@ -302,13 +366,12 @@ try {
     await readFile(join(root, "package.json"), "utf8"),
   );
   const expectedFontDigests = await verifySourceFonts();
-  if (sourcePackage.bin?.inspire !== "inspire") {
+  if (sourcePackage.bin?.inspire !== "inspire.mjs") {
     throw new Error(
       "Release package must use npm's canonical inspire bin path",
     );
   }
-  const packed = await execFile(
-    "npm",
+  const packed = await execNpm(
     ["pack", "--silent", "--json", "--pack-destination", packDirectory],
     {
       cwd: root,
@@ -321,9 +384,14 @@ try {
     throw new Error("npm pack did not report a tarball");
   }
   const required = new Set([
+    "build/server/file-lock.mjs",
     "build/server/index.js",
+    "build/server/instance-state.mjs",
+    "build/server/npm-command.mjs",
     "build/server/pi-installation.js",
     "build/server/pi-runtime.js",
+    "build/server/platform-paths.mjs",
+    "build/server/process-tree.mjs",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -334,6 +402,7 @@ try {
     "dist/index.html",
     "dist/THIRD_PARTY_NOTICES.txt",
     "inspire",
+    "inspire.mjs",
     "LICENSE",
     "src/assets/licenses/ibm-plex-LICENSE.txt",
     "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt",
@@ -360,8 +429,7 @@ try {
     );
 
   const tarball = join(packDirectory, record.filename);
-  const publishDryRun = await execFile(
-    "npm",
+  const publishDryRun = await execNpm(
     ["publish", tarball, "--dry-run", "--json"],
     {
       cwd: root,
@@ -389,8 +457,7 @@ try {
     throw new Error("npm publish dry-run reported the wrong package identity");
   }
 
-  await execFile(
-    "npm",
+  await execNpm(
     [
       "install",
       "--prefix",
@@ -420,9 +487,18 @@ try {
   }
   if (installedPackage.license !== "MIT")
     throw new Error("Installed release package must declare MIT");
-  if (installedPackage.bin?.inspire !== "inspire")
+  if (installedPackage.bin?.inspire !== "inspire.mjs")
     throw new Error("Installed release package has the wrong inspire bin path");
-  const projectLicense = await readFile(join(installedRoot, "LICENSE"), "utf8");
+  const shimHelp = await execNpm(
+    ["--prefix", installDirectory, "exec", "--", "inspire", "--help"],
+    { cwd: temporary, maxBuffer: 1024 * 1024 },
+  );
+  if (!shimHelp.stdout.includes("Usage:"))
+    throw new Error("Installed npm inspire shim did not execute the CLI");
+  const projectLicense = reviewedText(
+    await readFile(join(installedRoot, "LICENSE")),
+    "Installed project license",
+  ).toString("utf8");
   if (
     !projectLicense.startsWith("MIT License\n") ||
     !projectLicense.includes("Copyright (c) 2026 XWIlluDelu")
@@ -475,17 +551,22 @@ try {
     )
   )
     throw new Error("Production installation unexpectedly contains Pi");
-  const externalPiCommand = join(root, "node_modules/.bin/pi");
-  const externalPi = JSON.parse(
-    await readFile(
-      join(root, "node_modules/@earendil-works/pi-coding-agent/package.json"),
-      "utf8",
-    ),
+  const externalPiRoot = join(
+    root,
+    "node_modules/@earendil-works/pi-coding-agent",
   );
+  const externalPi = JSON.parse(
+    await readFile(join(externalPiRoot, "package.json"), "utf8"),
+  );
+  if (typeof externalPi.bin?.pi !== "string")
+    throw new Error("Development Pi package has no CLI entry");
+  const externalPiCommand = join(externalPiRoot, externalPi.bin.pi);
 
   const port = await freePort();
   const token = "inspire-release-smoke-token";
-  const bin = join(installDirectory, "node_modules/.bin/inspire");
+  // Exercise lifecycle through the installed JS entry after the npm-generated
+  // shell/.cmd shim has independently proved that package bin linking works.
+  const bin = join(installedRoot, "inspire.mjs");
   const environment = {
     ...process.env,
     INSPIRE_HOST: "127.0.0.1",
@@ -496,6 +577,9 @@ try {
     INSPIRE_PREFERENCES_PATH: join(stateDirectory, "preferences.json"),
     INSPIRE_LOG_PATH: join(stateDirectory, "diagnostics.jsonl"),
     HOME: homeDirectory,
+    USERPROFILE: homeDirectory,
+    APPDATA: join(homeDirectory, "AppData", "Roaming"),
+    LOCALAPPDATA: join(homeDirectory, "AppData", "Local"),
     XDG_CONFIG_HOME: join(homeDirectory, ".config"),
     XDG_DATA_HOME: join(homeDirectory, ".local", "share"),
     XDG_STATE_HOME: join(homeDirectory, ".local", "state"),
@@ -504,9 +588,10 @@ try {
     PI_OFFLINE: "1",
     INSPIRE_PI_COMMAND: externalPiCommand,
   };
-  host = spawn(bin, ["mock"], {
+  host = spawn(process.execPath, [bin, "mock"], {
     cwd: temporary,
     env: environment,
+    ...isolatedProcessOptions(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   host.stdout?.on("data", (chunk) => {
@@ -516,12 +601,13 @@ try {
     hostOutput = `${hostOutput}${String(chunk)}`.slice(-8_192);
   });
   await waitForHealth(`http://127.0.0.1:${port}/api/health`, token, true);
-  await execFile(bin, ["status"], {
+  await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  await execFile(process.execPath, [bin, "status"], {
     cwd: temporary,
     env: environment,
     maxBuffer: 1024 * 1024,
   });
-  await execFile(bin, ["stop"], {
+  await execFile(process.execPath, [bin, "stop"], {
     cwd: temporary,
     env: environment,
     maxBuffer: 1024 * 1024,
@@ -535,6 +621,7 @@ try {
   const realPort = await freePort();
   const workspace = join(temporary, "workspace");
   await mkdir(join(workspace, ".pi"), { recursive: true });
+  const canonicalWorkspace = await realpath(workspace);
   await writeFile(
     join(workspace, ".pi", "settings.json"),
     `${JSON.stringify({
@@ -551,9 +638,10 @@ try {
     INSPIRE_PREFERENCES_PATH: join(stateDirectory, "preferences-real.json"),
     INSPIRE_LOG_PATH: join(stateDirectory, "diagnostics-real.jsonl"),
   };
-  host = spawn(bin, [], {
-    cwd: workspace,
+  host = spawn(process.execPath, [bin], {
+    cwd: canonicalWorkspace,
     env: realEnvironment,
+    ...isolatedProcessOptions(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   host.stdout?.on("data", (chunk) => {
@@ -564,9 +652,10 @@ try {
   });
   const realOrigin = `http://127.0.0.1:${realPort}`;
   await waitForHealth(`${realOrigin}/api/health`, token, false);
+  await waitForInstanceState(realEnvironment.INSPIRE_STATE_PATH);
   const headers = { Authorization: `Bearer ${token}` };
   const defaultsResponse = await fetch(
-    `${realOrigin}/api/new-session/defaults?cwd=${encodeURIComponent(workspace)}`,
+    `${realOrigin}/api/new-session/defaults?cwd=${encodeURIComponent(canonicalWorkspace)}`,
     { headers },
   );
   if (!defaultsResponse.ok)
@@ -580,7 +669,7 @@ try {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify({
-      cwd: workspace,
+      cwd: canonicalWorkspace,
       model: { provider: defaults.model.provider, id: defaults.model.id },
       thinkingLevel: defaults.thinkingLevel,
     }),
@@ -590,17 +679,17 @@ try {
       `Packaged real Pi session startup failed with ${createResponse.status}: ${await createResponse.text()}`,
     );
   const created = await createResponse.json();
-  if (!created.active?.sessionId || created.active.cwd !== workspace)
+  if (!created.active?.sessionId || created.active.cwd !== canonicalWorkspace)
     throw new Error(
       "Packaged real Pi session startup returned the wrong owner",
     );
-  await execFile(bin, ["status"], {
-    cwd: workspace,
+  await execFile(process.execPath, [bin, "status"], {
+    cwd: canonicalWorkspace,
     env: realEnvironment,
     maxBuffer: 1024 * 1024,
   });
-  await execFile(bin, ["stop"], {
-    cwd: workspace,
+  await execFile(process.execPath, [bin, "stop"], {
+    cwd: canonicalWorkspace,
     env: realEnvironment,
     maxBuffer: 1024 * 1024,
   });
@@ -620,7 +709,7 @@ try {
       piRuntime: externalPi.version,
       piAuthority: "external installation",
       installMode: "production dependencies only; Pi not bundled",
-      cliSymlink: "resolved",
+      portableCliEntry: "npm shim and JS entry resolved",
       mockHealth: "ok",
       realPiStartup: "ok",
       publishDryRun: "accepted without metadata correction",
@@ -632,8 +721,12 @@ try {
   throw error;
 } finally {
   if (host && host.exitCode === null && host.signalCode === null) {
-    host.kill("SIGKILL");
-    await waitForExit(host).catch(() => undefined);
+    await signalProcessTree(host, "SIGTERM", { isolated: true });
+    await waitForExit(host, 5_000).catch(() => undefined);
+    if (host.exitCode === null && host.signalCode === null) {
+      await signalProcessTree(host, "SIGKILL", { isolated: true });
+      await waitForExit(host).catch(() => undefined);
+    }
   }
   await rm(temporary, { recursive: true, force: true });
 }

@@ -35,7 +35,7 @@ function managedProperties(overrides = {}) {
   };
 }
 
-describe("host systemd control", () => {
+describe.runIf(process.platform !== "win32")("host systemd control", () => {
   it("escapes non-ASCII paths as UTF-8 bytes in unit arguments", () => {
     expect(systemdEscape("/tmp/测试 path")).toBe(
       "/tmp/\\xe6\\xb5\\x8b\\xe8\\xaf\\x95\\x20path",

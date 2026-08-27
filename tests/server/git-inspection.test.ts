@@ -582,7 +582,7 @@ describe("bounded diff contract", () => {
       expect(truncatedResult.lines.at(-1)?.text).toContain("truncated");
   });
 
-  it(
+  it.runIf(process.platform !== "win32")(
     "sanitizes environment and kills hostile descendant groups on cap, timeout, and abort",
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "inspire-fake-git-"));
@@ -788,179 +788,193 @@ describe("real temporary repository", () => {
     }
   });
 
-  it("handles unborn, nested cwd, staged+unstaged, untracked and binary", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-git-"));
-    directories.push(root);
-    await exec("git", ["init", "-q", root]);
-    await exec("git", [
-      "-C",
-      root,
-      "config",
-      "user.email",
-      "test@example.invalid",
-    ]);
-    await exec("git", ["-C", root, "config", "user.name", "Test"]);
-    const service = new GitInspectionService();
-    expect(await service.status(root)).toMatchObject({
-      kind: "repository",
-      head: { kind: "unborn" },
-    });
-
-    await mkdir(join(root, "nested"));
-    await writeFile(join(root, "nested", "both.txt"), "base\n");
-    await writeFile(join(root, ":(glob)*.txt"), "magic-base\n");
-    await writeFile(join(root, "other.txt"), "other-base\n");
-    await exec("git", ["-C", root, "add", "."]);
-    await exec("git", ["-C", root, "commit", "-qm", "initial"]);
-    await exec("git", ["-C", root, "checkout", "-q", "--detach"]);
-    expect(await service.status(root)).toMatchObject({
-      kind: "repository",
-      head: { kind: "detached" },
-    });
-    await writeFile(join(root, "nested", "both.txt"), "staged\n");
-    await exec("git", ["-C", root, "add", "nested/both.txt"]);
-    await writeFile(join(root, "nested", "both.txt"), "unstaged\n");
-    await writeFile(join(root, ":(glob)*.txt"), "magic-new\n");
-    await exec("git", ["-C", root, "mv", "other.txt", "renamed.txt"]);
-    await writeFile(join(root, "renamed.txt"), "renamed-new\n");
-    await writeFile(join(root, "nested", "new file.txt"), "new\n");
-    await writeFile(join(root, "nested", "binary.dat"), Buffer.from([0, 1, 2]));
-    await symlink("both.txt", join(root, "nested", "link.txt"));
-    const newlineCwd = join(root, "line\nbreak");
-    await mkdir(newlineCwd);
-    await writeFile(join(newlineCwd, "inside.txt"), "inside\n");
-
-    const monitorDirectory = await mkdtemp(
-      join(tmpdir(), "inspire-fsmonitor-"),
-    );
-    directories.push(monitorDirectory);
-    const monitorMarker = join(monitorDirectory, "executed");
-    const monitor = join(monitorDirectory, "monitor");
-    await writeFile(
-      monitor,
-      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
-      { mode: 0o755 },
-    );
-    await exec("git", ["-C", root, "config", "core.fsmonitor", monitor]);
-
-    const status = await service.status(join(root, "nested"));
-    await expect(access(monitorMarker)).rejects.toThrow();
-    expect(status.kind).toBe("repository");
-    if (status.kind !== "repository") return;
-    const newlineStatus = await service.status(newlineCwd);
-    expect(newlineStatus.kind).toBe("repository");
-    if (newlineStatus.kind === "repository") {
-      expect(
-        newlineStatus.files.find(
-          (file) => file.path.utf8Path === "line\nbreak/inside.txt",
-        )?.path.workspacePath,
-      ).toBe("inside.txt");
-    }
-    await expect(access(monitorMarker)).rejects.toThrow();
-    const both = status.files.find(
-      (file) => file.path.utf8Path === "nested/both.txt",
-    )!;
-    expect(both.path.workspacePath).toBe("both.txt");
-    expect(both).toMatchObject({
-      staged: { kind: "modified" },
-      unstaged: { kind: "modified" },
-    });
-    expect(
-      (await service.diff(join(root, "nested"), both.path.id, "staged")).kind,
-    ).toBe("text");
-    expect(
-      (await service.diff(join(root, "nested"), both.path.id, "unstaged")).kind,
-    ).toBe("text");
-    const magic = status.files.find(
-      (file) => file.path.utf8Path === ":(glob)*.txt",
-    )!;
-    expect(magic.path.workspacePath).toBeUndefined();
-    const magicDiff = await service.diff(
-      join(root, "nested"),
-      magic.path.id,
-      "unstaged",
-    );
-    expect(magicDiff.kind).toBe("text");
-    if (magicDiff.kind === "text")
-      expect(magicDiff.lines.map((line) => line.text).join("\n")).not.toContain(
-        "renamed.txt",
-      );
-    const renamed = status.files.find(
-      (file) => file.path.utf8Path === "renamed.txt",
-    )!;
-    expect(renamed.staged).toMatchObject({
-      kind: "renamed",
-      originalPath: { utf8Path: "other.txt" },
-    });
-    expect(
-      (await service.diff(join(root, "nested"), renamed.path.id, "staged"))
-        .kind,
-    ).toBe("text");
-    for (const workspacePath of ["new file.txt", "binary.dat", "link.txt"]) {
-      const untracked = status.files.find(
-        (file) => file.path.workspacePath === workspacePath,
-      )!;
-      expect(
-        await service.diff(join(root, "nested"), untracked.path.id, "unstaged"),
-      ).toMatchObject({ kind: "unsupported", reason: "untracked-content" });
-    }
-  });
-
-  it("never opens untracked content through symlinks, directory swaps, FIFOs, or device targets", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-untracked-"));
-    const outside = await mkdtemp(join(tmpdir(), "inspire-outside-"));
-    directories.push(root, outside);
-    await exec("git", ["init", "-q", root]);
-    await writeFile(join(outside, "secret"), "must-not-be-read\n");
-    await symlink(join(outside, "secret"), join(root, "final-link"));
-    await symlink(outside, join(root, "intermediate-link"));
-    await symlink("/dev/null", join(root, "device-link"));
-    await exec("mkfifo", [join(root, "named-pipe")]);
-    await mkdir(join(root, "swap"));
-    await writeFile(join(root, "swap", "victim"), "before-swap\n");
-
-    const service = new GitInspectionService();
-    const initial = await service.status(root);
-    expect(initial.kind).toBe("repository");
-    if (initial.kind !== "repository") return;
-    const byPath = (path: string) =>
-      initial.files.find((file) => file.path.utf8Path === path)!;
-    const bounded = <T>(operation: Promise<T>) =>
-      Promise.race([
-        operation,
-        delay(750).then(() => {
-          throw new Error("untracked inspection hung");
-        }),
+  it.runIf(process.platform !== "win32")(
+    "handles unborn, nested cwd, staged+unstaged, untracked and binary",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "inspire-git-"));
+      directories.push(root);
+      await exec("git", ["init", "-q", root]);
+      await exec("git", [
+        "-C",
+        root,
+        "config",
+        "user.email",
+        "test@example.invalid",
       ]);
-    for (const path of ["final-link", "intermediate-link", "device-link"]) {
-      const change = byPath(path);
-      expect(change, path).toBeDefined();
-      await expect(
-        bounded(service.diff(root, change.path.id, "unstaged")),
-      ).resolves.toMatchObject({
-        kind: "unsupported",
-        reason: "untracked-content",
+      await exec("git", ["-C", root, "config", "user.name", "Test"]);
+      const service = new GitInspectionService();
+      expect(await service.status(root)).toMatchObject({
+        kind: "repository",
+        head: { kind: "unborn" },
       });
-    }
 
-    await expect(
-      bounded(
-        service.diff(
-          root,
-          Buffer.from("named-pipe").toString("base64url"),
-          "unstaged",
+      await mkdir(join(root, "nested"));
+      await writeFile(join(root, "nested", "both.txt"), "base\n");
+      await writeFile(join(root, ":(glob)*.txt"), "magic-base\n");
+      await writeFile(join(root, "other.txt"), "other-base\n");
+      await exec("git", ["-C", root, "add", "."]);
+      await exec("git", ["-C", root, "commit", "-qm", "initial"]);
+      await exec("git", ["-C", root, "checkout", "-q", "--detach"]);
+      expect(await service.status(root)).toMatchObject({
+        kind: "repository",
+        head: { kind: "detached" },
+      });
+      await writeFile(join(root, "nested", "both.txt"), "staged\n");
+      await exec("git", ["-C", root, "add", "nested/both.txt"]);
+      await writeFile(join(root, "nested", "both.txt"), "unstaged\n");
+      await writeFile(join(root, ":(glob)*.txt"), "magic-new\n");
+      await exec("git", ["-C", root, "mv", "other.txt", "renamed.txt"]);
+      await writeFile(join(root, "renamed.txt"), "renamed-new\n");
+      await writeFile(join(root, "nested", "new file.txt"), "new\n");
+      await writeFile(
+        join(root, "nested", "binary.dat"),
+        Buffer.from([0, 1, 2]),
+      );
+      await symlink("both.txt", join(root, "nested", "link.txt"));
+      const newlineCwd = join(root, "line\nbreak");
+      await mkdir(newlineCwd);
+      await writeFile(join(newlineCwd, "inside.txt"), "inside\n");
+
+      const monitorDirectory = await mkdtemp(
+        join(tmpdir(), "inspire-fsmonitor-"),
+      );
+      directories.push(monitorDirectory);
+      const monitorMarker = join(monitorDirectory, "executed");
+      const monitor = join(monitorDirectory, "monitor");
+      await writeFile(
+        monitor,
+        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
+        { mode: 0o755 },
+      );
+      await exec("git", ["-C", root, "config", "core.fsmonitor", monitor]);
+
+      const status = await service.status(join(root, "nested"));
+      await expect(access(monitorMarker)).rejects.toThrow();
+      expect(status.kind).toBe("repository");
+      if (status.kind !== "repository") return;
+      const newlineStatus = await service.status(newlineCwd);
+      expect(newlineStatus.kind).toBe("repository");
+      if (newlineStatus.kind === "repository") {
+        expect(
+          newlineStatus.files.find(
+            (file) => file.path.utf8Path === "line\nbreak/inside.txt",
+          )?.path.workspacePath,
+        ).toBe("inside.txt");
+      }
+      await expect(access(monitorMarker)).rejects.toThrow();
+      const both = status.files.find(
+        (file) => file.path.utf8Path === "nested/both.txt",
+      )!;
+      expect(both.path.workspacePath).toBe("both.txt");
+      expect(both).toMatchObject({
+        staged: { kind: "modified" },
+        unstaged: { kind: "modified" },
+      });
+      expect(
+        (await service.diff(join(root, "nested"), both.path.id, "staged")).kind,
+      ).toBe("text");
+      expect(
+        (await service.diff(join(root, "nested"), both.path.id, "unstaged"))
+          .kind,
+      ).toBe("text");
+      const magic = status.files.find(
+        (file) => file.path.utf8Path === ":(glob)*.txt",
+      )!;
+      expect(magic.path.workspacePath).toBeUndefined();
+      const magicDiff = await service.diff(
+        join(root, "nested"),
+        magic.path.id,
+        "unstaged",
+      );
+      expect(magicDiff.kind).toBe("text");
+      if (magicDiff.kind === "text")
+        expect(
+          magicDiff.lines.map((line) => line.text).join("\n"),
+        ).not.toContain("renamed.txt");
+      const renamed = status.files.find(
+        (file) => file.path.utf8Path === "renamed.txt",
+      )!;
+      expect(renamed.staged).toMatchObject({
+        kind: "renamed",
+        originalPath: { utf8Path: "other.txt" },
+      });
+      expect(
+        (await service.diff(join(root, "nested"), renamed.path.id, "staged"))
+          .kind,
+      ).toBe("text");
+      for (const workspacePath of ["new file.txt", "binary.dat", "link.txt"]) {
+        const untracked = status.files.find(
+          (file) => file.path.workspacePath === workspacePath,
+        )!;
+        expect(
+          await service.diff(
+            join(root, "nested"),
+            untracked.path.id,
+            "unstaged",
+          ),
+        ).toMatchObject({ kind: "unsupported", reason: "untracked-content" });
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "never opens untracked content through symlinks, directory swaps, FIFOs, or device targets",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "inspire-untracked-"));
+      const outside = await mkdtemp(join(tmpdir(), "inspire-outside-"));
+      directories.push(root, outside);
+      await exec("git", ["init", "-q", root]);
+      await writeFile(join(outside, "secret"), "must-not-be-read\n");
+      await symlink(join(outside, "secret"), join(root, "final-link"));
+      await symlink(outside, join(root, "intermediate-link"));
+      await symlink("/dev/null", join(root, "device-link"));
+      await exec("mkfifo", [join(root, "named-pipe")]);
+      await mkdir(join(root, "swap"));
+      await writeFile(join(root, "swap", "victim"), "before-swap\n");
+
+      const service = new GitInspectionService();
+      const initial = await service.status(root);
+      expect(initial.kind).toBe("repository");
+      if (initial.kind !== "repository") return;
+      const byPath = (path: string) =>
+        initial.files.find((file) => file.path.utf8Path === path)!;
+      const bounded = <T>(operation: Promise<T>) =>
+        Promise.race([
+          operation,
+          delay(750).then(() => {
+            throw new Error("untracked inspection hung");
+          }),
+        ]);
+      for (const path of ["final-link", "intermediate-link", "device-link"]) {
+        const change = byPath(path);
+        expect(change, path).toBeDefined();
+        await expect(
+          bounded(service.diff(root, change.path.id, "unstaged")),
+        ).resolves.toMatchObject({
+          kind: "unsupported",
+          reason: "untracked-content",
+        });
+      }
+
+      await expect(
+        bounded(
+          service.diff(
+            root,
+            Buffer.from("named-pipe").toString("base64url"),
+            "unstaged",
+          ),
         ),
-      ),
-    ).rejects.toMatchObject({ status: 409 });
+      ).rejects.toMatchObject({ status: 409 });
 
-    const victim = byPath("swap/victim");
-    expect(victim).toBeDefined();
-    await renamePath(join(root, "swap"), join(root, "swap-original"));
-    await symlink(outside, join(root, "swap"));
-    await expect(
-      bounded(service.diff(root, victim.path.id, "unstaged")),
-    ).rejects.toMatchObject({ status: 409 });
-  });
+      const victim = byPath("swap/victim");
+      expect(victim).toBeDefined();
+      await renamePath(join(root, "swap"), join(root, "swap-original"));
+      await symlink(outside, join(root, "swap"));
+      await expect(
+        bounded(service.diff(root, victim.path.id, "unstaged")),
+      ).rejects.toMatchObject({ status: 409 });
+    },
+  );
 
   it("parses a real merge conflict", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-conflict-"));
@@ -1007,70 +1021,73 @@ describe("real temporary repository", () => {
     ).resolves.toMatchObject({ kind: "conflict", code: "UU" });
   });
 
-  it("parses a real local submodule without invoking content helpers", async () => {
-    const source = await mkdtemp(join(tmpdir(), "inspire-submodule-source-"));
-    const root = await mkdtemp(join(tmpdir(), "inspire-submodule-parent-"));
-    directories.push(source, root);
-    for (const repository of [source, root]) {
-      await exec("git", ["init", "-q", repository]);
+  it.runIf(process.platform !== "win32")(
+    "parses a real local submodule without invoking content helpers",
+    async () => {
+      const source = await mkdtemp(join(tmpdir(), "inspire-submodule-source-"));
+      const root = await mkdtemp(join(tmpdir(), "inspire-submodule-parent-"));
+      directories.push(source, root);
+      for (const repository of [source, root]) {
+        await exec("git", ["init", "-q", repository]);
+        await exec("git", [
+          "-C",
+          repository,
+          "config",
+          "user.email",
+          "test@example.invalid",
+        ]);
+        await exec("git", ["-C", repository, "config", "user.name", "Test"]);
+      }
+      await writeFile(join(source, "tracked.txt"), "base\n");
+      await exec("git", ["-C", source, "add", "."]);
+      await exec("git", ["-C", source, "commit", "-qm", "base"]);
+      await exec("git", [
+        "-c",
+        "protocol.file.allow=always",
+        "-C",
+        root,
+        "submodule",
+        "add",
+        "-q",
+        source,
+        "modules/local",
+      ]);
+      await exec("git", ["-C", root, "commit", "-qam", "submodule"]);
+      await writeFile(
+        join(root, "modules", "local", "tracked.txt"),
+        "modified\n",
+      );
+      const monitorDirectory = await mkdtemp(
+        join(tmpdir(), "inspire-submodule-monitor-"),
+      );
+      directories.push(monitorDirectory);
+      const monitorMarker = join(monitorDirectory, "executed");
+      const monitor = join(monitorDirectory, "monitor");
+      await writeFile(
+        monitor,
+        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
+        { mode: 0o755 },
+      );
       await exec("git", [
         "-C",
-        repository,
+        join(root, "modules", "local"),
         "config",
-        "user.email",
-        "test@example.invalid",
+        "core.fsmonitor",
+        monitor,
       ]);
-      await exec("git", ["-C", repository, "config", "user.name", "Test"]);
-    }
-    await writeFile(join(source, "tracked.txt"), "base\n");
-    await exec("git", ["-C", source, "add", "."]);
-    await exec("git", ["-C", source, "commit", "-qm", "base"]);
-    await exec("git", [
-      "-c",
-      "protocol.file.allow=always",
-      "-C",
-      root,
-      "submodule",
-      "add",
-      "-q",
-      source,
-      "modules/local",
-    ]);
-    await exec("git", ["-C", root, "commit", "-qam", "submodule"]);
-    await writeFile(
-      join(root, "modules", "local", "tracked.txt"),
-      "modified\n",
-    );
-    const monitorDirectory = await mkdtemp(
-      join(tmpdir(), "inspire-submodule-monitor-"),
-    );
-    directories.push(monitorDirectory);
-    const monitorMarker = join(monitorDirectory, "executed");
-    const monitor = join(monitorDirectory, "monitor");
-    await writeFile(
-      monitor,
-      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
-      { mode: 0o755 },
-    );
-    await exec("git", [
-      "-C",
-      join(root, "modules", "local"),
-      "config",
-      "core.fsmonitor",
-      monitor,
-    ]);
 
-    const service = new GitInspectionService();
-    const status = await service.status(root);
-    await expect(access(monitorMarker)).rejects.toThrow();
-    expect(status.kind).toBe("repository");
-    if (status.kind !== "repository") return;
-    const module = status.files.find(
-      (file) => file.path.utf8Path === "modules/local",
-    )!;
-    expect(module.submodule).toMatchObject({ trackedModified: true });
-    await expect(
-      service.diff(root, module.path.id, "unstaged"),
-    ).resolves.toMatchObject({ kind: "submodule" });
-  });
+      const service = new GitInspectionService();
+      const status = await service.status(root);
+      await expect(access(monitorMarker)).rejects.toThrow();
+      expect(status.kind).toBe("repository");
+      if (status.kind !== "repository") return;
+      const module = status.files.find(
+        (file) => file.path.utf8Path === "modules/local",
+      )!;
+      expect(module.submodule).toMatchObject({ trackedModified: true });
+      await expect(
+        service.diff(root, module.path.id, "unstaged"),
+      ).resolves.toMatchObject({ kind: "submodule" });
+    },
+  );
 });

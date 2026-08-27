@@ -5,7 +5,7 @@ INSΠRE ships presentation rules for Pi's native tools. A local user can add dat
 ## Configuration location
 
 - Source checkout: `<checkout>/.inspire/tool-presentations.json` (`.inspire/` is gitignored).
-- Installed package: `${XDG_CONFIG_HOME:-~/.config}/inspire/tool-presentations.json`.
+- Installed package: `${XDG_CONFIG_HOME:-~/.config}/inspire/tool-presentations.json` on Linux, `~/Library/Application Support/Inspire/tool-presentations.json` on macOS, or `%APPDATA%\\Inspire\\tool-presentations.json` on Windows.
 - Explicit host override: `INSPIRE_TOOL_PRESENTATIONS_PATH=/path/to/tool-presentations.json`.
 
 The host reads the file for every authenticated bootstrap, so save it and refresh the page. Invalid JSON or declarations produce a browser warning and leave only shipped rules active; the file is never rewritten. The validated declarations are sent to the authenticated browser, so the file is private configuration, not a credential store: do not place secrets in literals.

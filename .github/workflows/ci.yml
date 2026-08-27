@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -29,9 +31,37 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
+  platform:
+    name: ${{ matrix.os }} core and Chromium
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Static, build, unit, and lifecycle checks
+        run: npm run check
+      - run: npx playwright install chromium
+      - run: npm run test:browser:chromium
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-${{ runner.os }}-artifacts
+          path: |
+            output/playwright/
+            test-results/
+          if-no-files-found: ignore
+
   size-report:
     # Measurement remains visible when it breaks but must not mask the required
-    # correctness gate in `quality`.
+    # correctness gates above.
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:
@@ -41,10 +71,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # `size:report` builds the release client and compiled host before packing
-      # with lifecycle scripts disabled, so its inventory describes the release
-      # artifact rather than a clean-checkout source-only tarball.
-      - run: mkdir -p output && npm run size:report | tee output/size-report.json
+      # `size:report` builds before packing, so the inventory describes the
+      # release artifact rather than a clean-checkout source-only tarball.
+      - run: |
+          node -e "require('node:fs').mkdirSync('output', { recursive: true })"
+      - run: npm run size:report > output/size-report.json
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -53,12 +84,15 @@ jobs:
           if-no-files-found: ignore
 
   release-verify:
-    # The full packaged-host smoke is release evidence. Run it on the main
-    # branch rather than making every pull-request edit pay for a second pack,
-    # install, mock host, and real Pi startup.
+    # The full packaged-host smoke is release evidence. Run it after main lands
+    # across every supported Host OS rather than repeating it for every PR edit.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

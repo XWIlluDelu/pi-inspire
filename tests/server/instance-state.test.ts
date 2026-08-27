@@ -1,18 +1,19 @@
-import { createServer, type Server } from "node:http";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  INSTANCE_STATE_VERSION,
   consumeStopRequest,
+  INSTANCE_STATE_VERSION,
+  type InstanceState,
   inspectInstance,
   instanceUrl,
   portAvailable,
   processStartIdentity,
   removeInstanceState,
+  stopManagedInstance,
   writeInstanceState,
-  type InstanceState,
 } from "../../server/instance-state.mjs";
 
 const temporaryDirectories: string[] = [];
@@ -55,7 +56,7 @@ function state(port = 4587): InstanceState {
 }
 
 describe("Inspire instance state", () => {
-  it("writes private atomic state and removes only the owning pid", async () => {
+  it("writes private atomic state and removes only the exact owner", async () => {
     const path = await temporaryStatePath();
     const value = state();
     await writeInstanceState(path, value);
@@ -67,10 +68,11 @@ describe("Inspire instance state", () => {
     expect(instanceUrl({ ...value, token: "local-token" })).toContain(
       "token=local-token",
     );
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-    await removeInstanceState(path, value.pid + 1);
+    if (process.platform !== "win32")
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+    await removeInstanceState(path, { ...value, token: "different-owner" });
     await expect(stat(path)).resolves.toBeDefined();
-    await removeInstanceState(path, value.pid);
+    await removeInstanceState(path, value);
     await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
 
     const requestPath = `${path}.stop-request`;
@@ -78,6 +80,34 @@ describe("Inspire instance state", () => {
     await writeFile(requestPath, "stop\n", { mode: 0o600 });
     await expect(consumeStopRequest(requestPath)).resolves.toBe(true);
     await expect(consumeStopRequest(requestPath)).resolves.toBe(false);
+  });
+
+  it("fails closed on malformed state instead of treating it as absent", async () => {
+    const path = await temporaryStatePath();
+    await writeFile(path, "not-json\n", { mode: 0o600 });
+
+    await expect(
+      inspectInstance(path, {
+        root: process.cwd(),
+        host: "127.0.0.1",
+        port: 4587,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("does not remove a publication owned by another instance", async () => {
+    const path = await temporaryStatePath();
+    const value = state();
+    await writeInstanceState(path, value);
+
+    await expect(
+      stopManagedInstance(path, {
+        root: `${value.root}-different`,
+        host: value.host,
+        port: value.port,
+      }),
+    ).resolves.toEqual({ kind: "stale" });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
   });
 
   it("recognizes only a verified process with a healthy authenticated host", async () => {

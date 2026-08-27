@@ -10,7 +10,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Request } from "express";
 import type { StorageEngine } from "multer";
@@ -24,6 +23,7 @@ import {
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import { escapesBase } from "./paths.js";
+import { inspireCacheDirectory } from "./platform-paths.mjs";
 import {
   invalidateProjectIndex,
   isIndexedProjectFile,
@@ -91,7 +91,7 @@ function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
   }
 }
 
-const DEFAULT_UPLOAD_PARENT = join(homedir(), ".cache", "inspire", "uploads");
+const DEFAULT_UPLOAD_PARENT = join(inspireCacheDirectory(), "uploads");
 
 export class AttachmentStore {
   private readonly values = new Map<string, StoredAttachment>();

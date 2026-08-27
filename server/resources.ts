@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
-import { type FileHandle, open, realpath } from "node:fs/promises";
+import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   basename,
@@ -77,11 +77,11 @@ function changedResourceError(): Error & { status: number } {
 }
 
 /** Open the path the user actually selected and prove that its descriptor
- * resolves to the canonical file we authorized. For an already-canonical path,
+ * is the canonical file we authorized. For an already-canonical path,
  * `O_NOFOLLOW` also rejects a final-component exchange. For a selected symlink
- * or symlinked cwd, the descriptor witness binds the followed chain atomically
- * to the expected target. INSΠRE is Linux-only, so `/proc/self/fd` is the
- * kernel-owned descriptor-to-path witness rather than a second pathname stat. */
+ * or symlinked cwd, the post-open path and inode witnesses bind the followed
+ * chain to the retained descriptor without relying on a platform-specific
+ * descriptor filesystem. */
 async function openAuthorizedResourceFile(
   selectedPath: string,
   canonicalPath: string,
@@ -91,17 +91,23 @@ async function openAuthorizedResourceFile(
     (selectedPath === canonicalPath ? constants.O_NOFOLLOW : 0);
   const handle = await open(selectedPath, flags);
   try {
-    let openedPath: string;
-    try {
-      openedPath = await realpath(`/proc/self/fd/${handle.fd}`);
-    } catch {
+    const [openedPath, details, linked] = await Promise.all([
+      realpath(selectedPath),
+      handle.stat({ bigint: true }),
+      lstat(canonicalPath, { bigint: true }),
+    ]);
+    if (
+      openedPath !== canonicalPath ||
+      !details.isFile() ||
+      !linked.isFile() ||
+      !sameFileObject(fileIdentity(details), fileIdentity(linked))
+    )
       throw changedResourceError();
-    }
-    if (openedPath !== canonicalPath) throw changedResourceError();
-    return { handle, details: await handle.stat({ bigint: true }) };
+    return { handle, details };
   } catch (error) {
     await handle.close().catch(() => undefined);
-    throw error;
+    if ((error as { status?: unknown }).status === 409) throw error;
+    throw changedResourceError();
   }
 }
 

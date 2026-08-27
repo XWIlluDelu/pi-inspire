@@ -1,5 +1,5 @@
 import { opendir, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import type { ProjectDirEntry } from "../shared/contracts.js";
 import { GIT_CONFIG_ARGS, GitInspectionError, spawnGit } from "./git-runner.js";
@@ -37,6 +37,13 @@ function validRelativePath(path: string): boolean {
   return Boolean(path) && !isAbsolute(path) && !escapesBase(path);
 }
 
+/** Project-index paths use Git's platform-independent forward-slash form.
+ * Convert only native Windows separators: a backslash is a legal filename
+ * character on POSIX and must not be reinterpreted there. */
+function projectIndexPath(path: string): string {
+  return sep === "\\" ? path.split(sep).join("/") : path;
+}
+
 async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
   const { stdout } = await spawnGit([...GIT_CONFIG_ARGS, "-C", cwd, ...args], {
     stdoutLimit: 4 * 1024 * 1024,
@@ -52,7 +59,7 @@ async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
       if (index < stdout.length && stdout[index] !== 0) continue;
       if (index > start) {
         const path = decoder.decode(stdout.subarray(start, index));
-        if (validRelativePath(path)) paths.push(path);
+        if (validRelativePath(path)) paths.push(projectIndexPath(path));
       }
       start = index + 1;
     }
@@ -142,7 +149,8 @@ async function fromFilesystem(cwd: string): Promise<string[]> {
         directories + pending.length < MAX_PROJECT_INDEX_DIRECTORIES
       )
         pending.push(absolute);
-      else if (entry.isFile()) values.push(relative(cwd, absolute));
+      else if (entry.isFile())
+        values.push(projectIndexPath(relative(cwd, absolute)));
       if (values.length >= MAX_PROJECT_INDEX_FILES) break;
     }
   }
@@ -265,7 +273,7 @@ export async function isIndexedProjectFile(
 ): Promise<boolean> {
   const relativePath = relative(cwd, absolutePath);
   if (!relativePath || escapesBase(relativePath)) return false;
-  return (await projectPaths(cwd)).includes(relativePath);
+  return (await projectPaths(cwd)).includes(projectIndexPath(relativePath));
 }
 
 /** Indexed files whose basename matches, as cwd-relative paths. This is the
