@@ -1817,10 +1817,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           }
           if (
             pendingProjection.sourceIdentity !== null &&
-            pendingProjection.attestInitialMaterialization(
-              cwd,
-              initialEntries,
-            ) === "mismatch"
+            pendingProjection.attestInitialMaterialization(initialEntries) ===
+              "mismatch"
           ) {
             throw Object.assign(
               new Error(

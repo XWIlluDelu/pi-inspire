@@ -486,8 +486,7 @@ export class RuntimePersistenceOwnershipController {
       try {
         const workerEntries = await this.host.readNewSessionEntries(slot, rpc);
         if (
-          projection.attestInitialMaterialization(slot.cwd, workerEntries) ===
-          "mismatch"
+          projection.attestInitialMaterialization(workerEntries) === "mismatch"
         ) {
           return { owned: false, reason: "initial-materialization-mismatch" };
         }
