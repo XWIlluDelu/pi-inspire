@@ -587,7 +587,7 @@ describe("welcome flow", () => {
       name: "Context panel",
     });
     expect(
-      within(pane).getByRole("button", { name: "Changes" }),
+      await within(pane).findByRole("button", { name: "Changes" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 

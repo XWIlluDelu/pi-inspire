@@ -209,17 +209,26 @@ async function verifySourceFonts() {
       "Flux Mono SC CSS must declare the exact 400/500 Web partition",
     );
   }
-  return new Set([
-    ...[...entries]
-      .filter(([filename]) => filename.endsWith(".woff2"))
-      .map(([, digest]) => digest),
-    ...[...fluxEntries]
-      .filter(([filename]) => filename.endsWith(".woff2"))
-      .map(([, digest]) => digest),
-  ]);
+  return {
+    digests: new Set([
+      ...[...entries]
+        .filter(([filename]) => filename.endsWith(".woff2"))
+        .map(([, digest]) => digest),
+      ...[...fluxEntries]
+        .filter(([filename]) => filename.endsWith(".woff2"))
+        .map(([, digest]) => digest),
+    ]),
+    // The critical sheet repeats only the five Latin/core declarations from
+    // the complete deferred registries. Vite still emits every reviewed font
+    // asset once; these extra declarations change load timing, not provenance.
+    installedFaces: {
+      ibm: 648 + 3,
+      flux: 112 + 2,
+    },
+  };
 }
 
-async function verifyInstalledFonts(installedRoot, expectedDigests) {
+async function verifyInstalledFonts(installedRoot, expectedFonts) {
   const assets = join(installedRoot, "dist/assets");
   const installedDigests = new Set();
   let css = "";
@@ -231,7 +240,7 @@ async function verifyInstalledFonts(installedRoot, expectedDigests) {
   for (const match of css.matchAll(/data:[^;,]+;base64,([A-Za-z0-9+/=]+)/gu)) {
     installedDigests.add(sha256(Buffer.from(match[1], "base64")));
   }
-  const missing = [...expectedDigests].filter(
+  const missing = [...expectedFonts.digests].filter(
     (digest) => !installedDigests.has(digest),
   );
   if (missing.length > 0)
@@ -239,9 +248,10 @@ async function verifyInstalledFonts(installedRoot, expectedDigests) {
       `Installed bundle is missing ${missing.length} verified font assets`,
     );
   if (
-    (css.match(/IBMPlexSansSC-/gu) ?? []).length !== 648 ||
+    (css.match(/IBMPlexSansSC-/gu) ?? []).length !==
+      expectedFonts.installedFaces.ibm ||
     (css.match(/@font-face\{font-family:Flux Mono SC;/gu) ?? []).length !==
-      112 ||
+      expectedFonts.installedFaces.flux ||
     /Noto|MOTO|IBM Plex Mono/u.test(css)
   ) {
     throw new Error(
@@ -368,7 +378,7 @@ try {
   const sourcePackage = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
   );
-  const expectedFontDigests = await verifySourceFonts();
+  const expectedFonts = await verifySourceFonts();
   if (sourcePackage.bin?.inspire !== "inspire.mjs") {
     throw new Error(
       "Release package must use npm's canonical inspire bin path",
@@ -521,7 +531,7 @@ try {
     if (!fontLicenses.includes(witness))
       throw new Error(`Bundled font licenses are missing ${witness}`);
   }
-  await verifyInstalledFonts(installedRoot, expectedFontDigests);
+  await verifyInstalledFonts(installedRoot, expectedFonts);
   const thirdPartyNotices = await readFile(
     join(installedRoot, "dist/THIRD_PARTY_NOTICES.txt"),
     "utf8",
@@ -795,7 +805,7 @@ try {
       package: `${installedPackage.name}@${installedPackage.version}`,
       license: installedPackage.license,
       bundledNotices: "present",
-      verifiedFontAssets: expectedFontDigests.size,
+      verifiedFontAssets: expectedFonts.digests.size,
       piManifest: false,
       sourceOnlyFiles: 0,
       requiredFiles: "present",
