@@ -1,7 +1,9 @@
+import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
 import { isRunState, isSessionRuntimeStatus } from "../../shared/contracts";
 import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl } from "../api";
 import type { WireEvent } from "../events";
+import { recordTransportMeasure, transportNow } from "../transport-performance";
 
 export const FIRST_SNAPSHOT_TIMEOUT_MS = 10_000;
 export const STREAM_INACTIVITY_TIMEOUT_MS = 45_000;
@@ -10,9 +12,24 @@ const MEDIUM_STREAM_RENDER_INTERVAL_MS = 32;
 const LONG_STREAM_RENDER_INTERVAL_MS = 50;
 const RECENT_STREAM_ACTIVITY_MS = 30_000;
 
-function completeMessageUpdate(
+function streamMessageUpdate(
   event: WireEvent,
 ): { event: WireEvent; key: string; textLength: number } | null {
+  if (
+    event.type === "message_update_batch" &&
+    typeof event.sessionId === "string" &&
+    typeof event.streamMessageKey === "string" &&
+    typeof event.streamTextLength === "number" &&
+    Number.isSafeInteger(event.streamTextLength) &&
+    event.streamTextLength >= 0 &&
+    Array.isArray(event.assistantMessageEvents)
+  ) {
+    return {
+      event,
+      key: `${event.sessionId}\0${event.streamMessageKey}`,
+      textLength: event.streamTextLength,
+    };
+  }
   if (
     event.type !== "message_update" ||
     !event.message ||
@@ -32,8 +49,14 @@ function completeMessageUpdate(
             if (typeof part === "string") return total + part.length;
             if (!part || typeof part !== "object" || Array.isArray(part))
               return total;
-            const text = (part as Record<string, unknown>).text;
-            return total + (typeof text === "string" ? text.length : 0);
+            const record = part as Record<string, unknown>;
+            const text =
+              typeof record.text === "string"
+                ? record.text
+                : typeof record.thinking === "string"
+                  ? record.thinking
+                  : "";
+            return total + text.length;
           }, 0)
         : 0;
   return {
@@ -55,19 +78,27 @@ export type ManagedConnectionState =
   | "reconnecting"
   | "offline";
 export type ManagedConnectionProblem =
-  | { kind: "host-unreachable" }
-  | { kind: "host-error"; message: string }
+  | { kind: "device-offline" }
+  | { kind: "address-unreachable" }
+  | { kind: "relay-unavailable" }
+  | { kind: "service-error"; message: string }
   | { kind: "stream-interrupted" }
   | null;
 export type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
 
 interface ConnectionControllerHost {
-  state(): { bootstrapped: boolean };
+  state(): {
+    bootstrapped: boolean;
+    authorityId?: string | null;
+    snapshotDigest?: string | null;
+  };
   patch(patch: {
     connection?: ManagedConnectionState;
     connectionProblem?: ManagedConnectionProblem;
   }): void;
   applyEvent(event: WireEvent): void;
+  recordSnapshotDigest?(digest: string): void;
+  invalidateSnapshotDigest?(): void;
   /** A deliberate replacement invalidates ownership tied to the old stream. */
   onTransportReplaced(): void;
   /** An unexpected close invalidates stream-owned state before retrying. */
@@ -91,19 +122,44 @@ function parseWireEvent(data: unknown): WireEvent | null {
   }
 }
 
-function isAuthoritativeSnapshot(event: WireEvent): boolean {
-  if (event.type !== "snapshot") return false;
+function authoritativeSnapshot(
+  event: WireEvent,
+  expectedAuthority: string | null | undefined,
+  expectedDigest: string | null | undefined,
+): { kind: "full" | "unchanged"; digest: string | null } | null {
+  if (event.type !== "snapshot") return null;
+  if (
+    expectedAuthority &&
+    (typeof event.authorityId !== "string" ||
+      event.authorityId !== expectedAuthority)
+  )
+    return null;
+  const digest =
+    typeof event.snapshotDigest === "string" &&
+    /^[0-9a-f]{64}$/u.test(event.snapshotDigest)
+      ? event.snapshotDigest
+      : null;
+  if (event.unchanged === true) {
+    return digest && digest === expectedDigest
+      ? { kind: "unchanged", digest }
+      : null;
+  }
   const data = event.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const snapshot = data as Record<string, unknown>;
-  if (!isRunState(snapshot.runState)) return false;
+  if (!isRunState(snapshot.runState)) return null;
   const statuses = snapshot.sessionStatuses;
-  return Boolean(
-    statuses &&
-      typeof statuses === "object" &&
-      !Array.isArray(statuses) &&
-      Object.values(statuses).every(isSessionRuntimeStatus),
-  );
+  if (
+    !statuses ||
+    typeof statuses !== "object" ||
+    Array.isArray(statuses) ||
+    !Object.values(statuses).every(isSessionRuntimeStatus)
+  )
+    return null;
+  // Production snapshots always carry their authority-bound digest. Unit hosts
+  // without an authority retain the smaller legacy fixture contract.
+  if (expectedAuthority && !digest) return null;
+  return { kind: "full", digest };
 }
 
 /**
@@ -112,6 +168,7 @@ function isAuthoritativeSnapshot(event: WireEvent): boolean {
  */
 export class ConnectionController {
   private socket: WebSocket | null = null;
+  private socketPhase: "bootstrap" | "resume" | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
@@ -120,6 +177,7 @@ export class ConnectionController {
   private started = false;
   private reconnectPending = false;
   private synchronized = false;
+  private scheduledReconnectKind: "resume" | "bootstrap" | null = null;
   private lastFrameAt = 0;
   private streamUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingStreamUpdate: {
@@ -127,12 +185,26 @@ export class ConnectionController {
     event: WireEvent;
     key: string;
   } | null = null;
+  private streamMetricStartedAt = -1;
+  private streamMetricFrames = 0;
+  private streamMetricCharacters = 0;
+  private streamMetricAssistantEvents = 0;
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
   connect(token: string | null): void {
     this.started = true;
     this.token = token;
+    this.reconnectPending = false;
+    this.scheduledReconnectKind = null;
+    this.openSocket(token, "bootstrap");
+  }
+
+  private openSocket(
+    token: string | null,
+    phase: "bootstrap" | "resume",
+  ): void {
+    const handshakeStartedAt = transportNow();
     this.reconnectPending = false;
     this.clearReconnectTimer();
     this.clearStreamTimers();
@@ -147,13 +219,15 @@ export class ConnectionController {
       this.host.onTransportReplaced();
       previous.close();
     }
+    const state = this.host.state();
     this.host.patch({
-      connection: this.host.state().bootstrapped
-        ? "reconnecting"
-        : "connecting",
+      connection: state.bootstrapped ? "reconnecting" : "connecting",
     });
-    const socket = new WebSocket(eventsUrl(token));
+    const socket = new WebSocket(
+      eventsUrl(token, state.snapshotDigest ?? null),
+    );
     this.socket = socket;
+    this.socketPhase = phase;
     // Bound the whole connection handshake, not only an already-open socket:
     // a black-holed TCP/WebSocket negotiation may otherwise remain CONNECTING
     // indefinitely without producing an error or close event.
@@ -171,35 +245,67 @@ export class ConnectionController {
         return;
       }
 
+      const hostState = this.host.state();
       if (!this.synchronized) {
-        if (!isAuthoritativeSnapshot(event)) {
-          this.failSocket(socket);
+        const snapshot = authoritativeSnapshot(
+          event,
+          hostState.authorityId,
+          hostState.snapshotDigest,
+        );
+        if (!snapshot) {
+          this.failSocket(socket, "bootstrap");
           return;
         }
         try {
-          this.host.applyEvent(event);
+          if (snapshot.kind === "full") this.host.applyEvent(event);
+          if (snapshot.digest)
+            this.host.recordSnapshotDigest?.(snapshot.digest);
         } catch {
-          this.failSocket(socket);
+          this.failSocket(socket, "bootstrap");
           return;
         }
         if (this.socket !== socket) return;
         this.synchronized = true;
         this.lastFrameAt = Date.now();
         this.reconnectDelay = 1_000;
+        this.scheduledReconnectKind = null;
         this.clearSnapshotTimer();
         this.armWatchdog(socket);
         this.host.patch({ connection: "open", connectionProblem: null });
+        recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
+          phase,
+          snapshot: snapshot.kind,
+          compression:
+            typeof socket.extensions === "string" &&
+            socket.extensions.includes("permessage-deflate"),
+          characters: String(frame.data).length,
+        });
+        this.beginStreamMetrics();
         return;
       }
 
-      if (event.type === "snapshot" && !isAuthoritativeSnapshot(event)) {
-        this.failSocket(socket);
-        return;
-      }
       this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
+      this.recordStreamFrame(event, String(frame.data).length);
       if (event.type === "heartbeat") return;
-      const streamUpdate = completeMessageUpdate(event);
+      if (event.type === "snapshot") {
+        if (!this.flushStreamUpdate(socket)) return;
+        const snapshot = authoritativeSnapshot(
+          event,
+          hostState.authorityId,
+          hostState.snapshotDigest,
+        );
+        if (!snapshot) {
+          this.failSocket(socket, "bootstrap");
+          return;
+        }
+        if (snapshot.kind === "full" && !this.applySocketEvent(socket, event))
+          return;
+        if (snapshot.digest) this.host.recordSnapshotDigest?.(snapshot.digest);
+        return;
+      }
+      this.host.invalidateSnapshotDigest?.();
+      const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);
         return;
@@ -209,12 +315,19 @@ export class ConnectionController {
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
+      const canResume =
+        this.synchronized ||
+        (phase === "bootstrap" && Boolean(this.host.state().snapshotDigest));
       this.socket = null;
+      this.socketPhase = null;
       this.synchronized = false;
       this.lastFrameAt = 0;
       this.clearStreamTimers();
       this.host.onTransportClosed();
-      this.scheduleReconnectAfterDelay(token);
+      this.scheduleReconnectAfterDelay(
+        token,
+        canResume ? "resume" : "bootstrap",
+      );
     };
     socket.onerror = () => socket.close();
   }
@@ -223,6 +336,7 @@ export class ConnectionController {
     this.started = false;
     this.token = null;
     this.reconnectPending = false;
+    this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
     this.clearStreamTimers();
@@ -230,6 +344,7 @@ export class ConnectionController {
     this.lastFrameAt = 0;
     const socket = this.socket;
     this.socket = null;
+    this.socketPhase = null;
     socket?.close();
   }
 
@@ -237,25 +352,27 @@ export class ConnectionController {
     this.started = true;
     this.token = token;
     this.reconnectPending = false;
+    this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
     this.clearStreamTimers();
     const socket = this.socket;
     if (socket) {
       this.socket = null;
+      this.socketPhase = null;
       this.synchronized = false;
       this.lastFrameAt = 0;
       this.host.onTransportReplaced();
       socket.close();
     }
-    this.requestReconnect();
+    this.requestReconnect("bootstrap");
   }
 
   scheduleReconnect(token: string | null): void {
     this.started = true;
     this.token = token;
     this.reconnectPending = false;
-    this.scheduleReconnectAfterDelay(token);
+    this.scheduleReconnectAfterDelay(token, "bootstrap");
   }
 
   /** Recover promptly from browser/network lifecycle boundaries. A normal
@@ -275,21 +392,32 @@ export class ConnectionController {
 
   private recoverNow(): void {
     if (this.reconnectPending) return;
+    const canResume =
+      (this.socket !== null && this.synchronized) ||
+      this.scheduledReconnectKind === "resume" ||
+      (this.socketPhase === "bootstrap" &&
+        Boolean(this.host.state().snapshotDigest));
     this.clearReconnectTimer();
     this.clearStreamTimers();
     const socket = this.socket;
     if (socket) {
       this.socket = null;
+      this.socketPhase = null;
       this.synchronized = false;
       this.lastFrameAt = 0;
       this.host.onTransportClosed();
       socket.close();
     }
-    this.requestReconnect();
+    this.requestReconnect(canResume ? "resume" : "bootstrap");
   }
 
-  private requestReconnect(): void {
+  private requestReconnect(kind: "resume" | "bootstrap"): void {
     if (!this.started || this.reconnectPending) return;
+    this.scheduledReconnectKind = null;
+    if (kind === "resume") {
+      this.openSocket(this.token, "resume");
+      return;
+    }
     this.reconnectPending = true;
     this.host.reconnect(this.token);
   }
@@ -320,18 +448,58 @@ export class ConnectionController {
     socket: WebSocket,
     update: { event: WireEvent; key: string; textLength: number },
   ): void {
+    const pending = this.pendingStreamUpdate;
     if (
-      this.pendingStreamUpdate &&
-      (this.pendingStreamUpdate.socket !== socket ||
-        this.pendingStreamUpdate.key !== update.key) &&
+      pending &&
+      (pending.socket !== socket || pending.key !== update.key) &&
       !this.flushStreamUpdate(socket)
     )
       return;
-    this.pendingStreamUpdate = {
-      socket,
-      event: update.event,
-      key: update.key,
-    };
+    if (
+      this.pendingStreamUpdate &&
+      this.pendingStreamUpdate.event.type === "message_update_batch" &&
+      update.event.type === "message_update_batch"
+    ) {
+      const previousEvents = this.pendingStreamUpdate.event
+        .assistantMessageEvents as unknown[];
+      const nextEvents = update.event.assistantMessageEvents as unknown[];
+      if (
+        previousEvents.length + nextEvents.length >
+        MAX_ASSISTANT_STREAM_BATCH_EVENTS
+      ) {
+        if (!this.flushStreamUpdate(socket)) return;
+        this.pendingStreamUpdate = {
+          socket,
+          event: update.event,
+          key: update.key,
+        };
+      } else {
+        this.pendingStreamUpdate.event = {
+          ...update.event,
+          assistantMessageEvents: [...previousEvents, ...nextEvents],
+        };
+      }
+    } else if (
+      this.pendingStreamUpdate &&
+      this.pendingStreamUpdate.event.type === "message_update" &&
+      update.event.type === "message_update_batch"
+    ) {
+      // A complete projection followed by deltas is ordered, not
+      // supersedable. Publish the complete base before retaining the batch.
+      if (!this.flushStreamUpdate(socket)) return;
+      this.pendingStreamUpdate = {
+        socket,
+        event: update.event,
+        key: update.key,
+      };
+    } else {
+      // A later complete projection subsumes any earlier queued update.
+      this.pendingStreamUpdate = {
+        socket,
+        event: update.event,
+        key: update.key,
+      };
+    }
     if (this.streamUpdateTimer) return;
     this.streamUpdateTimer = setTimeout(() => {
       this.streamUpdateTimer = null;
@@ -339,25 +507,42 @@ export class ConnectionController {
     }, streamRenderInterval(update.textLength));
   }
 
-  private failSocket(socket: WebSocket): void {
+  private failSocket(
+    socket: WebSocket,
+    recovery?: "resume" | "bootstrap",
+  ): void {
     if (this.socket !== socket) return;
+    const canResume =
+      recovery === "resume" ||
+      (recovery !== "bootstrap" &&
+        (this.synchronized ||
+          (this.socketPhase === "bootstrap" &&
+            Boolean(this.host.state().snapshotDigest))));
     this.socket = null;
+    this.socketPhase = null;
     this.synchronized = false;
     this.lastFrameAt = 0;
     this.clearStreamTimers();
     this.host.onTransportClosed();
     socket.close();
-    this.scheduleReconnectAfterDelay(this.token);
+    this.scheduleReconnectAfterDelay(
+      this.token,
+      canResume ? "resume" : "bootstrap",
+    );
   }
 
-  private scheduleReconnectAfterDelay(token: string | null): void {
+  private scheduleReconnectAfterDelay(
+    token: string | null,
+    kind: "resume" | "bootstrap",
+  ): void {
     this.token = token;
     this.clearReconnectTimer();
+    this.scheduledReconnectKind = kind;
     const delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.requestReconnect();
+      this.requestReconnect(kind);
     }, delay);
   }
 
@@ -398,7 +583,48 @@ export class ConnectionController {
     this.snapshotTimer = null;
   }
 
+  private beginStreamMetrics(): void {
+    this.streamMetricStartedAt = transportNow();
+    this.streamMetricFrames = 0;
+    this.streamMetricCharacters = 0;
+    this.streamMetricAssistantEvents = 0;
+  }
+
+  private recordStreamFrame(event: WireEvent, characters: number): void {
+    if (this.streamMetricStartedAt < 0) this.beginStreamMetrics();
+    this.streamMetricFrames += 1;
+    this.streamMetricCharacters += characters;
+    this.streamMetricAssistantEvents +=
+      event.type === "message_update_batch" &&
+      Array.isArray(event.assistantMessageEvents)
+        ? event.assistantMessageEvents.length
+        : event.type === "message_update"
+          ? 1
+          : 0;
+    if (transportNow() - this.streamMetricStartedAt >= 10_000)
+      this.flushStreamMetrics();
+  }
+
+  private flushStreamMetrics(): void {
+    if (this.streamMetricStartedAt < 0) return;
+    if (this.streamMetricFrames > 0)
+      recordTransportMeasure(
+        "event-stream-window",
+        this.streamMetricStartedAt,
+        {
+          frames: this.streamMetricFrames,
+          characters: this.streamMetricCharacters,
+          assistantEvents: this.streamMetricAssistantEvents,
+        },
+      );
+    this.streamMetricStartedAt = -1;
+    this.streamMetricFrames = 0;
+    this.streamMetricCharacters = 0;
+    this.streamMetricAssistantEvents = 0;
+  }
+
   private clearStreamTimers(): void {
+    this.flushStreamMetrics();
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
     if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);

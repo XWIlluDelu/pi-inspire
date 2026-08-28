@@ -6,10 +6,9 @@
 
 /* --- Self-hosted fonts (SIL OFL, see src/assets/licenses) --- */
 
-/* Exact, checksum-pinned Unicode splits keep browser transfer bounded. IBM Plex
-   Sans SC owns UI text; Flux Mono SC v0.1.0 owns the 600/1200 code grid. */
-@import "./assets/fonts/ibm-plex-sans-sc/faces.css";
-@import "./assets/fonts/flux-mono-sc/flux-mono-sc.css";
+/* Render-critical Latin faces stay in the blocking sheet. Exact,
+   checksum-pinned CJK splits load after the shell becomes interactive. */
+@import "./assets/fonts/core-fonts.css";
 
 @import "./styles/foundation.css";
 @import "./styles/navigation.css";

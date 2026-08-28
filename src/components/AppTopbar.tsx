@@ -11,12 +11,12 @@ import {
 import { memo, useEffect, useState } from "react";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
-  projectionConflictSeverity,
   type ProjectionConflict,
+  projectionConflictSeverity,
   type RunState,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
-import { messageText, type ChatMessage } from "../events";
+import { type ChatMessage, messageText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
@@ -343,18 +343,27 @@ export const AppTopbar = memo(function AppTopbar({
         ))}
         {state.connection !== "open"
           ? (() => {
+              const problem = state.connectionProblem;
+              const failure =
+                problem !== null && problem.kind !== "stream-interrupted";
               const label =
-                state.connectionProblem?.kind === "host-unreachable"
-                  ? "Host unavailable"
-                  : state.connection === "reconnecting"
-                    ? "Reconnecting"
-                    : "Connecting";
+                problem?.kind === "device-offline"
+                  ? "Device offline"
+                  : problem?.kind === "relay-unavailable"
+                    ? "Tunnel unavailable"
+                    : problem?.kind === "service-error"
+                      ? "Host error"
+                      : problem?.kind === "address-unreachable"
+                        ? "Address unavailable"
+                        : state.connection === "reconnecting"
+                          ? "Reconnecting"
+                          : "Connecting";
               return (
                 <StatusChip
-                  className={`chip chip--warning ${state.connectionProblem?.kind === "host-unreachable" ? "" : "chip--live"}`}
+                  className={`chip chip--warning ${failure ? "" : "chip--live"}`}
                   label={label}
                 >
-                  {state.connectionProblem?.kind === "host-unreachable" ? (
+                  {failure ? (
                     <AlertTriangle size={12} aria-hidden />
                   ) : (
                     <Loader2 size={12} className="spin" aria-hidden />

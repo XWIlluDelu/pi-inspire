@@ -958,6 +958,12 @@ export interface ActiveSnapshot {
 export interface BootstrapResponse {
   /** Stable wire identifier; visual branding lives in the client. */
   appName: "inspire";
+  /** Ephemeral identity of this Host process. Mutations bind to it so a retry
+   * can never cross an unnoticed Host restart. */
+  authorityId: string;
+  /** Digest of the included snapshot. A joining event stream may confirm this
+   * exact projection instead of transferring it a second time. */
+  snapshotDigest: string;
   version: string;
   piVersion: string;
   mock: boolean;
@@ -1035,6 +1041,16 @@ export interface PromptRequest {
   historyArtifacts?: ComposerHistoryArtifactsRequest;
   projectFiles?: string[];
   behavior?: "steer" | "followUp";
+}
+
+export interface PromptDeliveryRequest extends PromptRequest {
+  /** One browser-owned delivery identity. Repeating the same operation against
+   * the same Host process returns its first acceptance instead of writing
+   * another prompt. */
+  operationId: string;
+  /** Host process observed before delivery began. A restarted Host rejects the
+   * old operation rather than guessing whether its predecessor accepted it. */
+  authorityId: string;
 }
 
 export interface PromptAcceptedResponse {

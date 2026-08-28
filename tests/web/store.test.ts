@@ -18,6 +18,7 @@ import {
   type RouteHandler,
   type RouteResponse,
   sessionSummary,
+  TEST_SNAPSHOT_DIGEST,
 } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
 
@@ -89,7 +90,9 @@ describe("websocket lifecycle", () => {
     );
     expect(bootstrapCall?.[1]).toMatchObject({ credentials: "same-origin" });
     expect(bootstrapCall?.[1]?.headers).not.toHaveProperty("Authorization");
-    expect(socket.url).toBe("ws://localhost:3000/events");
+    expect(socket.url).toBe(
+      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}`,
+    );
   });
 
   it("retires a launch bearer after bootstrap establishes the pairing cookie", async () => {
@@ -112,7 +115,7 @@ describe("websocket lifecycle", () => {
       sessionCalls.every(([, init]) => requestToken(init ?? {}) === null),
     ).toBe(true);
     expect(FakeWebSocket.instances.at(-1)?.url).toBe(
-      "ws://localhost:3000/events",
+      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}`,
     );
   });
 
@@ -143,7 +146,9 @@ describe("websocket lifecycle", () => {
       needsToken: false,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(FakeWebSocket.instances[0]?.url).toBe("ws://localhost:3000/events");
+    expect(FakeWebSocket.instances[0]?.url).toBe(
+      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}`,
+    );
   });
 
   it("ignores a superseded bootstrap authorization failure", async () => {
@@ -171,7 +176,9 @@ describe("websocket lifecycle", () => {
       needsToken: false,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(FakeWebSocket.instances[0]?.url).toBe("ws://localhost:3000/events");
+    expect(FakeWebSocket.instances[0]?.url).toBe(
+      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}`,
+    );
   });
 
   it("prevents a superseded bootstrap from replacing current preferences or its socket", async () => {
@@ -203,7 +210,7 @@ describe("websocket lifecycle", () => {
     expect(FakeWebSocket.instances).toEqual([currentSocket]);
   });
 
-  it("distinguishes an unreachable host from a host that requires pairing", async () => {
+  it("distinguishes an unreachable address from a host that requires pairing", async () => {
     vi.useFakeTimers();
     try {
       installFetch(() => {
@@ -215,7 +222,38 @@ describe("websocket lifecycle", () => {
         needsToken: false,
         bootstrapped: false,
         connection: "offline",
-        connectionProblem: { kind: "host-unreachable" },
+        connectionProblem: { kind: "address-unreachable" },
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("distinguishes an answered address with an invalid Host response", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve(
+            new Response("not an INSΠRE response", {
+              status: 200,
+              headers: { "Content-Type": "text/plain" },
+            }),
+          ),
+        ),
+      );
+      const store = new AppStore();
+      await store.init(null);
+      expect(store.getState()).toMatchObject({
+        needsToken: false,
+        bootstrapped: false,
+        connection: "offline",
+        connectionProblem: {
+          kind: "service-error",
+          message: "The INSΠRE address returned an invalid response",
+        },
       });
     } finally {
       vi.clearAllTimers();
@@ -237,13 +275,19 @@ describe("websocket lifecycle", () => {
       expired = true;
       socket.onclose?.();
       await vi.advanceTimersByTimeAsync(1_000);
+      const resumedSocket = FakeWebSocket.instances[1]!;
+      expect(resumedSocket.url).toContain(`snapshot=${TEST_SNAPSHOT_DIGEST}`);
 
+      // The cheap event-stream resume is tried before HTTP bootstrap. If that
+      // path cannot complete, the next backoff step revalidates pairing.
+      resumedSocket.onclose?.();
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(store.getState()).toMatchObject({
         needsToken: true,
         connection: "offline",
         connectionProblem: null,
       });
-      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(FakeWebSocket.instances).toHaveLength(2);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -286,7 +330,7 @@ describe("websocket lifecycle", () => {
       expect(store.getState()).toMatchObject({
         bootstrapped: false,
         connection: "offline",
-        connectionProblem: { kind: "host-unreachable" },
+        connectionProblem: { kind: "address-unreachable" },
       });
     } finally {
       vi.clearAllTimers();
@@ -3886,7 +3930,9 @@ describe("resource previews", () => {
       needsToken: false,
       connection: "open",
     });
-    expect(freshSocket.url).toBe("ws://localhost:3000/events");
+    expect(freshSocket.url).toBe(
+      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}`,
+    );
     expect(store.getState().resourceAvailability).toEqual({});
   });
 
@@ -4682,7 +4728,10 @@ describe("composer session partitions", () => {
 
     // A send from B must not carry A's staged artifacts.
     await store.sendPrompt("from B");
-    expect(promptBodies.at(-1)).toEqual({ sessionId: "s2", message: "from B" });
+    expect(promptBodies.at(-1)).toMatchObject({
+      sessionId: "s2",
+      message: "from B",
+    });
 
     // Switching back restores A's staged work untouched.
     socket.emit({ type: "snapshot", data: activeSnapshot() });

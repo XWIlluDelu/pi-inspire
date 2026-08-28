@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   projectKatexSelection,
@@ -249,7 +249,7 @@ After.`}
     expect(projected?.html).toContain("annotation");
   });
 
-  it("copies partial inline and display selections with their original delimiter identity", () => {
+  it("copies partial inline and display selections with their original delimiter identity", async () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -271,6 +271,9 @@ After.`}
         toolVisibility="collapsed"
       />,
     );
+    await waitFor(() =>
+      expect(container.querySelector(".rich-text p .katex-html")).toBeTruthy(),
+    );
     const inlineHtml = container.querySelector(".rich-text p .katex-html")!;
     const inlineRange = document.createRange();
     inlineRange.setStart(textNode(inlineHtml), 0);
@@ -291,7 +294,7 @@ After.`}
     expect(display.data.getData("text/html")).toContain("katex-display");
   });
 
-  it("copies multiple formulas with surrounding text and selected HTML", () => {
+  it("copies multiple formulas with surrounding text and selected HTML", async () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -308,6 +311,9 @@ After.`}
         toolVisibility="collapsed"
       />,
     );
+    await waitFor(() =>
+      expect(container.querySelector(".rich-text p")).toBeTruthy(),
+    );
     const paragraph = container.querySelector(".rich-text p")!;
     const range = document.createRange();
     range.selectNodeContents(paragraph);
@@ -322,7 +328,7 @@ After.`}
     expect(copied.data.getData("text/html")).toContain(" after");
   });
 
-  it("handles a real DOM selection and writes both ClipboardEvent formats", () => {
+  it("handles a real DOM selection and writes both ClipboardEvent formats", async () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -336,6 +342,9 @@ After.`}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
       />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".rich-text p")).toBeTruthy(),
     );
     const paragraph = container.querySelector(".rich-text p")!;
     const range = document.createRange();
