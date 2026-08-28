@@ -280,6 +280,52 @@ test("narrow pairing controls contain a long access token", async ({
   expect(layout.button).toBe(true);
 });
 
+test("new-session completion opens below its caret line inside the viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 715, height: 571 });
+  await pairedPage(page);
+  await page
+    .getByRole("button", {
+      name: /Formula rendering and spectral analysis research/,
+    })
+    .click();
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: "New session" }).click();
+
+  await page.getByRole("textbox", { name: "First message" }).fill("/");
+  const menu = page.getByRole("listbox", {
+    name: "Slash command completions",
+  });
+  await expect(menu).toBeVisible();
+
+  const layout = await menu.evaluate((element) => {
+    const welcome = document.querySelector<HTMLElement>(".welcome");
+    const input = document.querySelector<HTMLTextAreaElement>(
+      ".welcome__composer .composer__input",
+    );
+    if (!welcome || !input) throw new Error("Missing start surface");
+    const menuBox = element.getBoundingClientRect();
+    const welcomeBox = welcome.getBoundingClientRect();
+    const inputBox = input.getBoundingClientRect();
+    return {
+      placement: element.dataset.placement,
+      menuTop: menuBox.top,
+      menuBottom: menuBox.bottom,
+      welcomeTop: welcomeBox.top,
+      welcomeBottom: welcomeBox.bottom,
+      inputTop: inputBox.top,
+      inputBottom: inputBox.bottom,
+    };
+  });
+
+  expect(layout.placement).toBe("down");
+  expect(layout.menuTop).toBeGreaterThan(layout.inputTop);
+  expect(layout.menuTop).toBeLessThan(layout.inputBottom);
+  expect(layout.menuTop).toBeGreaterThanOrEqual(layout.welcomeTop);
+  expect(layout.menuBottom).toBeLessThanOrEqual(layout.welcomeBottom);
+});
+
 test("narrow composer keeps its trailing action stable without a context meter", async ({
   page,
 }) => {
@@ -342,6 +388,58 @@ test("narrow user prompts preserve source lines and normal-sized math", async ({
   expect(layout.overflow).toBe(false);
   expect(layout.whiteSpace).toBe("pre-wrap");
   expect(layout.mathScale).toBeCloseTo(1.05, 2);
+  await page.getByRole("button", { name: "Abort running task" }).click();
+});
+
+test("narrow rich text contains long links and file references", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+
+  const external = `https://example.test/${"unbroken-segment".repeat(8)}`;
+  const local =
+    "./packages/research-pipeline/components/transformers/normalize-observations-for-rendering.ts";
+  await page
+    .getByRole("textbox", { name: "Message" })
+    .fill(`[${external}](https://example.test/) and \`${local}\``);
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  const prompt = page.locator(".turn--user").last();
+  await expect(prompt.getByRole("link", { name: external })).toBeVisible();
+  await expect(prompt.locator(".file-ref--code")).toHaveText(local);
+  const layout = await prompt.evaluate((turn) => {
+    const root = turn.querySelector<HTMLElement>(".rich-text--user");
+    if (!root) throw new Error("Missing rich text");
+    const fileReference = root.querySelector<HTMLElement>(".file-ref--code");
+    if (!fileReference) throw new Error("Missing file reference");
+    const boundary = root.getBoundingClientRect();
+    const contained = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return box.left >= boundary.left - 1 && box.right <= boundary.right + 1;
+    };
+    return {
+      overflowWrap: getComputedStyle(root).overflowWrap,
+      contentOverflow: root.scrollWidth - root.clientWidth,
+      documentOverflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      referenceTextAlign: getComputedStyle(fileReference).textAlign,
+      paragraphTextAlign: getComputedStyle(fileReference.parentElement!)
+        .textAlign,
+      referencesContained: [
+        ...root.querySelectorAll("a, .file-ref--code"),
+      ].every(contained),
+    };
+  });
+
+  expect(layout.overflowWrap).toBe("anywhere");
+  expect(layout.contentOverflow).toBeLessThanOrEqual(1);
+  expect(layout.documentOverflow).toBeLessThanOrEqual(1);
+  expect(layout.referenceTextAlign).toBe(layout.paragraphTextAlign);
+  expect(layout.referencesContained).toBe(true);
   await page.getByRole("button", { name: "Abort running task" }).click();
 });
 

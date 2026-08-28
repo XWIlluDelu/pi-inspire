@@ -1311,10 +1311,12 @@ button.res__more:hover {
 }
 
 .file-ref--code {
+  max-width: 100%;
   border: 0;
   background: transparent;
   padding: 0;
   font: inherit;
+  text-align: inherit;
   cursor: pointer;
 }
 

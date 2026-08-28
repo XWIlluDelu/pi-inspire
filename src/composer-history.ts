@@ -252,6 +252,78 @@ function logicalEdgeFallback(
     : value.indexOf("\n", caret) < 0;
 }
 
+function mountTextareaMirror(
+  textarea: HTMLTextAreaElement,
+  left: number,
+  top: number,
+): {
+  mirror: HTMLDivElement;
+  text: ChildNode | null;
+  computed: CSSStyleDeclaration;
+} {
+  const computed = getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  mirror.setAttribute("aria-hidden", "true");
+  mirror.style.position = "fixed";
+  mirror.style.left = `${left}px`;
+  mirror.style.top = `${top}px`;
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  for (const property of CARET_LAYOUT_PROPERTIES) {
+    mirror.style.setProperty(property, computed.getPropertyValue(property));
+  }
+  mirror.textContent = textarea.value;
+  document.body.append(mirror);
+  return { mirror, text: mirror.firstChild, computed };
+}
+
+function collapsedCaretRect(text: Node, offset: number): DOMRect | null {
+  const range = document.createRange();
+  range.setStart(text, offset);
+  range.collapse(true);
+  return range.getClientRects()[0] ?? null;
+}
+
+export interface TextareaCaretLineBounds {
+  top: number;
+  bottom: number;
+}
+
+/** Locate the caret's visible line box without changing textarea selection. */
+export function textareaCaretLineBounds(
+  textarea: HTMLTextAreaElement,
+  caret = textarea.selectionStart,
+): TextareaCaretLineBounds | null {
+  const value = textarea.value;
+  const bounds = textarea.getBoundingClientRect();
+  if (!value || !document.body || bounds.width <= 0) return null;
+
+  let mirror: HTMLDivElement | null = null;
+  try {
+    const mounted = mountTextareaMirror(textarea, bounds.left, bounds.top);
+    mirror = mounted.mirror;
+    mirror.scrollLeft = textarea.scrollLeft;
+    mirror.scrollTop = textarea.scrollTop;
+    if (!mounted.text) return null;
+    const offset = Math.max(0, Math.min(value.length, caret));
+    const rect = collapsedCaretRect(mounted.text, offset);
+    if (!rect) return null;
+    const fontSize =
+      Number.parseFloat(mounted.computed.fontSize) || rect.height;
+    const lineHeight = Math.max(
+      rect.height,
+      Number.parseFloat(mounted.computed.lineHeight) || fontSize,
+    );
+    const renderedHeight = rect.height || fontSize;
+    const top = rect.top - Math.max(0, lineHeight - renderedHeight) / 2;
+    return { top, bottom: top + lineHeight };
+  } catch {
+    return null;
+  } finally {
+    mirror?.remove();
+  }
+}
+
 /** Measure the browser's wrapped visual line without changing textarea selection. */
 export function isTextareaCaretOnVisualEdge(
   textarea: HTMLTextAreaElement,
@@ -264,35 +336,20 @@ export function isTextareaCaretOnVisualEdge(
 
   const bounds = textarea.getBoundingClientRect();
   if (bounds.width <= 0) return fallback;
-  const mirror = document.createElement("div");
+  let mirror: HTMLDivElement | null = null;
   try {
-    const computed = getComputedStyle(textarea);
-    mirror.setAttribute("aria-hidden", "true");
-    mirror.style.position = "fixed";
-    mirror.style.left = "-100000px";
-    mirror.style.top = "0";
-    mirror.style.visibility = "hidden";
-    mirror.style.pointerEvents = "none";
-    for (const property of CARET_LAYOUT_PROPERTIES) {
-      mirror.style.setProperty(property, computed.getPropertyValue(property));
-    }
-    mirror.textContent = value;
-    document.body.append(mirror);
-    const text = mirror.firstChild;
-    if (!text) return fallback;
-    const topAt = (offset: number): number | null => {
-      const range = document.createRange();
-      range.setStart(text, offset);
-      range.collapse(true);
-      return range.getClientRects()[0]?.top ?? null;
-    };
-    const currentTop = topAt(caret);
-    const edgeTop = topAt(edge === "first" ? 0 : value.length);
+    const mounted = mountTextareaMirror(textarea, -100000, 0);
+    mirror = mounted.mirror;
+    if (!mounted.text) return fallback;
+    const currentTop = collapsedCaretRect(mounted.text, caret)?.top ?? null;
+    const edgeTop =
+      collapsedCaretRect(mounted.text, edge === "first" ? 0 : value.length)
+        ?.top ?? null;
     if (currentTop === null || edgeTop === null) return fallback;
     return Math.abs(currentTop - edgeTop) < 0.5;
   } catch {
     return fallback;
   } finally {
-    mirror.remove();
+    mirror?.remove();
   }
 }
