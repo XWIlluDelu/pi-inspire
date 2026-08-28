@@ -797,11 +797,9 @@
 /* Caret completion shares the picker's restrained floating surface, but
    stays anchored to the writing instrument rather than becoming a dialog. */
 .completion {
-  position: absolute;
-  left: var(--space-3);
-  right: var(--space-3);
-  bottom: calc(100% + var(--space-2));
+  position: fixed;
   z-index: 42;
+  min-width: 0;
   max-height: min(320px, 45dvh);
   overflow-y: auto;
   padding: var(--space-1);

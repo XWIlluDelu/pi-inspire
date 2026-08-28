@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ComposerHistoryEntry } from "../../shared/contracts";
 import type { ProjectFileResult } from "../api";
 import {
@@ -19,7 +20,23 @@ import {
   replaceCompletionToken,
   resolveCommandInventory,
 } from "../composer-completion";
-import { isTextareaCaretOnVisualEdge } from "../composer-history";
+import {
+  isTextareaCaretOnVisualEdge,
+  textareaCaretLineBounds,
+} from "../composer-history";
+import {
+  type FloatingMenuConstraints,
+  type FloatingMenuPlacement,
+  useFloatingMenuPlacement,
+} from "../use-floating-menu";
+
+const COMPLETION_MENU_CONSTRAINTS: FloatingMenuConstraints = {
+  gap: 8,
+  horizontalMargin: 16,
+  verticalMargin: 8,
+  maxWidth: Number.POSITIVE_INFINITY,
+  maxHeight: 320,
+};
 
 interface CompletionItem {
   key: string;
@@ -36,6 +53,7 @@ function CompletionMenu({
   items,
   active,
   status,
+  placement,
   onActive,
   onPick,
 }: {
@@ -44,6 +62,7 @@ function CompletionMenu({
   items: CompletionItem[];
   active: number;
   status: "loading" | "ready" | "error";
+  placement: FloatingMenuPlacement | null;
   onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
 }) {
@@ -56,6 +75,18 @@ function CompletionMenu({
     <div
       className="completion"
       id={id}
+      data-placement={placement?.direction}
+      style={
+        placement
+          ? {
+              left: placement.left,
+              top: placement.top,
+              bottom: placement.bottom,
+              width: placement.width,
+              maxHeight: placement.maxHeight,
+            }
+          : { visibility: "hidden" }
+      }
       role="listbox"
       aria-label={
         token.kind === "file"
@@ -167,6 +198,7 @@ export function ComposerInput({
     "loading" | "ready" | "error"
   >("ready");
   const [completionActive, setCompletionActive] = useState(0);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const inputValueRef = useRef(value);
@@ -180,6 +212,31 @@ export function ComposerInput({
   } | null>(null);
   const historyPreviewValueRef = useRef<string | null>(null);
   const pendingSelectionRef = useRef(0);
+  const resolveCompletionMenuTarget = useCallback(() => {
+    const inputWrap = inputWrapRef.current;
+    const textarea = textareaRef.current;
+    if (!inputWrap || !textarea) return null;
+    const horizontal = inputWrap.getBoundingClientRect();
+    const vertical =
+      textareaCaretLineBounds(textarea, completion?.end) ??
+      textarea.getBoundingClientRect();
+    return {
+      context: inputWrap,
+      anchor: {
+        left: horizontal.left,
+        right: horizontal.right,
+        top: vertical.top,
+        bottom: vertical.bottom,
+      },
+      preferredWidth: horizontal.width,
+      observe: [inputWrap, textarea],
+    };
+  }, [completion?.end]);
+  const completionPlacement = useFloatingMenuPlacement(
+    completion !== null,
+    resolveCompletionMenuTarget,
+    COMPLETION_MENU_CONSTRAINTS,
+  );
 
   const exitHistoryBrowsing = useCallback(() => {
     historyIndexRef.current = -1;
@@ -495,6 +552,7 @@ export function ComposerInput({
   return (
     <>
       <div
+        ref={inputWrapRef}
         className="composer__input-wrap"
         role="combobox"
         aria-label={completionLabel}
@@ -558,17 +616,21 @@ export function ComposerInput({
           autoFocus={autoFocus}
         />
       </div>
-      {completion ? (
-        <CompletionMenu
-          id={completionId}
-          token={completion}
-          items={completionItems}
-          active={activeIndex}
-          status={completion.kind === "file" ? completionStatus : "ready"}
-          onActive={setCompletionActive}
-          onPick={pickCompletion}
-        />
-      ) : null}
+      {completion
+        ? createPortal(
+            <CompletionMenu
+              id={completionId}
+              token={completion}
+              items={completionItems}
+              active={activeIndex}
+              status={completion.kind === "file" ? completionStatus : "ready"}
+              placement={completionPlacement}
+              onActive={setCompletionActive}
+              onPick={pickCompletion}
+            />,
+            document.body,
+          )
+        : null}
     </>
   );
 }

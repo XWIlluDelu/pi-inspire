@@ -280,6 +280,52 @@ test("narrow pairing controls contain a long access token", async ({
   expect(layout.button).toBe(true);
 });
 
+test("new-session completion opens below its caret line inside the viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 715, height: 571 });
+  await pairedPage(page);
+  await page
+    .getByRole("button", {
+      name: /Formula rendering and spectral analysis research/,
+    })
+    .click();
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: "New session" }).click();
+
+  await page.getByRole("textbox", { name: "First message" }).fill("/");
+  const menu = page.getByRole("listbox", {
+    name: "Slash command completions",
+  });
+  await expect(menu).toBeVisible();
+
+  const layout = await menu.evaluate((element) => {
+    const welcome = document.querySelector<HTMLElement>(".welcome");
+    const input = document.querySelector<HTMLTextAreaElement>(
+      ".welcome__composer .composer__input",
+    );
+    if (!welcome || !input) throw new Error("Missing start surface");
+    const menuBox = element.getBoundingClientRect();
+    const welcomeBox = welcome.getBoundingClientRect();
+    const inputBox = input.getBoundingClientRect();
+    return {
+      placement: element.dataset.placement,
+      menuTop: menuBox.top,
+      menuBottom: menuBox.bottom,
+      welcomeTop: welcomeBox.top,
+      welcomeBottom: welcomeBox.bottom,
+      inputTop: inputBox.top,
+      inputBottom: inputBox.bottom,
+    };
+  });
+
+  expect(layout.placement).toBe("down");
+  expect(layout.menuTop).toBeGreaterThan(layout.inputTop);
+  expect(layout.menuTop).toBeLessThan(layout.inputBottom);
+  expect(layout.menuTop).toBeGreaterThanOrEqual(layout.welcomeTop);
+  expect(layout.menuBottom).toBeLessThanOrEqual(layout.welcomeBottom);
+});
+
 test("narrow composer keeps its trailing action stable without a context meter", async ({
   page,
 }) => {
