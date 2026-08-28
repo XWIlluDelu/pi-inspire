@@ -72,7 +72,6 @@ interface RuntimeEventControllerHost {
   ): ProjectionConflict;
   stopWriter(slot: RuntimeSlot): Promise<void>;
   logRuntimeError(sessionId: string, error: unknown, source?: string): void;
-  markForkBufferOverflow(slot: RuntimeSlot): void;
   safeProjection(value: unknown): unknown;
 }
 
@@ -535,49 +534,6 @@ export class RuntimeEventController {
         : {};
     if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
-    if (slot.rebinding) {
-      if (slot.forkBufferOverflow) return;
-      // Pi tears the source AgentSession down before returning from fork, and
-      // does not subscribe the RPC event channel to the replacement until its
-      // session_start handlers have completed. Therefore every session event
-      // before the correlated response line still belongs to the source.
-      // Extension UI/error frames use a separate direct channel and retain the
-      // existing handoff treatment because either runtime may emit them.
-      if (
-        slot.forkResponseFence?.received === false &&
-        record.type !== "extension_ui_request" &&
-        record.type !== "extension_error"
-      ) {
-        this.dispatchOwnedProcessEvent(slot, rpc, event, record);
-        return;
-      }
-      // Fork hooks may block Pi's replacement command on a dialog. Such
-      // requests keep their source address and bypass the general event
-      // buffer so the browser can answer while the mutation FIFO is occupied.
-      if (record.type === "extension_ui_request") {
-        const owned = { ...record, sessionId: slot.id };
-        if (parsePendingExtensionUiRequest(owned)) {
-          this.handleEvent(slot, record, rpc);
-          return;
-        }
-      }
-      let eventBytes = 0;
-      try {
-        eventBytes = Buffer.byteLength(JSON.stringify(event));
-      } catch {
-        eventBytes = 2 * 1024 * 1024 + 1;
-      }
-      if (
-        slot.bufferedEvents.length >= 1_000 ||
-        slot.bufferedEventBytes + eventBytes > 2 * 1024 * 1024
-      ) {
-        this.host.markForkBufferOverflow(slot);
-        return;
-      }
-      slot.bufferedEvents.push(event);
-      slot.bufferedEventBytes += eventBytes;
-      return;
-    }
     this.dispatchOwnedProcessEvent(slot, rpc, event, record);
   }
 }

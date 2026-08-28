@@ -21,7 +21,6 @@ import {
   type BranchTreeResponse,
   type ComposerHistoryEntry,
   type ComposerHistoryPage,
-  type ExtensionUiRequest,
   emptyPendingQueues,
   type HiddenClearResponse,
   isBusyRunState,
@@ -83,6 +82,12 @@ import {
   type ActiveSessionSnapshot,
   loadSessionPreview,
 } from "./session-preview.js";
+import {
+  discardStagedSessionFork,
+  publishStagedSessionFork,
+  type StageSessionFork,
+  stageSessionFork,
+} from "./session-fork.js";
 
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
 
@@ -121,9 +126,6 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
 const MAX_PROMPT_CHARS = 500_000;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
-const FORK_BUFFER_OVERFLOW_MESSAGE = "Fork event buffer exceeded its bound";
-const FORK_BUFFER_OVERFLOW_ERROR =
-  "Fork event buffer exceeded its bound; the worker was stopped";
 export { PI_STARTUP_RESPONSE_UI_ERROR } from "./runtime-events.js";
 
 export function safeProjection(value: unknown): unknown {
@@ -311,6 +313,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     deleteSessionFile
       ? validateSessionFile
       : async () => undefined,
+    private readonly stageFork: StageSessionFork = stageSessionFork,
   ) {
     super();
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
@@ -391,7 +394,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       stopWriter: (slot) => this.stopWriter(slot),
       logRuntimeError: (sessionId, error, source) =>
         this.logRuntimeError(sessionId, error, source),
-      markForkBufferOverflow: (slot) => this.markForkBufferOverflow(slot),
       safeProjection,
     });
     this.reads = new RuntimeReadController({
@@ -568,8 +570,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.stopping !== null ||
         slot.startupStop !== null ||
         slot.startupPhase === "starting" ||
-        slot.rebinding ||
-        slot.forkOverflowCleanup !== null ||
         slot.navigationLease !== null ||
         slot.pendingBranchBridge !== null ||
         slot.pendingPartialPersistence !== null ||
@@ -912,44 +912,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private async cleanupForkBufferOverflow(slot: RuntimeSlot): Promise<void> {
-    // Clear the handoff buffer before awaiting child cleanup. While the stop is
-    // in flight, later child events must not become a second source of truth.
-    slot.bufferedEvents = [];
-    slot.bufferedEventBytes = 0;
-    await this.stopWriter(slot);
-    await this.reconcileSlot(slot, true).catch(() => undefined);
-  }
-
-  private markForkBufferOverflow(slot: RuntimeSlot): void {
-    if (slot.forkBufferOverflow) return;
-    slot.forkBufferOverflow = true;
-    if (!slot.conflict)
-      this.setProjectionConflict(
-        slot,
-        "fork-overflow",
-        FORK_BUFFER_OVERFLOW_MESSAGE,
-      );
-    this.emitSlotEvent(slot, {
-      type: "session_projection_conflict",
-      conflict: slot.conflict,
-    });
-    slot.forkOverflowCleanup = this.cleanupForkBufferOverflow(slot);
-    void slot.forkOverflowCleanup.catch((error) =>
-      this.logRuntimeError(slot.id, error),
-    );
-  }
-
-  private async failForkBufferOverflow(slot: RuntimeSlot): Promise<never> {
-    if (slot.forkOverflowCleanup)
-      await slot.forkOverflowCleanup.catch(() => undefined);
-    throw Object.assign(new Error(FORK_BUFFER_OVERFLOW_ERROR), { status: 504 });
-  }
-
-  private async assertForkBufferHealthy(slot: RuntimeSlot): Promise<void> {
-    if (slot.forkBufferOverflow) await this.failForkBufferOverflow(slot);
-  }
-
   private stopWriter(slot: RuntimeSlot): Promise<void> {
     return this.workerLifecycle.stop(slot);
   }
@@ -1179,10 +1141,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.clearWriterProjectionBaseline(slot);
     slot.bridge = null;
     this.renewView(slot);
-    slot.rebinding = false;
-    slot.forkResponseFence = null;
-    slot.bufferedEvents = [];
-    slot.bufferedEventBytes = 0;
     if (slot.navigationLease) slot.branchRevision += 1;
     slot.navigationLease = null;
     if (slot.pendingBranchBridge) {
@@ -2303,31 +2261,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private requireForkBranchSlot(slot: RuntimeSlot, revision: number): void {
-    this.requireFreshBranchRevision(slot, revision);
-    if (
-      slot.pendingQueues.paused ||
-      slot.pendingQueues.steering.length > 0 ||
-      slot.pendingQueues.followUp.length > 0
-    ) {
-      // Pi's native fork aborts the current response, but an accepted queue is
-      // drained as another run before AgentSession becomes idle. Letting fork
-      // proceed would submit that input instead of replacing the session.
-      throw Object.assign(
-        new Error("Resume Pending and remove queued messages before forking"),
-        { status: 409 },
-      );
-    }
-    // A pre-existing response-bearing dialog must likewise be resolved before
-    // another session-replacement command can own that interaction.
-    if (slot.pendingExtensionUiRequests.size > 0) {
-      throw Object.assign(
-        new Error("Fork requires the pending dialog to be resolved first"),
-        { status: 409 },
-      );
-    }
-  }
-
   private makePendingBranch(
     slot: RuntimeSlot,
     bridge: BranchBridgeIdentity,
@@ -2582,18 +2515,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private replayBufferedEvents(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-    events: readonly unknown[],
-  ): void {
-    slot.rebinding = false;
-    slot.forkResponseFence = null;
-    slot.bufferedEvents = [];
-    slot.bufferedEventBytes = 0;
-    for (const event of events) this.events.dispatchProcessEvent(rpc, event);
-  }
-
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
     return this.withMaintenanceOperation(() => this.forkBranchInside(request));
   }
@@ -2609,213 +2530,61 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           { status: 409 },
         );
       }
-      this.requireForkBranchSlot(source, request.revision);
-      const ready = await this.ensureFreshWriterInsideGate(source);
-      this.requireForkBranchSlot(source, request.revision);
-      const projection = ready.projection;
-      const rpc = ready.process;
-      const bridge = ready.bridge;
-      if (!projection || !bridge)
-        throw Object.assign(new Error("Fork runtime is unavailable"), {
-          status: 503,
-        });
+      await this.reconcileSlot(source, true);
+      this.throwIfConflicted(source);
+      this.requireFreshBranchRevision(source, request.revision);
+      const projection = source.projection;
+      const sourcePath = source.sessionPath;
+      if (!projection || !sourcePath) {
+        throw Object.assign(
+          new Error("Fork requires a materialized source Session"),
+          { status: 409 },
+        );
+      }
       const tree = projection.branchTree(this.effectiveLeaf(source));
       const node = tree.nodes.find(
         (candidate) => candidate.id === request.targetId,
       );
-      if (!node?.canFork)
+      if (!node?.canFork) {
         throw Object.assign(
           new Error("Fork requires a user message on the active branch"),
           { status: 409 },
         );
+      }
       const editorText = projection.userText(
         request.targetId,
         MAX_PROMPT_CHARS,
       );
       const selectionAtDispatch = this.selectionSequence;
-      source.rebinding = true;
-      source.bufferedEvents = [];
-      source.bufferedEventBytes = 0;
-      const responseFence = { received: false };
-      source.forkResponseFence = responseFence;
-      let forkResult: { text?: unknown; cancelled?: unknown };
-      try {
-        forkResult = await rpc.request(
-          {
-            type: "fork",
-            entryId: request.targetId,
-          },
-          30_000,
-          responseFence,
-        );
-        // Test doubles may not implement PiRpcProcess's response fence. The
-        // awaited response is still an authoritative lower-boundary witness.
-        responseFence.received = true;
-        await source.eventTail;
-        await this.assertForkBufferHealthy(source);
-      } catch (error) {
-        if (source.forkBufferOverflow)
-          return this.failForkBufferOverflow(source);
-        const buffered = source.bufferedEvents.slice();
-        source.rebinding = false;
-        source.forkResponseFence = null;
-        source.bufferedEvents = [];
-        source.bufferedEventBytes = 0;
-        if (isPiRpcOutcomeUnknown(error)) {
-          await error.stopped.catch(() => undefined);
-          // Events cannot be attributed after an acceptance-unknown replacement.
-          void buffered;
-          return this.failUnknownBranchOutcome(
-            source,
-            "Fork outcome is unknown; the worker was stopped and disk state reconciled",
-          );
-        }
-        this.replayBufferedEvents(source, rpc, buffered);
-        throw error;
-      }
-
-      if (forkResult.cancelled === true) {
-        const buffered = source.bufferedEvents.slice();
-        this.replayBufferedEvents(source, rpc, buffered);
-        await this.reconcileSlot(source, true);
-        await this.assertForkBufferHealthy(source);
-        throw Object.assign(new Error("Fork was cancelled by an extension"), {
-          status: 409,
-        });
-      }
-      await this.reconcileSlot(source, true);
-      await this.assertForkBufferHealthy(source);
-      if (source.conflict || source.projection?.health.status === "error") {
-        await this.stopWriter(source);
-        throw Object.assign(
-          new Error(
-            "Fork source changed while the operation was in flight; the destination worker was stopped",
-          ),
-          { status: 409 },
-        );
-      }
-
-      let state: Record<string, unknown>;
-      try {
-        state = await rpc.request<Record<string, unknown>>({
-          type: "get_state",
-        });
-        await this.assertForkBufferHealthy(source);
-      } catch (_error) {
-        if (source.forkBufferOverflow)
-          return this.failForkBufferOverflow(source);
-        return this.failUnknownBranchOutcome(
-          source,
-          "Fork identity outcome is unknown; the worker was stopped and disk state reconciled",
-        );
-      }
-      const destinationId =
-        typeof state.sessionId === "string" ? state.sessionId : "";
-      const destinationPath =
-        typeof state.sessionFile === "string" ? resolve(state.sessionFile) : "";
-      const identityCollision =
-        this.slots.has(destinationId) ||
-        this.loadingSlots.has(destinationId) ||
-        this.isDeletingSession(destinationId) ||
-        [...this.provisionalSlots.values()].some(
-          ({ slot }) => slot.id === destinationId,
-        );
-      const pathCollision =
-        this.loadingPaths.has(destinationPath) ||
-        [...this.slots.values()].some(
-          (slot) =>
-            slot.sessionPath !== null &&
-            resolve(slot.sessionPath) === destinationPath,
-        ) ||
-        [...this.provisionalSlots.values()].some(
-          ({ slot }) =>
-            slot.sessionPath !== null &&
-            resolve(slot.sessionPath) === destinationPath,
-        );
-      if (
-        !destinationId ||
-        destinationId === source.id ||
-        !destinationPath ||
-        identityCollision ||
-        pathCollision
-      ) {
-        await this.stopWriter(source);
-        await this.reconcileSlot(source, true).catch(() => undefined);
-        throw Object.assign(
-          new Error("Pi returned an invalid or colliding fork identity"),
-          { status: 409 },
-        );
-      }
-
-      // This reservation is installed synchronously in the same turn as the
-      // verified identity. No catalog refresh/open can start a second worker
-      // while the destination projection is being opened.
-      let reservation: ForkReservation;
-      try {
-        reservation = this.reserveForkDestination(
-          destinationId,
-          destinationPath,
-        );
-      } catch (error) {
-        await this.stopWriter(source);
-        await this.reconcileSlot(source, true).catch(() => undefined);
-        throw error;
-      }
-
+      const staged = await this.stageFork({
+        sourcePath,
+        sourceSessionId: source.id,
+        sourceCommittedBytes: projection.committedBytes,
+        sourceFingerprint: projection.fingerprint,
+        targetId: request.targetId,
+        targetParentId: node.parentId,
+      });
+      const destinationId = staged.destinationId;
+      const destinationPath = resolve(staged.destinationPath);
+      let reservation: ForkReservation | null = null;
+      let stagedProjection: SessionProjectionView | null = null;
       let destinationProjection: SessionProjectionView | null = null;
-      let attachedDestination: RuntimeSlot | null = null;
-      let committed = false;
-      let committedResponse: BranchForkResponse | null = null;
+      let published = false;
+      let attached = false;
       try {
-        destinationProjection = await this.openForkProjection({
-          id: destinationId,
-          cwd: source.cwd,
-          path: destinationPath,
-          created: new Date(),
-          modified: new Date(),
-          messageCount: 0,
-          firstMessage: "",
-          searchText: "",
-          source: null,
-        });
-        // Extensions may append destination state during session_start before
-        // Pi emits the correlated fork response. Those exact claims were
-        // temporarily observed under the source owner; the two durable
-        // projections now provide the authoritative attribution boundary.
-        this.persistenceOwnership.absorbForkDestinationClaims(
-          source,
-          destinationProjection,
-        );
-        let extras: Awaited<ReturnType<RuntimeController["readRuntimeExtras"]>>;
-        try {
-          extras = await this.readRuntimeExtras(source, rpc);
-        } catch (error) {
-          // Fork replacement was already accepted and its identity is known.
-          // A worker loss here must not turn that accepted operation into a
-          // retryable error; commit the durable destination read-only instead.
-          if (source.process === rpc && rpc.available) throw error;
-          extras = {
-            stats: undefined,
-            models: source.availableModels ?? [],
-            commands: source.commands ?? [],
-          };
-        }
-        // Recheck and attach without yielding afterward. JavaScript's
-        // run-to-completion semantics make this the atomic
-        // reservation-to-owner transition.
-        await this.assertForkBufferHealthy(source);
-        const workerAttached =
-          source.process === rpc && source.ready && rpc.available;
-        const attachIdentityCollision =
+        const identityCollision =
+          destinationId === source.id ||
+          this.slots.has(destinationId) ||
           this.loadingSlots.has(destinationId) ||
+          this.isDeletingSession(destinationId) ||
           [...this.provisionalSlots.values()].some(
             ({ slot }) => slot.id === destinationId,
           );
-        const attachPathCollision =
+        const pathCollision =
+          destinationPath === resolve(sourcePath) ||
           this.loadingPaths.has(destinationPath) ||
           [...this.slots.values()].some(
             (slot) =>
-              slot !== source &&
               slot.sessionPath !== null &&
               resolve(slot.sessionPath) === destinationPath,
           ) ||
@@ -2824,203 +2593,164 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               slot.sessionPath !== null &&
               resolve(slot.sessionPath) === destinationPath,
           );
-        if (
-          this.forkReservationsById.get(destinationId) !== reservation ||
-          this.forkReservationsByPath.get(destinationPath) !== reservation ||
-          this.slots.has(destinationId) ||
-          attachIdentityCollision ||
-          attachPathCollision
-        ) {
+        if (identityCollision || pathCollision) {
           throw Object.assign(
-            new Error("Fork destination ownership changed before attach"),
+            new Error("Pi returned an invalid or colliding fork identity"),
             { status: 409 },
           );
         }
 
+        const stagedRecord: SessionRecord = {
+          id: destinationId,
+          cwd: source.cwd,
+          path: staged.stagedPath,
+          name: staged.sessionName,
+          parentSessionPath: resolve(sourcePath),
+          created: new Date(),
+          modified: new Date(),
+          messageCount: 0,
+          firstMessage: "",
+          searchText: "",
+          source: null,
+        };
+        stagedProjection = await this.openForkProjection(stagedRecord);
+        if (
+          stagedProjection.sessionId !== destinationId ||
+          resolve(stagedProjection.path) !== resolve(staged.stagedPath) ||
+          stagedProjection.health.status === "error" ||
+          stagedProjection.leafId !== node.parentId ||
+          stagedProjection.entry(request.targetId) !== null
+        ) {
+          throw Object.assign(
+            new Error("Pi produced an invalid fork destination"),
+            { status: 409 },
+          );
+        }
+        await stagedProjection.close();
+        stagedProjection = null;
+
+        // Reserve the still-private generated identity before any catalog
+        // lookup or public filesystem operation can yield to another owner.
+        reservation = this.reserveForkDestination(
+          destinationId,
+          destinationPath,
+        );
+        if (await this.catalog.get(destinationId)) {
+          throw Object.assign(
+            new Error("The fork destination identity already exists"),
+            { status: 409 },
+          );
+        }
+        if (
+          this.forkReservationsById.get(destinationId) !== reservation ||
+          this.forkReservationsByPath.get(destinationPath) !== reservation ||
+          this.slots.has(destinationId) ||
+          this.loadingSlots.has(destinationId) ||
+          this.loadingPaths.has(destinationPath)
+        ) {
+          throw Object.assign(
+            new Error("Fork destination ownership changed before publication"),
+            { status: 409 },
+          );
+        }
+
+        await publishStagedSessionFork(staged);
+        published = true;
+        const destinationRecord: SessionRecord = {
+          ...stagedRecord,
+          path: destinationPath,
+        };
+        destinationProjection =
+          await this.openForkProjection(destinationRecord);
+        if (
+          destinationProjection.sessionId !== destinationId ||
+          resolve(destinationProjection.path) !== destinationPath ||
+          destinationProjection.health.status === "error" ||
+          destinationProjection.leafId !== node.parentId ||
+          destinationProjection.entry(request.targetId) !== null
+        ) {
+          throw new Error("Published fork destination failed revalidation");
+        }
+        if (
+          this.forkReservationsById.get(destinationId) !== reservation ||
+          this.forkReservationsByPath.get(destinationPath) !== reservation ||
+          this.slots.has(destinationId)
+        ) {
+          throw new Error("Fork destination ownership changed before attach");
+        }
+
         const destinationViewId = bridgeToken("view");
-        const sourceViewId = bridgeToken("view");
         const page = destinationProjection.latestPage(
           [],
           destinationProjection.leafId,
           destinationViewId,
         );
-        const reboundRequests = new Map(
-          workerAttached
-            ? [...source.pendingExtensionUiRequests]
-                .filter(
-                  ([id]) => source.pendingExtensionUiOwners.get(id) === rpc,
-                )
-                .map(([id, request]) => [
-                  id,
-                  {
-                    ...request,
-                    sessionId: destinationId,
-                  } as ExtensionUiRequest,
-                ])
-            : [],
-        );
         const destination = createRuntimeSlot({
           id: destinationId,
           cwd: source.cwd,
           sessionPath: destinationPath,
-          process: workerAttached ? rpc : null,
+          process: null,
           preview: {
             sessionId: destinationId,
             sessionFile: destinationPath,
-            ...(typeof state.sessionName === "string"
-              ? { sessionName: state.sessionName }
-              : {}),
+            ...(staged.sessionName ? { sessionName: staged.sessionName } : {}),
             cwd: source.cwd,
-            model: destinationProjection.model ?? state.model,
-            thinkingLevel:
-              destinationProjection.thinkingLevel ||
-              String(state.thinkingLevel ?? "off"),
+            model: destinationProjection.model,
+            thinkingLevel: destinationProjection.thinkingLevel || "off",
             isStreaming: false,
             isCompacting: false,
             transcriptPage: page,
             projectionHealth: destinationProjection.health,
-            stats: extras.stats,
-            availableModels: extras.models,
-            commands: extras.commands,
+            availableModels: [],
+            commands: [],
           },
           projection: destinationProjection,
-          bridge: workerAttached ? bridge : null,
+          bridge: null,
           branchRevision: destinationProjection.revision,
           incarnationId: bridgeToken("slot"),
           viewId: destinationViewId,
         });
-        destination.startupPhase = "complete";
-        destination.ready = workerAttached;
-        if (!workerAttached) destination.runState = "failed";
-        destination.pendingExtensionUiRequests = reboundRequests;
-        // The queue precondition and Pi's replacement runtime both establish
-        // an empty destination queue; never transfer source-local queue state.
-        destination.pendingQueues = emptyPendingQueues();
-        destination.extensionDisplays = workerAttached
-          ? source.extensionDisplays
-          : [];
-        destination.extensionStatuses = workerAttached
-          ? source.extensionStatuses
-          : {};
-        destination.availableModels = extras.models;
-        destination.commands = extras.commands;
         destination.lastUsed = ++this.useSequence;
-        destination.workerProjectionRevision = destinationProjection.revision;
-        destination.workerProjectionFingerprint =
-          destinationProjection.fingerprint;
-        destination.workerProjectionSourceIdentity =
-          destinationProjection.sourceIdentity;
-        destination.workerProjectionSourceVersion =
-          destinationProjection.sourceVersion;
-        destination.workerProjectionObservedBytes =
-          destinationProjection.committedBytes +
-          destinationProjection.uncommittedBytes;
-        destination.nextOverlayId = source.nextOverlayId;
-        destination.rebinding = true;
-        destination.bufferedEvents = source.bufferedEvents.slice();
-        destination.bufferedEventBytes = source.bufferedEventBytes;
-        if (!workerAttached && !source.conflict) {
-          source.runState = "idle";
-          source.attention = null;
-        }
-        const selectedAfterCommit =
-          this.selectedSessionId === source.id &&
-          this.selectionSequence === selectionAtDispatch
-            ? destinationId
-            : this.selectedSessionId;
-        const snapshot = this.previewSnapshot(destination, {
-          ...this.sessionStatuses(selectedAfterCommit),
-          [destinationId]: this.statusFor(destination, selectedAfterCommit),
-        });
-        committedResponse = { sessionId: destinationId, snapshot, editorText };
         this.attachProjection(destination, destinationProjection);
-
-        source.process = null;
-        source.ready = false;
-        source.bridge = null;
-        source.navigationLease = null;
-        source.viewId = sourceViewId;
-        if (workerAttached) {
-          this.extensionUi.rebind(source, destination, rpc);
-        } else {
-          this.processRegistry.detach(rpc);
-          this.extensionUi.clear(source, "stopped");
-        }
-        source.pendingQueues = emptyPendingQueues();
-        source.extensionDisplays = [];
-        source.extensionStatuses = {};
-        source.availableModels = null;
-        source.commands = null;
-        this.clearWriterProjectionBaseline(source);
-        source.rebinding = false;
-        source.forkResponseFence = null;
-        source.bufferedEvents = [];
-        source.bufferedEventBytes = 0;
         this.slots.set(destinationId, destination);
-        attachedDestination = destination;
-        if (workerAttached) this.processRegistry.rebind(rpc, destination);
-        if (
+        attached = true;
+
+        const selected =
           this.selectedSessionId === source.id &&
-          this.selectionSequence === selectionAtDispatch
-        ) {
+          this.selectionSequence === selectionAtDispatch;
+        if (selected) {
           this.selectedSessionId = destinationId;
           this.selectionSequence += 1;
         }
-        committed = true;
-        if (workerAttached) {
-          const buffered = destination.bufferedEvents.slice();
-          this.replayBufferedEvents(destination, rpc, buffered);
-        } else {
-          destination.rebinding = false;
-          destination.forkResponseFence = null;
-          destination.bufferedEvents = [];
-          destination.bufferedEventBytes = 0;
-        }
-        this.catalog.invalidate();
-        this.emitSlotEvent(destination, {
-          type: "runtime_ready",
-          forkedFrom: source.id,
-          extensionDisplays: destination.extensionDisplays,
-          extensionStatuses: destination.extensionStatuses,
+        const selectedSessionId = selected
+          ? destinationId
+          : this.selectedSessionId;
+        const snapshot = this.previewSnapshot(destination, {
+          ...this.sessionStatuses(selectedSessionId),
+          [destinationId]: this.statusFor(destination, selectedSessionId),
         });
-        this.scheduleIdleWorkerEviction();
+        this.catalog.invalidate();
         reservation.release();
-        return committedResponse;
+        reservation = null;
+        if (selected)
+          void this.ensureProcess(destination).catch(() => undefined);
+        this.scheduleIdleWorkerEviction();
+        return { sessionId: destinationId, snapshot, editorText };
       } catch (error) {
-        if (committed && committedResponse) {
-          this.logRuntimeError(destinationId, error, "fork_post_commit");
-          return committedResponse;
-        }
-        if (attachedDestination) {
-          if (this.slots.get(destinationId) === attachedDestination)
-            this.slots.delete(destinationId);
-          if (this.selectedSessionId === destinationId)
-            this.selectedSessionId = source.id;
-          this.extensionUi.clear(attachedDestination, "replaced");
-          await this.stopWriter(attachedDestination);
-        } else {
-          await this.stopWriter(source);
-        }
-        await destinationProjection?.close().catch(() => undefined);
-        if (source.conflict) throw error;
+        await stagedProjection?.close().catch(() => undefined);
+        if (!attached)
+          await destinationProjection?.close().catch(() => undefined);
+        if (!published) throw error;
         this.catalog.invalidate();
-        await this.reconcileSlot(source, true).catch(() => undefined);
-        const failureMessage =
-          error instanceof Error ? error.message : String(error);
-        const conflict = this.setProjectionConflict(
-          source,
-          "projection-failure",
-          `${failureMessage}. Fork was accepted as ${destinationId}, but its destination could not be attached safely. Refresh Sessions and open that destination instead of retrying the fork`,
-        );
-        this.emitSlotEvent(source, {
-          type: "session_projection_conflict",
-          conflict,
-        });
-        throw Object.assign(new Error(conflict.message, { cause: error }), {
+        const message = `Fork created Session ${destinationId}, but INSΠRE could not attach it. Refresh Sessions and open that destination instead of retrying the fork`;
+        this.logRuntimeError(destinationId, error, "fork_post_publish");
+        throw Object.assign(new Error(message, { cause: error }), {
           status: 409,
         });
       } finally {
-        reservation.release();
+        reservation?.release();
+        if (!published)
+          await discardStagedSessionFork(staged).catch(() => undefined);
       }
     });
   }
@@ -3066,8 +2796,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               sourceVersion: slot.projection.sourceVersion,
             });
             slot.conflict = null;
-            slot.forkBufferOverflow = false;
-            slot.forkOverflowCleanup = null;
           }
           slot.runState = slot.conflict ? "conflict" : "aborted";
           this.emitSlotEvent(slot, {
@@ -3260,12 +2988,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot> {
     return this.useSlot(slot, async () => {
-      // A native Pi fork changes the child identity before its correlated
-      // response lets the host atomically rebind ownership. A read during that
-      // interval must remain a source preview, never adopt destination state.
-      if (slot.rebinding) return this.previewSnapshot(slot);
       await this.reconcileSlot(slot, true);
-      if (slot.rebinding) return this.previewSnapshot(slot);
       const rpc = slot.process;
       if (!rpc || !slot.ready) return this.previewSnapshot(slot);
       const [state, extras] = await Promise.all([
@@ -3279,7 +3002,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ? resolve(state.sessionFile)
           : null;
       if (
-        slot.rebinding ||
         slot.process !== rpc ||
         !slot.ready ||
         !rpc.available ||

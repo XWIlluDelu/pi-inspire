@@ -12,6 +12,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { npmInvocation } from "../server/npm-command.mjs";
 import {
@@ -394,6 +395,8 @@ try {
     "build/server/pi-runtime.js",
     "build/server/platform-paths.mjs",
     "build/server/process-tree.mjs",
+    "build/server/session-fork.js",
+    "build/server/session-fork-worker.js",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -564,6 +567,94 @@ try {
     throw new Error("Development Pi package has no CLI entry");
   const externalPiCommand = join(externalPiRoot, externalPi.bin.pi);
 
+  // Exercise the installed JS worker boundary itself, not only its presence in
+  // the tarball. This catches source-only loaders or omitted sibling modules.
+  const forkWorkspace = join(temporary, "fork-workspace");
+  await mkdir(forkWorkspace);
+  const forkSourcePath = join(forkWorkspace, "source.jsonl");
+  const forkSourceId = "11111111-1111-4111-8111-111111111111";
+  const forkTargetId = "33333333-3333-4333-8333-333333333333";
+  const forkParentId = "22222222-2222-4222-8222-222222222222";
+  const forkSourceBytes = Buffer.from(
+    `${[
+      {
+        type: "session",
+        version: 3,
+        id: forkSourceId,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        cwd: forkWorkspace,
+      },
+      {
+        type: "message",
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        parentId: null,
+        timestamp: "2026-08-01T00:00:01.000Z",
+        message: { role: "user", content: "release root", timestamp: 1 },
+      },
+      {
+        type: "message",
+        id: forkParentId,
+        parentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "release answer" }],
+          provider: "release-smoke",
+          model: "release-smoke",
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+          },
+          stopReason: "stop",
+          timestamp: 2,
+        },
+      },
+      {
+        type: "message",
+        id: forkTargetId,
+        parentId: forkParentId,
+        timestamp: "2026-08-01T00:00:03.000Z",
+        message: { role: "user", content: "release fork", timestamp: 3 },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n")}\n`,
+  );
+  await writeFile(forkSourcePath, forkSourceBytes, { mode: 0o600 });
+  const previousPiCommand = process.env.INSPIRE_PI_COMMAND;
+  process.env.INSPIRE_PI_COMMAND = externalPiCommand;
+  const forkModule = await import(
+    pathToFileURL(join(installedRoot, "build/server/session-fork.js")).href
+  );
+  if (previousPiCommand === undefined) delete process.env.INSPIRE_PI_COMMAND;
+  else process.env.INSPIRE_PI_COMMAND = previousPiCommand;
+  const stagedFork = await forkModule.stageSessionFork({
+    sourcePath: forkSourcePath,
+    sourceSessionId: forkSourceId,
+    sourceCommittedBytes: forkSourceBytes.length,
+    sourceFingerprint: sha256(forkSourceBytes),
+    targetId: forkTargetId,
+    targetParentId: forkParentId,
+  });
+  const stagedForkText = await readFile(stagedFork.stagedPath, "utf8");
+  if (
+    !stagedForkText.includes(`"id":"${forkParentId}"`) ||
+    stagedForkText.includes(`"id":"${forkTargetId}"`)
+  ) {
+    throw new Error("Installed Session fork worker produced the wrong branch");
+  }
+  await forkModule.discardStagedSessionFork(stagedFork);
+
   const port = await freePort();
   const token = "inspire-release-smoke-token";
   // Exercise lifecycle through the installed JS entry after the npm-generated
@@ -714,6 +805,7 @@ try {
       portableCliEntry: "npm shim and JS entry resolved",
       mockHealth: "ok",
       realPiStartup: "ok",
+      sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",
       lifecycle: "mock and real start/status/stop",
     }),
