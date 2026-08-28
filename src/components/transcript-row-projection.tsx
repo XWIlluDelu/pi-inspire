@@ -854,18 +854,20 @@ export function useTranscriptRows({
           ];
           appendActivity(
             projectedKey,
-            <UnpairedToolResultRow
-              key={key}
-              activityItemId={activityItemId}
-              toolName={message.toolName}
-              visibility={
-                toolVisibility === "compact" ||
-                toolVisibility === "collapsed" ||
-                toolVisibility === "dynamic"
-                  ? "collapsed"
-                  : toolVisibility
-              }
-            />,
+            <ActivitySegmentBoundary ids={[activityItemId]}>
+              <UnpairedToolResultRow
+                key={key}
+                activityItemId={activityItemId}
+                toolName={message.toolName}
+                visibility={
+                  toolVisibility === "compact" ||
+                  toolVisibility === "collapsed" ||
+                  toolVisibility === "dynamic"
+                    ? "collapsed"
+                    : toolVisibility
+                }
+              />
+            </ActivitySegmentBoundary>,
             false,
             deferredRangeAlias(message),
             undefined,
@@ -879,18 +881,20 @@ export function useTranscriptRows({
         ];
         appendActivity(
           projectedKey,
-          <UnknownRoleRow
-            key={key}
-            activityItemId={activityItemId}
-            message={message}
-            visibility={
-              toolVisibility === "compact" ||
-              toolVisibility === "collapsed" ||
-              toolVisibility === "dynamic"
-                ? "collapsed"
-                : toolVisibility
-            }
-          />,
+          <ActivitySegmentBoundary ids={[activityItemId]}>
+            <UnknownRoleRow
+              key={key}
+              activityItemId={activityItemId}
+              message={message}
+              visibility={
+                toolVisibility === "compact" ||
+                toolVisibility === "collapsed" ||
+                toolVisibility === "dynamic"
+                  ? "collapsed"
+                  : toolVisibility
+              }
+            />
+          </ActivitySegmentBoundary>,
           false,
           deferredRangeAlias(message),
           undefined,
