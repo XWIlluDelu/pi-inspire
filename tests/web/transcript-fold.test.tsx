@@ -227,6 +227,37 @@ describe("response activity folds", () => {
     );
   });
 
+  it("removes compacted standalone rows at their layout boundary", () => {
+    const { container } = render(
+      transcript(
+        Array.from({ length: 26 }, (_, index) => ({
+          role: "toolResult",
+          toolCallId: `unpaired-${index + 1}`,
+          toolName: `tool-${index + 1}`,
+          content: `result ${index + 1}`,
+          timestamp: index + 1,
+        })),
+        "compact",
+      ),
+    );
+
+    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
+    const rows = Array.from(fold.querySelectorAll<HTMLElement>(".turn"));
+    const boundaries = rows.map((row) => row.parentElement as HTMLElement);
+    expect(rows).toHaveLength(26);
+    expect(
+      boundaries.every((boundary) =>
+        boundary.classList.contains("activity-item-boundary"),
+      ),
+    ).toBe(true);
+    expect(boundaries.slice(0, 2).every((boundary) => boundary.hidden)).toBe(
+      true,
+    );
+    expect(boundaries.slice(2).every((boundary) => !boundary.hidden)).toBe(
+      true,
+    );
+  });
+
   it("omits the structural round leads owned by Compact's hidden prefix", () => {
     const { container } = render(
       transcript(

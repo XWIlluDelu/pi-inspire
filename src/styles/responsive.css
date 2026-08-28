@@ -421,37 +421,16 @@ body.srail-dragging {
   }
 }
 
-/* The map's desktop rail needs the reading column's side margin, which is a
-   property of the center pane rather than the browser viewport. When either
-   side pane narrows that center, it becomes the same temporary directory
-   control used by the narrow workbench. */
-@container reading-stage (max-width: 600px) {
-  .prompt-map:not(.prompt-map--mobile-active) {
-    top: 50%;
-    bottom: auto;
-    left: max(var(--space-2), var(--safe-left));
-    width: auto;
-    height: auto;
-    transform: translateY(-50%);
-  }
-
-  .prompt-map:not(.prompt-map--mobile-active) .prompt-map__step,
-  .prompt-map:not(.prompt-map--mobile-active) .prompt-map__toggle {
-    width: 44px;
-    height: 44px;
-    min-height: 44px;
-  }
-
-  .prompt-map--open:not(.prompt-map--mobile-active) {
-    top: 50%;
-    bottom: auto;
-    left: max(var(--space-3), var(--safe-left));
-    width: min(296px, calc(100% - var(--space-6)));
-    height: min(
-      calc(100dvh - var(--space-5)),
-      calc(24px + var(--prompt-map-list-height))
+/* The desktop Prompt Map owns a real gutter beside the reading column. The
+   gutter is derived from the center pane itself, so a wide reading preference,
+   either side pane, and live window resizing cannot push the rail onto content.
+   Above the minimum, the computed margin is the ordinary centered measure. */
+@media (min-width: 901px) {
+  .transcript__column {
+    margin-left: max(
+      var(--space-4),
+      calc((100% - var(--content-max)) / 2)
     );
-    transform: translateY(-50%);
   }
 }
 
