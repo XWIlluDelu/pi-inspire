@@ -227,12 +227,6 @@
   gap: var(--space-4);
 }
 
-@container reading-stage (min-width: 601px) and (max-width: 860px) {
-  .transcript__column {
-    margin-left: max(36px, calc((100% - var(--content-max)) / 2));
-  }
-}
-
 .transcript__column--virtual {
   display: block;
   position: relative;

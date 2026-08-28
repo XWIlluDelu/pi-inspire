@@ -1281,3 +1281,55 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
     .evaluate((element) => element.scrollWidth - element.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
 });
+
+test("prompt map rail tracks a constrained desktop reading column", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1_800, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Prompt map long-session fixture/);
+  await page.evaluate(() => {
+    document.documentElement.dataset.readingWidth = "wide";
+    localStorage.setItem("inspire.ctx-width", "340");
+  });
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+
+  const geometry = () =>
+    page.evaluate(() => {
+      const root = document.querySelector(".transcript");
+      const column = root?.querySelector(".transcript__column");
+      const map = document.querySelector(".prompt-map");
+      if (!root || !column || !map) return null;
+      const rootBounds = root.getBoundingClientRect();
+      const columnBounds = column.getBoundingClientRect();
+      const mapBounds = map.getBoundingClientRect();
+      const rightGap = rootBounds.right - columnBounds.right;
+      const offset = Math.max(28, Math.min(rightGap * 0.5, 72));
+      const expectedCenter = Math.max(
+        columnBounds.left - offset,
+        rootBounds.left + 14,
+      );
+      return {
+        clearance: columnBounds.left - mapBounds.right,
+        positionError: Math.abs(
+          expectedCenter - (mapBounds.left + mapBounds.right) / 2,
+        ),
+      };
+    });
+
+  const widths = [
+    1_800, 1_700, 1_600, 1_500, 1_400, 1_300, 1_200, 1_100, 1_000, 920, 1_000,
+    1_100, 1_200, 1_300, 1_400, 1_500, 1_600, 1_700, 1_800,
+  ];
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(async () => {
+        const current = await geometry();
+        return Boolean(
+          current && current.clearance >= 8 && current.positionError <= 1,
+        );
+      })
+      .toBe(true);
+  }
+});

@@ -147,7 +147,7 @@ export function PromptMap({
     void onLoad();
   }, [onLoad]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const nav = navRef.current;
     const root = container?.current;
     if (!nav || !root || typeof ResizeObserver === "undefined") return;
@@ -156,16 +156,6 @@ export function PromptMap({
       nav.style.removeProperty("top");
       return;
     }
-
-    let frame: number | null = null;
-    const schedule = () => {
-      if (frame === null) {
-        frame = requestAnimationFrame(() => {
-          frame = null;
-          sync();
-        });
-      }
-    };
 
     const sync = () => {
       if (!nav || !root || !root.isConnected) return;
@@ -193,22 +183,24 @@ export function PromptMap({
       nav.style.top = `${Math.round(y)}px`;
     };
 
-    const resizeObserver = new ResizeObserver(schedule);
+    // ResizeObserver runs after layout and before paint. Position immediately
+    // in that observation cycle so a pane or window resize cannot leave the
+    // rail one frame behind the reading column.
+    const resizeObserver = new ResizeObserver(sync);
     resizeObserver.observe(root);
     // Reading width changes the centered child without resizing this scrollport.
-    const readingWidthObserver = new MutationObserver(schedule);
+    const readingWidthObserver = new MutationObserver(sync);
     readingWidthObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-reading-width"],
     });
-    window.addEventListener("resize", schedule);
+    window.addEventListener("resize", sync);
     sync();
 
     return () => {
       resizeObserver.disconnect();
       readingWidthObserver.disconnect();
-      window.removeEventListener("resize", schedule);
-      if (frame !== null) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", sync);
     };
   }, [container, mobileActive, open]);
 
