@@ -110,7 +110,6 @@ export class RuntimeWorkerPool {
       Boolean(slot.projection) &&
       !slot.process &&
       !slot.stopping &&
-      !slot.rebinding &&
       slot.activeOperations === 0 &&
       slot.mutationPending === 0 &&
       slot.extensionResponsePending === 0 &&
@@ -156,7 +155,6 @@ export class RuntimeWorkerPool {
       !slot.conflict &&
       !slot.navigationLease &&
       !slot.pendingBranchBridge &&
-      !slot.rebinding &&
       slot.activeOperations === 0 &&
       slot.mutationPending === 0 &&
       slot.extensionResponsePending === 0 &&
@@ -202,7 +200,6 @@ export class RuntimeWorkerPool {
         !slot.navigationLease &&
         !slot.pendingBranchBridge &&
         !slot.pendingPartialPersistence &&
-        !slot.rebinding &&
         slot.activeOperations === 0 &&
         slot.mutationPending === 0 &&
         slot.extensionResponsePending === 0 &&

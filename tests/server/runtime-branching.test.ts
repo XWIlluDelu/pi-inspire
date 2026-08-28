@@ -1,5 +1,13 @@
 import { EventEmitter } from "node:events";
-import { appendFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import {
+  appendFile,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +18,10 @@ import type {
   PiRpcResponseFence,
 } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
+import type {
+  StageSessionFork,
+  StagedSessionFork,
+} from "../../server/session-fork.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import type {
   SessionCatalogLike,
@@ -17,6 +29,7 @@ import type {
 } from "../../server/session-catalog.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const directories: string[] = [];
 const stores: AttachmentStore[] = [];
 
@@ -36,12 +49,12 @@ const entry = (
 
 class BranchRpc extends EventEmitter {
   readonly commands: Array<Record<string, unknown>> = [];
-  path: string;
+  readonly path: string;
   readonly bridgeCommand: string;
   readonly statusKey: string;
   readonly workerId: string;
-  sessionId = SESSION_ID;
-  leafId = "a2";
+  sessionId: string;
+  leafId: string | null;
   stops = 0;
   resultMode:
     | "ok"
@@ -52,34 +65,13 @@ class BranchRpc extends EventEmitter {
     | "cancel"
     | "missing"
     | "persist" = "ok";
-  forkPath: string | null = null;
-  forkSessionId = "22222222-2222-4222-8222-222222222222";
-  forkGate: Promise<void> | null = null;
-  forkStarted: (() => void) | null = null;
-  forkResponseGate: Promise<void> | null = null;
-  forkReplaced: (() => void) | null = null;
-  forkDestinationEntry: Record<string, unknown> | null = null;
-  forkEventEntry: Record<string, unknown> | null = null;
-  nextStateGate: Promise<void> | null = null;
-  stateRequestStarted: (() => void) | null = null;
-  forkEventCount = 0;
-  lateForkEventCount = 0;
-  loseWorkerDuringForkExtras = false;
-  unavailable = false;
   treeDialog = false;
-  forkDialog = false;
   extensionResponses: Array<Record<string, unknown>> = [];
-
-  get available(): boolean {
-    return !this.unavailable;
-  }
-
+  private stopped = false;
   private readonly dialogResolvers = new Map<string, () => void>();
 
-  emitLateForkEvents(): void {
-    for (let index = 0; index < this.lateForkEventCount; index += 1) {
-      this.emit("event", { type: "message_update", late: true, index });
-    }
+  get available(): boolean {
+    return !this.stopped;
   }
 
   constructor(readonly options: PiRpcOptions) {
@@ -89,11 +81,22 @@ class BranchRpc extends EventEmitter {
     this.bridgeCommand = options.env!.INSPIRE_BRANCH_COMMAND!;
     this.statusKey = options.env!.INSPIRE_BRANCH_STATUS_KEY!;
     this.workerId = options.env!.INSPIRE_BRANCH_WORKER_ID!;
+    const persisted = readFileSync(this.path, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    this.sessionId = String(persisted[0]?.id ?? "");
+    const last = [...persisted]
+      .reverse()
+      .find((candidate) => typeof candidate.id === "string");
+    this.leafId = typeof last?.id === "string" ? last.id : null;
   }
 
   async start() {}
+
   async stop() {
     this.stops += 1;
+    this.stopped = true;
   }
 
   private waitForDialog(
@@ -161,17 +164,11 @@ class BranchRpc extends EventEmitter {
   async request<T>(
     command: Record<string, unknown>,
     _timeoutMs?: number,
-    responseFence?: PiRpcResponseFence,
+    _responseFence?: PiRpcResponseFence,
   ): Promise<T> {
     this.commands.push(command);
     let value: unknown = {};
     if (command.type === "get_state") {
-      const gate = this.nextStateGate;
-      if (gate) {
-        this.nextStateGate = null;
-        this.stateRequestStarted?.();
-        await gate;
-      }
       value = {
         sessionId: this.sessionId,
         sessionFile: this.path,
@@ -180,13 +177,6 @@ class BranchRpc extends EventEmitter {
         isStreaming: false,
         isCompacting: false,
       };
-    } else if (command.type === "get_session_stats") {
-      if (
-        this.loseWorkerDuringForkExtras &&
-        this.sessionId === this.forkSessionId
-      ) {
-        this.unavailable = true;
-      }
     } else if (command.type === "get_available_models") value = { models: [] };
     else if (command.type === "get_commands")
       value = {
@@ -197,49 +187,7 @@ class BranchRpc extends EventEmitter {
       };
     else if (command.type === "get_entries")
       value = { entries: [], leafId: this.leafId };
-    else if (command.type === "fork") {
-      if (!this.forkPath) throw new Error("fork fixture is not configured");
-      this.forkStarted?.();
-      if (this.forkDialog) await this.waitForDialog("fork-hook", "input");
-      if (this.forkGate) await this.forkGate;
-      const destination = [
-        {
-          type: "session",
-          version: 3,
-          id: this.forkSessionId,
-          timestamp: "2026-08-01T00:00:00.000Z",
-          cwd: this.options.cwd,
-        },
-        entry("u1", null, "user", "root", 1),
-        entry("a1", "u1", "assistant", "first answer", 2),
-        entry("alt", "u1", "assistant", "fork sibling", 5),
-        ...(this.forkDestinationEntry ? [this.forkDestinationEntry] : []),
-      ];
-      await writeFile(
-        this.forkPath,
-        `${destination.map((line) => JSON.stringify(line)).join("\n")}\n`,
-      );
-      this.path = this.forkPath;
-      this.sessionId = this.forkSessionId;
-      this.leafId =
-        typeof this.forkDestinationEntry?.id === "string"
-          ? this.forkDestinationEntry.id
-          : "alt";
-      const forkEventEntry = this.forkEventEntry ?? this.forkDestinationEntry;
-      if (forkEventEntry)
-        this.emit("event", {
-          type: "entry_appended",
-          entry: forkEventEntry,
-        });
-      this.forkReplaced?.();
-      if (this.forkResponseGate) await this.forkResponseGate;
-      if (responseFence) responseFence.received = true;
-      for (let index = 0; index < this.forkEventCount; index += 1) {
-        this.emit("event", { type: "message_update", index });
-      }
-      this.emit("event", { type: "session_start", reason: "fork" });
-      value = { text: "second question", cancelled: false };
-    } else if (command.type === "prompt") {
+    else if (command.type === "prompt") {
       const text = String(command.message ?? "");
       if (text.startsWith(`/${this.bridgeCommand} `))
         await this.emitBridge(text);
@@ -261,9 +209,49 @@ class BranchRpc extends EventEmitter {
   }
 }
 
+function fakeStageFork(directory: string): StageSessionFork {
+  return async (request): Promise<StagedSessionFork> => {
+    const stagingDir = await mkdtemp(join(directory, ".test-fork-"));
+    const stagedPath = join(stagingDir, `${FORK_SESSION_ID}.jsonl`);
+    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
+    const source = (await readFile(request.sourcePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const targetIndex = source.findIndex(
+      (candidate) => candidate.id === request.targetId,
+    );
+    if (targetIndex < 1) throw new Error("Fork fixture target is unavailable");
+    const destination = [
+      {
+        type: "session",
+        version: 3,
+        id: FORK_SESSION_ID,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        cwd: directory,
+        parentSession: request.sourcePath,
+      },
+      ...source.slice(1, targetIndex),
+    ];
+    await writeFile(
+      stagedPath,
+      `${destination.map((line) => JSON.stringify(line)).join("\n")}\n`,
+    );
+    return {
+      stagingDir,
+      stagedPath,
+      destinationPath,
+      destinationId: FORK_SESSION_ID,
+      cwd: directory,
+      parentSessionPath: request.sourcePath,
+    };
+  };
+}
+
 async function setup(
   branchBridgeTimeoutMs = 15_000,
   openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
+  stageFork?: StageSessionFork,
 ) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
@@ -322,6 +310,10 @@ async function setup(
     undefined,
     branchBridgeTimeoutMs,
     openForkProjection,
+    undefined,
+    undefined,
+    undefined,
+    stageFork ?? fakeStageFork(directory),
   );
   await runtime.openSession(SESSION_ID);
   await vi.waitFor(() => expect(worker).toBeDefined());
@@ -441,44 +433,6 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("emits a session_before_fork dialog under the source id and rebinds only unresolved requests", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-dialog.jsonl");
-    worker.forkDialog = true;
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      events.push(event as Record<string, unknown>),
-    );
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-      });
-      await vi.waitFor(() =>
-        expect(events.find((event) => event.id === "fork-hook")).toMatchObject({
-          sessionId: SESSION_ID,
-        }),
-      );
-      await runtime.extensionUiResponse({
-        sessionId: SESSION_ID,
-        id: "fork-hook",
-        value: "continue",
-      });
-      const result = await forking;
-      expect(result.sessionId).toBe(worker.forkSessionId);
-      expect(result.snapshot.pendingExtensionUiRequests).toEqual([]);
-      expect(
-        worker.extensionResponses.filter(
-          (response) => response.id === "fork-hook",
-        ),
-      ).toHaveLength(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("returns original edit text, navigates to the parent, and refuses the irreducible root case", async () => {
     const { runtime } = await setup();
     try {
@@ -523,68 +477,145 @@ describe("stock RPC branch bridge", () => {
     },
   );
 
-  it("buffers fork replacement events, atomically rebinds identity, and keeps the bridge usable", async () => {
-    const { runtime, worker, directory } = await setup();
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      events.push(event as Record<string, unknown>),
-    );
-    worker.forkPath = join(directory, "forked.jsonl");
+  it("forks through an independent owner while preserving an active source worker, queue, and dialog", async () => {
+    const { runtime, worker, workers, path } = await setup();
     try {
-      const sourceTree = await runtime.branchTree(SESSION_ID);
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", {
+        type: "queue_update",
+        steering: ["steer later"],
+        followUp: ["follow later"],
+      });
+      worker.emit("event", {
+        type: "extension_ui_request",
+        id: "source-dialog",
+        method: "confirm",
+        title: "Source dialog",
+      });
+      await vi.waitFor(async () =>
+        expect(await runtime.snapshot()).toMatchObject({
+          runState: "running",
+          pendingExtensionUiRequests: [
+            { id: "source-dialog", sessionId: SESSION_ID },
+          ],
+          pendingQueues: {
+            steering: [expect.objectContaining({ textPreview: "steer later" })],
+            followUp: [
+              expect.objectContaining({ textPreview: "follow later" }),
+            ],
+          },
+        }),
+      );
+      const sourceBefore = await readFile(path, "utf8");
+      const tree = await runtime.branchTree(SESSION_ID);
       const forked = await runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: sourceTree.revision,
+        revision: tree.revision,
         targetId: "u2",
       });
-      expect(forked.sessionId).toBe(worker.forkSessionId);
-      expect(forked.editorText).toBe("second question");
-      expect(runtime.activeSessionId).toBe(worker.forkSessionId);
-      expect(forked.snapshot.active?.sessionId).toBe(worker.forkSessionId);
-      expect(
-        events.find((event) => event.type === "session_start"),
-      ).toMatchObject({ sessionId: worker.forkSessionId });
-      expect(
-        events.some(
-          (event) =>
-            event.sessionId === SESSION_ID && event.type === "session_start",
-        ),
-      ).toBe(false);
-      const slots = (
-        runtime as unknown as { slots: Map<string, { projection: unknown }> }
-      ).slots;
-      await vi.waitFor(() => expect(slots.has(SESSION_ID)).toBe(false));
-      expect(
-        [...slots.values()].filter((slot) => slot.projection !== null),
-      ).toHaveLength(1);
 
-      const destinationTree = await runtime.branchTree(worker.forkSessionId);
-      const navigated = await runtime.navigateBranch({
-        sessionId: worker.forkSessionId,
-        revision: destinationTree.revision,
-        targetId: "a1",
-        mode: "switch",
+      expect(forked).toMatchObject({
+        sessionId: FORK_SESSION_ID,
+        editorText: "second question",
+        snapshot: {
+          active: {
+            sessionId: FORK_SESSION_ID,
+            durableLeafId: "a1",
+          },
+          sessionStatuses: {
+            [SESSION_ID]: { runState: "running" },
+          },
+        },
       });
-      expect(navigated.snapshot.active?.effectiveLeafId).toBe("a1");
+      expect(runtime.activeSessionId).toBe(FORK_SESSION_ID);
+      expect(worker.commands.some((command) => command.type === "fork")).toBe(
+        false,
+      );
       expect(worker.stops).toBe(0);
+      expect(await readFile(path, "utf8")).toBe(sourceBefore);
+      const destination = await readFile(
+        join(resolve(path, ".."), `${FORK_SESSION_ID}.jsonl`),
+        "utf8",
+      );
+      expect(destination).toContain('"id":"a1"');
+      expect(destination).not.toContain('"id":"u2"');
 
-      const reopened = await runtime.openSession(SESSION_ID);
-      expect(reopened.active?.sessionId).toBe(SESSION_ID);
-      await vi.waitFor(() => expect(slots.has(SESSION_ID)).toBe(true));
+      const source = await runtime.openSession(SESSION_ID);
+      expect(source).toMatchObject({
+        active: { sessionId: SESSION_ID },
+        runState: "running",
+        pendingExtensionUiRequests: [
+          { id: "source-dialog", sessionId: SESSION_ID },
+        ],
+        pendingQueues: {
+          steering: [expect.objectContaining({ textPreview: "steer later" })],
+          followUp: [expect.objectContaining({ textPreview: "follow later" })],
+        },
+      });
+      expect(workers[0]).toBe(worker);
+      expect(worker.stops).toBe(0);
     } finally {
       await runtime.close();
     }
   });
 
-  it("rejects a fork destination already reserved by an in-flight projection load", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-loading-collision.jsonl");
-    const loadingPaths = (
-      runtime as unknown as {
-        loadingPaths: Map<string, Promise<unknown>>;
+  it("holds the generated destination reservation across publication and a slower final projection open", async () => {
+    let release!: () => void;
+    let opened!: () => void;
+    let recordsRef!: Map<string, SessionRecord>;
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const finalOpen = new Promise<void>((resolveOpen) => {
+      opened = resolveOpen;
+    });
+    const fixture = await setup(15_000, async (record) => {
+      if (record.path.includes(`${join("", ".test-fork-")}`)) {
+        return SessionProjection.open(record);
       }
-    ).loadingPaths;
-    loadingPaths.set(resolve(worker.forkPath), Promise.resolve({}));
+      recordsRef.set(record.id, record);
+      opened();
+      await gate;
+      return SessionProjection.open(record);
+    });
+    const { runtime, workers, records } = fixture;
+    recordsRef = records;
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      const forking = runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      });
+      await finalOpen;
+      const openingDestination = runtime.openSession(FORK_SESSION_ID);
+      await runtime.openSession(SESSION_ID);
+      release();
+      const [forked, openedDestination] = await Promise.all([
+        forking,
+        openingDestination,
+      ]);
+      expect(forked.sessionId).toBe(FORK_SESSION_ID);
+      expect(openedDestination.active?.sessionId).toBe(FORK_SESSION_ID);
+      expect(runtime.activeSessionId).toBe(SESSION_ID);
+      await vi.waitFor(() =>
+        expect(
+          workers.filter(
+            (candidate) => candidate.sessionId === FORK_SESSION_ID,
+          ),
+        ).toHaveLength(1),
+      );
+    } finally {
+      release?.();
+      await runtime.close();
+    }
+  });
+
+  it("rejects an atomic destination-path collision without changing the source", async () => {
+    const { runtime, worker, directory, path } = await setup();
+    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
+    await writeFile(destinationPath, "existing destination\n");
+    const sourceBefore = await readFile(path, "utf8");
     try {
       const tree = await runtime.branchTree(SESSION_ID);
       await expect(
@@ -594,150 +625,11 @@ describe("stock RPC branch bridge", () => {
           targetId: "u2",
         }),
       ).rejects.toMatchObject({ status: 409 });
-      expect(worker.stops).toBeGreaterThan(0);
-    } finally {
-      loadingPaths.delete(resolve(worker.forkPath));
-      await runtime.close();
-    }
-  });
-
-  it("keeps source snapshot identity stable while a concurrent read straddles fork replacement", async () => {
-    const { runtime, worker, workers, directory, path } = await setup();
-    worker.forkPath = join(directory, "forked-concurrent-snapshot.jsonl");
-    worker.forkDestinationEntry = {
-      type: "custom",
-      id: "destination-state",
-      parentId: "alt",
-      timestamp: "2026-08-01T00:00:00.006Z",
-      customType: "fork-state",
-      data: { active: true },
-    };
-    let releaseState!: () => void;
-    let releaseFork!: () => void;
-    const stateRequested = new Promise<void>((resolveState) => {
-      worker.stateRequestStarted = resolveState;
-    });
-    worker.nextStateGate = new Promise<void>((resolveState) => {
-      releaseState = resolveState;
-    });
-    const forkReplaced = new Promise<void>((resolveFork) => {
-      worker.forkReplaced = resolveFork;
-    });
-    worker.forkResponseGate = new Promise<void>((resolveFork) => {
-      releaseFork = resolveFork;
-    });
-    try {
-      const sourceTree = await runtime.branchTree(SESSION_ID);
-      const straddlingSnapshot = runtime.snapshot();
-      await stateRequested;
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: sourceTree.revision,
-        targetId: "u2",
-      });
-      await forkReplaced;
-
-      const replacementSnapshot = await runtime.openSession(SESSION_ID);
-      expect(replacementSnapshot.active).toMatchObject({
-        sessionId: SESSION_ID,
-        sessionFile: path,
-      });
-
-      releaseState();
-      const completedSnapshot = await straddlingSnapshot;
-      expect(completedSnapshot.active).toMatchObject({
-        sessionId: SESSION_ID,
-        sessionFile: path,
-      });
-
-      releaseFork();
-      await expect(forking).resolves.toMatchObject({
-        sessionId: worker.forkSessionId,
-      });
-      const sourceSlot = (
-        runtime as unknown as {
-          slots: Map<
-            string,
-            {
-              sessionPath: string | null;
-              persistenceExpectations: unknown[];
-            }
-          >;
-        }
-      ).slots.get(SESSION_ID);
-      expect(sourceSlot?.sessionPath).toBe(path);
-      expect(sourceSlot?.persistenceExpectations).toEqual([]);
-      const reopened = await runtime.openSession(SESSION_ID);
-      expect(reopened.active?.sessionFile).toBe(path);
-      await vi.waitFor(() => expect(workers).toHaveLength(2));
-      expect(workers[1]?.path).toBe(path);
-    } finally {
-      releaseState?.();
-      releaseFork?.();
-      await runtime.close();
-    }
-  });
-
-  it("fails closed when a fork persistence claim disagrees with the destination entry", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-claim-mismatch.jsonl");
-    worker.forkDestinationEntry = {
-      type: "custom",
-      id: "destination-state",
-      parentId: "alt",
-      timestamp: "2026-08-01T00:00:00.006Z",
-      customType: "fork-state",
-      data: { active: false },
-    };
-    worker.forkEventEntry = {
-      ...worker.forkDestinationEntry,
-      data: { active: true },
-    };
-    try {
-      const sourceTree = await runtime.branchTree(SESSION_ID);
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          revision: sourceTree.revision,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        message: expect.stringContaining(
-          "differs from the worker's persistence claim",
-        ),
-      });
-      expect(worker.stops).toBe(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("does not let native fork drain accepted queued input before replacement", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      worker.emit("event", {
-        type: "queue_update",
-        steering: [],
-        followUp: ["queued follow-up"],
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.followUp).toEqual([
-          expect.objectContaining({ textPreview: "queued follow-up" }),
-        ]),
+      expect(await readFile(destinationPath, "utf8")).toBe(
+        "existing destination\n",
       );
-      const tree = await runtime.branchTree(SESSION_ID);
-
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        message: "Resume Pending and remove queued messages before forking",
-      });
+      expect(await readFile(path, "utf8")).toBe(sourceBefore);
+      expect(worker.stops).toBe(0);
       expect(worker.commands.some((command) => command.type === "fork")).toBe(
         false,
       );
@@ -746,128 +638,36 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("reserves fork identity and path while projection open races catalog refresh and destination open", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const opening = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const fixture = await setup(15_000, async (record) => {
-      started();
-      await gate;
-      return SessionProjection.open(record);
-    });
-    const { runtime, worker, workers, directory, records, catalog } = fixture;
-    worker.forkPath = join(directory, "forked-reserved.jsonl");
-    records.set(worker.forkSessionId, {
-      id: worker.forkSessionId,
-      cwd: directory,
-      path: worker.forkPath,
-      source: null,
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 3,
-      firstMessage: "root",
-      searchText: "root",
-    });
+  it("reports a published destination as committed when final attachment fails", async () => {
+    let opens = 0;
+    const { runtime, worker, directory } = await setup(
+      15_000,
+      async (record) => {
+        opens += 1;
+        if (opens === 1) return SessionProjection.open(record);
+        throw new Error("projection fixture failed");
+      },
+    );
     try {
       const tree = await runtime.branchTree(SESSION_ID);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
+      await expect(
+        runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "u2",
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining(
+          `Fork created Session ${FORK_SESSION_ID}`,
+        ),
       });
-      await opening;
-      await catalog.refresh(true);
-      const openingDestination = runtime.openSession(worker.forkSessionId);
-      await new Promise((resolveTick) => setTimeout(resolveTick, 10));
-      expect(workers).toHaveLength(1);
-      release();
-      const [forked, opened] = await Promise.all([forking, openingDestination]);
-      expect(opened.active?.sessionId).toBe(forked.sessionId);
-      expect(workers).toHaveLength(1);
+      expect(
+        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
+      ).toContain('"id":"a1"');
+      expect(worker.stops).toBe(0);
+      expect((await runtime.snapshot()).runState).not.toBe("conflict");
     } finally {
-      release?.();
-      await runtime.close();
-    }
-  });
-
-  it("commits an accepted fork read-only when its worker exits during optional reads", async () => {
-    const { runtime, worker, workers, directory } = await setup();
-    worker.forkPath = join(directory, "forked-worker-exit.jsonl");
-    worker.loseWorkerDuringForkExtras = true;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const forked = await runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-      });
-      expect(forked).toMatchObject({
-        sessionId: worker.forkSessionId,
-        snapshot: {
-          active: { sessionId: worker.forkSessionId },
-          runState: "failed",
-        },
-      });
-      expect(await runtime.snapshot()).toMatchObject({
-        active: { sessionId: worker.forkSessionId },
-        runState: "failed",
-      });
-      expect(workers).toHaveLength(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("releases a failed fork reservation so destination open can recover with one fresh worker", async () => {
-    let fail!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      fail = resolve;
-    });
-    const opening = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const fixture = await setup(15_000, async () => {
-      started();
-      await gate;
-      throw new Error("projection fixture failed");
-    });
-    const { runtime, worker, workers, directory, records } = fixture;
-    worker.forkPath = join(directory, "forked-reservation-failure.jsonl");
-    records.set(worker.forkSessionId, {
-      id: worker.forkSessionId,
-      cwd: directory,
-      path: worker.forkPath,
-      source: null,
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 3,
-      firstMessage: "root",
-      searchText: "root",
-    });
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-      });
-      await opening;
-      const openingDestination = runtime.openSession(worker.forkSessionId);
-      fail();
-      await expect(forking).rejects.toThrow(/projection fixture failed/);
-      await expect(openingDestination).resolves.toMatchObject({
-        active: { sessionId: worker.forkSessionId },
-      });
-      await vi.waitFor(() => expect(workers).toHaveLength(2));
-      expect(workers[0]?.stops).toBe(1);
-    } finally {
-      fail?.();
       await runtime.close();
     }
   });
@@ -960,136 +760,6 @@ describe("stock RPC branch bridge", () => {
         worker.commands.filter((command) => command.type === "prompt"),
       ).toHaveLength(1);
     } finally {
-      await runtime.close();
-    }
-  });
-
-  it("clears fork rebinding state after invalid final identity so a fresh source worker can recover", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-invalid.jsonl");
-    worker.forkSessionId = SESSION_ID;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(worker.stops).toBe(1);
-      await expect(
-        runtime.prompt({ sessionId: SESSION_ID, message: "recover source" }),
-      ).resolves.toMatchObject({ text: "recover source" });
-      expect(
-        JSON.stringify(
-          (await runtime.snapshot()).active?.transcriptPage.messages,
-        ),
-      ).toContain("recover source");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("stops buffering and fails closed when the fork event cap is exceeded", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-overflow.jsonl");
-    worker.forkEventCount = 1_001;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-      expect((await runtime.snapshot()).runState).toBe("conflict");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps late fork overflow terminal while destination projection is opening", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const opening = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const fixture = await setup(15_000, async (record) => {
-      started();
-      await gate;
-      return SessionProjection.open(record);
-    });
-    const { runtime, worker, directory, records } = fixture;
-    worker.forkPath = join(directory, "forked-late-overflow.jsonl");
-    worker.lateForkEventCount = 1_001;
-    records.set(worker.forkSessionId, {
-      id: worker.forkSessionId,
-      cwd: directory,
-      path: worker.forkPath,
-      source: null,
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 3,
-      firstMessage: "root",
-      searchText: "root",
-    });
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-      });
-      await opening;
-      worker.emitLateForkEvents();
-      await vi.waitFor(() => expect(worker.stops).toBe(1));
-      release();
-      await expect(forking).rejects.toMatchObject({ status: 504 });
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-      expect(
-        (runtime as unknown as { slots: Map<string, unknown> }).slots.has(
-          worker.forkSessionId,
-        ),
-      ).toBe(false);
-    } finally {
-      release?.();
-      await runtime.close();
-    }
-  });
-
-  it("does not let a slower fork steal a newer host selection intent", async () => {
-    const { runtime, worker, directory } = await setup();
-    worker.forkPath = join(directory, "forked-race.jsonl");
-    let release!: () => void;
-    let started!: () => void;
-    worker.forkGate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const dispatched = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    worker.forkStarted = started;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-      });
-      await dispatched;
-      await runtime.openSession(SESSION_ID);
-      release();
-      const result = await forking;
-      expect(result.sessionId).toBe(worker.forkSessionId);
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-    } finally {
-      release?.();
       await runtime.close();
     }
   });

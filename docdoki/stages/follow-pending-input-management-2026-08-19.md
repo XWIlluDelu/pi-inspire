@@ -69,7 +69,7 @@ Turn the existing Pending projection into a small, truthful Session queue manage
 - [x] Route every queue mutation through the Session mutation gate with process/incarnation and revision validation. Reconcile only from the authoritative operation result/event.
 - [x] Keep paused queues across `agent_settled`, protect their worker from eviction and maintenance leases, and clear them on worker replacement/exit with existing visible failure reporting.
 - [x] Keep the established Pending visual structure. Keep Active Pending deliberately low-presence, make Paused Pending more prominent when management becomes available, and add a quiet Active/Paused signal, Pause/Resume, paused-only delete and type-toggle controls, confirmed Clear all, and an explicit empty paused state without adding a second editor or reorder UI.
-- [x] Keep fork, branch replacement, deletion, and other queue-destructive operations unavailable until Pending is resumed and consumed or explicitly cleared.
+- [x] Keep same-session branch replacement, deletion, and other queue-destructive operations unavailable until Pending is resumed and consumed or explicitly cleared. Independent fork does not consume or replace the source worker, so source Pending remains intact and does not block it.
 - [x] Bound queue events and rendering so many large text entries cannot exceed the existing RPC/WebSocket limits or create an unbounded active DOM, without changing copy authority for accepted text.
 
 ## Acceptance
