@@ -27,7 +27,7 @@ import {
 import { store } from "../store";
 import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
-import { RichText } from "./RichText";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
 import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {

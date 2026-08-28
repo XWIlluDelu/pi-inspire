@@ -44,7 +44,7 @@ import {
 import { Dropdown } from "./Dropdown";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { PromptMap } from "./PromptMap";
-import { handleRichTextCopy } from "./RichText";
+import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
 import { useTranscriptRows } from "./transcript-row-projection";
 import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";

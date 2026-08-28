@@ -13,12 +13,12 @@ import { resourceReferenceLine } from "../../shared/resource-references";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
-import type { ContextPaneView } from "./context-pane-view";
 import { ContextPaneState } from "./ContextPaneState";
+import type { ContextPaneView } from "./context-pane-view";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-import { RichText } from "./RichText";
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

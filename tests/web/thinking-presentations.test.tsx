@@ -22,7 +22,7 @@ function configureThinking(
 afterEach(() => configureToolPresentationRegistry());
 
 describe("custom Thinking presentations", () => {
-  it("replaces only the summary and expanded body inside the native shell", () => {
+  it("replaces only the summary and expanded body inside the native shell", async () => {
     const configuration = toolPresentationConfigurationSchema.parse({
       version: 1,
       rules: {},
@@ -82,7 +82,7 @@ describe("custom Thinking presentations", () => {
     ).not.toBeNull();
     expect(within(card).getByText("Characters")).toBeInTheDocument();
     expect(
-      within(card).getByText("Plan", { selector: "h1" }),
+      await within(card).findByText("Plan", { selector: "h1" }),
     ).toBeInTheDocument();
     expect(
       within(card).getByRole("button", { name: "Copy thinking block" }),

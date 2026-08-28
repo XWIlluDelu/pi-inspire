@@ -125,8 +125,6 @@ describe("message reconciliation", () => {
         assistantMessageEvent: {
           type: "toolcall_start",
           contentIndex: 2,
-          id: "tool-1",
-          toolName: "read",
         },
       },
       {
@@ -141,10 +139,10 @@ describe("message reconciliation", () => {
     for (const update of updates)
       result = reduce(result.slice, new Set(), update);
 
+    expect(result.resync).toBe(false);
     expect(result.slice.messages[0]!.content).toMatchObject([
       { type: "thinking", thinking: "check state" },
       { type: "text", text: "hello" },
-      { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
     ]);
 
     result = reduce(result.slice, new Set(), {
@@ -169,6 +167,113 @@ describe("message reconciliation", () => {
         { type: "text", text: "hello" },
         { type: "toolCall", id: "tool-1", name: "read" },
       ],
+    });
+  });
+
+  it("reduces an ordered delta batch once and rejects a broken length witness", () => {
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-batch",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const streamMessageKey = started.slice.activeAssistantMessageKey!;
+    const batch = reduce(started.slice, new Set(), {
+      type: "message_update_batch",
+      streamMessageKey,
+      streamTextLength: 5,
+      streamRevision: 3,
+      assistantMessageEvents: [
+        { type: "text_start", contentIndex: 0 },
+        { type: "text_delta", contentIndex: 0, delta: "hel" },
+        { type: "text_delta", contentIndex: 0, delta: "lo" },
+      ],
+    });
+    expect(batch.changed).toBe(true);
+    expect(batch.resync).toBe(false);
+    expect(batch.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "hello" },
+    ]);
+
+    const broken = reduce(batch.slice, new Set(), {
+      type: "message_update_batch",
+      streamMessageKey,
+      streamTextLength: 99,
+      streamRevision: 4,
+      assistantMessageEvents: [
+        { type: "text_delta", contentIndex: 0, delta: "!" },
+      ],
+    });
+    expect(broken.resync).toBe(true);
+    expect(broken.slice.messages).toBe(batch.slice.messages);
+  });
+
+  it("does not let a joining backlog regress a newer snapshot projection", () => {
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const streamMessageKey = started.slice.activeAssistantMessageKey!;
+    const atThree = reduce(started.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 3,
+      streamRevision: 3,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "abc" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 3,
+      },
+    });
+    const stale = reduce(atThree.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 2,
+      streamRevision: 2,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ab" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 2,
+      },
+    });
+    expect(stale.changed).toBe(false);
+    expect(stale.resync).toBe(false);
+    expect(stale.slice.messages).toBe(atThree.slice.messages);
+
+    const advanced = reduce(stale.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 4,
+      streamRevision: 4,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "abcd" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 4,
+      },
+    });
+    expect(advanced.resync).toBe(false);
+    expect(advanced.slice.messages[0]).toMatchObject({
+      __inspireStreamRevision: 4,
+      content: [{ type: "text", text: "abcd" }],
     });
   });
 

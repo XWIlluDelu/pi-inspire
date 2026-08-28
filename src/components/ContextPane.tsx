@@ -23,7 +23,7 @@ export const ContextPane = memo(function ContextPane({
   const transportGeneration = state.transportGeneration;
   const modalPaneRef = useModalFocus<HTMLDivElement>(
     isModal,
-    undefined,
+    "context-pane",
     onClose,
   );
   const [resourcePage, setResourcePage] = useState<

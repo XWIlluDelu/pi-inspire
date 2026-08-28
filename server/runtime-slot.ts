@@ -146,6 +146,8 @@ export interface RuntimeSlot {
   workerProjectionSourceVersion: string | null;
   workerProjectionObservedBytes: number | null;
   overlay: unknown[];
+  /** Exact serialized bytes for each bounded overlay item. */
+  overlayItemBytes: number[];
   overlayBytes: number;
   nextOverlayId: number;
   /** Fallback correlation of the assistant message whose tool batch is live.
@@ -223,7 +225,8 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     workerProjectionSourceVersion: null,
     workerProjectionObservedBytes: null,
     overlay: [],
-    overlayBytes: 0,
+    overlayItemBytes: [],
+    overlayBytes: 2,
     nextOverlayId: 0,
     activeAssistantCorrelation: null,
     activeOverlayIds: new Map(),

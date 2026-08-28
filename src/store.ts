@@ -1,11 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import {
-  type ActivityMaterializationMode,
-  type AppState,
-  contextUsage,
-  createInitialAppState,
-} from "./app-state";
-import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
@@ -42,11 +36,18 @@ import { messageFallbackCorrelation } from "../shared/message-identity";
 import {
   type Api,
   ApiError,
+  ApiTransportError,
   createApi,
   type PendingManagementAction,
   type PendingManagementIntent,
   type ProjectFileResult,
 } from "./api";
+import {
+  type ActivityMaterializationMode,
+  type AppState,
+  contextUsage,
+  createInitialAppState,
+} from "./app-state";
 import type { PiCommand } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import { BranchController } from "./controllers/branch-controller";
@@ -271,6 +272,7 @@ export class AppStore {
   private readonly composer = new ComposerController({
     state: () => this.state,
     api: () => this.api,
+    authorityId: () => this.hostAuthorityId,
     transportGeneration: () => this.transportGeneration,
     patch: (slice) => this.set(slice),
     notify: (kind, text) => this.notify(kind, text),
@@ -299,6 +301,8 @@ export class AppStore {
       this.preferences.reconcile(authoritative, owners),
   });
   private authToken: string | null = null;
+  private hostAuthorityId: string | null = null;
+  private snapshotDigest: string | null = null;
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
   private readonly updates = new UpdateController({
@@ -308,9 +312,19 @@ export class AppStore {
     transportGeneration: () => this.transportGeneration,
   });
   private readonly connectionController = new ConnectionController({
-    state: () => ({ bootstrapped: this.state.bootstrapped }),
+    state: () => ({
+      bootstrapped: this.state.bootstrapped,
+      authorityId: this.hostAuthorityId,
+      snapshotDigest: this.snapshotDigest,
+    }),
     patch: (patch) => this.set(patch),
     applyEvent: (event) => this.runtimeEvents.apply(event),
+    recordSnapshotDigest: (digest) => {
+      this.snapshotDigest = digest;
+    },
+    invalidateSnapshotDigest: () => {
+      this.snapshotDigest = null;
+    },
     onTransportReplaced: () => this.runtimeEvents.clearLiveAttention(),
     onTransportClosed: () => {
       // A later terminal event cannot be correlated across a lost stream.
@@ -448,6 +462,8 @@ export class AppStore {
     this.invalidateTransportRequests();
     this.runtimeEvents.clearLiveAttention();
     this.authToken = null;
+    this.hostAuthorityId = null;
+    this.snapshotDigest = null;
     this.api = null;
     this.set({
       needsToken: true,
@@ -518,6 +534,20 @@ export class AppStore {
     try {
       const boot = await api.bootstrap(bootstrapRequest.signal);
       if (!ownsBootstrap()) return;
+      if (
+        typeof boot.authorityId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+          boot.authorityId,
+        ) ||
+        typeof boot.snapshotDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(boot.snapshotDigest)
+      )
+        throw new ApiError(
+          502,
+          "The Host returned an invalid bootstrap authority",
+          undefined,
+          "INVALID_BOOTSTRAP_AUTHORITY",
+        );
       // Bootstrap has either confirmed the existing pairing cookie or set one
       // from the one-shot launch bearer. All continuing browser authority is
       // cookie-backed; in particular, a forwarded WebSocket must never inherit
@@ -554,7 +584,9 @@ export class AppStore {
         needsToken: false,
         connectionProblem: null,
       });
+      this.hostAuthorityId = boot.authorityId;
       this.applySnapshot(boot.snapshot);
+      this.snapshotDigest = boot.snapshotDigest;
       void this.git.resumeAfterTransportReplacement();
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
@@ -587,9 +619,19 @@ export class AppStore {
         this.set({
           connection: "offline",
           connectionProblem:
-            error instanceof ApiError
-              ? { kind: "host-error", message: error.message }
-              : { kind: "host-unreachable" },
+            typeof navigator !== "undefined" && navigator.onLine === false
+              ? { kind: "device-offline" }
+              : error instanceof ApiError &&
+                  error.edge === "ssh-reverse" &&
+                  (error.status === 502 ||
+                    error.status === 503 ||
+                    error.status === 504)
+                ? { kind: "relay-unavailable" }
+                : error instanceof ApiError ||
+                    (error instanceof ApiTransportError &&
+                      error.phase === "response")
+                  ? { kind: "service-error", message: error.message }
+                  : { kind: "address-unreachable" },
           error: null,
           errorSeverity: "error",
         });
@@ -608,6 +650,10 @@ export class AppStore {
     snapshot: ActiveSnapshot,
     mode: "replace" | "preserve" = "preserve",
   ): void {
+    // Only a snapshot supplied with its matching wire digest can be confirmed
+    // without retransmission. HTTP resyncs and local event reduction invalidate
+    // that witness until the next event-stream snapshot.
+    this.snapshotDigest = null;
     const active = snapshot.active;
     const nextSessionId = active?.sessionId ?? null;
     const cwd = active?.cwd ?? null;

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -40,6 +41,14 @@ describe("local host API", () => {
   let git: GitInspectionLike;
   let shutdown: ReturnType<typeof vi.fn<() => void>>;
   let baseUrl: string;
+
+  function promptDelivery<T extends Record<string, unknown>>(body: T) {
+    return {
+      ...body,
+      operationId: randomUUID(),
+      authorityId: application.authorityId,
+    };
+  }
 
   beforeEach(async () => {
     temporary = await realpath(await mkdtemp(join(tmpdir(), "inspire-test-")));
@@ -1416,6 +1425,109 @@ describe("local host API", () => {
     }
   });
 
+  it("confirms an unchanged bootstrap snapshot without retransmitting it", async () => {
+    const bootstrap = await request(application.server)
+      .get("/api/bootstrap")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}&snapshot=${bootstrap.body.snapshotDigest}`,
+    );
+    try {
+      const firstFrame = await new Promise<Record<string, unknown>>(
+        (resolve, reject) => {
+          socket.once("message", (data) =>
+            resolve(JSON.parse(data.toString()) as Record<string, unknown>),
+          );
+          socket.once("error", reject);
+        },
+      );
+      expect(firstFrame).toEqual({
+        type: "snapshot",
+        authorityId: application.authorityId,
+        snapshotDigest: bootstrap.body.snapshotDigest,
+        unchanged: true,
+      });
+    } finally {
+      socket.close();
+    }
+  });
+
+  it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("message", () => resolve());
+        socket.once("error", reject);
+      });
+      const batchFrame = new Promise<Record<string, unknown>>(
+        (resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("stream batch did not arrive")),
+            2_000,
+          );
+          socket.on("message", (data) => {
+            const frame = JSON.parse(data.toString()) as Record<
+              string,
+              unknown
+            >;
+            if (frame.type !== "message_update_batch") return;
+            clearTimeout(timeout);
+            resolve(frame);
+          });
+        },
+      );
+      runtime.emit("event", {
+        type: "message_update",
+        sessionId: "mock-active",
+        streamDelta: true,
+        streamMessageKey: "live:assistant-1",
+        streamTextLength: 1,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "a",
+        },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "a" }],
+        },
+      });
+      runtime.emit("event", {
+        type: "message_update",
+        sessionId: "mock-active",
+        streamDelta: true,
+        streamMessageKey: "live:assistant-1",
+        streamTextLength: 2,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "b",
+        },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "ab" }],
+        },
+      });
+      const frame = await batchFrame;
+      expect(frame).toMatchObject({
+        type: "message_update_batch",
+        sessionId: "mock-active",
+        streamMessageKey: "live:assistant-1",
+        streamTextLength: 2,
+        assistantMessageEvents: [
+          { type: "text_delta", delta: "a" },
+          { type: "text_delta", delta: "b" },
+        ],
+      });
+      expect(frame).not.toHaveProperty("message");
+    } finally {
+      socket.close();
+    }
+  });
+
   it("keeps joined sockets observable and terminates clients that stop answering pings", async () => {
     const heartbeatApp = createInspireServer({
       token,
@@ -1582,11 +1694,109 @@ describe("local host API", () => {
     }
   });
 
+  it("deduplicates prompt delivery within one Host authority", async () => {
+    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue({
+      text: "deliver once",
+      images: [],
+      files: [],
+    });
+    const delivery = promptDelivery({
+      sessionId: "mock-active",
+      message: "deliver once",
+    });
+    const first = await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send(delivery)
+      .expect(202);
+    const duplicate = await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send(delivery)
+      .expect(202);
+    expect(duplicate.body).toEqual(first.body);
+    expect(prompt).toHaveBeenCalledTimes(1);
+
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...delivery, message: "changed payload" })
+      .expect(409)
+      .expect((response) =>
+        expect(response.body.code).toBe("PROMPT_OPERATION_MISMATCH"),
+      );
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        ...delivery,
+        operationId: randomUUID(),
+        authorityId: randomUUID(),
+      })
+      .expect(409)
+      .expect((response) =>
+        expect(response.body.code).toBe("HOST_AUTHORITY_CHANGED"),
+      );
+    expect(prompt).toHaveBeenCalledTimes(1);
+
+    const refused = promptDelivery({
+      sessionId: "mock-active",
+      message: "refuse once",
+    });
+    prompt.mockRejectedValueOnce(
+      Object.assign(new Error("Prompt was refused"), {
+        status: 409,
+        code: "PROMPT_REFUSED_FOR_TEST",
+      }),
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      await request(application.server)
+        .post("/api/prompt")
+        .set("Authorization", `Bearer ${token}`)
+        .send(refused)
+        .expect("X-Inspire-Authority", application.authorityId)
+        .expect(409)
+        .expect((response) =>
+          expect(response.body.code).toBe("PROMPT_REFUSED_FOR_TEST"),
+        );
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed after a prompt response receipt retires", async () => {
+    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
+    const delivery = promptDelivery({
+      sessionId: "mock-active",
+      message: "retain the identity",
+    });
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send(delivery)
+      .expect(202);
+
+    const clock = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.now() + 15 * 60 * 1_000 + 1);
+    try {
+      await request(application.server)
+        .post("/api/prompt")
+        .set("Authorization", `Bearer ${token}`)
+        .send(delivery)
+        .expect(409)
+        .expect((response) =>
+          expect(response.body.code).toBe("PROMPT_OPERATION_RESULT_RETIRED"),
+        );
+    } finally {
+      clock.mockRestore();
+    }
+    expect(prompt).toHaveBeenCalledOnce();
+  });
+
   it("rejects session-scoped writes that do not name their session", async () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ message: "no target" })
+      .send(promptDelivery({ message: "no target" }))
       .expect(400);
     await request(application.server)
       .post("/api/control/abort")
@@ -1598,7 +1808,7 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "never-opened", message: "hello" })
+      .send(promptDelivery({ sessionId: "never-opened", message: "hello" }))
       .expect(409);
   });
 
@@ -1626,11 +1836,13 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        message:
-          "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`.",
-      })
+      .send(
+        promptDelivery({
+          sessionId,
+          message:
+            "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`.",
+        }),
+      )
       .expect(202);
 
     const listed = await request(application.server)
@@ -1793,7 +2005,12 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, message: "Open [changing](changing.md)." })
+      .send(
+        promptDelivery({
+          sessionId,
+          message: "Open [changing](changing.md).",
+        }),
+      )
       .expect(202);
     const resolved = await request(application.server)
       .post("/api/resources/resolve")
@@ -1842,7 +2059,7 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, message: "Open [slow](slow.md)." })
+      .send(promptDelivery({ sessionId, message: "Open [slow](slow.md)." }))
       .expect(202);
     const resolved = await request(application.server)
       .post("/api/resources/resolve")
@@ -2041,11 +2258,13 @@ describe("local host API", () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "mock-active",
-        message: "Integrate this note",
-        attachmentIds: [uploaded.body.attachments[0].id],
-      })
+      .send(
+        promptDelivery({
+          sessionId: "mock-active",
+          message: "Integrate this note",
+          attachmentIds: [uploaded.body.attachments[0].id],
+        }),
+      )
       .expect(202, {
         accepted: true,
         historyEntry: {

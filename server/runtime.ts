@@ -1475,7 +1475,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.extensionStatuses = {};
         this.clearWriterProjectionBaseline(current);
         current.overlay = [];
-        current.overlayBytes = 0;
+        current.overlayItemBytes = [];
+        current.overlayBytes = 2;
         current.activeAssistantCorrelation = null;
         current.activeOverlayIds.clear();
         current.conflict = retainedConflict;
