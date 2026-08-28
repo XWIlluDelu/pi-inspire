@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Search } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -13,6 +14,13 @@ import {
   type ModelIdentity,
   type ModelOption,
 } from "../../shared/contracts";
+import {
+  type FloatingMenuBounds,
+  type FloatingMenuConstraints,
+  type FloatingMenuPlacement,
+  placeFloatingMenu,
+  useFloatingMenuPlacement,
+} from "../use-floating-menu";
 
 interface ModelGroupingMetrics {
   comparisons: number;
@@ -44,119 +52,28 @@ interface ModelGroup {
   models: ModelOption[];
 }
 
-interface ModelMenuBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-interface ModelMenuPlacement {
-  direction: "up" | "down";
-  left: number;
-  top?: number;
-  bottom?: number;
-  width: number;
-  maxHeight: number;
-}
-
-const MODEL_MENU_GAP = 4;
-const MODEL_MENU_HORIZONTAL_MARGIN = 16;
-const MODEL_MENU_VERTICAL_MARGIN = 8;
-const MODEL_MENU_MAX_WIDTH = 520;
-const MODEL_MENU_MAX_HEIGHT = 440;
-
-function samePlacement(
-  left: ModelMenuPlacement | null,
-  right: ModelMenuPlacement,
-): boolean {
-  return (
-    left?.direction === right.direction &&
-    left.left === right.left &&
-    left.top === right.top &&
-    left.bottom === right.bottom &&
-    left.width === right.width &&
-    left.maxHeight === right.maxHeight
-  );
-}
+const MODEL_MENU_CONSTRAINTS: FloatingMenuConstraints = {
+  gap: 4,
+  horizontalMargin: 16,
+  verticalMargin: 8,
+  maxWidth: 520,
+  maxHeight: 440,
+};
 
 /** Place the menu inside the live center viewport, preferring the side with
  * more usable room. Upward placement uses bottom alignment so a short menu
  * remains attached to its trigger without measuring its rendered height. */
 export function placeModelMenu(
   trigger: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
-  bounds: ModelMenuBounds,
+  bounds: FloatingMenuBounds,
   layoutHeight: number,
-): ModelMenuPlacement {
-  const availableWidth = Math.max(
-    0,
-    bounds.right - bounds.left - 2 * MODEL_MENU_HORIZONTAL_MARGIN,
+): FloatingMenuPlacement {
+  return placeFloatingMenu(
+    trigger,
+    bounds,
+    layoutHeight,
+    MODEL_MENU_CONSTRAINTS,
   );
-  const width = Math.min(MODEL_MENU_MAX_WIDTH, availableWidth);
-  const minimumLeft = bounds.left + MODEL_MENU_HORIZONTAL_MARGIN;
-  const maximumLeft = Math.max(
-    minimumLeft,
-    bounds.right - MODEL_MENU_HORIZONTAL_MARGIN - width,
-  );
-  const left = Math.min(Math.max(trigger.left, minimumLeft), maximumLeft);
-  const above = Math.max(
-    0,
-    trigger.top - MODEL_MENU_GAP - bounds.top - MODEL_MENU_VERTICAL_MARGIN,
-  );
-  const below = Math.max(
-    0,
-    bounds.bottom -
-      MODEL_MENU_VERTICAL_MARGIN -
-      trigger.bottom -
-      MODEL_MENU_GAP,
-  );
-  const direction = above >= below ? "up" : "down";
-  const maxHeight = Math.min(
-    MODEL_MENU_MAX_HEIGHT,
-    direction === "up" ? above : below,
-  );
-
-  return {
-    direction,
-    left: Math.round(left),
-    ...(direction === "down"
-      ? { top: Math.round(trigger.bottom + MODEL_MENU_GAP) }
-      : {
-          bottom: Math.round(layoutHeight - trigger.top + MODEL_MENU_GAP),
-        }),
-    width: Math.round(width),
-    maxHeight: Math.floor(maxHeight),
-  };
-}
-
-function liveModelMenuBounds(root: HTMLElement): ModelMenuBounds {
-  const visualViewport = window.visualViewport;
-  const viewportLeft = visualViewport?.offsetLeft ?? 0;
-  const viewportTop = visualViewport?.offsetTop ?? 0;
-  const viewportWidth = visualViewport?.width ?? window.innerWidth;
-  const viewportHeight = visualViewport?.height ?? window.innerHeight;
-  let bounds: ModelMenuBounds = {
-    left: viewportLeft,
-    top: viewportTop,
-    right: viewportLeft + viewportWidth,
-    bottom: viewportTop + viewportHeight,
-  };
-  const center = root.closest<HTMLElement>(".center");
-  const centerBounds = center?.getBoundingClientRect();
-  if (centerBounds && centerBounds.width > 0 && centerBounds.height > 0) {
-    bounds = {
-      left: Math.max(bounds.left, centerBounds.left),
-      top: Math.max(bounds.top, centerBounds.top),
-      right: Math.min(bounds.right, centerBounds.right),
-      bottom: Math.min(bounds.bottom, centerBounds.bottom),
-    };
-  }
-  const topbarBounds = center
-    ?.querySelector<HTMLElement>(":scope > .topbar")
-    ?.getBoundingClientRect();
-  if (topbarBounds && topbarBounds.height > 0)
-    bounds.top = Math.max(bounds.top, topbarBounds.bottom);
-  return bounds;
 }
 
 /** Canonical comparison sorting is paid only when the available-model array changes. */
@@ -256,7 +173,21 @@ export function ModelSelector({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [placement, setPlacement] = useState<ModelMenuPlacement | null>(null);
+  const resolveMenuTarget = useCallback(() => {
+    const root = rootRef.current;
+    const trigger = triggerRef.current;
+    if (!root || !trigger) return null;
+    return {
+      context: root,
+      anchor: trigger.getBoundingClientRect(),
+      observe: [trigger],
+    };
+  }, []);
+  const placement = useFloatingMenuPlacement(
+    open,
+    resolveMenuTarget,
+    MODEL_MENU_CONSTRAINTS,
+  );
   const currentKey = value ? modelIdentityKey(value) : "";
   const recentKeys = useMemo(
     () => new Set(recent.map(modelIdentityKey)),
@@ -279,7 +210,6 @@ export function ModelSelector({
 
   const show = () => {
     if (models.length === 0) return;
-    setPlacement(null);
     setQuery("");
     const unfiltered = groupPreparedModels(preparedModels, recent).flatMap(
       (group) => group.models,
@@ -307,53 +237,6 @@ export function ModelSelector({
     if (modelIdentityKey(model) !== currentKey)
       onChange(model.provider, model.id);
   };
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const root = rootRef.current;
-    const trigger = triggerRef.current;
-    const menu = menuRef.current;
-    if (!root || !trigger || !menu) return;
-
-    let frame: number | null = null;
-    const update = () => {
-      frame = null;
-      if (!trigger.isConnected || !menu.isConnected) return;
-      const next = placeModelMenu(
-        trigger.getBoundingClientRect(),
-        liveModelMenuBounds(root),
-        document.documentElement.clientHeight || window.innerHeight,
-      );
-      setPlacement((current) =>
-        samePlacement(current, next) ? current : next,
-      );
-    };
-    const schedule = () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(update);
-    };
-    const center = root.closest<HTMLElement>(".center");
-    const resizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(schedule);
-    resizeObserver?.observe(trigger);
-    if (center) resizeObserver?.observe(center);
-    window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, true);
-    window.visualViewport?.addEventListener("resize", schedule);
-    window.visualViewport?.addEventListener("scroll", schedule);
-    update();
-
-    return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule, true);
-      window.visualViewport?.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("scroll", schedule);
-    };
-  }, [open]);
 
   useLayoutEffect(() => {
     if (open) inputRef.current?.focus({ preventScroll: true });

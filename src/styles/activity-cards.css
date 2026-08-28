@@ -937,7 +937,9 @@
 /* --- Rich text (rendered Markdown) --- */
 
 .rich-text {
-  overflow-wrap: break-word;
+  /* Unbroken URLs and file paths contribute a usable min-content width rather
+     than widening the reading column; ordinary prose still wraps at spaces. */
+  overflow-wrap: anywhere;
 }
 
 .rich-text--deferred {
