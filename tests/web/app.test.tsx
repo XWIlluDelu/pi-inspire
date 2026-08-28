@@ -9,6 +9,9 @@ import {
 } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+// App integration assertions exercise the real panel, not lazy-transform
+// scheduling. Preload this chunk outside each test's behavior timeout.
+import "../../src/components/ContextPane";
 import { App, composeDocumentTitle, sessionHeading } from "../../src/App";
 import { store } from "../../src/store";
 import {
@@ -587,11 +590,7 @@ describe("welcome flow", () => {
       name: "Context panel",
     });
     expect(
-      await within(pane).findByRole(
-        "button",
-        { name: "Changes" },
-        { timeout: 5_000 },
-      ),
+      await within(pane).findByRole("button", { name: "Changes" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
