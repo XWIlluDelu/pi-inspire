@@ -7,8 +7,12 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  Component,
+  lazy,
   memo,
   Profiler,
+  type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -21,25 +25,213 @@ import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
-import { ContextPane } from "./components/ContextPane";
 import { CopyAction } from "./components/CopyAction";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
-import { Settings, type SettingsCategoryId } from "./components/Settings";
+import type { SettingsCategoryId } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
 import { shallowEqual, store, useAppState } from "./store";
 import { type AvailableUpdates, availableUpdates } from "./update-availability";
-import { hasActiveModal } from "./use-modal-focus";
+import { hasActiveModal, useModalFocus } from "./use-modal-focus";
 import { cacheVisualPreferences } from "./visual-preferences";
 
 // Vite replaces MODE at build time. The production false branches are folded
 // before Rollup, leaving the ordinary elements directly in the component tree.
 const MAINTENANCE_BENCHMARK = import.meta.env.MODE === "maintenance-benchmark";
+const loadContextPane = () => import("./components/ContextPane");
+const loadSettings = () => import("./components/Settings");
+const DeferredContextSurface = lazy(() =>
+  loadContextPane().then((module) => ({ default: module.ContextPane })),
+);
+const DeferredSettingsSurface = lazy(() =>
+  loadSettings().then((module) => ({ default: module.Settings })),
+);
+
+class SurfaceLoadBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Deferred surface failed to load", error);
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+function ContextPaneLoading({
+  isModal,
+  onClose,
+  onRetry,
+}: {
+  isModal: boolean;
+  onClose: () => void;
+  onRetry?: () => void;
+}) {
+  const ref = useModalFocus<HTMLDivElement>(isModal, "context-pane", onClose);
+  const content = (
+    <>
+      <div className="ctx__header">
+        <span className="ctx__title">Context</span>
+        <button
+          type="button"
+          className="icon-button ctx__close"
+          title="Close"
+          aria-label="Close context pane"
+          onClick={onClose}
+        >
+          <X size={15} aria-hidden />
+        </button>
+      </div>
+      <div className="res__empty" role={onRetry ? "alert" : "status"}>
+        {onRetry ? (
+          <>
+            Context could not be opened.
+            <button type="button" onClick={onRetry}>
+              Reload
+            </button>
+          </>
+        ) : (
+          <>
+            <Loader2 size={14} className="spin" aria-hidden /> Loading context
+          </>
+        )}
+      </div>
+    </>
+  );
+  return isModal ? (
+    <div
+      className="ctx res"
+      id="context-pane"
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Context panel"
+      tabIndex={-1}
+    >
+      {content}
+    </div>
+  ) : (
+    <aside className="ctx res" id="context-pane" aria-label="Context panel">
+      {content}
+    </aside>
+  );
+}
+
+function SettingsLoading({
+  onClose,
+  onRetry,
+}: {
+  onClose: () => void;
+  onRetry?: () => void;
+}) {
+  const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
+  return (
+    <div className="overlay" role="presentation" onClick={onClose}>
+      <div
+        ref={ref}
+        className="dialog settings"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="settings__header">
+          <h2 className="settings__title">Settings</h2>
+          <button
+            type="button"
+            className="icon-button settings__close-btn"
+            onClick={onClose}
+            aria-label="Close settings"
+            title="Close"
+          >
+            <X size={15} aria-hidden />
+          </button>
+        </header>
+        <div className="res__empty" role={onRetry ? "alert" : "status"}>
+          {onRetry ? (
+            <>
+              Settings could not be opened.
+              <button type="button" onClick={onRetry}>
+                Reload
+              </button>
+            </>
+          ) : (
+            <>
+              <Loader2 size={14} className="spin" aria-hidden /> Loading
+              settings
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeferredContextPane({
+  isModal,
+  onClose,
+}: {
+  isModal: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <SurfaceLoadBoundary
+      fallback={
+        <ContextPaneLoading
+          isModal={isModal}
+          onClose={onClose}
+          onRetry={() => window.location.reload()}
+        />
+      }
+    >
+      <Suspense
+        fallback={<ContextPaneLoading isModal={isModal} onClose={onClose} />}
+      >
+        <DeferredContextSurface isModal={isModal} onClose={onClose} />
+      </Suspense>
+    </SurfaceLoadBoundary>
+  );
+}
+
+function DeferredSettings({
+  initialCategory,
+  onClose,
+}: {
+  initialCategory: SettingsCategoryId;
+  onClose: () => void;
+}) {
+  return (
+    <SurfaceLoadBoundary
+      fallback={
+        <SettingsLoading
+          onClose={onClose}
+          onRetry={() => window.location.reload()}
+        />
+      }
+    >
+      <Suspense fallback={<SettingsLoading onClose={onClose} />}>
+        <DeferredSettingsSurface
+          initialCategory={initialCategory}
+          onClose={onClose}
+        />
+      </Suspense>
+    </SurfaceLoadBoundary>
+  );
+}
 
 export function resolveTheme(
   pref: ThemePreference,
@@ -125,6 +317,39 @@ function TokenGate() {
   );
 }
 
+function connectionProblemText(
+  problem: NonNullable<ReturnType<typeof store.getState>["connectionProblem"]>,
+  host: string,
+): { title: string; detail: string } {
+  switch (problem.kind) {
+    case "device-offline":
+      return {
+        title: "This device is offline",
+        detail: `The browser reports no network connection, so ${host} cannot be checked yet.`,
+      };
+    case "relay-unavailable":
+      return {
+        title: "Reverse tunnel unavailable",
+        detail: `The public entry at ${host} answered, but its SSH reverse path to the INSΠRE Host is unavailable.`,
+      };
+    case "service-error":
+      return {
+        title: "Host needs attention",
+        detail: `The address answered at ${host}, but INSΠRE could not initialize: ${problem.message}`,
+      };
+    case "stream-interrupted":
+      return {
+        title: "Live connection interrupted",
+        detail: `The last confirmed state remains visible while INSΠRE reconnects to ${host}.`,
+      };
+    default:
+      return {
+        title: "INSΠRE address not reachable",
+        detail: `No usable response arrived from ${host}. The device network, public entry, reverse tunnel, or local Host may be unavailable.`,
+      };
+  }
+}
+
 function HostUnavailable({
   problem,
 }: {
@@ -134,7 +359,12 @@ function HostUnavailable({
     typeof window === "undefined"
       ? "the configured address"
       : window.location.host;
-  const hostError = problem.kind === "host-error";
+  const localHost =
+    typeof window !== "undefined" &&
+    /^(localhost|127(?:\.\d+){3}|\[::1\])(?::\d+)?$/u.test(
+      window.location.host,
+    );
+  const copy = connectionProblemText(problem, host);
   return (
     <div className="token-gate">
       <div className="token-gate__card">
@@ -143,19 +373,19 @@ function HostUnavailable({
           <Wordmark large />
         </div>
         <div>
-          <h1 className="token-gate__title">
-            {hostError ? "Host needs attention" : "Host not reachable"}
-          </h1>
-          <p className="token-gate__hint">
-            {hostError
-              ? `The host answered at ${host}, but could not initialize: ${problem.message}`
-              : `The installed app is ready, but no Inspire host is reachable at ${host}.`}
-          </p>
+          <h1 className="token-gate__title">{copy.title}</h1>
+          <p className="token-gate__hint">{copy.detail}</p>
         </div>
-        <div className="token-gate__instruction">
-          <span>Start or restart it from the Inspire project directory:</span>
-          <code>./inspire</code>
-        </div>
+        {localHost &&
+        (problem.kind === "address-unreachable" ||
+          problem.kind === "service-error") ? (
+          <div className="token-gate__instruction">
+            <span>
+              Start or restart the local Host from the project directory:
+            </span>
+            <code>./inspire</code>
+          </div>
+        ) : null}
         <div className="token-gate__actions">
           <button
             type="button"
@@ -747,7 +977,7 @@ export function App() {
       />
     );
   const resourcesContent = state.resourcesOpen ? (
-    <ContextPane isModal={isResourcesModal} onClose={closeResources} />
+    <DeferredContextPane isModal={isResourcesModal} onClose={closeResources} />
   ) : null;
 
   return (
@@ -821,11 +1051,12 @@ export function App() {
         {state.connection !== "open" && !state.error ? (
           <div className="banner banner--warning" role="status">
             <span>
-              {state.connectionProblem?.kind === "host-unreachable"
-                ? `The Inspire host is not reachable at ${window.location.host}. Start or restart it with ./inspire; the last settled state stays visible.`
-                : state.connectionProblem?.kind === "host-error"
-                  ? `The host responded but could not initialize: ${state.connectionProblem.message}`
-                  : "The live host connection was interrupted. The last settled state stays visible."}
+              {state.connectionProblem
+                ? connectionProblemText(
+                    state.connectionProblem,
+                    window.location.host,
+                  ).detail
+                : "The live INSΠRE connection was interrupted. The last confirmed state remains visible."}
             </span>
             <button type="button" onClick={() => store.retryConnection()}>
               Retry now
@@ -833,7 +1064,7 @@ export function App() {
           </div>
         ) : null}
         {settingsOpen && !extensionOverlayOpen ? (
-          <Settings
+          <DeferredSettings
             initialCategory={settingsCategory}
             onClose={closeSettings}
           />

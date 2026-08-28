@@ -9,6 +9,9 @@ import {
 } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+// App integration assertions exercise the real panel, not lazy-transform
+// scheduling. Preload this chunk outside each test's behavior timeout.
+import "../../src/components/ContextPane";
 import { App, composeDocumentTitle, sessionHeading } from "../../src/App";
 import { store } from "../../src/store";
 import {
@@ -587,7 +590,7 @@ describe("welcome flow", () => {
       name: "Context panel",
     });
     expect(
-      within(pane).getByRole("button", { name: "Changes" }),
+      await within(pane).findByRole("button", { name: "Changes" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -1215,10 +1218,10 @@ describe("folder grouping and settings page", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(
-      within(dialog).getByRole("group", { name: "Theme" }),
+      await screen.findByRole("group", { name: "Theme" }),
     ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
     expect(
       within(dialog).getByRole("group", { name: "Project location" }),
     ).toBeInTheDocument();
@@ -1278,7 +1281,7 @@ describe("folder grouping and settings page", () => {
       within(dialog).getByText(/notifications also keep the tab marked/i),
     ).toBeInTheDocument();
     // the overlay floats above the conversation instead of replacing it
-    expect(screen.getByText("hello world")).toBeInTheDocument();
+    expect(await screen.findByText("hello world")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
     expect(

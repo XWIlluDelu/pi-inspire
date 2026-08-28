@@ -1,5 +1,6 @@
 const MAX_STREAM_CONTENT_INDEX = 255;
 const MAX_STREAM_TEXT_CHARS = 64_000;
+export const MAX_ASSISTANT_STREAM_BATCH_EVENTS = 2_048;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,6 +27,25 @@ function appendBounded(current: unknown, delta: unknown): string {
   if (typeof delta !== "string" || prefix.length >= MAX_STREAM_TEXT_CHARS)
     return prefix;
   return `${prefix}${delta}`.slice(0, MAX_STREAM_TEXT_CHARS);
+}
+
+/** A cheap integrity witness for ordered stream-delta transport. */
+export function assistantStreamTextLength(value: unknown): number {
+  const message = record(value);
+  if (!message) return 0;
+  if (typeof message.content === "string") return message.content.length;
+  if (!Array.isArray(message.content)) return 0;
+  return message.content.reduce((total, part) => {
+    if (typeof part === "string") return total + part.length;
+    const item = record(part);
+    const text =
+      typeof item?.text === "string"
+        ? item.text
+        : typeof item?.thinking === "string"
+          ? item.thinking
+          : "";
+    return total + text.length;
+  }, 0);
 }
 
 /**
@@ -106,30 +126,11 @@ export function applyAssistantMessageDelta(
       };
       break;
     }
-    case "toolcall_start": {
-      const id = typeof event.id === "string" ? event.id : "";
-      const name = typeof event.toolName === "string" ? event.toolName : "";
-      if (!id || !name) return null;
-      if (
-        existing?.type === "toolCall" &&
-        existing.id === id &&
-        existing.name === name
-      )
-        return null;
-      content[index] = {
-        type: "toolCall",
-        id,
-        name,
-        arguments:
-          existing?.type === "toolCall" && record(existing.arguments)
-            ? existing.arguments
-            : {},
-      };
-      break;
-    }
+    case "toolcall_start":
     case "toolcall_delta":
-      // The public frame exposes only an argument-string fragment. Preserve the
-      // established card identity; `toolcall_end` atomically supplies typed args.
+      // Pi's public start carries no identity/name and its deltas carry only an
+      // argument-string fragment. `toolcall_end` atomically supplies the typed
+      // ToolCall, so these events cannot safely mutate the browser projection.
       return null;
     case "toolcall_end": {
       const toolCall = record(event.toolCall);

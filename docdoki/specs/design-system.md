@@ -11,6 +11,7 @@ covers:
   - public/apple-touch-icon.png
   - public/theme-init.js
   - src/styles.css
+  - src/deferred-fonts.css
   - src/styles/*.css
   - src/assets/fonts/**
   - src/assets/licenses/**
@@ -81,6 +82,11 @@ declaration.
 - IBM Plex Sans SC owns interface controls, reading text, Chinese/Latin flow,
   and the wordmark. Flux Mono SC owns code, paths, identifiers, timestamps,
   shortcut labels, and machine-oriented data. KaTeX keeps its bundled glyphs.
+  The render-blocking stylesheet registers the exact Latin core faces; the
+  complete checksum-pinned CJK face registry is a deferred stylesheet loaded
+  only after authoritative bootstrap settles, so its large declarations cannot
+  delay first render or compete with bootstrap while the browser still fetches
+  only the Unicode subsets actually used.
 - The shared type scale is 11.5px, 12.5px, 14px, 15.5px, 17px, 21px, 26px, and
   32px; 600 is the maximum product weight. CJK running text has no tracking,
   while short uppercase Latin labels may use restrained tracking. Compact,

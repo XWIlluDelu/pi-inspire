@@ -217,7 +217,7 @@ describe("History contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
 
     const history = await screen.findByLabelText(
       "Conversation history and branches",
@@ -304,7 +304,7 @@ describe("History contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
     await screen.findByLabelText("Conversation history and branches");
 
     fireEvent.click(
@@ -352,7 +352,7 @@ describe("History contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
     await screen.findByLabelText("Conversation history and branches");
     fireEvent.click(
       screen.getByRole("button", {
@@ -384,7 +384,7 @@ describe("History contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
     await screen.findByLabelText("Conversation history and branches");
     fireEvent.click(
       screen.getByRole("button", {
@@ -414,7 +414,7 @@ describe("History contextual mode", () => {
     store.setResourcesOpen(true);
     store.setContextMode("files");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
     await screen.findByLabelText("Conversation history and branches");
 
     // A projection update makes actions visibly stale until refresh.

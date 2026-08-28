@@ -1,4 +1,8 @@
-import { applyAssistantMessageDelta } from "../shared/assistant-stream";
+import {
+  applyAssistantMessageDelta,
+  assistantStreamTextLength,
+  MAX_ASSISTANT_STREAM_BATCH_EVENTS,
+} from "../shared/assistant-stream";
 import {
   boundedExtensionStatus,
   EXTENSION_ONE_WAY_METHODS,
@@ -46,6 +50,9 @@ export interface ChatMessage {
    * owning Pi entry. */
   __inspireMessageId?: string;
   __inspireLiveId?: string;
+  /** Monotonic within one live assistant projection; reconnect overlap may
+   * never replace a newer partial with an older cumulative message. */
+  __inspireStreamRevision?: number;
   __inspireSettled?: boolean;
   __inspireEntryId?: string;
   /** Opaque lazy-range alias retained while deferred history materializes so
@@ -260,6 +267,14 @@ function indexOfKey(messages: ChatMessage[], key: string): number {
   return -1;
 }
 
+function streamRevision(value: unknown): number | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const revision = (value as Record<string, unknown>).__inspireStreamRevision;
+  return Number.isSafeInteger(revision) && Number(revision) >= 0
+    ? Number(revision)
+    : null;
+}
+
 /** Replace the message identified by key. Only keyless defensive events may
  * fall back to the trailing unsettled assistant; a new keyed turn must never
  * overwrite an older turn merely because its end event was absent. */
@@ -436,7 +451,8 @@ export function reduceEvent(
       }
       break;
     }
-    case "message_update": {
+    case "message_update":
+    case "message_update_batch": {
       const supplied =
         event.message &&
         typeof event.message === "object" &&
@@ -444,33 +460,111 @@ export function reduceEvent(
           ? asMessage(event.message)
           : null;
       if (supplied && typeof supplied.role === "string") {
-        // Pi <=0.83 RPC and Inspire's reconstructed host projection supply the
-        // complete partial message directly.
+        // Joining sockets and legacy Pi RPC supply complete partial messages.
+        // Host revisions make an update that overlaps a newer snapshot a true
+        // no-op rather than allowing a cumulative replacement to move backward.
+        const suppliedKey = messageKey(supplied);
+        const wireKey =
+          typeof event.streamMessageKey === "string"
+            ? event.streamMessageKey
+            : null;
+        const suppliedRevision = streamRevision(supplied);
+        const wireRevision =
+          Number.isSafeInteger(event.streamRevision) &&
+          Number(event.streamRevision) >= 0
+            ? Number(event.streamRevision)
+            : null;
+        if (
+          (event.streamRevision !== undefined && wireRevision === null) ||
+          (wireRevision !== null && suppliedRevision !== wireRevision) ||
+          (wireKey !== null && suppliedKey !== wireKey)
+        ) {
+          resync = true;
+          break;
+        }
+        const index = suppliedKey
+          ? indexOfKey(current.messages, suppliedKey)
+          : -1;
+        const currentRevision =
+          index >= 0 ? streamRevision(current.messages[index]) : null;
+        if (
+          suppliedRevision !== null &&
+          currentRevision !== null &&
+          suppliedRevision <= currentRevision
+        )
+          break;
         slice.messages = upsert(current.messages, supplied, settledKeys);
         changed = true;
         break;
       }
 
-      // Pi 0.84 JSON/RPC intentionally sends only AssistantMessageEvent here:
-      // its mutable `partial` and the outer `message` are removed. Rebuild the
-      // current assistant from the public delta protocol instead of appending
-      // one keyless empty transcript row per token.
-      const index = current.activeAssistantMessageKey
-        ? indexOfKey(current.messages, current.activeAssistantMessageKey)
-        : -1;
-      if (index < 0) {
-        // Never guess against settled history. A missing active identity means
-        // this browser missed lifecycle state and needs the host snapshot.
+      // Established Pi 0.84 streams carry only public AssistantMessageEvent
+      // deltas. A Host batch is reduced into one immutable browser publication.
+      const activeKey = current.activeAssistantMessageKey;
+      const wireKey =
+        typeof event.streamMessageKey === "string"
+          ? event.streamMessageKey
+          : null;
+      const index = activeKey ? indexOfKey(current.messages, activeKey) : -1;
+      const events =
+        event.type === "message_update_batch"
+          ? event.assistantMessageEvents
+          : [event.assistantMessageEvent];
+      if (
+        index < 0 ||
+        (wireKey !== null && wireKey !== activeKey) ||
+        !Array.isArray(events) ||
+        events.length === 0 ||
+        events.length > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
+        (event.streamTextLength !== undefined &&
+          (!Number.isSafeInteger(event.streamTextLength) ||
+            Number(event.streamTextLength) < 0)) ||
+        (event.streamRevision !== undefined &&
+          (!Number.isSafeInteger(event.streamRevision) ||
+            Number(event.streamRevision) < 0))
+      ) {
+        // Never guess against settled history. A missing or mismatched active
+        // identity means this browser missed lifecycle state.
         resync = true;
         break;
       }
-      const reconstructed = applyAssistantMessageDelta(
-        current.messages[index],
-        event.assistantMessageEvent,
-      );
-      if (!reconstructed) break;
+      let reconstructed: unknown = current.messages[index];
+      for (const delta of events) {
+        reconstructed = applyAssistantMessageDelta(reconstructed, delta);
+        if (!reconstructed) break;
+      }
+      if (!reconstructed) {
+        // Legacy/raw Pi frames also carry projection no-ops such as
+        // toolcall_delta or an end marker whose complete text already matches.
+        // Host-owned incremental batches never contain those; a failed batch
+        // application therefore means this browser lost its stream base.
+        if (event.type === "message_update_batch" || wireKey !== null)
+          resync = true;
+        break;
+      }
+      if (
+        event.streamTextLength !== undefined &&
+        assistantStreamTextLength(reconstructed) !== event.streamTextLength
+      ) {
+        resync = true;
+        break;
+      }
+      if (event.streamRevision !== undefined) {
+        const currentRevision = streamRevision(current.messages[index]);
+        if (
+          currentRevision === null ||
+          Number(event.streamRevision) !== currentRevision + events.length
+        ) {
+          resync = true;
+          break;
+        }
+        reconstructed = {
+          ...(reconstructed as Record<string, unknown>),
+          __inspireStreamRevision: Number(event.streamRevision),
+        };
+      }
       slice.messages = [...current.messages];
-      slice.messages[index] = reconstructed as unknown as ChatMessage;
+      slice.messages[index] = reconstructed as ChatMessage;
       changed = true;
       break;
     }

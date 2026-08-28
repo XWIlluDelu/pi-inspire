@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { appendFileSync } from "node:fs";
 import {
-  appendFile,
   access,
+  appendFile,
   mkdtemp,
   readFile,
   rename,
@@ -16,8 +16,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import {
-  PiRpcOutcomeUnknownError,
   type PiRpcOptions,
+  PiRpcOutcomeUnknownError,
   type PiRpcProcess,
 } from "../../server/pi-rpc.js";
 import {
@@ -25,14 +25,14 @@ import {
   PARTIAL_PERSISTENCE_TIMEOUT_MS,
   RuntimeController,
 } from "../../server/runtime.js";
-import {
-  TRANSCRIPT_PAGE_MAX_BYTES,
-  TRANSIENT_OVERLAY_MAX_BYTES,
-} from "../../server/session-projection.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
+import {
+  TRANSCRIPT_PAGE_MAX_BYTES,
+  TRANSIENT_OVERLAY_MAX_BYTES,
+} from "../../server/session-projection.js";
 
 const directories: string[] = [];
 const stores: AttachmentStore[] = [];
@@ -1806,18 +1806,49 @@ describe("RuntimeController projection ownership gate", () => {
           delta: "live answer",
         },
       });
+      // Pi's public start/delta protocol does not expose tool identity/name or
+      // typed arguments until toolcall_end.
       workers[0]!.emit("event", {
         type: "message_update",
         assistantMessageEvent: {
           type: "toolcall_start",
           contentIndex: 2,
-          id: "tool-1",
-          toolName: "read",
+        },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 2,
+          delta: '{"path":',
+        },
+      });
+      workers[0]!.emit("event", {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_end",
+          contentIndex: 2,
+          toolCall: {
+            type: "toolCall",
+            id: "tool-1",
+            name: "read",
+            arguments: { path: "README.md" },
+          },
         },
       });
 
       const snapshot = await runtime.snapshot();
       expect(forwarded).toHaveLength(5);
+      expect(forwarded.every((event) => event.streamDelta === true)).toBe(true);
+      expect(
+        new Set(forwarded.map((event) => event.streamMessageKey)),
+      ).toHaveLength(1);
+      expect(forwarded.map((event) => event.streamTextLength)).toEqual([
+        0, 12, 12, 23, 23,
+      ]);
+      expect(forwarded.map((event) => event.streamRevision)).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
       const identities = forwarded.map(
         (event) => (event.message as Record<string, unknown>).__inspireLiveId,
       );
@@ -1827,14 +1858,25 @@ describe("RuntimeController projection ownership gate", () => {
       ).toEqual([
         { type: "thinking", thinking: "live thought" },
         { type: "text", text: "live answer" },
-        { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+        {
+          type: "toolCall",
+          id: "tool-1",
+          name: "read",
+          arguments: { path: "README.md" },
+        },
       ]);
       expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject({
         role: "assistant",
+        __inspireStreamRevision: 5,
         content: [
           { type: "thinking", thinking: "live thought" },
           { type: "text", text: "live answer" },
-          { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+          {
+            type: "toolCall",
+            id: "tool-1",
+            name: "read",
+            arguments: { path: "README.md" },
+          },
         ],
       });
     } finally {

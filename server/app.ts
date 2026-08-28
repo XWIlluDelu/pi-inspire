@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -11,6 +11,7 @@ import express, {
 import multer from "multer";
 import { WebSocket, WebSocketServer } from "ws";
 import { ZodError, z } from "zod";
+import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
 import {
   type BootstrapResponse,
   type GitDiffSide,
@@ -86,6 +87,8 @@ const newSchema = z
 const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 const promptSchema = z
   .object({
+    operationId: z.string().uuid(),
+    authorityId: z.string().uuid(),
     sessionId: sessionIdField,
     message: z.string().max(500_000),
     attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
@@ -353,6 +356,11 @@ const gitDiffSchema = z.object({
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
 const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
+const STREAM_EVENT_BATCH_INTERVAL_MS = 16;
+const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
+const MAX_PROMPT_OPERATION_RESULTS = 2_048;
+const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
+const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
@@ -599,21 +607,61 @@ function apiError(
     response.set("Content-Range", contentRange);
   if (status >= 500)
     console.error(`[${request.method} ${request.path}]`, error);
-  // A refusal may carry the candidates the host declined to choose between.
+  // Refusals may carry machine-readable provenance and candidates the host
+  // declined to choose between. Neither field contains runtime stderr.
   const matches = (error as { matches?: unknown })?.matches;
-  response
-    .status(status)
-    .json(
-      Array.isArray(matches) ? { error: message, matches } : { error: message },
-    );
+  const code = (error as { code?: unknown })?.code;
+  response.status(status).json({
+    error: message,
+    ...(typeof code === "string" ? { code } : {}),
+    ...(Array.isArray(matches) ? { matches } : {}),
+  });
 }
 
 export function createInspireServer(deps: AppDependencies): {
   app: express.Express;
   server: Server;
+  /** Process-lifetime prompt-delivery authority, also advertised by bootstrap. */
+  authorityId: string;
   close: () => Promise<void>;
 } {
   const app = express();
+  const authorityId = randomUUID();
+  type PromptOperationResponse = {
+    accepted: true;
+    historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
+  };
+  interface PromptOperationReceipt {
+    fingerprint: string;
+    promise: Promise<PromptOperationResponse> | null;
+    settledAt: number | null;
+    resultBytes: number;
+  }
+  // A process authority must never forget an operation and later accept the
+  // same ID again. Settled response bodies retire to small fingerprint
+  // tombstones; the bounded process-lifetime map fails closed at its generous
+  // limit instead of silently evicting identities.
+  const promptOperations = new Map<string, PromptOperationReceipt>();
+  const retainedPromptOperationResults: PromptOperationReceipt[] = [];
+  let retainedPromptOperationResultBytes = 0;
+  const retirePromptOperationResults = (now = Date.now()): void => {
+    while (retainedPromptOperationResults.length > 0) {
+      const operation = retainedPromptOperationResults[0]!;
+      if (
+        retainedPromptOperationResults.length <= MAX_PROMPT_OPERATION_RESULTS &&
+        retainedPromptOperationResultBytes <=
+          MAX_PROMPT_OPERATION_RESULT_BYTES &&
+        operation.settledAt !== null &&
+        now - operation.settledAt <= PROMPT_OPERATION_RESULT_TTL_MS
+      )
+        break;
+      retainedPromptOperationResults.shift();
+      operation.promise = null;
+      retainedPromptOperationResultBytes -= operation.resultBytes;
+      operation.resultBytes = 0;
+    }
+  };
+
   // The host itself remains loopback-only. A local reverse proxy may report
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
   app.set("trust proxy", "loopback");
@@ -732,6 +780,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/bootstrap", async (_request, response) => {
+    const startedAt = performance.now();
     const [preferenceState, toolPresentationState, availableModels, snapshot] =
       await Promise.all([
         deps.preferences.inspect(),
@@ -743,8 +792,13 @@ export function createInspireServer(deps: AppDependencies): {
         deps.availableModels ? deps.availableModels() : Promise.resolve([]),
         deps.runtime.snapshot(),
       ]);
+    const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
+      authorityId,
+      snapshotDigest: createHash("sha256")
+        .update(encodedSnapshot)
+        .digest("hex"),
       version: deps.version,
       piVersion: deps.piVersion,
       mock: deps.mock,
@@ -759,6 +813,10 @@ export function createInspireServer(deps: AppDependencies): {
       availableModels,
       snapshot,
     };
+    response.set(
+      "Server-Timing",
+      `inspire-bootstrap;dur=${(performance.now() - startedAt).toFixed(1)}`,
+    );
     response.json(body);
   });
 
@@ -898,10 +956,76 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.post("/api/prompt", async (request, response) => {
-    const historyEntry = await deps.runtime.prompt(
-      promptSchema.parse(request.body),
-    );
-    response.status(202).json({ accepted: true, historyEntry });
+    // Lets the browser distinguish a definitive Host refusal from an
+    // intermediary 5xx whose delivery outcome remains unknown.
+    response.set("X-Inspire-Authority", authorityId);
+    const prompt = promptSchema.parse(request.body);
+    if (prompt.authorityId !== authorityId)
+      throw Object.assign(
+        new Error(
+          "The Host restarted before this prompt delivery could be confirmed",
+        ),
+        { status: 409, code: "HOST_AUTHORITY_CHANGED" },
+      );
+
+    retirePromptOperationResults();
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify(prompt))
+      .digest("hex");
+    let operation = promptOperations.get(prompt.operationId);
+    if (operation && operation.fingerprint !== fingerprint)
+      throw Object.assign(
+        new Error("That prompt operation ID was reused with different content"),
+        { status: 409, code: "PROMPT_OPERATION_MISMATCH" },
+      );
+    if (operation && !operation.promise)
+      throw Object.assign(
+        new Error(
+          "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
+        ),
+        { status: 409, code: "PROMPT_OPERATION_RESULT_RETIRED" },
+      );
+    if (!operation) {
+      if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
+        throw Object.assign(
+          new Error(
+            "This Host has reached its process-lifetime prompt receipt limit",
+          ),
+          { status: 503, code: "PROMPT_OPERATION_CAPACITY" },
+        );
+      const receipt: PromptOperationReceipt = {
+        fingerprint,
+        promise: null,
+        settledAt: null,
+        resultBytes: 0,
+      };
+      const {
+        operationId: _operationId,
+        authorityId: _authorityId,
+        ...request
+      } = prompt;
+      const promise = deps.runtime
+        .prompt(request)
+        .then((historyEntry) => ({ accepted: true as const, historyEntry }));
+      receipt.promise = promise;
+      void promise.then(
+        (result) => {
+          receipt.settledAt = Date.now();
+          receipt.resultBytes = Buffer.byteLength(JSON.stringify(result));
+          retainedPromptOperationResultBytes += receipt.resultBytes;
+          retainedPromptOperationResults.push(receipt);
+          retirePromptOperationResults(receipt.settledAt);
+        },
+        () => {
+          receipt.settledAt = Date.now();
+          retainedPromptOperationResults.push(receipt);
+          retirePromptOperationResults(receipt.settledAt);
+        },
+      );
+      promptOperations.set(prompt.operationId, receipt);
+      operation = receipt;
+    }
+    response.status(202).json(await operation.promise!);
   });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
@@ -1248,6 +1372,12 @@ export function createInspireServer(deps: AppDependencies): {
   const websocket = new WebSocketServer({
     noServer: true,
     maxPayload: 2 * 1024 * 1024,
+    perMessageDeflate: {
+      clientNoContextTakeover: true,
+      serverNoContextTakeover: true,
+      concurrencyLimit: 4,
+      threshold: 1_024,
+    },
   });
   const sockets = new Set<WebSocket>();
   /** Sockets still waiting for their snapshot; live events queue here so the
@@ -1255,6 +1385,15 @@ export function createInspireServer(deps: AppDependencies): {
    * with the queued events flushed after it in arrival order. */
   const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
   const responsiveSockets = new Map<WebSocket, boolean>();
+  const requestedSnapshotDigests = new WeakMap<WebSocket, string | null>();
+  interface PendingStreamBatch {
+    key: string;
+    events: unknown[];
+    latest: Record<string, unknown>;
+    approximateBytes: number;
+  }
+  let pendingStreamBatch: PendingStreamBatch | null = null;
+  let streamBatchTimer: ReturnType<typeof setTimeout> | null = null;
   const forgetSocket = (socket: WebSocket): void => {
     sockets.delete(socket);
     joining.delete(socket);
@@ -1312,40 +1451,197 @@ export function createInspireServer(deps: AppDependencies): {
   }, deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS);
   heartbeatInterval.unref();
 
-  const publishRuntimeEvent = (event: unknown): void => {
-    let message: string;
-    try {
-      const encoded = JSON.stringify(event);
-      if (encoded === undefined) throw new Error("event is not serializable");
-      message = encoded;
-    } catch {
-      // A transport projection failure must not throw back through the runtime
-      // operation that emitted it. Re-bootstrap every client instead.
-      for (const socket of sockets)
-        closeLaggingSocket(socket, "Runtime event was not serializable");
-      return;
-    }
-    const messageBytes = Buffer.byteLength(message);
-    if (messageBytes > MAX_RUNTIME_EVENT_BYTES) {
-      // The next bootstrap snapshot is the recovery authority. Never enqueue
-      // one exceptional extension/runtime object into every browser socket.
-      for (const socket of sockets)
-        closeLaggingSocket(socket, "Runtime event exceeded projection budget");
-      return;
-    }
+  const broadcastEncoded = (
+    message: string,
+    messageBytes: number,
+    destinations: { joining: boolean; established: boolean },
+  ): void => {
     for (const socket of sockets) {
       const queue = joining.get(socket);
       if (queue) {
+        if (!destinations.joining) continue;
         if (queue.bytes + messageBytes > MAX_JOINING_EVENT_BYTES) {
           closeLaggingSocket(socket, "Snapshot backlog exceeded");
         } else {
           queue.messages.push(message);
           queue.bytes += messageBytes;
         }
-      } else {
+      } else if (destinations.established) {
         sendBounded(socket, message);
       }
     }
+  };
+  const serializeRuntimeEvent = (
+    event: unknown,
+  ): { message: string; bytes: number } | null => {
+    try {
+      const message = JSON.stringify(event);
+      if (message === undefined) return null;
+      return { message, bytes: Buffer.byteLength(message) };
+    } catch {
+      return null;
+    }
+  };
+  const closeProjectionDestinations = (
+    reason: string,
+    destinations: { joining: boolean; established: boolean },
+  ): void => {
+    for (const socket of sockets) {
+      const isJoining = joining.has(socket);
+      if (
+        (isJoining && destinations.joining) ||
+        (!isJoining && destinations.established)
+      )
+        closeLaggingSocket(socket, reason);
+    }
+  };
+  const flushStreamBatch = (): void => {
+    if (streamBatchTimer) clearTimeout(streamBatchTimer);
+    streamBatchTimer = null;
+    const pending = pendingStreamBatch;
+    pendingStreamBatch = null;
+    if (!pending) return;
+    const batch: Record<string, unknown> = { ...pending.latest };
+    delete batch.message;
+    delete batch.assistantMessageEvent;
+    delete batch.streamDelta;
+    batch.type = "message_update_batch";
+    batch.assistantMessageEvents = pending.events;
+    const encoded = serializeRuntimeEvent(batch);
+    if (!encoded) {
+      closeProjectionDestinations("Runtime event was not serializable", {
+        joining: false,
+        established: true,
+      });
+      return;
+    }
+    if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
+      closeProjectionDestinations("Runtime event exceeded projection budget", {
+        joining: false,
+        established: true,
+      });
+      return;
+    }
+    broadcastEncoded(encoded.message, encoded.bytes, {
+      joining: false,
+      established: true,
+    });
+  };
+  const scheduleStreamBatch = (): void => {
+    if (streamBatchTimer) return;
+    streamBatchTimer = setTimeout(
+      flushStreamBatch,
+      STREAM_EVENT_BATCH_INTERVAL_MS,
+    );
+    streamBatchTimer.unref();
+  };
+  const publishRuntimeEvent = (event: unknown): void => {
+    const record =
+      event && typeof event === "object" && !Array.isArray(event)
+        ? (event as Record<string, unknown>)
+        : null;
+    const streamDelta =
+      record?.type === "message_update" &&
+      record.streamDelta === true &&
+      typeof record.sessionId === "string" &&
+      typeof record.streamMessageKey === "string" &&
+      record.assistantMessageEvent !== undefined;
+    if (!streamDelta || !record) {
+      const encoded = serializeRuntimeEvent(event);
+      if (!encoded) {
+        // A transport projection failure must not throw back through the
+        // runtime operation that emitted it. Re-bootstrap every client.
+        closeProjectionDestinations("Runtime event was not serializable", {
+          joining: true,
+          established: true,
+        });
+        return;
+      }
+      if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
+        // The next bootstrap snapshot is the recovery authority. Never enqueue
+        // one exceptional object into every browser socket.
+        closeProjectionDestinations(
+          "Runtime event exceeded projection budget",
+          {
+            joining: true,
+            established: true,
+          },
+        );
+        return;
+      }
+      flushStreamBatch();
+      broadcastEncoded(encoded.message, encoded.bytes, {
+        joining: true,
+        established: true,
+      });
+      return;
+    }
+
+    if (sockets.size === 0) return;
+
+    // Joining sockets need complete, overlap-safe replacements. Avoid the
+    // cumulative-message stringify entirely when every socket is established;
+    // otherwise that hidden O(response length × fragments) cost survives even
+    // after wire deltas have removed the redundant network bytes.
+    if (joining.size > 0) {
+      const complete = serializeRuntimeEvent(event);
+      if (!complete) {
+        closeProjectionDestinations("Runtime event was not serializable", {
+          joining: true,
+          established: false,
+        });
+      } else if (complete.bytes > MAX_RUNTIME_EVENT_BYTES) {
+        closeProjectionDestinations(
+          "Runtime event exceeded projection budget",
+          {
+            joining: true,
+            established: false,
+          },
+        );
+      } else {
+        broadcastEncoded(complete.message, complete.bytes, {
+          joining: true,
+          established: false,
+        });
+      }
+    }
+    const hasEstablishedSocket = [...sockets].some(
+      (socket) => !joining.has(socket) && socket.readyState === WebSocket.OPEN,
+    );
+    if (!hasEstablishedSocket) return;
+
+    const compact = { ...record };
+    delete compact.message;
+    delete compact.streamDelta;
+    const compactEncoded = serializeRuntimeEvent(compact);
+    if (!compactEncoded) {
+      closeProjectionDestinations("Runtime event was not serializable", {
+        joining: false,
+        established: true,
+      });
+      return;
+    }
+    const key = `${record.sessionId}\0${record.streamMessageKey}`;
+    if (
+      pendingStreamBatch &&
+      (pendingStreamBatch.key !== key ||
+        pendingStreamBatch.events.length >= MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
+        pendingStreamBatch.approximateBytes + compactEncoded.bytes >
+          MAX_RUNTIME_EVENT_BYTES)
+    )
+      flushStreamBatch();
+    if (!pendingStreamBatch) {
+      pendingStreamBatch = {
+        key,
+        events: [],
+        latest: compact,
+        approximateBytes: 0,
+      };
+    }
+    pendingStreamBatch.events.push(record.assistantMessageEvent);
+    pendingStreamBatch.latest = compact;
+    pendingStreamBatch.approximateBytes += compactEncoded.bytes;
+    scheduleStreamBatch();
   };
   deps.runtime.on("event", publishRuntimeEvent);
 
@@ -1378,12 +1674,22 @@ export function createInspireServer(deps: AppDependencies): {
       socket.destroy();
       return;
     }
-    websocket.handleUpgrade(request, socket, head, (client) =>
-      websocket.emit("connection", client, request),
-    );
+    websocket.handleUpgrade(request, socket, head, (client) => {
+      const requestedDigest = url.searchParams.get("snapshot");
+      requestedSnapshotDigests.set(
+        client,
+        requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
+          ? requestedDigest
+          : null,
+      );
+      websocket.emit("connection", client, request);
+    });
   });
 
   websocket.on("connection", (socket) => {
+    // A stream batch belongs only to the sockets that were established when
+    // its first delta arrived. Flush before admitting a new snapshot reader.
+    flushStreamBatch();
     sockets.add(socket);
     joining.set(socket, { messages: [], bytes: 0 });
     responsiveSockets.set(socket, true);
@@ -1396,11 +1702,25 @@ export function createInspireServer(deps: AppDependencies): {
     void deps.runtime.snapshot().then(
       (snapshot) => {
         const queued = joining.get(socket);
+        // Pending batches exclude this joining socket, which already queued
+        // their complete projections. Flush before it becomes established.
+        flushStreamBatch();
         joining.delete(socket);
         if (!queued || socket.readyState !== WebSocket.OPEN) return;
         let message: string;
         try {
-          message = JSON.stringify({ type: "snapshot", data: snapshot });
+          const encodedSnapshot = JSON.stringify(snapshot);
+          const snapshotDigest = createHash("sha256")
+            .update(encodedSnapshot)
+            .digest("hex");
+          const unchanged =
+            requestedSnapshotDigests.get(socket) === snapshotDigest;
+          message = JSON.stringify({
+            type: "snapshot",
+            authorityId,
+            snapshotDigest,
+            ...(unchanged ? { unchanged: true } : { data: snapshot }),
+          });
         } catch {
           socket.close(1011, "Session state was not serializable");
           return;
@@ -1420,8 +1740,12 @@ export function createInspireServer(deps: AppDependencies): {
   return {
     app,
     server,
+    authorityId,
     close: async () => {
       clearInterval(heartbeatInterval);
+      if (streamBatchTimer) clearTimeout(streamBatchTimer);
+      streamBatchTimer = null;
+      pendingStreamBatch = null;
       deps.runtime.off("event", publishRuntimeEvent);
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.

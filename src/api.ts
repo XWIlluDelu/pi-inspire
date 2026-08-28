@@ -22,7 +22,7 @@ import type {
   PiUpdateCheckResponse,
   ProjectDirEntry,
   PromptAcceptedResponse,
-  PromptRequest,
+  PromptDeliveryRequest,
   ResourceDescriptor,
   ResourceProbeResponse,
   SessionDeleteResponse,
@@ -35,6 +35,7 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
+import { withTransportMeasure } from "./transport-performance";
 
 export type { PendingManagementAction, PendingManagementIntent };
 
@@ -68,9 +69,58 @@ export class ApiError extends Error {
     message: string,
     /** Candidate paths a refusal offered instead of guessing between them. */
     public matches?: string[],
+    public code?: string,
+    /** Public edge that produced the HTTP status, when explicitly marked. */
+    public edge?: string,
+    /** Host process that authored this application response, when present. */
+    public authorityId?: string,
   ) {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+/** The request did not produce a trustworthy application response. A write's
+ * outcome is therefore unknown until its operation identity is checked. */
+export const PROMPT_CONFIRMATION_TIMEOUT_MS = 30_000;
+
+export class ApiTransportError extends Error {
+  constructor(public phase: "request" | "response") {
+    super(
+      phase === "request"
+        ? "The INSΠRE address did not return a response"
+        : "The INSΠRE address returned an invalid response",
+    );
+    this.name = "ApiTransportError";
+  }
+}
+
+function aborted(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      (error as { name?: unknown }).name === "AbortError",
+  );
+}
+
+async function applicationFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (aborted(error)) throw error;
+    throw new ApiTransportError("request");
+  }
+}
+
+async function responseJson<T>(response: Response): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    if (aborted(error)) throw error;
+    throw new ApiTransportError("response");
   }
 }
 
@@ -78,17 +128,27 @@ async function ensureOk(response: Response): Promise<void> {
   if (response.ok) return;
   let message = `Request failed (${response.status})`;
   let matches: string[] | undefined;
+  let code: string | undefined;
   try {
     const body = (await response.json()) as {
       error?: string;
       matches?: unknown;
+      code?: unknown;
     };
     if (body.error) message = body.error;
     if (Array.isArray(body.matches)) matches = body.matches.map(String);
+    if (typeof body.code === "string") code = body.code;
   } catch {
     // keep status-based message
   }
-  throw new ApiError(response.status, message, matches);
+  throw new ApiError(
+    response.status,
+    message,
+    matches,
+    code,
+    response.headers.get("X-Inspire-Edge") ?? undefined,
+    response.headers.get("X-Inspire-Authority") ?? undefined,
+  );
 }
 
 function authorizationHeader(token: string | null): Record<string, string> {
@@ -100,7 +160,7 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await applicationFetch(path, {
     ...init,
     credentials: "same-origin",
     headers: {
@@ -112,7 +172,7 @@ async function request<T>(
     },
   });
   await ensureOk(response);
-  return (await response.json()) as T;
+  return responseJson<T>(response);
 }
 
 interface ResourceContentOptions {
@@ -153,7 +213,7 @@ async function fetchResourceContent(
   sessionId: string,
   options: ResourceContentOptions = {},
 ): Promise<ResourceContentResponse> {
-  const response = await fetch(
+  const response = await applicationFetch(
     `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
     {
       signal: options.signal,
@@ -167,7 +227,13 @@ async function fetchResourceContent(
     },
   );
   await ensureOk(response);
-  const blob = await response.blob();
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch (error) {
+    if (aborted(error)) throw error;
+    throw new ApiTransportError("response");
+  }
   if (options.byteLimit !== undefined && blob.size > options.byteLimit) {
     throw new ApiError(502, "The resource response exceeded its byte limit");
   }
@@ -181,14 +247,14 @@ async function uploadFiles(
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
   // No Content-Type header: the browser sets the multipart boundary.
-  const response = await fetch("/api/attachments", {
+  const response = await applicationFetch("/api/attachments", {
     method: "POST",
     credentials: "same-origin",
     headers: authorizationHeader(token),
     body: form,
   });
   await ensureOk(response);
-  return (await response.json()) as { attachments: UploadedAttachment[] };
+  return responseJson<{ attachments: UploadedAttachment[] }>(response);
 }
 
 function post<T>(
@@ -204,6 +270,30 @@ function post<T>(
   });
 }
 
+async function deliverPrompt(
+  token: string | null,
+  body: PromptDeliveryRequest,
+): Promise<PromptAcceptedResponse> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(
+    () => controller.abort(),
+    PROMPT_CONFIRMATION_TIMEOUT_MS,
+  );
+  try {
+    return await post<PromptAcceptedResponse>(token, "/api/prompt", body, {
+      signal: controller.signal,
+    });
+  } catch (error) {
+    // Prompt acceptance may already have crossed the public edge. Convert only
+    // this owned timeout into an unknown transport outcome so Composer retains
+    // and safely reuses the operation identity.
+    if (aborted(error)) throw new ApiTransportError("request");
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export function createApi(token: string | null = null) {
   return {
     /** A successful bearer-authenticated bootstrap establishes the pairing
@@ -213,7 +303,9 @@ export function createApi(token: string | null = null) {
       token = null;
     },
     bootstrap: (signal?: AbortSignal) =>
-      request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
+      withTransportMeasure("bootstrap-confirmation", () =>
+        request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
+      ),
     update: (refresh = false) =>
       request<UpdateCheckResponse>(
         token,
@@ -327,8 +419,10 @@ export function createApi(token: string | null = null) {
       post<HiddenClearResponse>(token, "/api/sessions/clear-hidden", {
         sessionIds,
       }),
-    prompt: (body: PromptRequest) =>
-      post<PromptAcceptedResponse>(token, "/api/prompt", body),
+    prompt: (body: PromptDeliveryRequest) =>
+      withTransportMeasure("prompt-confirmation", () =>
+        deliverPrompt(token, body),
+      ),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
     managePending: (sessionId: string, action: PendingManagementAction) =>
@@ -466,7 +560,7 @@ export function createApi(token: string | null = null) {
 export type Api = ReturnType<typeof createApi>;
 
 export async function pairHost(token: string): Promise<void> {
-  const response = await fetch("/api/auth/pair", {
+  const response = await applicationFetch("/api/auth/pair", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
@@ -475,8 +569,14 @@ export async function pairHost(token: string): Promise<void> {
   await ensureOk(response);
 }
 
-export function eventsUrl(token: string | null = null): string {
+export function eventsUrl(
+  token: string | null = null,
+  snapshotDigest: string | null = null,
+): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${protocol}//${window.location.host}/events${query}`;
+  const query = new URLSearchParams();
+  if (token) query.set("token", token);
+  if (snapshotDigest) query.set("snapshot", snapshotDigest);
+  const suffix = query.size > 0 ? `?${query}` : "";
+  return `${protocol}//${window.location.host}/events${suffix}`;
 }

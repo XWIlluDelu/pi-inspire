@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { RichText } from "./RichText";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
 const MAX_NOTEBOOK_CELLS = 200;
 const MAX_NOTEBOOK_OUTPUTS = 400;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, type Api } from "../../src/api";
+import { type Api, ApiError, ApiTransportError } from "../../src/api";
 import {
   ComposerController,
   type ComposerSlice,
@@ -19,6 +19,7 @@ function createHarness(sessionId = "session-a") {
   const uploadAttachments = vi.fn();
   const deleteAttachment = vi.fn().mockResolvedValue(undefined);
   let generation = 0;
+  let authorityId = "11111111-1111-4111-8111-111111111111";
   let api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
   const patch = vi.fn();
   const notify = vi.fn();
@@ -28,6 +29,7 @@ function createHarness(sessionId = "session-a") {
   const controller = new ComposerController({
     state: () => ({ sessionId: activeSessionId }),
     api: () => api,
+    authorityId: () => authorityId,
     transportGeneration: () => generation,
     patch,
     notify,
@@ -52,6 +54,11 @@ function createHarness(sessionId = "session-a") {
     replaceTransport: (replacement?: Api) => {
       generation += 1;
       api = replacement ?? api;
+      controller.invalidateForTransportReplacement();
+    },
+    replaceAuthority: (replacement: string) => {
+      authorityId = replacement;
+      generation += 1;
       controller.invalidateForTransportReplacement();
     },
     activate: (id: string | null) => {
@@ -81,11 +88,13 @@ describe("ComposerController", () => {
       accepted: true,
       historyEntry: null,
     });
-    expect(harness.prompt).toHaveBeenCalledWith({
-      sessionId: "session-a",
-      message: "inspect this",
-      projectFiles: ["/workspace/sent.ts"],
-    });
+    expect(harness.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-a",
+        message: "inspect this",
+        projectFiles: ["/workspace/sent.ts"],
+      }),
+    );
     expect(harness.slice()).toEqual({
       attachments: [
         expect.objectContaining({
@@ -100,7 +109,7 @@ describe("ComposerController", () => {
 
   it("keeps a failed prompt error scoped to the session that sent it", async () => {
     const harness = createHarness();
-    harness.prompt.mockRejectedValue(new Error("network lost"));
+    harness.prompt.mockRejectedValue(new ApiTransportError("request"));
     harness.controller.addProjectFile("/workspace/message.ts");
 
     const sending = harness.controller.send("send");
@@ -113,6 +122,117 @@ describe("ComposerController", () => {
       projectFiles: ["/workspace/message.ts"],
       sending: false,
     });
+  });
+
+  it("reuses one delivery identity after an acceptance-unknown transport failure", async () => {
+    const harness = createHarness();
+    harness.prompt
+      .mockRejectedValueOnce(new ApiTransportError("request"))
+      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
+
+    await expect(harness.controller.send("send once")).resolves.toBe(false);
+    await expect(harness.controller.send("send once")).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
+
+    expect(harness.prompt).toHaveBeenCalledTimes(2);
+    expect(harness.prompt.mock.calls[1]![0]).toEqual(
+      harness.prompt.mock.calls[0]![0],
+    );
+  });
+
+  it("reuses one delivery identity after an unmarked intermediary 5xx", async () => {
+    const harness = createHarness();
+    harness.prompt
+      .mockRejectedValueOnce(new ApiError(502, "Bad gateway"))
+      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
+
+    await expect(harness.controller.send("send once")).resolves.toBe(false);
+    await expect(harness.controller.send("send once")).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
+
+    expect(harness.prompt.mock.calls[1]![0]).toEqual(
+      harness.prompt.mock.calls[0]![0],
+    );
+  });
+
+  it("reuses one delivery identity after a marked relay failure", async () => {
+    const harness = createHarness();
+    harness.prompt
+      .mockRejectedValueOnce(
+        new ApiError(
+          502,
+          "Public relay could not reach the Host",
+          undefined,
+          undefined,
+          "ssh-reverse",
+        ),
+      )
+      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
+
+    await expect(harness.controller.send("send once")).resolves.toBe(false);
+    await expect(harness.controller.send("send once")).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
+
+    expect(harness.prompt.mock.calls[1]![0]).toEqual(
+      harness.prompt.mock.calls[0]![0],
+    );
+  });
+
+  it("starts a new operation after a definitive same-Host 5xx refusal", async () => {
+    const harness = createHarness();
+    harness.prompt
+      .mockRejectedValueOnce(
+        new ApiError(
+          500,
+          "Host refused the prompt",
+          undefined,
+          undefined,
+          undefined,
+          "11111111-1111-4111-8111-111111111111",
+        ),
+      )
+      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
+
+    await expect(harness.controller.send("try again")).resolves.toBe(false);
+    await expect(harness.controller.send("try again")).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
+
+    expect(harness.prompt.mock.calls[1]![0].operationId).not.toBe(
+      harness.prompt.mock.calls[0]![0].operationId,
+    );
+  });
+
+  it("blocks one blind retry before creating a new identity after Host restart", async () => {
+    const harness = createHarness();
+    harness.prompt
+      .mockRejectedValueOnce(new ApiTransportError("request"))
+      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
+
+    await expect(harness.controller.send("inspect first")).resolves.toBe(false);
+    const first = harness.prompt.mock.calls[0]![0];
+    harness.replaceAuthority("22222222-2222-4222-8222-222222222222");
+
+    await expect(harness.controller.send("inspect first")).resolves.toBe(false);
+    expect(harness.prompt).toHaveBeenCalledTimes(1);
+    expect(harness.failVisible).toHaveBeenLastCalledWith(
+      expect.stringContaining("Check the conversation"),
+    );
+
+    await expect(harness.controller.send("inspect first")).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
+    const second = harness.prompt.mock.calls[1]![0];
+    expect(second.operationId).not.toBe(first.operationId);
+    expect(second.authorityId).toBe("22222222-2222-4222-8222-222222222222");
   });
 
   it("enters pairing on a current prompt authorization failure without discarding the draft", async () => {
@@ -206,19 +326,21 @@ describe("ComposerController", () => {
     });
 
     harness.controller.previewHistoryEntry(scope, entry);
-    harness.prompt.mockRejectedValue(new Error("network lost"));
+    harness.prompt.mockRejectedValue(new ApiTransportError("request"));
     await expect(harness.controller.send("recalled")).resolves.toBe(false);
-    expect(harness.prompt).toHaveBeenCalledWith({
-      sessionId: "session-a",
-      message: "recalled",
-      historyArtifacts: {
-        viewId: "view-a",
-        incarnation: "projection-a",
-        effectiveLeafId: "leaf-a",
-        imageReferences: ["pi-embedded://4/1"],
-        fileReferences: ["pi-file://4/0", "pi-file://4/1"],
-      },
-    });
+    expect(harness.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-a",
+        message: "recalled",
+        historyArtifacts: {
+          viewId: "view-a",
+          incarnation: "projection-a",
+          effectiveLeafId: "leaf-a",
+          imageReferences: ["pi-embedded://4/1"],
+          fileReferences: ["pi-file://4/0", "pi-file://4/1"],
+        },
+      }),
+    );
     expect(harness.deleteAttachment).toHaveBeenCalledWith("draft-file");
     expect(harness.slice()).toMatchObject({
       attachments: [

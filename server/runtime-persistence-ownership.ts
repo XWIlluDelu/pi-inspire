@@ -24,13 +24,30 @@ import type {
   RuntimeSlot,
 } from "./runtime-slot.js";
 import {
-  boundedTranscriptValue,
+  boundedTranscriptProjection,
   type ProjectionReconcileResult,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "./session-projection.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
+
+function overlayItemBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value) ?? "null");
+}
+
+function overlayArrayBytes(items: readonly number[]): number {
+  return (
+    2 +
+    items.reduce((total, bytes) => total + bytes, 0) +
+    Math.max(0, items.length - 1)
+  );
+}
+
+function recountOverlay(slot: RuntimeSlot): void {
+  slot.overlayItemBytes = slot.overlay.map(overlayItemBytes);
+  slot.overlayBytes = overlayArrayBytes(slot.overlayItemBytes);
+}
 
 interface RuntimePersistenceOwnershipHost {
   readNewSessionEntries(
@@ -132,6 +149,7 @@ export class RuntimePersistenceOwnershipController {
             __inspireMessageId: `${entry.id}:0`,
             __inspireEntryId: entry.id,
           };
+          recountOverlay(slot);
         }
       }
       return;
@@ -186,7 +204,8 @@ export class RuntimePersistenceOwnershipController {
       liveId = `${slot.id}:live:${++slot.nextOverlayId}`;
       if (correlation) slot.activeOverlayIds.set(correlation, liveId);
     }
-    const bounded = boundedTranscriptValue(message);
+    const boundedProjection = boundedTranscriptProjection(message);
+    const bounded = boundedProjection.value;
     const boundedRecord =
       bounded && typeof bounded === "object" && !Array.isArray(bounded)
         ? (bounded as Record<string, unknown>)
@@ -209,6 +228,10 @@ export class RuntimePersistenceOwnershipController {
         }
       : bounded;
     const next = [...slot.overlay];
+    const itemBytes =
+      slot.overlayItemBytes.length === next.length
+        ? [...slot.overlayItemBytes]
+        : next.map(overlayItemBytes);
     const index = next.findIndex(
       (item) => this.overlayIdentity(item) === liveId,
     );
@@ -216,19 +239,36 @@ export class RuntimePersistenceOwnershipController {
       phase === "end" &&
       customEntryId !== null &&
       this.projectionHasEntry(slot, customEntryId);
+    const projectedBytes =
+      phase === "update" &&
+      customEntryId === null &&
+      boundedRecord?.__inspireLiveId === liveId
+        ? boundedProjection.bytes
+        : overlayItemBytes(projected);
     if (durableEnd) {
-      if (index >= 0) next.splice(index, 1);
-    } else if (index >= 0) next[index] = projected;
-    else next.push(projected);
+      if (index >= 0) {
+        next.splice(index, 1);
+        itemBytes.splice(index, 1);
+      }
+    } else if (index >= 0) {
+      next[index] = projected;
+      itemBytes[index] = projectedBytes;
+    } else {
+      next.push(projected);
+      itemBytes.push(projectedBytes);
+    }
     if (phase === "end" && correlation)
       slot.activeOverlayIds.delete(correlation);
     while (
       next.length > 0 &&
-      Buffer.byteLength(JSON.stringify(next)) > TRANSIENT_OVERLAY_MAX_BYTES
-    )
+      overlayArrayBytes(itemBytes) > TRANSIENT_OVERLAY_MAX_BYTES
+    ) {
       next.shift();
+      itemBytes.shift();
+    }
     slot.overlay = next;
-    slot.overlayBytes = Buffer.byteLength(JSON.stringify(next));
+    slot.overlayItemBytes = itemBytes;
+    slot.overlayBytes = overlayArrayBytes(itemBytes);
     return projected;
   }
 
@@ -330,7 +370,7 @@ export class RuntimePersistenceOwnershipController {
       overlay.push(item);
     }
     slot.overlay = overlay;
-    slot.overlayBytes = Buffer.byteLength(JSON.stringify(slot.overlay));
+    recountOverlay(slot);
   }
 
   private consumeAbsorbedPersistenceEntry(

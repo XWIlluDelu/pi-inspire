@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   parseSshReverseConfig,
   sshCommandArguments,
+  sshFailureSummary,
   sshReverseServiceBelongsToRoot,
 } from "../../connections/ssh-reverse/runner.mjs";
 
@@ -173,7 +174,25 @@ describe("ssh-reverse connection module", () => {
     );
     expect(arguments_).toContain("127.0.0.1:14587:127.0.0.1:4587");
     expect(arguments_).toContain("ExitOnForwardFailure=yes");
+    expect(arguments_).toContain("ConnectTimeout=10");
+    expect(arguments_).toContain("ServerAliveInterval=15");
+    expect(arguments_).toContain("ServerAliveCountMax=3");
+    expect(arguments_).not.toContain("Compression=yes");
     expect(arguments_).not.toContain("IdentitiesOnly=yes");
+  });
+
+  it.each([
+    ["Error: spawn ssh ENOENT", "client could not be started"],
+    ["Permission denied (publickey)", "authentication was rejected"],
+    ["Host key verification failed", "identity verification failed"],
+    [
+      "Error: remote port forwarding failed for listen port 14587",
+      "configured reverse port",
+    ],
+    ["ssh: connect to host relay port 22: Connection timed out", "unreachable"],
+    ["client_loop: send disconnect: Broken pipe", "connection was interrupted"],
+  ])("classifies SSH failure layers: %s", (stderr, expected) => {
+    expect(sshFailureSummary(stderr)).toContain(expected);
   });
 
   it("uses an explicit identity only when configured", () => {
