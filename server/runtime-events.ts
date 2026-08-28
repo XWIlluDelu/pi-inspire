@@ -1,4 +1,7 @@
-import { applyAssistantMessageDelta } from "../shared/assistant-stream.js";
+import {
+  applyAssistantMessageDelta,
+  assistantStreamTextLength,
+} from "../shared/assistant-stream.js";
 import {
   boundedExtensionStatus,
   type ExtensionDisplay,
@@ -8,10 +11,13 @@ import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
-  parsePendingExtensionUiRequest,
   type ProjectionConflict,
+  parsePendingExtensionUiRequest,
 } from "../shared/contracts.js";
-import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import {
+  messageFallbackCorrelation,
+  structuralMessageIdentity,
+} from "../shared/message-identity.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
 import {
@@ -20,6 +26,7 @@ import {
 } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
+const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
 const MAX_EXTENSION_WIDGET_PAYLOAD_BYTES = 24 * 1024;
 const EXTENSION_NON_DISPLAY_UI_METHODS = new Set([
@@ -228,13 +235,16 @@ export class RuntimeEventController {
       record.type === "message_update" ||
       record.type === "message_end"
     ) {
+      const suppliedCompleteMessage = Boolean(
+        record.message &&
+          typeof record.message === "object" &&
+          !Array.isArray(record.message),
+      );
+      const previousMessage = this.host.activeAssistantOverlayMessage(slot);
       let message = record.message;
-      if (
-        record.type === "message_update" &&
-        (!message || typeof message !== "object" || Array.isArray(message))
-      ) {
+      if (record.type === "message_update" && !suppliedCompleteMessage) {
         message = applyAssistantMessageDelta(
-          this.host.activeAssistantOverlayMessage(slot),
+          previousMessage,
           record.assistantMessageEvent,
         );
       }
@@ -245,7 +255,30 @@ export class RuntimeEventController {
             : record.type === "message_end"
               ? "end"
               : "update";
-        const projectedMessage = this.host.updateOverlay(slot, message, phase);
+        const messageRecord = message as Record<string, unknown>;
+        const previousRecord =
+          previousMessage &&
+          typeof previousMessage === "object" &&
+          !Array.isArray(previousMessage)
+            ? (previousMessage as Record<string, unknown>)
+            : null;
+        const previousRevision = previousRecord?.[STREAM_REVISION_FIELD];
+        const streamRevision =
+          messageRecord.role === "assistant"
+            ? record.type === "message_start"
+              ? 0
+              : Number.isSafeInteger(previousRevision) &&
+                  Number(previousRevision) >= 0
+                ? Number(previousRevision) + 1
+                : 0
+            : null;
+        const projectedMessage = this.host.updateOverlay(
+          slot,
+          streamRevision === null
+            ? message
+            : { ...messageRecord, [STREAM_REVISION_FIELD]: streamRevision },
+          phase,
+        );
         if (
           record.type === "message_start" &&
           projectedMessage &&
@@ -254,9 +287,40 @@ export class RuntimeEventController {
         )
           slot.activeAssistantCorrelation =
             messageFallbackCorrelation(projectedMessage);
-        forwardedEvent = { ...record, message: projectedMessage };
+        const streamMessageKey = structuralMessageIdentity(projectedMessage);
+        forwardedEvent = {
+          ...record,
+          message: projectedMessage,
+          ...(streamRevision === null ? {} : { streamRevision }),
+          ...(record.type === "message_update" &&
+          !suppliedCompleteMessage &&
+          streamMessageKey
+            ? {
+                streamDelta: true,
+                streamMessageKey,
+                streamTextLength: assistantStreamTextLength(projectedMessage),
+              }
+            : {}),
+        };
       }
     }
+    // Pi's public tool-call start has no identity/name and its deltas expose
+    // only argument-string fragments; only the terminal event has a typed
+    // ToolCall. The first two intentionally do not mutate either projection,
+    // so do not spend transport bandwidth on browser no-ops.
+    if (
+      record.type === "message_update" &&
+      (!record.message ||
+        typeof record.message !== "object" ||
+        Array.isArray(record.message)) &&
+      record.assistantMessageEvent &&
+      typeof record.assistantMessageEvent === "object" &&
+      !Array.isArray(record.assistantMessageEvent) &&
+      ["toolcall_start", "toolcall_delta"].includes(
+        String((record.assistantMessageEvent as Record<string, unknown>).type),
+      )
+    )
+      return;
     switch (record.type) {
       case "extension_ui_request": {
         const owned = { ...record, sessionId: slot.id };

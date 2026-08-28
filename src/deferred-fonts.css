@@ -1,0 +1,3 @@
+/* Full self-hosted CJK coverage, loaded after the render-critical shell. */
+@import "./assets/fonts/ibm-plex-sans-sc/faces.css";
+@import "./assets/fonts/flux-mono-sc/flux-mono-sc.css";

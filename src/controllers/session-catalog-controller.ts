@@ -742,6 +742,9 @@ export class SessionCatalogController {
         error.status,
         `Failed to load ${label}: ${message}`,
         error.matches,
+        error.code,
+        error.edge,
+        error.authorityId,
       );
     }
     return new Error(`Failed to load ${label}: ${message}`);

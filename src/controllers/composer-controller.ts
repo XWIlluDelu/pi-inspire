@@ -3,8 +3,9 @@ import {
   MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   type PromptAcceptedResponse,
+  type PromptDeliveryRequest,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import {
   type ComposerHistoryScope,
@@ -43,11 +44,18 @@ interface ComposerArtifactDraft {
   projectFiles: string[];
 }
 
+interface PendingPromptDelivery {
+  signature: string;
+  request: PromptDeliveryRequest;
+}
+
 export interface ComposerPartition {
   attachments: PendingAttachment[];
   projectFiles: string[];
   sending: boolean;
   historyDraft: ComposerArtifactDraft | null;
+  /** Retained only after an acceptance-unknown transport result. */
+  pendingDelivery: PendingPromptDelivery | null;
 }
 
 interface ComposerControllerState {
@@ -62,6 +70,7 @@ export type ComposerSlice = Pick<
 interface ComposerControllerHost {
   state(): ComposerControllerState;
   api(): Api | null;
+  authorityId(): string | null;
   transportGeneration(): number;
   patch(slice: ComposerSlice): void;
   notify(kind: "warning", text: string): void;
@@ -121,7 +130,7 @@ export class ComposerController {
     if (deliveryOutcomeUnknown)
       this.host.notify(
         "warning",
-        "Connection changed while sending; check the conversation before retrying",
+        "Connection changed while sending. Retry keeps the same delivery identity while this Host is unchanged; after a Host restart, check the conversation first.",
       );
   }
 
@@ -138,6 +147,7 @@ export class ComposerController {
       composer.projectFiles = [];
       composer.sending = false;
       composer.historyDraft = null;
+      composer.pendingDelivery = null;
       this.composers.delete(sessionId);
     }
     deleteSessionDraft(sessionId);
@@ -150,7 +160,8 @@ export class ComposerController {
   ): Promise<PromptAcceptedResponse | false> {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
-    if (!api || !sessionId) return false;
+    const authorityId = this.host.authorityId();
+    if (!api || !sessionId || !authorityId) return false;
     const generation = this.host.transportGeneration();
     const requestEpoch = this.requestEpoch;
     const ownsTransport = (): boolean =>
@@ -226,31 +237,60 @@ export class ComposerController {
     ) {
       return false;
     }
+    const deliveryContent = {
+      sessionId,
+      message,
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(historyOwner
+        ? {
+            historyArtifacts: {
+              viewId: historyOwner.viewId,
+              incarnation: historyOwner.incarnation,
+              effectiveLeafId: historyOwner.effectiveLeafId,
+              imageReferences: recalled
+                .filter((item) => item.recalledArtifact.type === "image")
+                .map((item) => item.recalledArtifact.reference),
+              fileReferences: recalled
+                .filter((item) => item.recalledArtifact.type === "file")
+                .map((item) => item.recalledArtifact.reference),
+            },
+          }
+        : {}),
+      ...(projectFiles.length > 0 ? { projectFiles } : {}),
+      ...(behavior ? { behavior } : {}),
+    };
+    const signature = JSON.stringify(deliveryContent);
+    if (
+      composer.pendingDelivery?.signature === signature &&
+      composer.pendingDelivery.request.authorityId !== authorityId
+    ) {
+      // A restarted Host cannot answer the old operation. Fail closed once so
+      // an ordinary Retry cannot turn an unknown outcome into a duplicate.
+      composer.pendingDelivery = null;
+      this.host.failVisible(
+        sessionId,
+        "The Host restarted after this message had an unknown delivery outcome. Check the conversation before sending it again.",
+      );
+      this.publish(sessionId);
+      return false;
+    }
+    const retained =
+      composer.pendingDelivery?.signature === signature
+        ? composer.pendingDelivery
+        : null;
+    const delivery: PendingPromptDelivery = retained ?? {
+      signature,
+      request: {
+        operationId: globalThis.crypto.randomUUID(),
+        authorityId,
+        ...deliveryContent,
+      },
+    };
+    composer.pendingDelivery = delivery;
     composer.sending = true;
     this.publish(sessionId);
     try {
-      const response = await api.prompt({
-        sessionId,
-        message,
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-        ...(historyOwner
-          ? {
-              historyArtifacts: {
-                viewId: historyOwner.viewId,
-                incarnation: historyOwner.incarnation,
-                effectiveLeafId: historyOwner.effectiveLeafId,
-                imageReferences: recalled
-                  .filter((item) => item.recalledArtifact.type === "image")
-                  .map((item) => item.recalledArtifact.reference),
-                fileReferences: recalled
-                  .filter((item) => item.recalledArtifact.type === "file")
-                  .map((item) => item.recalledArtifact.reference),
-              },
-            }
-          : {}),
-        ...(projectFiles.length > 0 ? { projectFiles } : {}),
-        behavior,
-      });
+      const response = await api.prompt(delivery.request);
       if (!ownsTransport()) return false;
       // Accepted: clear exactly what was delivered, from the owner session's
       // partition — never from whichever session is visible by now.
@@ -271,6 +311,7 @@ export class ComposerController {
         (path) => !sentPaths.has(path),
       );
       this.releaseHistoryDraft(composer);
+      composer.pendingDelivery = null;
       this.host.clearVisibleError(sessionId);
       return {
         accepted: true,
@@ -279,19 +320,31 @@ export class ComposerController {
     } catch (error) {
       if (!ownsTransport()) return false;
       this.commitHistoryDraft(composer);
-      if (error instanceof ApiError && error.status === 401) {
-        // This request received a definitive rejection, so transport teardown
-        // must not label its delivery outcome as unknown.
-        composer.sending = false;
-        this.host.handleAuthFailure();
-        return false;
+      const acceptanceUnknown =
+        !(error instanceof ApiError) ||
+        error.edge === "ssh-reverse" ||
+        ((error.status === 408 || error.status >= 500) &&
+          error.authorityId !== authorityId);
+      if (error instanceof ApiError && !acceptanceUnknown) {
+        // An application response is a definitive refusal. Reusing its
+        // operation is unnecessary; a changed Host also cannot resolve it.
+        composer.pendingDelivery = null;
+        if (error.status === 401) {
+          composer.sending = false;
+          this.host.handleAuthFailure();
+          return false;
+        }
       }
-      // Keep failures attached to the session that sent the prompt. A switch
-      // before the HTTP result arrives must not overwrite the new session's
-      // visible error.
+      // Keep failures attached to the session that sent the prompt. Transport,
+      // marked-edge, and unowned timeout/5xx failures retain the operation so
+      // an unchanged Host can answer a retry without delivering twice.
       this.host.failVisible(
         sessionId,
-        error instanceof Error ? error.message : "Failed to send",
+        acceptanceUnknown
+          ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
+          : error instanceof Error
+            ? error.message
+            : "Failed to send",
       );
       return false;
     } finally {
@@ -624,6 +677,7 @@ export class ComposerController {
         projectFiles: [],
         sending: false,
         historyDraft: null,
+        pendingDelivery: null,
       };
       this.composers.set(sessionId, composer);
     }
@@ -634,6 +688,7 @@ export class ComposerController {
     if (
       !composer.sending &&
       !composer.historyDraft &&
+      !composer.pendingDelivery &&
       composer.attachments.length === 0 &&
       composer.projectFiles.length === 0
     ) {

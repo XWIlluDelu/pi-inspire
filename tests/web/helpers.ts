@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import {
-  defaultPreferences,
   type ActiveSnapshot,
+  defaultPreferences,
   type SessionSummary,
 } from "../../shared/contracts";
 
@@ -9,6 +9,7 @@ import {
 
 export interface RouteResponse {
   status?: number;
+  headers?: Record<string, string>;
   body: unknown;
 }
 
@@ -37,7 +38,7 @@ export function installFetch(handler: RouteHandler) {
     }
     return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...route.headers },
     });
   });
   vi.stubGlobal("fetch", fn);
@@ -49,6 +50,9 @@ export function jsonBody(init: RequestInit): Record<string, unknown> {
 }
 
 // --- WebSocket stubbing (never connects unless told to) ---
+
+export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
+export const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
 
 export class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -71,11 +75,24 @@ export class FakeWebSocket {
     if (snapshot)
       this.emit({
         type: "snapshot",
+        authorityId: TEST_HOST_AUTHORITY,
+        snapshotDigest: TEST_SNAPSHOT_DIGEST,
         data: snapshot,
       });
   }
   emit(event: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(event) });
+    const wire =
+      event &&
+      typeof event === "object" &&
+      !Array.isArray(event) &&
+      (event as { type?: unknown }).type === "snapshot"
+        ? {
+            authorityId: TEST_HOST_AUTHORITY,
+            snapshotDigest: TEST_SNAPSHOT_DIGEST,
+            ...event,
+          }
+        : event;
+    this.onmessage?.({ data: JSON.stringify(wire) });
   }
 }
 
@@ -156,6 +173,8 @@ export function sessionSummary(
 export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
   return {
     appName: "inspire",
+    authorityId: TEST_HOST_AUTHORITY,
+    snapshotDigest: TEST_SNAPSHOT_DIGEST,
     version: "0.1.0",
     piVersion: "0.80.10",
     mock: false,

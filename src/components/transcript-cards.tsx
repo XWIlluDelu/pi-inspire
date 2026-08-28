@@ -48,8 +48,8 @@ import {
   toolPresentationRegistry,
 } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-import { RichText } from "./RichText";
 import {
   CARD_TRANSITION_MS,
   DYNAMIC_CUSTOM_CLOSE_DELAY_MS,

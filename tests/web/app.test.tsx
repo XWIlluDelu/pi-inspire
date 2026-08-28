@@ -1215,10 +1215,10 @@ describe("folder grouping and settings page", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(
-      within(dialog).getByRole("group", { name: "Theme" }),
+      await screen.findByRole("group", { name: "Theme" }),
     ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
     expect(
       within(dialog).getByRole("group", { name: "Project location" }),
     ).toBeInTheDocument();
@@ -1278,7 +1278,7 @@ describe("folder grouping and settings page", () => {
       within(dialog).getByText(/notifications also keep the tab marked/i),
     ).toBeInTheDocument();
     // the overlay floats above the conversation instead of replacing it
-    expect(screen.getByText("hello world")).toBeInTheDocument();
+    expect(await screen.findByText("hello world")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
     expect(

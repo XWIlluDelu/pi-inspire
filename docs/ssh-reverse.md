@@ -53,6 +53,8 @@ The parser accepts only these fields; it never executes the configuration as she
 ssh -N -R 127.0.0.1:14587:127.0.0.1:4587 relay-user@relay-host
 ```
 
+The managed command also bounds the initial connection to 10 seconds and probes the server every 15 seconds with three missed probes allowed, detecting a dead tunnel in roughly 45 seconds without changing the routing topology. The module leaves SSH compression at its default. `Compression=yes` can reduce bootstrap, asset, and other HTTP bytes carried inside the encrypted reverse hop, but costs CPU and may duplicate WebSocket per-message compression when the proxy preserves that negotiation. Benchmark the end-to-end path before opting in; the Caddy setting below compresses only the separate phone-facing HTTP response.
+
 ## Connection lifecycle
 
 ```bash
@@ -62,9 +64,11 @@ inspire connection ssh-reverse restart
 inspire connection ssh-reverse stop
 ```
 
-The connection commands manage only the verified SSH tunnel. They do not stop, replace, or otherwise own the local INSΠRE host. A tunnel start requires that the configured local loopback port is already listening.
+The connection commands manage only the verified SSH tunnel. They do not stop, replace, or otherwise own the local INSΠRE host. A tunnel start requires that the configured local loopback port is already listening. Startup and service logs distinguish SSH authentication, server-identity verification, relay DNS/reachability, remote-port rejection, and an interrupted established connection while retaining the raw SSH diagnostics.
 
 `status` verifies the local host listener and this module's managed SSH control connection. It does not prove public DNS, TLS, HTTPS proxying, or browser WebSocket delivery. If those are operational requirements, monitor the public endpoint independently with a paired test client that requires both an authenticated health response and the WebSocket's initial snapshot.
+
+For a bounded client-side trace, browser developer tools can inspect `performance.getEntriesByType("measure").filter(({ name }) => name.startsWith("inspire:"))`. These process-local entries report bootstrap and WebSocket handshake duration (including whether `permessage-deflate` was actually negotiated), prompt-confirmation outcome, and ten-second stream frame/event/character aggregates; they contain no prompt or response text and are neither persisted nor uploaded.
 
 `./inspire --ssh-reverse` is a shorthand for `./inspire connection ssh-reverse start`.
 
@@ -104,8 +108,6 @@ A minimal Caddy site is:
 
 ```caddyfile
 inspire.example.com {
-    encode zstd gzip
-
     header {
         Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options "nosniff"
@@ -114,13 +116,24 @@ inspire.example.com {
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
 
+    # Compresses the phone-facing HTTP response. The INSΠRE Host separately
+    # offers WebSocket per-message compression; verify negotiated extensions
+    # in the browser trace rather than assuming the proxy preserved them.
+    encode zstd gzip
+
     reverse_proxy 127.0.0.1:14587
+
+    # Mark only Caddy handler failures, not a 5xx response returned by INSΠRE.
+    handle_errors 502 503 504 {
+        header X-Inspire-Edge "ssh-reverse"
+        respond "{err.status_code} {err.status_text}"
+    }
 }
 ```
 
 Configure the site without an access log that retains request URLs. Caddy sets `X-Forwarded-Proto` for proxied requests by default; any substitute must overwrite that header. INSΠRE trusts it only when the immediate connection is loopback-local.
 
-Use an SSH authorization policy that confines the key to the assigned `127.0.0.1:<remote-port>` reverse listener and disallows ordinary interactive use. Keep the public firewall limited to the HTTPS edge and the SSH service; the reverse listener itself remains local to the server.
+Use an SSH authorization policy that confines the key to the assigned `127.0.0.1:<remote-port>` reverse listener and disallows ordinary interactive use. Keep the reverse listener itself local to the server. Permit TCP 443 for HTTPS and, where the server firewall supports it, UDP 443 so Caddy can serve HTTP/3 on the phone-facing hop; `curl --http3-only -I https://inspire.example.com` can confirm that path when the installed curl build supports HTTP/3.
 
 ## Browser pairing
 

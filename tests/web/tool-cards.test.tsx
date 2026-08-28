@@ -220,7 +220,7 @@ describe("native Pi tool cards", () => {
     );
   });
 
-  it("renders a configured custom rule through sanitized Markdown blocks", () => {
+  it("renders a configured custom rule through sanitized Markdown blocks", async () => {
     configureToolPresentationRegistry(
       toolPresentationConfigurationSchema.parse({
         version: 1,
@@ -251,7 +251,7 @@ describe("native Pi tool cards", () => {
       "user.example.markdown",
     );
     expect(
-      screen.getByRole("heading", { name: "Finding" }),
+      await screen.findByRole("heading", { name: "Finding" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Supported")).toBeInTheDocument();
     expect(screen.getByText("unsafe").closest("a")).not.toHaveAttribute("href");

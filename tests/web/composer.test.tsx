@@ -21,6 +21,7 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  TEST_HOST_AUTHORITY,
 } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
 
@@ -110,7 +111,12 @@ beforeAll(async () => {
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);
-      if (promptFails) return { status: 500, body: { error: "boom" } };
+      if (promptFails)
+        return {
+          status: 500,
+          headers: { "X-Inspire-Authority": TEST_HOST_AUTHORITY },
+          body: { error: "boom" },
+        };
       promptBodies.push(body);
       return { status: 202, body: { accepted: true } };
     }

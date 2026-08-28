@@ -940,6 +940,10 @@
   overflow-wrap: break-word;
 }
 
+.rich-text--deferred {
+  white-space: pre-wrap;
+}
+
 .rich-text > :first-child {
   margin-top: 0;
 }

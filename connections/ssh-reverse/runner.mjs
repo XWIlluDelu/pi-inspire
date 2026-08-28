@@ -143,7 +143,9 @@ export function sshCommandArguments(
     "-o",
     "ExitOnForwardFailure=yes",
     "-o",
-    "ServerAliveInterval=30",
+    "ConnectTimeout=10",
+    "-o",
+    "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
     "-o",
@@ -296,6 +298,24 @@ function commandDetail(result) {
   return detail ? ` (${detail})` : "";
 }
 
+export function sshFailureSummary(stderr) {
+  if (/spawn ssh enoent|command not found|not found: ssh/iu.test(stderr))
+    return "the SSH client could not be started";
+  if (/permission denied|authentication failed|no supported authentication/iu.test(stderr))
+    return "SSH authentication was rejected";
+  if (/host key verification failed|remote host identification has changed/iu.test(stderr))
+    return "SSH server identity verification failed";
+  if (/remote port forwarding failed|cannot listen to port|administratively prohibited/iu.test(stderr))
+    return "the relay rejected or could not bind the configured reverse port";
+  if (/could not resolve hostname|name or service not known|temporary failure in name resolution/iu.test(stderr))
+    return "the relay hostname could not be resolved";
+  if (/connection timed out|operation timed out|no route to host|network is unreachable|connection refused/iu.test(stderr))
+    return "the relay SSH endpoint is unreachable";
+  if (/connection (?:closed|reset)|broken pipe|client_loop: send disconnect/iu.test(stderr))
+    return "the SSH connection was interrupted";
+  return "SSH exited before the reverse connection was ready";
+}
+
 async function waitForExit(pid, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -437,7 +457,9 @@ async function start(root) {
     { cwd: root },
   );
   if (result.code !== 0)
-    throw new Error(`Unable to start SSH reverse connection${commandDetail(result)}`);
+    throw new Error(
+      `Unable to start SSH reverse connection: ${sshFailureSummary(result.stderr)}${commandDetail(result)}`,
+    );
   const state = {
     version: STATE_VERSION,
     pid: 0,
@@ -567,8 +589,15 @@ async function supervise(root) {
   await ensurePrivateDirectory(paths.stateDirectory);
   const child = spawn("ssh", sshCommandArguments(config), {
     cwd: root,
-    stdio: "inherit",
+    stdio: ["ignore", "inherit", "pipe"],
   });
+  let recentStderr = "";
+  const retainStderr = (text) => {
+    process.stderr.write(text);
+    recentStderr = `${recentStderr}${text}`.slice(-64 * 1024);
+  };
+  child.stderr.on("data", (chunk) => retainStderr(String(chunk)));
+  child.on("error", (error) => retainStderr(`${String(error)}\n`));
   let stopping = false;
   const stopChild = () => {
     stopping = true;
@@ -576,8 +605,8 @@ async function supervise(root) {
   };
   process.once("SIGTERM", stopChild);
   process.once("SIGINT", stopChild);
-  const code = await new Promise((resolveChild, reject) => {
-    child.once("error", reject);
+  const code = await new Promise((resolveChild) => {
+    child.once("error", () => resolveChild(1));
     child.once("exit", (exitCode, signal) =>
       resolveChild(exitCode ?? (signal ? 1 : 0)),
     );
@@ -585,6 +614,8 @@ async function supervise(root) {
     process.off("SIGTERM", stopChild);
     process.off("SIGINT", stopChild);
   });
+  if (!stopping)
+    console.error(`SSH reverse connection stopped: ${sshFailureSummary(recentStderr)}.`);
   process.exitCode = stopping ? 0 : code || 1;
 }
 

@@ -509,6 +509,14 @@ function boundedTranscriptItem(
         ...(typeof sourceRecord.__inspireSettled === "boolean"
           ? { __inspireSettled: sourceRecord.__inspireSettled }
           : {}),
+        ...(Number.isSafeInteger(sourceRecord.__inspireStreamRevision) &&
+        Number(sourceRecord.__inspireStreamRevision) >= 0
+          ? {
+              __inspireStreamRevision: Number(
+                sourceRecord.__inspireStreamRevision,
+              ),
+            }
+          : {}),
         ...(typeof sourceRecord.__inspireUserTurnId === "string"
           ? { __inspireUserTurnId: sourceRecord.__inspireUserTurnId }
           : {}),
@@ -559,6 +567,14 @@ function boundedTranscriptItem(
         : omitted,
   });
   return { value: projected, serialized: JSON.stringify(projected) };
+}
+
+export function boundedTranscriptProjection(value: unknown): {
+  value: unknown;
+  bytes: number;
+} {
+  const item = boundedTranscriptItem(value);
+  return { value: item.value, bytes: Buffer.byteLength(item.serialized) };
 }
 
 export function boundedTranscriptValue(value: unknown): unknown {
