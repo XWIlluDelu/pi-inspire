@@ -391,6 +391,58 @@ test("narrow user prompts preserve source lines and normal-sized math", async ({
   await page.getByRole("button", { name: "Abort running task" }).click();
 });
 
+test("narrow rich text contains long links and file references", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+
+  const external = `https://example.test/${"unbroken-segment".repeat(8)}`;
+  const local =
+    "./packages/research-pipeline/components/transformers/normalize-observations-for-rendering.ts";
+  await page
+    .getByRole("textbox", { name: "Message" })
+    .fill(`[${external}](https://example.test/) and \`${local}\``);
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  const prompt = page.locator(".turn--user").last();
+  await expect(prompt.getByRole("link", { name: external })).toBeVisible();
+  await expect(prompt.locator(".file-ref--code")).toHaveText(local);
+  const layout = await prompt.evaluate((turn) => {
+    const root = turn.querySelector<HTMLElement>(".rich-text--user");
+    if (!root) throw new Error("Missing rich text");
+    const fileReference = root.querySelector<HTMLElement>(".file-ref--code");
+    if (!fileReference) throw new Error("Missing file reference");
+    const boundary = root.getBoundingClientRect();
+    const contained = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return box.left >= boundary.left - 1 && box.right <= boundary.right + 1;
+    };
+    return {
+      overflowWrap: getComputedStyle(root).overflowWrap,
+      contentOverflow: root.scrollWidth - root.clientWidth,
+      documentOverflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      referenceTextAlign: getComputedStyle(fileReference).textAlign,
+      paragraphTextAlign: getComputedStyle(fileReference.parentElement!)
+        .textAlign,
+      referencesContained: [
+        ...root.querySelectorAll("a, .file-ref--code"),
+      ].every(contained),
+    };
+  });
+
+  expect(layout.overflowWrap).toBe("anywhere");
+  expect(layout.contentOverflow).toBeLessThanOrEqual(1);
+  expect(layout.documentOverflow).toBeLessThanOrEqual(1);
+  expect(layout.referenceTextAlign).toBe(layout.paragraphTextAlign);
+  expect(layout.referencesContained).toBe(true);
+  await page.getByRole("button", { name: "Abort running task" }).click();
+});
+
 test("project-file picker restores focus to its trigger", async ({ page }) => {
   await pairedPage(page);
   await openMockSession(page, /Formula rendering and spectral analysis/);
