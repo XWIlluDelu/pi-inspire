@@ -94,10 +94,6 @@ export class RuntimeWorkerLifecycle {
     this.host.clearWriterBaseline(slot);
     slot.bridge = null;
     this.host.renewView(slot);
-    slot.rebinding = false;
-    slot.forkResponseFence = null;
-    slot.bufferedEvents = [];
-    slot.bufferedEventBytes = 0;
     if (slot.navigationLease) slot.branchRevision += 1;
     slot.navigationLease = null;
     if (slot.pendingBranchBridge) {

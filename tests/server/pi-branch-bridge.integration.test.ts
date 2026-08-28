@@ -144,7 +144,7 @@ export default function (pi) {
     }
   }, 15_000);
 
-  it("runs real no-model tree/fork hook dialogs through RuntimeController's response lane with one writer", async () => {
+  it("keeps the source worker and its dialogs independent from a fork destination", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-real-runtime-branch-"),
     );
@@ -277,25 +277,12 @@ export default function (pi) {
         mode: "switch",
       });
       tree = await runtime.branchTree(SESSION_ID);
-      const internals = runtime as unknown as {
-        snapshotSlot(slot: { id: string }): Promise<unknown>;
-      };
-      const originalSnapshotSlot = internals.snapshotSlot.bind(runtime);
-      internals.snapshotSlot = async (slot) => {
-        if (slot.id !== SESSION_ID)
-          throw new Error("post-commit fork snapshot must not run");
-        return originalSnapshotSlot(slot);
-      };
-      let forked!: Awaited<ReturnType<typeof runtime.forkBranch>>;
-      try {
-        forked = await runtime.forkBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "u2",
-        });
-      } finally {
-        internals.snapshotSlot = originalSnapshotSlot;
-      }
+      const sourcePid = workers[0]?.pid;
+      const forked = await runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      });
       expect(forked.snapshot.active?.sessionName).toBe("Named source");
       const destinationTree = await runtime.branchTree(forked.sessionId);
       await runtime.navigateBranch({
@@ -306,12 +293,18 @@ export default function (pi) {
       });
       await Promise.all(responses);
       expect(runtime.activeSessionId).toBe(forked.sessionId);
-      expect(workers).toHaveLength(1);
+      expect(workers).toHaveLength(2);
+      expect(sourcePid).not.toBeNull();
+      expect(workers[0]?.pid).toBe(sourcePid);
+      expect(workers[1]?.pid).not.toBe(sourcePid);
+      expect(await runtime.branchTree(SESSION_ID)).toMatchObject({
+        sessionId: SESSION_ID,
+      });
       expect(
         dialogs.filter((event) => event.method === "confirm"),
       ).toHaveLength(3);
       expect(dialogs.filter((event) => event.method === "input")).toHaveLength(
-        1,
+        0,
       );
     } finally {
       await runtime.close();
@@ -319,7 +312,102 @@ export default function (pi) {
     }
   }, 30_000);
 
-  it("forks an active stock Pi run while keeping aborted source output out of the destination", async () => {
+  it("opens and writes a first-turn fork after materializing its header-only Session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-real-root-fork-"));
+    directories.push(directory);
+    const sessionFile = join(directory, "source.jsonl");
+    const sessionDir = join(directory, "sessions");
+    const configDir = join(directory, "config");
+    await mkdir(configDir, { recursive: true });
+    const entries = [
+      message("u1", null, "user", "question one", 1),
+      message("a1", "u1", "assistant", "answer one", 2),
+    ];
+    await writeFile(
+      sessionFile,
+      `${[
+        {
+          type: "session",
+          version: 3,
+          id: SESSION_ID,
+          timestamp: "2026-08-01T00:00:00.000Z",
+          cwd: directory,
+        },
+        ...entries,
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n")}\n`,
+    );
+    const record: SessionRecord = {
+      id: SESSION_ID,
+      cwd: directory,
+      path: sessionFile,
+      source: null,
+      created: new Date(),
+      modified: new Date(),
+      messageCount: entries.length,
+      firstMessage: "question one",
+      searchText: "question one",
+    };
+    const catalog: SessionCatalogLike = {
+      refresh: async () => [record],
+      get: async (id) => (id === SESSION_ID ? record : undefined),
+      list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
+      listByIds: async () => [],
+      listByCwds: async () => [],
+      invalidate() {},
+    };
+    const attachments = new AttachmentStore(join(directory, "uploads"));
+    const runtime = new RuntimeController(
+      catalog,
+      attachments,
+      (options) =>
+        new PiRpcProcess({
+          ...options,
+          args: [
+            "--no-extensions",
+            "--session-dir",
+            sessionDir,
+            ...(options.args ?? []),
+          ],
+          env: {
+            ...options.env,
+            PI_CODING_AGENT_DIR: configDir,
+            PI_CODING_AGENT_SESSION_DIR: sessionDir,
+            PI_OFFLINE: "1",
+          },
+        }),
+    );
+    try {
+      await runtime.openSession(SESSION_ID);
+      await vi.waitFor(
+        async () =>
+          expect((await runtime.snapshot()).active?.commands).toBeDefined(),
+        { timeout: 10_000 },
+      );
+      const tree = await runtime.branchTree(SESSION_ID);
+      const forked = await runtime.forkBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u1",
+      });
+      expect(forked.editorText).toBe("question one");
+      expect(forked.snapshot.active?.transcriptPage.messages).toEqual([]);
+
+      await runtime.rename(forked.sessionId, "Writable root fork");
+      const destinationText = await readFile(
+        forked.snapshot.active!.sessionFile!,
+        "utf8",
+      );
+      expect(destinationText).toContain('"name":"Writable root fork"');
+      expect(destinationText).not.toContain("question one");
+    } finally {
+      await runtime.close();
+      await attachments.close();
+    }
+  }, 30_000);
+
+  it("forks an active stock Pi run without interrupting its later completion", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-real-active-fork-"),
     );
@@ -330,6 +418,7 @@ export default function (pi) {
     await mkdir(configDir, { recursive: true });
 
     let markModelStarted!: () => void;
+    let finishModel!: () => void;
     const modelStarted = new Promise<void>((resolveStarted) => {
       markModelStarted = resolveStarted;
     });
@@ -343,16 +432,23 @@ export default function (pi) {
         connection: "keep-alive",
         "cache-control": "no-cache",
       });
-      const chunk = (delta: Record<string, string>) =>
+      const chunk = (
+        delta: Record<string, string>,
+        finishReason: "stop" | null = null,
+      ) =>
         `data: ${JSON.stringify({
           id: "chatcmpl-active-fork",
           object: "chat.completion.chunk",
           created: 1,
           model: "offline-model",
-          choices: [{ index: 0, delta, finish_reason: null }],
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
         })}\n\n`;
       response.write(chunk({ role: "assistant" }));
       response.write(chunk({ content: "partial active answer" }));
+      finishModel = () => {
+        response.write(chunk({}, "stop"));
+        response.end("data: [DONE]\n\n");
+      };
       markModelStarted();
     });
     await new Promise<void>((resolveListen, reject) => {
@@ -463,17 +559,23 @@ export default function (pi) {
         sessionId: SESSION_ID,
         message: "active question",
       });
+      const sourcePid = workers[0]?.pid;
       await modelStarted;
       await vi.waitFor(async () =>
         expect((await runtime.snapshot()).runState).toBe("running"),
       );
       const tree = await runtime.branchTree(SESSION_ID);
+      const activePrompt = tree.nodes.find(
+        (node) =>
+          node.role === "user" && node.snippet.includes("active question"),
+      );
+      expect(activePrompt).toMatchObject({ active: true, canFork: true });
       const forked = await runtime.forkBranch({
         sessionId: SESSION_ID,
         revision: tree.revision,
-        targetId: "u2",
+        targetId: activePrompt!.id,
       });
-      const sourceText = await readFile(sessionFile, "utf8");
+      expect(forked.editorText).toBe("active question");
       const destinationText = await readFile(
         forked.snapshot.active!.sessionFile!,
         "utf8",
@@ -481,7 +583,7 @@ export default function (pi) {
 
       expect(forked.snapshot.runState).toBe("idle");
       expect(forked.snapshot.sessionStatuses[SESSION_ID]?.runState).toBe(
-        "aborted",
+        "running",
       );
       expect(forked.snapshot.pendingQueues).toEqual({
         steering: [],
@@ -490,28 +592,41 @@ export default function (pi) {
         revision: 0,
         managementAvailable: false,
       });
-      expect(sourceText).toContain("active question");
-      expect(sourceText).toContain("partial active answer");
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      expect(sourcePid).not.toBeNull();
+      expect(workers[0]?.pid).toBe(sourcePid);
+      expect(workers[1]?.pid).not.toBe(sourcePid);
       expect(destinationText).not.toContain("active question");
       expect(destinationText).not.toContain("partial active answer");
       expect(
-        events.find(
-          (event) =>
-            event.type === "message_end" &&
-            (event.message as { stopReason?: unknown } | undefined)
-              ?.stopReason === "aborted",
-        ),
-      ).toMatchObject({ sessionId: SESSION_ID });
-      expect(
         events.some(
           (event) =>
-            event.sessionId === forked.sessionId &&
             event.type === "message_end" &&
             (event.message as { stopReason?: unknown } | undefined)
               ?.stopReason === "aborted",
         ),
       ).toBe(false);
-      expect(workers).toHaveLength(1);
+
+      finishModel();
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await runtime.snapshot()).sessionStatuses[SESSION_ID]?.runState,
+          ).toBe("idle"),
+        { timeout: 10_000 },
+      );
+      const sourceText = await readFile(sessionFile, "utf8");
+      expect(sourceText).toContain("active question");
+      expect(sourceText).toContain("partial active answer");
+      expect(
+        events.find(
+          (event) =>
+            event.sessionId === SESSION_ID &&
+            event.type === "message_end" &&
+            (event.message as { stopReason?: unknown } | undefined)
+              ?.stopReason === "stop",
+        ),
+      ).toBeDefined();
     } finally {
       await runtime.close();
       await attachments.close();

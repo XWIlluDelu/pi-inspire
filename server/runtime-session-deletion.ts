@@ -145,7 +145,6 @@ export class RuntimeSessionDeletionController {
         slot.persistenceExpectations.length > 0 ||
         slot.pendingPartialPersistence ||
         slot.pendingBranchBridge ||
-        slot.rebinding ||
         slot.conflict ||
         slot.navigationLease
       ) {
@@ -177,7 +176,6 @@ export class RuntimeSessionDeletionController {
           slot.persistenceExpectations.length > 0 ||
           slot.pendingPartialPersistence ||
           slot.pendingBranchBridge ||
-          slot.rebinding ||
           slot.conflict ||
           slot.navigationLease
         ) {
@@ -340,7 +338,6 @@ export class RuntimeSessionDeletionController {
           slot.persistenceExpectations.length > 0 ||
           slot.pendingPartialPersistence ||
           slot.pendingBranchBridge ||
-          slot.rebinding ||
           slot.conflict ||
           slot.navigationLease)
       ) {
