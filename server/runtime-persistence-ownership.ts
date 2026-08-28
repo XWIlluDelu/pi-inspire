@@ -26,7 +26,6 @@ import type {
 import {
   boundedTranscriptValue,
   type ProjectionReconcileResult,
-  type SessionProjectionView,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "./session-projection.js";
 
@@ -561,69 +560,6 @@ export class RuntimePersistenceOwnershipController {
     entries.splice(index, 1);
     if (entries.length === 0) slot.absorbedPersistenceEntries.delete(key);
     return true;
-  }
-
-  absorbForkDestinationClaims(
-    source: RuntimeSlot,
-    destination: SessionProjectionView,
-  ): void {
-    const absorbedEntryIds = new Set<string>();
-    source.persistenceExpectations = source.persistenceExpectations.filter(
-      (expectation) => {
-        const entry = expectation.exactEntry;
-        if (!entry || source.projection?.entry(entry.id)) return true;
-        const destinationEntry = destination.entry(entry.id);
-        if (!destinationEntry) return true;
-        if (!destination.persistedEntryMatches(entry)) {
-          throw Object.assign(
-            new Error(
-              `Fork destination entry ${entry.id} differs from the worker's persistence claim`,
-            ),
-            { status: 409 },
-          );
-        }
-        expectation.settle(null);
-        absorbedEntryIds.add(entry.id);
-        return false;
-      },
-    );
-    if (absorbedEntryIds.size === 0) return;
-
-    source.customActivities.pendingEntries =
-      source.customActivities.pendingEntries.filter(
-        (entry) => !absorbedEntryIds.has(entry.id),
-      );
-    const absorbedActivityIds = new Set<string>();
-    for (const entryId of absorbedEntryIds) {
-      const activityId =
-        source.customActivities.activityIdByEntryId.get(entryId);
-      source.customActivities.activityIdByEntryId.delete(entryId);
-      if (!activityId) continue;
-      absorbedActivityIds.add(activityId);
-      source.customActivities.entryIdByActivityId.delete(activityId);
-    }
-    source.customActivities.pendingMessageActivityIds =
-      source.customActivities.pendingMessageActivityIds.filter(
-        (activityId) => !absorbedActivityIds.has(activityId),
-      );
-    source.overlay = source.overlay.filter((message) => {
-      if (!message || typeof message !== "object" || Array.isArray(message))
-        return true;
-      const record = message as Record<string, unknown>;
-      return (
-        !absorbedEntryIds.has(String(record.__inspireEntryId ?? "")) &&
-        !absorbedActivityIds.has(String(record.__inspireLiveId ?? ""))
-      );
-    });
-    source.overlayBytes = Buffer.byteLength(JSON.stringify(source.overlay));
-    this.diagnostics.record("debug", "fork_destination_claims_absorbed", {
-      sessionId: source.id,
-      slotIncarnation: source.incarnationId,
-      workerId: source.bridge?.workerId,
-      childPid: source.process?.pid,
-      count: absorbedEntryIds.size,
-      entryIds: [...absorbedEntryIds],
-    });
   }
 
   recordPersistenceEvent(
