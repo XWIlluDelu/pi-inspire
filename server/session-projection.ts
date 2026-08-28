@@ -27,6 +27,7 @@ import {
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -53,7 +54,6 @@ export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
 export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
 const USER_TURN_INDEX_PAGE_SIZE = 100;
-const USER_TURN_SNIPPET_CHARS = 180;
 const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
 const MAX_SESSION_PATH_CHARS = 32_768;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
@@ -599,41 +599,6 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
         String((part as Record<string, unknown>).text).length > 0,
     )
   );
-}
-
-function userTurnSnippet(value: unknown): {
-  snippet: string;
-  attachmentCount: number;
-} {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return { snippet: "User message", attachmentCount: 0 };
-  const record = value as Record<string, unknown>;
-  const text: string[] = [];
-  let attachmentCount = 0;
-  if (typeof record.content === "string") text.push(record.content);
-  else if (Array.isArray(record.content)) {
-    for (const part of record.content) {
-      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-      const item = part as Record<string, unknown>;
-      if (item.type === "text" && typeof item.text === "string")
-        text.push(item.text);
-      else if (item.type === "image") attachmentCount += 1;
-    }
-  }
-  const normalized = text.join(" ").replace(/\s+/g, " ").trim();
-  return {
-    snippet:
-      normalized.length > 0
-        ? Array.from(normalized.slice(0, USER_TURN_SNIPPET_CHARS * 2))
-            .slice(0, USER_TURN_SNIPPET_CHARS)
-            .join("")
-        : attachmentCount > 0
-          ? attachmentCount === 1
-            ? "Image attachment"
-            : `${attachmentCount} image attachments`
-          : "User message",
-    attachmentCount,
-  };
 }
 
 function projectedTimestamp(value: unknown): string | undefined {
@@ -2080,7 +2045,7 @@ export class SessionProjection
         Number(ordinal) < 0
       )
         return [];
-      const summary = userTurnSnippet(value);
+      const summary = userTurnSummary(value);
       const timestamp = projectedTimestamp(value);
       return [
         {

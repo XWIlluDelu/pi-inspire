@@ -8,6 +8,7 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
+import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -130,46 +131,10 @@ export class PreviewProjection
     _effectiveLeafId?: string | null,
     viewId = "preview",
   ): UserTurnIndexPage {
-    const turns = this.preview.transcriptPage.messages.flatMap(
-      (value, index) => {
-        if (!value || typeof value !== "object" || Array.isArray(value))
-          return [];
-        const record = value as Record<string, unknown>;
-        if (record.role !== "user") return [];
-        const id =
-          typeof record.__inspireMessageId === "string"
-            ? record.__inspireMessageId
-            : `preview-user:${index}`;
-        const text =
-          typeof record.content === "string"
-            ? record.content
-            : Array.isArray(record.content)
-              ? record.content
-                  .flatMap((part) =>
-                    part &&
-                    typeof part === "object" &&
-                    !Array.isArray(part) &&
-                    (part as Record<string, unknown>).type === "text" &&
-                    typeof (part as Record<string, unknown>).text === "string"
-                      ? [(part as Record<string, unknown>).text as string]
-                      : [],
-                  )
-                  .join(" ")
-              : "";
-        return [
-          {
-            id,
-            ordinal: 0,
-            snippet:
-              text.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
-            attachmentCount: 0,
-          },
-        ];
-      },
+    const turns = sequentialUserTurnAnchors(
+      this.preview.transcriptPage.messages,
+      "preview-user",
     );
-    turns.forEach((turn, ordinal) => {
-      turn.ordinal = ordinal;
-    });
     const pageStart =
       start === undefined
         ? Math.max(0, turns.length - 100)

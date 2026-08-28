@@ -7,11 +7,9 @@ import {
   XCircle,
 } from "lucide-react";
 import {
-  Component,
   lazy,
   memo,
   Profiler,
-  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -30,6 +28,7 @@ import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
+import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
@@ -52,23 +51,8 @@ const DeferredSettingsSurface = lazy(() =>
   loadSettings().then((module) => ({ default: module.Settings })),
 );
 
-class SurfaceLoadBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error("Deferred surface failed to load", error);
-  }
-
-  render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
+function reportDeferredSurfaceError(error: unknown): void {
+  console.error("Deferred surface failed to load", error);
 }
 
 function ContextPaneLoading({
@@ -189,7 +173,8 @@ function DeferredContextPane({
   onClose: () => void;
 }) {
   return (
-    <SurfaceLoadBoundary
+    <RenderErrorBoundary
+      onError={reportDeferredSurfaceError}
       fallback={
         <ContextPaneLoading
           isModal={isModal}
@@ -203,7 +188,7 @@ function DeferredContextPane({
       >
         <DeferredContextSurface isModal={isModal} onClose={onClose} />
       </Suspense>
-    </SurfaceLoadBoundary>
+    </RenderErrorBoundary>
   );
 }
 
@@ -215,7 +200,8 @@ function DeferredSettings({
   onClose: () => void;
 }) {
   return (
-    <SurfaceLoadBoundary
+    <RenderErrorBoundary
+      onError={reportDeferredSurfaceError}
       fallback={
         <SettingsLoading
           onClose={onClose}
@@ -229,7 +215,7 @@ function DeferredSettings({
           onClose={onClose}
         />
       </Suspense>
-    </SurfaceLoadBoundary>
+    </RenderErrorBoundary>
   );
 }
 

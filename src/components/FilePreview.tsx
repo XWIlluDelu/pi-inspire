@@ -10,6 +10,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import { resourceReferenceLine } from "../../shared/resource-references";
+import { formatBytes } from "../format";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
@@ -19,12 +20,6 @@ import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function escapeHtml(value: string): string {
   return value

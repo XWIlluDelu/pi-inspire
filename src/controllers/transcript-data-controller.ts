@@ -5,10 +5,11 @@ import {
   type UserTurnTranscriptPage,
 } from "../../shared/contracts";
 import { ApiError, type Api } from "../api";
-import type {
-  ActivityMaterializationMode,
-  AppState,
-  TranscriptActivityRangeState,
+import {
+  type ActivityMaterializationMode,
+  type AppState,
+  type TranscriptActivityRangeState,
+  transcriptRevisionContains,
 } from "../app-state";
 import { asMessage, type ChatMessage, messageKey } from "../events";
 
@@ -80,14 +81,16 @@ export class TranscriptDataController {
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
     try {
       const page = await api.olderTranscript(sessionId, cursor, request.signal);
-      const pageLineageCompatible =
-        page.revision === revision ||
-        (page.revision > revision &&
-          (page.appendFromRevision ?? page.revision) <= revision);
-      const currentLineageCompatible =
-        this.host.state().transcriptRevision === revision ||
-        (this.host.state().transcriptRevision > revision &&
-          this.host.state().transcriptAppendFromRevision <= revision);
+      const pageLineageCompatible = transcriptRevisionContains(
+        page.revision,
+        page.appendFromRevision ?? page.revision,
+        revision,
+      );
+      const currentLineageCompatible = transcriptRevisionContains(
+        this.host.state().transcriptRevision,
+        this.host.state().transcriptAppendFromRevision,
+        revision,
+      );
       if (
         !ownsTransport() ||
         this.host.state().sessionId !== sessionId ||
@@ -358,14 +361,16 @@ export class TranscriptDataController {
           start,
           request.signal,
         );
-        const pageLineageCompatible =
-          page.revision === revision ||
-          (page.revision > revision &&
-            (page.appendFromRevision ?? page.revision) <= revision);
-        const currentLineageCompatible =
-          this.host.state().transcriptRevision === revision ||
-          (this.host.state().transcriptRevision > revision &&
-            this.host.state().transcriptAppendFromRevision <= revision);
+        const pageLineageCompatible = transcriptRevisionContains(
+          page.revision,
+          page.appendFromRevision ?? page.revision,
+          revision,
+        );
+        const currentLineageCompatible = transcriptRevisionContains(
+          this.host.state().transcriptRevision,
+          this.host.state().transcriptAppendFromRevision,
+          revision,
+        );
         if (
           request.signal.aborted ||
           !ownsTransport() ||
@@ -518,14 +523,16 @@ export class TranscriptDataController {
           continuationCursor,
           request.signal,
         );
-        const pageLineageCompatible =
-          page.revision === revision ||
-          (page.revision > revision &&
-            (page.appendFromRevision ?? page.revision) <= revision);
-        const currentLineageCompatible =
-          this.host.state().transcriptRevision === revision ||
-          (this.host.state().transcriptRevision > revision &&
-            this.host.state().transcriptAppendFromRevision <= revision);
+        const pageLineageCompatible = transcriptRevisionContains(
+          page.revision,
+          page.appendFromRevision ?? page.revision,
+          revision,
+        );
+        const currentLineageCompatible = transcriptRevisionContains(
+          this.host.state().transcriptRevision,
+          this.host.state().transcriptAppendFromRevision,
+          revision,
+        );
         if (
           request.signal.aborted ||
           !ownsTransport() ||

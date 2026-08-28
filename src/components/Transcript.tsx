@@ -27,14 +27,9 @@ import {
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../../shared/contracts";
+import { userTurnSummary } from "../../shared/user-turns";
 import type { PendingManagementIntent } from "../api";
-import {
-  type ActivityTool,
-  type ChatMessage,
-  contentItems,
-  messageKey,
-  messageText,
-} from "../events";
+import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
 import {
   type ActivityMaterializationMode,
@@ -177,20 +172,10 @@ export const Transcript = memo(function Transcript({
         message.__inspireMessageId ??
         messageKey(message) ??
         `loaded-user:${inferredOrdinal}`;
-      const attachmentCount = contentItems(message).filter(
-        (item) => item.type === "image",
-      ).length;
       byOrdinal.set(inferredOrdinal, {
         id,
         ordinal: inferredOrdinal,
-        snippet:
-          Array.from(
-            messageText(message).replace(/\s+/g, " ").trim().slice(0, 360),
-          )
-            .slice(0, 180)
-            .join("") ||
-          (attachmentCount > 0 ? "Image attachment" : "User message"),
-        attachmentCount,
+        ...userTurnSummary(message),
       });
     }
     return [...byOrdinal.values()];

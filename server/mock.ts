@@ -28,6 +28,7 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { emptyPendingQueues } from "../shared/contracts.js";
+import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import type { ResourceContext } from "./resources.js";
@@ -1107,44 +1108,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     start?: number,
   ): Promise<UserTurnIndexPage> {
     const active = this.requireSession(sessionId);
-    const turns = active.transcriptPage.messages.flatMap((value, index) => {
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return [];
-      const record = value as Record<string, unknown>;
-      if (record.role !== "user") return [];
-      const ordinal = Number(record.__inspireUserTurnIndex);
-      const content =
-        typeof record.content === "string"
-          ? record.content
-          : Array.isArray(record.content)
-            ? record.content
-                .flatMap((part) =>
-                  part &&
-                  typeof part === "object" &&
-                  !Array.isArray(part) &&
-                  (part as Record<string, unknown>).type === "text" &&
-                  typeof (part as Record<string, unknown>).text === "string"
-                    ? [(part as Record<string, unknown>).text as string]
-                    : [],
-                )
-                .join(" ")
-            : "";
-      return [
-        {
-          id:
-            typeof record.__inspireMessageId === "string"
-              ? record.__inspireMessageId
-              : `mock-user:${index}`,
-          ordinal: Number.isSafeInteger(ordinal) ? ordinal : 0,
-          snippet:
-            content.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
-          attachmentCount: 0,
-        },
-      ];
-    });
-    turns.forEach((turn, ordinal) => {
-      turn.ordinal = ordinal;
-    });
+    const turns = sequentialUserTurnAnchors(
+      active.transcriptPage.messages,
+      "mock-user",
+    );
     const pageStart =
       start === undefined
         ? Math.max(0, turns.length - 100)
