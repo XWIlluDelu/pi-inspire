@@ -976,6 +976,9 @@ export interface BootstrapResponse {
   version: string;
   piVersion: string;
   mock: boolean;
+  /** Host-owned update observations and notice acknowledgement shared by every
+   * authenticated view of this deployment. */
+  updateStatus: HostUpdateStatus;
   preferences: InspirePreferences;
   /** Present when an invalid saved preference projection is usable for this
    * bootstrap but the original file was left unchanged and writes are blocked. */
@@ -1023,6 +1026,31 @@ export interface PiUpdateCheckResponse {
   pi: PiVersionUpdateStatus;
   extensions: PiExtensionUpdateStatus;
 }
+
+/** One Host-authoritative update projection. Its revision is monotonic only
+ * within the current Host process; bootstrap replaces it after a restart. */
+export interface HostUpdateStatus {
+  revision: number;
+  inspireUpdateCheck: UpdateCheckResponse | null;
+  piUpdateCheck: PiUpdateCheckResponse | null;
+  inspireUpdateChecking: boolean;
+  piUpdateChecking: boolean;
+  /** Exact identity accepted by the snooze endpoint, or null when nothing is
+   * currently available. */
+  availableUpdateIdentity: string | null;
+  updateSnoozedUntil: number | null;
+}
+
+/** Source-specific fields remain top-level so an already-loaded client from
+ * the preceding release can still read a check while newer clients reconcile
+ * the accompanying Host-wide projection. */
+export type InspireUpdateCheckResult = UpdateCheckResponse & {
+  updateStatus: HostUpdateStatus;
+};
+
+export type PiUpdateCheckResult = PiUpdateCheckResponse & {
+  updateStatus: HostUpdateStatus;
+};
 
 export interface UploadedAttachment {
   id: string;

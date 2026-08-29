@@ -16,7 +16,6 @@ export interface AvailablePiUpdate {
 }
 
 export interface AvailableUpdates {
-  identity: string;
   inspire: AvailableUpdate | null;
   pi: AvailablePiUpdate | null;
   extensions: PiExtensionUpdate[];
@@ -45,19 +44,7 @@ export function availableUpdates(
       : [];
   if (!state.availableUpdate && !pi && extensions.length === 0) return null;
 
-  const identity = JSON.stringify([
-    state.availableUpdate
-      ? ["inspire", state.availableUpdate.latestVersion]
-      : null,
-    pi ? ["pi", pi.latestVersion] : null,
-    ...extensions.map((update) => [
-      "extension",
-      update.type,
-      update.displayName,
-    ]),
-  ]);
   return {
-    identity,
     inspire: state.availableUpdate,
     pi,
     extensions,

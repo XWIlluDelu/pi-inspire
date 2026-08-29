@@ -257,7 +257,7 @@ export class ConnectionController {
           return;
         }
         try {
-          if (snapshot.kind === "full") this.host.applyEvent(event);
+          this.host.applyEvent(event);
           if (snapshot.digest)
             this.host.recordSnapshotDigest?.(snapshot.digest);
         } catch {
@@ -299,12 +299,14 @@ export class ConnectionController {
           this.failSocket(socket, "bootstrap");
           return;
         }
-        if (snapshot.kind === "full" && !this.applySocketEvent(socket, event))
-          return;
+        if (!this.applySocketEvent(socket, event)) return;
         if (snapshot.digest) this.host.recordSnapshotDigest?.(snapshot.digest);
         return;
       }
-      this.host.invalidateSnapshotDigest?.();
+      // Host-wide update status is carried on the authenticated stream but is
+      // not part of the runtime snapshot digest.
+      if (event.type !== "update_status")
+        this.host.invalidateSnapshotDigest?.();
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);

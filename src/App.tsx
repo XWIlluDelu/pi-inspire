@@ -568,7 +568,7 @@ const Notices = memo(function Notices({
   const updates =
     !state.inspireUpdateChecking &&
     !state.piUpdateChecking &&
-    (!state.updateSnoozedUntil || state.updateSnoozedUntil <= Date.now())
+    state.updateSnoozedUntil === null
       ? availableUpdates(state)
       : null;
   if (state.notices.length === 0 && !updates) return null;
