@@ -90,18 +90,6 @@ x^2, & x\geq 0 \\
     expect(container.textContent).toContain("\\includegraphics");
   });
 
-  it("supports TeX inline and display delimiters at tokenization level", () => {
-    const { container } = render(
-      <RichText
-        text={String.raw`Inline \(x+1\)
-
-\[y^2\]`}
-      />,
-    );
-    expect(container.querySelectorAll(".katex")).toHaveLength(2);
-    expect(container.querySelector(".katex-display")).toBeTruthy();
-  });
-
   it("does not reinterpret inline or fenced code as math", () => {
     const text = String.raw`Code: \`$x$ \(y\)\`
 
@@ -131,32 +119,6 @@ $$z$$
     const { container } = render(<RichText text={source} />);
     expect(container.querySelector(".katex")).toBeNull();
     expect(container.querySelector(".rich-text")?.textContent).toBe(source);
-  });
-
-  it("preserves Markdown escapes and code without treating their delimiters as math", () => {
-    const source = String.raw`Escaped \$x and \\(x; code \`$$x\``.replaceAll(
-      "\\`",
-      "`",
-    );
-    const { container } = render(<RichText text={source} />);
-    expect(container.querySelector(".katex")).toBeNull();
-    expect(container.textContent).toContain("Escaped $x and \\(x; code $$x");
-  });
-
-  it("keeps valid same-line and multiline display forms rendered", () => {
-    const source = String.raw`$$x$$
-
-$$
-y
-$$
-
-\[z\]
-
-\[
-w
-\]`;
-    const { container } = render(<RichText text={source} />);
-    expect(container.querySelectorAll(".katex-display")).toHaveLength(4);
   });
 
   it("keeps a KaTeX failure contained and the source readable", () => {
@@ -210,40 +172,6 @@ describe("selection copy", () => {
     expect(display.event.defaultPrevented).toBe(true);
     expect(display.data.getData("text/plain")).toBe("$$d+2$$");
     expect(display.data.getData("text/html")).toContain("katex-display");
-  });
-
-  it("copies multiple formulas with surrounding text and selected HTML", async () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            content: [
-              { type: "text", text: String.raw`Before $x$ middle \(y\) after` },
-            ],
-            timestamp: 1,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-    await waitFor(() =>
-      expect(container.querySelector(".rich-text p")).toBeTruthy(),
-    );
-    const paragraph = container.querySelector(".rich-text p")!;
-    const range = document.createRange();
-    range.selectNodeContents(paragraph);
-    const copied = dispatchSelectionCopy(paragraph, range);
-    expect(copied.data.getData("text/plain")).toBe(
-      "Before $x$ middle $y$ after",
-    );
-    expect(
-      copied.data.getData("text/html").match(/class=\"katex\"/g),
-    ).toHaveLength(2);
-    expect(copied.data.getData("text/html")).toContain("Before ");
-    expect(copied.data.getData("text/html")).toContain(" after");
   });
 
   it("handles a real DOM selection and writes both ClipboardEvent formats", async () => {

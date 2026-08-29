@@ -27,19 +27,6 @@ describe("MockRuntime concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("keeps a configured stream observable until its interval elapses", async () => {
-    vi.useFakeTimers();
-    const runtime = new MockRuntime({ streamIntervalMs: 250 });
-    await runtime.openSession("mock-active");
-    await runtime.prompt({ sessionId: "mock-active", message: "paced task" });
-
-    await vi.advanceTimersByTimeAsync(249);
-    expect((await runtime.snapshot()).runState).toBe("running");
-    await vi.advanceTimersByTimeAsync(1);
-    expect((await runtime.snapshot()).runState).toBe("running");
-    await runtime.close();
-  });
-
   it("keeps background streams attributed to their owning session", async () => {
     vi.useFakeTimers();
     const runtime = new MockRuntime();

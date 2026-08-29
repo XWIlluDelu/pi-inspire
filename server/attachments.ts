@@ -540,8 +540,3 @@ export function parseAttachmentContext(
     references,
   };
 }
-
-/** Recover only the editor-owned text from INSΠRE's deterministic file context. */
-export function promptTextWithoutAttachmentContext(prompt: string): string {
-  return parseAttachmentContext(prompt).text;
-}

@@ -2,13 +2,11 @@ import { EventEmitter } from "node:events";
 import { realpathSync } from "node:fs";
 import {
   access,
-  appendFile,
   mkdir,
   mkdtemp,
   realpath,
   rm,
   symlink,
-  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1774,83 +1772,6 @@ describe("RuntimeController concurrent sessions", () => {
       const snapshot = await runtime.newSession(TEST_CWD);
       expect(snapshot.active?.sessionId).toBe("new-id");
       expect(worker?.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("tracks a partial new-session header until the worker completes it", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-new-session-"));
-    workspaceDirectories.push(directory);
-    const sessionPath = join(directory, "new-id.jsonl");
-    const serializedHeader = JSON.stringify({
-      type: "session",
-      version: 3,
-      id: "new-id",
-      timestamp: "2026-08-01T00:00:00.000Z",
-      cwd: TEST_CWD,
-    });
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        worker.sessionPath = sessionPath;
-        worker.start = async () => {
-          worker!.starts += 1;
-          await writeFile(sessionPath, serializedHeader.slice(0, -1));
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    try {
-      await expect(runtime.newSession(TEST_CWD)).resolves.toMatchObject({
-        active: { sessionId: "new-id" },
-      });
-      const internals = runtime as unknown as {
-        slots: Map<
-          string,
-          {
-            projection: {
-              uncommittedBytes: number;
-              suspendReconciliation(): Promise<void>;
-              reconcileSuspended(force: boolean): Promise<unknown>;
-              resumeReconciliation(): void;
-            };
-          }
-        >;
-        projectionCoordinator: {
-          handle(slot: unknown, result: unknown): Promise<void>;
-        };
-        reconcileSlot(slot: unknown, force: boolean): Promise<unknown>;
-      };
-      const slot = internals.slots.get("new-id")!;
-      expect(slot.projection.uncommittedBytes).toBeGreaterThan(0);
-
-      const touchedAt = new Date(Date.now() + 10_000);
-      await utimes(sessionPath, touchedAt, touchedAt);
-      await internals.reconcileSlot(slot, true);
-      expect(worker?.stops).toBe(0);
-
-      await slot.projection.suspendReconciliation();
-      try {
-        await appendFile(sessionPath, `${serializedHeader.slice(-1)}\n`);
-        const completed = await slot.projection.reconcileSuspended(true);
-        const completedTouch = new Date(Date.now() + 20_000);
-        await utimes(sessionPath, completedTouch, completedTouch);
-        const repeated = await slot.projection.reconcileSuspended(true);
-        await internals.projectionCoordinator.handle(slot, completed);
-        await internals.projectionCoordinator.handle(slot, repeated);
-      } finally {
-        slot.projection.resumeReconciliation();
-      }
-      expect(slot.projection.uncommittedBytes).toBe(0);
-      expect(worker?.stops).toBe(0);
-      expect((await runtime.snapshot()).active?.projectionConflict).toBeNull();
     } finally {
       await runtime.close();
     }

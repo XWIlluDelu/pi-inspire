@@ -227,7 +227,7 @@ function resolveTheme(
   return pref;
 }
 
-export function composeDocumentTitle(
+function composeDocumentTitle(
   windowTitle: string | null,
   sessionName: string,
   attentionCount: number,
@@ -236,8 +236,6 @@ export function composeDocumentTitle(
     windowTitle ?? (sessionName ? `${sessionName} · INSΠRE` : "INSΠRE");
   return attentionCount > 0 ? `● ${base}` : base;
 }
-
-export { sessionHeading } from "./components/AppTopbar";
 
 function TokenGate() {
   const [value, setValue] = useState("");

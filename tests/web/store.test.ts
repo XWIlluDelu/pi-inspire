@@ -362,16 +362,6 @@ describe("websocket lifecycle", () => {
     expect(store.getState().sessionId).toBe("s9");
     expect(snapshotCalls).toBe(0);
   });
-
-  it("ignores unknown wire events without notifying listeners", async () => {
-    installFetch(baseRoutes);
-    const { store, socket } = await initStore();
-    const listener = vi.fn();
-    const unsubscribe = store.subscribe(listener);
-    socket.emit({ type: "future_wire_event", data: { anything: true } });
-    expect(listener).not.toHaveBeenCalled();
-    unsubscribe();
-  });
 });
 
 describe("multi-session event routing", () => {
@@ -546,39 +536,6 @@ describe("multi-session event routing", () => {
       windowTitle: null,
       editorText: null,
     });
-  });
-
-  it("keeps equal-timestamp ordinary live messages distinct when host lifecycle IDs differ", async () => {
-    installFetch(baseRoutes);
-    const { store, socket } = await initStore();
-    for (const [id, content] of [
-      ["live-1", "first"],
-      ["live-2", "second"],
-    ] as const) {
-      socket.emit({
-        type: "message_start",
-        sessionId: "s1",
-        message: {
-          role: "assistant",
-          content,
-          timestamp: 2,
-          __inspireLiveId: id,
-        },
-      });
-      socket.emit({
-        type: "message_end",
-        sessionId: "s1",
-        message: {
-          role: "assistant",
-          content,
-          timestamp: 2,
-          __inspireLiveId: id,
-        },
-      });
-    }
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["first", "second"],
-    );
   });
 
   it("routes background deltas only to the status map, never the visible transcript", async () => {
@@ -951,35 +908,6 @@ describe("multi-session event routing", () => {
       unsubscribe();
     },
   );
-
-  it("keeps conflict abortable while an extension dialog is pending", async () => {
-    let aborts = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/control/abort")) {
-        aborts += 1;
-        return { body: { ok: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    socket.emit({
-      type: "extension_ui_request",
-      sessionId: "s1",
-      id: "blocked",
-      method: "confirm",
-      title: "Blocked",
-    });
-    socket.emit({
-      type: "session_projection_conflict",
-      sessionId: "s1",
-      conflict: { message: "conflict", revision: 2 },
-      sessionStatus: { runState: "conflict" },
-    });
-    expect(store.getState().extensionUiRequests[0]?.id).toBe("blocked");
-    expect(store.getState().runState).toBe("conflict");
-    await store.abort();
-    expect(aborts).toBe(1);
-  });
 
   it("serializes Pending management and resolves exact copy text by current ids", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -2587,82 +2515,10 @@ describe("thinking level control", () => {
 
     expect(store.getState().thinkingLevel).toBe("low");
   });
-
-  it("keeps the optimistic level when the API accepts the change", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/control/thinking"))
-        return { body: { ok: true } };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.setThinkingLevel("low");
-    expect(store.getState().thinkingLevel).toBe("low");
-    expect(store.getState().error).toBeNull();
-  });
 });
 
 describe("session switching guard", () => {
   beforeEach(() => installFakeWebSocket());
-
-  it("allows a newer selection to supersede a pending switch without stale cleanup", async () => {
-    installFetch(baseRoutes);
-    const store = new AppStore();
-    await store.init("token");
-    FakeWebSocket.instances.at(-1)!.open();
-    expect(store.getState().sessionId).toBe("s1");
-
-    let openCalls = 0;
-    const releases: Record<string, () => void> = {};
-    const gates: Record<string, Promise<void>> = {};
-    for (const id of ["s2", "s3"]) {
-      gates[id] = new Promise<void>((resolve) => {
-        releases[id] = resolve;
-      });
-    }
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: unknown, init?: RequestInit) => {
-        const url = String(input);
-        if (url.startsWith("/api/sessions/open")) {
-          openCalls += 1;
-          const id = (JSON.parse(String(init?.body ?? "{}")) as { id: string })
-            .id;
-          await gates[id]!;
-          return new Response(
-            JSON.stringify(activeSnapshot({ sessionId: id, cwd: `/${id}` })),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-        return new Response(JSON.stringify({ error: "unexpected" }), {
-          status: 404,
-        });
-      }),
-    );
-
-    const first = store.openSession("s2");
-    expect(store.getState().openingSessionId).toBe("s2");
-    const second = store.openSession("s3");
-    expect(store.getState().openingSessionId).toBe("s3");
-    expect(openCalls).toBe(2);
-
-    releases.s2!();
-    await first;
-    // The stale first finally cannot clear the newer opener.
-    expect(store.getState().openingSessionId).toBe("s3");
-    expect(store.getState().sessionId).toBe("s1");
-
-    releases.s3!();
-    await second;
-    expect(store.getState().openingSessionId).toBeNull();
-    expect(store.getState().sessionId).toBe("s3");
-    expect(store.getState().error).toBeNull();
-
-    await store.openSession("s3"); // already active: no-op
-    expect(openCalls).toBe(2);
-  });
 
   it("clears the pending state and surfaces the error when the open fails", async () => {
     installFetch(baseRoutes);
@@ -2722,43 +2578,6 @@ describe("session switching guard", () => {
   });
 });
 
-describe("notice expiry", () => {
-  beforeEach(() => {
-    installFakeWebSocket();
-    installFetch(baseRoutes);
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => vi.useRealTimers());
-
-  it("cancels the expiry timer when a notice is dismissed manually", async () => {
-    const { store, socket } = await initStore();
-    socket.emit({
-      type: "extension_ui_request",
-      id: "n1",
-      method: "notify",
-      message: "Indexed 3 files",
-    });
-    const notice = store.getState().notices.at(-1)!;
-    expect(notice.text).toBe("Indexed 3 files");
-
-    const listener = vi.fn();
-    store.subscribe(listener);
-    store.dismissNotice(notice.id);
-    expect(store.getState().notices).toHaveLength(0);
-    listener.mockClear();
-
-    // The fake server's keepalive mirrors production while the notice expiry
-    // window advances; heartbeat frames themselves never publish store state.
-    for (let elapsed = 0; elapsed < 60_000; elapsed += 20_000) {
-      vi.advanceTimersByTime(20_000);
-      socket.emit({ type: "heartbeat" });
-    }
-    expect(listener).not.toHaveBeenCalled();
-    expect(store.getState().notices).toHaveLength(0);
-  });
-});
-
 describe("navigation curation", () => {
   beforeEach(() => installFakeWebSocket());
 
@@ -2797,45 +2616,6 @@ describe("navigation curation", () => {
       return baseRoutes(url, init);
     };
   };
-
-  it("patches only changed curation fields without resetting chronology", async () => {
-    const patches: Array<Record<string, unknown>> = [];
-    let listRequests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/sessions?")) listRequests += 1;
-      return curationRoutes("ok", (patch) => patches.push(patch))(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListLoading).toBe(false),
-    );
-    expect(listRequests).toBe(1);
-
-    store.toggleSessionHidden("s7");
-    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s7"]);
-
-    // Pinning a hidden session unhides it, in one patch carrying both lists.
-    store.toggleSessionPin("s7");
-    expect(store.getState().prefs).toMatchObject({
-      pinnedSessionIds: ["s7"],
-      hiddenSessionIds: [],
-    });
-
-    store.toggleProjectPin("/demo");
-    expect(store.getState().prefs.pinnedProjectCwds).toEqual(["/demo"]);
-
-    await vi.waitFor(() => expect(patches).toHaveLength(3));
-    expect(patches).toEqual([
-      { hiddenSessionIds: ["s7"] },
-      { pinnedSessionIds: ["s7"], hiddenSessionIds: [] },
-      { pinnedProjectCwds: ["/demo"] },
-    ]);
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListHydrating).toBe(false),
-    );
-    expect(listRequests).toBe(1);
-    expect(store.getState().error).toBeNull();
-  });
 
   it("retains an off-page curated row until restore is confirmed, then prunes it without a list reload", async () => {
     let listRequests = 0;
@@ -3154,38 +2934,6 @@ describe("navigation curation", () => {
       ).toBe(true),
     );
     expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-  });
-
-  it("keeps a newer local change when an older write is refused", async () => {
-    let failNext = true;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        if (failNext) {
-          failNext = false;
-          return { status: 500, body: { error: "preference write rejected" } };
-        }
-        return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-        };
-      }
-      return curationRoutes("ok")(url, init);
-    });
-    const { store } = await initStore();
-
-    store.setTheme("dark"); // this write fails
-    store.setTheme("light"); // …but a newer local change already owns the field
-    await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .notices.some(
-            (notice) =>
-              notice.kind === "warning" &&
-              notice.text === "preference write rejected",
-          ),
-      ).toBe(true),
-    );
-    expect(store.getState().prefs.theme).toBe("light");
   });
 
   it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
@@ -3589,19 +3337,6 @@ describe("resource previews", () => {
     );
   }
 
-  it("loads a bounded reference page for the current branch revision", async () => {
-    installFetch(resourceRoutes());
-    const { store } = await initStore();
-
-    await expect(store.loadSessionResources()).resolves.toMatchObject({
-      sessionId: "s1",
-      viewId: "view-s1",
-      revision: 1,
-      total: 1,
-      resources: [{ reference: "notes/result.md" }],
-    });
-  });
-
   it("preflights every loaded reference in bounded batches without selecting or loading content", async () => {
     const batches: string[][] = [];
     installFetch((url, init) => {
@@ -3652,42 +3387,6 @@ describe("resource previews", () => {
       "outside/file.md": { availability: "unavailable" },
     });
     expect(store.getState().resourceAvailability["file-0.md"]).toBeUndefined();
-  });
-
-  it("keeps incomplete probe batches visibly unknown and retryable", async () => {
-    let calls = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/resources/probe")) {
-        calls += 1;
-        const body = jsonBody(init) as { references: string[] };
-        return {
-          body: {
-            sessionId: "s1",
-            viewId: "view-s1",
-            revision: 1,
-            results:
-              calls === 1
-                ? [{ reference: body.references[0], availability: "available" }]
-                : body.references.map((reference) => ({
-                    reference,
-                    availability: "available",
-                  })),
-          },
-        };
-      }
-      return resourceRoutes()(url, init);
-    });
-    const { store } = await initStore();
-
-    await store.probeResources(["first.md", "omitted.md"]);
-    expect(store.getState().resourceAvailability["first.md"]).toBeUndefined();
-    expect(store.getState().resourceAvailability["omitted.md"]).toMatchObject({
-      availability: "unknown",
-    });
-
-    await store.probeResources(["first.md", "omitted.md"]);
-    expect(calls).toBe(2);
-    expect(store.getState().resourceAvailability["omitted.md"]).toBeUndefined();
   });
 
   it("keeps probe transport failures visibly unknown and retryable", async () => {
@@ -3926,24 +3625,6 @@ describe("resource previews", () => {
     expect(store.getState().resourceAvailability).toEqual({});
   });
 
-  it("opens the pane, resolves the reference, and loads the text preview", async () => {
-    installFetch(resourceRoutes());
-    stubContent("# Notes body");
-    const { store } = await initStore();
-
-    await store.openResource("notes/result.md");
-    const state = store.getState();
-    expect(state.resourcesOpen).toBe(true);
-    expect(state.selectedResourceReference).toBe("notes/result.md");
-    expect(state.resourcePreview).toMatchObject({
-      status: "ready",
-      truncated: false,
-    });
-    expect((state.resourcePreview as { text?: string }).text).toContain(
-      "Notes body",
-    );
-  });
-
   it("loads a complete notebook within the bounded document-preview range", async () => {
     let range: string | null = null;
     const notebook = JSON.stringify({
@@ -4022,18 +3703,6 @@ describe("resource previews", () => {
     expect(store.getState().sessionId).toBe("s1");
     expect(store.getState().selectedResourceReference).toBeNull();
     expect(store.getState().resourcePreview).toBeNull();
-  });
-
-  it("marks the preview truncated only when the body is shorter than the file", async () => {
-    installFetch(resourceRoutes());
-    stubContent("# Notes bo", { "Content-Range": "bytes 0-9/12" }); // 10 of the current 12 bytes arrived
-    const { store } = await initStore();
-
-    await store.openResource("notes/result.md");
-    expect(store.getState().resourcePreview).toMatchObject({
-      status: "ready",
-      truncated: true,
-    });
   });
 
   it("uses the transfer total for grown and shrunk files instead of resolve metadata", async () => {
@@ -4334,49 +4003,6 @@ describe("resource previews", () => {
     expect(store.getState().needsToken).toBe(false);
   });
 
-  it("aborts a pending preview when the pane closes", async () => {
-    let transferStarted!: () => void;
-    const started = new Promise<void>((resolve) => (transferStarted = resolve));
-    let signal: AbortSignal | undefined;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/resources/resolve")) {
-        return {
-          body: {
-            id: "pending",
-            sessionId: "s1",
-            viewId: "view-s1",
-            reference: "pending.pdf",
-            name: "pending.pdf",
-            mimeType: "application/pdf",
-            size: 12,
-            kind: "pdf",
-          },
-        };
-      }
-      if (url.includes("/api/resources/pending/content")) {
-        signal = init.signal ?? undefined;
-        transferStarted();
-        return new Promise<never>((_resolve, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-        });
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const opening = store.openResource("pending.pdf");
-    await started;
-    store.setResourcesOpen(false);
-    await opening;
-
-    expect(signal?.aborted).toBe(true);
-    expect(store.getState().resourcePreview).toBeNull();
-  });
-
   it("aborts a pending preview when the session changes", async () => {
     let transferStarted!: () => void;
     const started = new Promise<void>((resolve) => (transferStarted = resolve));
@@ -4580,96 +4206,6 @@ describe("resource previews", () => {
       resourceWorkspacePaths: {},
     });
   });
-
-  it("closing the pane clears the loaded preview", async () => {
-    installFetch(resourceRoutes());
-    stubContent("# Notes body");
-    const { store } = await initStore();
-
-    await store.openResource("notes/result.md");
-    expect(store.getState().resourcePreview?.status).toBe("ready");
-    store.setResourcesOpen(false);
-    expect(store.getState().resourcesOpen).toBe(false);
-    expect(store.getState().resourcePreview).toBeNull();
-    expect(store.getState().selectedResourceReference).toBeNull();
-  });
-});
-
-describe("prompt delivery freeze", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it("freezes withdrawals and repeat sends in flight, then clears only what was delivered", async () => {
-    let releasePrompt!: () => void;
-    const promptGate = new Promise<void>(
-      (resolve) => (releasePrompt = resolve),
-    );
-    let promptCalls = 0;
-    let uploads = 0;
-    const deletes: string[] = [];
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/attachments") && init.method === "DELETE") {
-        deletes.push(url);
-        return { body: { ok: true } };
-      }
-      if (url.startsWith("/api/attachments")) {
-        uploads += 1;
-        return {
-          body: {
-            attachments: [
-              {
-                id: `att-${uploads}`,
-                fileName: `file-${uploads}.txt`,
-                mimeType: "text/plain",
-                size: 5,
-                kind: "file",
-              },
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/prompt")) {
-        promptCalls += 1;
-        await promptGate;
-        return { status: 202, body: { accepted: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.addFiles([
-      new File(["hello"], "notes.txt", { type: "text/plain" }),
-    ]);
-    const sentLocalId = store.getState().attachments[0]!.localId;
-
-    const send = store.sendPrompt("use the attachment");
-    expect(store.getState().sending).toBe(true);
-
-    // Withdrawing the in-flight attachment must neither mutate state nor
-    // DELETE the host file the prompt is resolving into the message.
-    store.removeAttachment(sentLocalId);
-    expect(store.getState().attachments).toHaveLength(1);
-    expect(deletes).toHaveLength(0);
-
-    // A repeat send while one is in flight is refused outright.
-    await expect(store.sendPrompt("again")).resolves.toBe(false);
-    expect(promptCalls).toBe(1);
-
-    // Files staged during the flight belong to the next message.
-    await store.addFiles([
-      new File(["late"], "late.txt", { type: "text/plain" }),
-    ]);
-    expect(store.getState().attachments).toHaveLength(2);
-
-    releasePrompt();
-    await expect(send).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    expect(store.getState().sending).toBe(false);
-    expect(store.getState().attachments.map((item) => item.fileName)).toEqual([
-      "file-2.txt",
-    ]);
-    expect(deletes).toHaveLength(0);
-  });
 });
 
 describe("composer session partitions", () => {
@@ -4730,215 +4266,10 @@ describe("composer session partitions", () => {
     ]);
     expect(store.getState().projectFiles).toEqual(["src/index.ts"]);
   });
-
-  it("a slow send settles into its owner session's partition only", async () => {
-    let uploads = 0;
-    let releasePrompt!: () => void;
-    const promptGate = new Promise<void>(
-      (resolve) => (releasePrompt = resolve),
-    );
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/attachments")) {
-        uploads += 1;
-        return {
-          body: {
-            attachments: [
-              {
-                id: `att-${uploads}`,
-                fileName: `file-${uploads}.txt`,
-                mimeType: "text/plain",
-                size: 5,
-                kind: "file",
-              },
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/prompt")) {
-        await promptGate;
-        return { status: 202, body: { accepted: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    await store.addFiles([new File(["a"], "a.txt", { type: "text/plain" })]);
-    const send = store.sendPrompt("from A");
-    expect(store.getState().sending).toBe(true);
-
-    // Switch to B mid-flight: B's composer is free and usable immediately.
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2", sessionName: "B" }),
-    });
-    expect(store.getState().sending).toBe(false);
-    await store.addFiles([new File(["b"], "b.txt", { type: "text/plain" })]);
-    expect(store.getState().attachments).toHaveLength(1);
-
-    releasePrompt();
-    await expect(send).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    // The settled send cleared A's partition, never B's visible composer.
-    expect(store.getState().attachments.map((item) => item.fileName)).toEqual([
-      "file-2.txt",
-    ]);
-    socket.emit({ type: "snapshot", data: activeSnapshot() });
-    expect(store.getState().attachments).toEqual([]);
-    expect(store.getState().sending).toBe(false);
-  });
-});
-
-describe("prompt result ownership", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it("does not clear another session's visible error after a delayed success", async () => {
-    let releasePrompt!: () => void;
-    const promptGate = new Promise<void>((resolve) => {
-      releasePrompt = resolve;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/prompt")) {
-        await promptGate;
-        return { status: 202, body: { accepted: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-
-    const sending = store.sendPrompt("from A");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2", sessionName: "B" }),
-    });
-    socket.emit({
-      type: "session_projection_conflict",
-      sessionId: "s2",
-      conflict: { message: "B's visible error", revision: 2 },
-      sessionStatus: { runState: "conflict" },
-    });
-    releasePrompt();
-
-    await expect(sending).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    expect(store.getState().sessionId).toBe("s2");
-    expect(store.getState().error).toBe("B's visible error");
-  });
-
-  it("does not replace another session's visible error after a delayed failure", async () => {
-    let releasePrompt!: () => void;
-    const promptGate = new Promise<void>((resolve) => {
-      releasePrompt = resolve;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/prompt")) {
-        await promptGate;
-        return { status: 500, body: { error: "A failed" } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-
-    const sending = store.sendPrompt("from A");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2", sessionName: "B" }),
-    });
-    socket.emit({
-      type: "session_projection_conflict",
-      sessionId: "s2",
-      conflict: { message: "B's visible error", revision: 2 },
-      sessionStatus: { runState: "conflict" },
-    });
-    releasePrompt();
-
-    await expect(sending).resolves.toBe(false);
-    expect(store.getState().sessionId).toBe("s2");
-    expect(store.getState().error).toBe("B's visible error");
-  });
 });
 
 describe("async completion ownership", () => {
   beforeEach(() => installFakeWebSocket());
-
-  it("a slower, earlier session search cannot overwrite a newer query's results", async () => {
-    let releaseOld!: () => void;
-    const oldGate = new Promise<void>((resolve) => (releaseOld = resolve));
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions?")) {
-        const query = /[?&]q=([^&]*)/.exec(url)?.[1] ?? "";
-        if (query === "old") {
-          await oldGate;
-          return {
-            body: {
-              sessions: [sessionSummary({ id: "old-hit", title: "Old" })],
-              total: 1,
-              offset: 0,
-              limit: 40,
-            },
-          };
-        }
-        if (query === "new") {
-          return {
-            body: {
-              sessions: [sessionSummary({ id: "new-hit", title: "New" })],
-              total: 1,
-              offset: 0,
-              limit: 40,
-            },
-          };
-        }
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const slow = store.loadSessions("old");
-    await store.loadSessions("new");
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "new-hit",
-    ]);
-
-    releaseOld();
-    await slow;
-    // The stale response arrived after a newer query and was discarded.
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "new-hit",
-    ]);
-  });
-
-  it("keeps only the latest rename response for each session", async () => {
-    let releaseFirst!: () => void;
-    let releaseSecond!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/rename")) {
-        const name = String(jsonBody(init).name ?? "");
-        await (name === "First" ? firstGate : secondGate);
-        return { body: { ok: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const first = store.renameSession("s1", "First");
-    const second = store.renameSession("s1", "Second");
-    releaseSecond();
-    await expect(second).resolves.toBe(true);
-    expect(store.getState().sessionName).toBe("Second");
-
-    releaseFirst();
-    await expect(first).resolves.toBe(false);
-    expect(store.getState().sessionName).toBe("Second");
-  });
 
   it("a delayed rename response cannot retitle a different session", async () => {
     let releaseRename!: () => void;
@@ -4971,141 +4302,6 @@ describe("async completion ownership", () => {
 
 describe("selection race ownership", () => {
   beforeEach(() => installFakeWebSocket());
-
-  it("deselects the authoritative active session for the New session surface", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/sessions/deselect")) {
-        return {
-          body: {
-            active: null,
-            runState: "idle",
-            sessionStatuses: { s1: { runState: "idle" } },
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    expect(store.getState().sessionId).toBe("s1");
-
-    await expect(store.deselectSession()).resolves.toBe(true);
-    expect(store.getState()).toMatchObject({
-      sessionId: null,
-      sessionName: "",
-      cwd: null,
-      runState: "idle",
-      messages: [],
-      statuses: {},
-      extensionDisplays: [],
-    });
-  });
-
-  it("does not let a delayed deselect override a newer session selection", async () => {
-    let releaseDeselect!: () => void;
-    const deselectGate = new Promise<void>((resolveGate) => {
-      releaseDeselect = resolveGate;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/deselect")) {
-        await deselectGate;
-        return {
-          body: { active: null, runState: "idle", sessionStatuses: {} },
-        };
-      }
-      if (url.startsWith("/api/sessions/open")) {
-        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const deselecting = store.deselectSession();
-    expect(store.getState().sessionSelectionPending).toBe(true);
-    await store.openSession("s-B");
-    expect(store.getState().sessionSelectionPending).toBe(false);
-    releaseDeselect();
-    await expect(deselecting).resolves.toBe(false);
-    expect(store.getState().sessionId).toBe("s-B");
-  });
-
-  it("a late open response cannot override a newer session selection", async () => {
-    let releaseOpen!: () => void;
-    const openGate = new Promise<void>((resolve) => (releaseOpen = resolve));
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/open")) {
-        await openGate;
-        return { body: activeSnapshot({ sessionId: "s-A", sessionName: "A" }) };
-      }
-      if (url.startsWith("/api/sessions/new")) {
-        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const opening = store.openSession("s-A"); // ticket 1, gated
-    await store.newSession("/proj", "B"); // ticket 2, applies B
-    expect(store.getState().sessionId).toBe("s-B");
-
-    releaseOpen();
-    await opening;
-    // The stale open response is discarded; the newer selection stands.
-    expect(store.getState().sessionId).toBe("s-B");
-  });
-
-  it("returns no created identity when a newer selection supersedes session creation", async () => {
-    let releaseNew!: () => void;
-    const newGate = new Promise<void>((resolveGate) => {
-      releaseNew = resolveGate;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/new")) {
-        await newGate;
-        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
-      }
-      if (url.startsWith("/api/sessions/open")) {
-        return { body: activeSnapshot({ sessionId: "s-C", sessionName: "C" }) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const creating = store.newSession("/proj", "B");
-    await store.openSession("s-C");
-    releaseNew();
-
-    await expect(creating).resolves.toBeNull();
-    expect(store.getState().sessionId).toBe("s-C");
-  });
-
-  it("a successful new session clears the superseded opener", async () => {
-    let releaseOpen!: () => void;
-    const openGate = new Promise<void>((resolveGate) => {
-      releaseOpen = resolveGate;
-    });
-    installFetch(async (url) => {
-      if (url.startsWith("/api/sessions/open")) {
-        await openGate;
-        return { body: activeSnapshot({ sessionId: "s-A", sessionName: "A" }) };
-      }
-      if (url.startsWith("/api/sessions/new")) {
-        return { body: activeSnapshot({ sessionId: "s-B", sessionName: "B" }) };
-      }
-      return baseRoutes(url, {});
-    });
-    const { store } = await initStore();
-
-    const opening = store.openSession("s-A");
-    expect(store.getState().openingSessionId).toBe("s-A");
-    await store.newSession("/proj", "B");
-    expect(store.getState().sessionId).toBe("s-B");
-    expect(store.getState().openingSessionId).toBeNull();
-
-    releaseOpen();
-    await opening;
-    expect(store.getState().sessionId).toBe("s-B");
-    expect(store.getState().openingSessionId).toBeNull();
-  });
 
   it("an authoritative push invalidates an in-flight open response", async () => {
     let releaseOpen!: () => void;

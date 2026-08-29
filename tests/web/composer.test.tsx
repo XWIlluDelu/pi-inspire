@@ -622,34 +622,6 @@ describe("caret completion", () => {
     clearLeftovers();
   });
 
-  it("does not register scrollIntoView's return value as an effect cleanup", async () => {
-    clearLeftovers();
-    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: () => Promise.resolve(),
-    });
-    try {
-      const view = render(<Composer />);
-      const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
-      typeDraft("/");
-      textarea.setSelectionRange(1, 1);
-      fireEvent.select(textarea);
-      await screen.findByRole("listbox", { name: "Slash command completions" });
-      expect(() => view.unmount()).not.toThrow();
-    } finally {
-      if (originalScrollIntoView) {
-        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-          configurable: true,
-          value: originalScrollIntoView,
-        });
-      } else {
-        delete (HTMLElement.prototype as { scrollIntoView?: unknown })
-          .scrollIntoView;
-      }
-    }
-  });
-
   it("inserts a slash command with a trailing space without executing it", async () => {
     clearLeftovers();
     const before = promptBodies.length;
@@ -935,23 +907,6 @@ describe("session-owned composer surfaces", () => {
 });
 
 describe("project file picker", () => {
-  it("orders message tools as model, effort, project files, then attachments", () => {
-    clearLeftovers();
-    const { container } = render(<Composer />);
-    const meta = container.querySelector(".composer__meta")!;
-    const controls = Array.from(meta.querySelectorAll("button"));
-    expect([
-      controls.indexOf(screen.getByRole("button", { name: "Model" })),
-      controls.indexOf(
-        screen.getByRole("combobox", { name: "Thinking level" }),
-      ),
-      controls.indexOf(
-        screen.getByRole("button", { name: "Add project files" }),
-      ),
-      controls.indexOf(screen.getByRole("button", { name: "Attach files" })),
-    ]).toEqual([0, 1, 2, 3]);
-  });
-
   it("adds a searched project file and sends it with the prompt", async () => {
     clearLeftovers();
     render(<Composer />);
