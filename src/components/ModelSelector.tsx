@@ -15,27 +15,14 @@ import {
   type ModelOption,
 } from "../../shared/contracts";
 import {
-  type FloatingMenuBounds,
   type FloatingMenuConstraints,
-  type FloatingMenuPlacement,
-  placeFloatingMenu,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 
-interface ModelGroupingMetrics {
-  comparisons: number;
-  visits: number;
-}
-
-function fuzzyCategory(
-  value: string,
-  queryValue: string,
-  metrics?: ModelGroupingMetrics,
-): number | null {
+function fuzzyCategory(value: string, queryValue: string): number | null {
   const query = queryValue.trim().toLocaleLowerCase();
   if (!query) return 0;
   const text = value.toLocaleLowerCase();
-  metrics && (metrics.visits += text.length);
   const direct = text.indexOf(query);
   if (direct >= 0) return direct === 0 ? 0 : 1;
   let cursor = 0;
@@ -60,32 +47,12 @@ const MODEL_MENU_CONSTRAINTS: FloatingMenuConstraints = {
   maxHeight: 440,
 };
 
-/** Place the menu inside the live center viewport, preferring the side with
- * more usable room. Upward placement uses bottom alignment so a short menu
- * remains attached to its trigger without measuring its rendered height. */
-export function placeModelMenu(
-  trigger: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
-  bounds: FloatingMenuBounds,
-  layoutHeight: number,
-): FloatingMenuPlacement {
-  return placeFloatingMenu(
-    trigger,
-    bounds,
-    layoutHeight,
-    MODEL_MENU_CONSTRAINTS,
-  );
-}
-
 /** Canonical comparison sorting is paid only when the available-model array changes. */
-export function prepareModelOptions(
-  models: readonly ModelOption[],
-  metrics?: ModelGroupingMetrics,
-): ModelOption[] {
+function prepareModelOptions(models: readonly ModelOption[]): ModelOption[] {
   return models
     .map((model, order) => ({ model, order }))
-    .sort((left, right) => {
-      if (metrics) metrics.comparisons += 1;
-      return left.model.provider < right.model.provider
+    .sort((left, right) =>
+      left.model.provider < right.model.provider
         ? -1
         : left.model.provider > right.model.provider
           ? 1
@@ -93,17 +60,16 @@ export function prepareModelOptions(
             ? -1
             : left.model.id > right.model.id
               ? 1
-              : left.order - right.order;
-    })
+              : left.order - right.order,
+    )
     .map(({ model }) => model);
 }
 
 /** Stable linear filtering and bounded relevance bucketing over prepared models. */
-export function groupPreparedModels(
+function groupPreparedModels(
   models: readonly ModelOption[],
   recent: readonly ModelIdentity[],
   query = "",
-  metrics?: ModelGroupingMetrics,
 ): ModelGroup[] {
   const recentRank = new Map(
     recent.map((model, index) => [modelIdentityKey(model), index]),
@@ -114,11 +80,9 @@ export function groupPreparedModels(
   };
   const groups = new Map<string, Bucket[]>();
   for (const model of models) {
-    if (metrics) metrics.visits += 1;
     const category = fuzzyCategory(
       `${model.provider} ${model.id} ${model.name ?? ""}`,
       query,
-      metrics,
     );
     if (category === null) continue;
     let buckets = groups.get(model.provider);
@@ -140,14 +104,6 @@ export function groupPreparedModels(
   }));
 }
 
-/** Convenience owner for non-rendering callers; production prepares once with useMemo. */
-export function groupModels(
-  models: readonly ModelOption[],
-  recent: readonly ModelIdentity[],
-  query = "",
-): ModelGroup[] {
-  return groupPreparedModels(prepareModelOptions(models), recent, query);
-}
 export function ModelSelector({
   value,
   models,

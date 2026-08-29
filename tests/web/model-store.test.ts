@@ -13,7 +13,7 @@ import {
 describe("recent model preference", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("records a deduplicated bounded MRU only after a successful setModel", async () => {
+  it("records a bounded MRU without rewriting an unchanged order", async () => {
     const patches: Record<string, unknown>[] = [];
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
@@ -47,7 +47,7 @@ describe("recent model preference", () => {
     ]);
 
     await store.setModel("openai", "gpt-5");
-    await vi.waitFor(() => expect(patches).toHaveLength(2));
+    expect(patches).toHaveLength(1);
     expect(store.getState().prefs.recentModelIds).toEqual([
       { provider: "openai", id: "gpt-5" },
     ]);

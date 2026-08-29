@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Welcome } from "../../src/components/Welcome";
+import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -219,6 +220,81 @@ describe("new-session start surface", () => {
         attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
       }),
     );
+  });
+
+  it("does not send the first prompt into a session selected during upload", async () => {
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    let releaseUpload!: () => void;
+    const upload = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const newSession = vi
+      .spyOn(store, "newSession")
+      .mockImplementation(async () => {
+        act(() => {
+          socket.emit({
+            type: "snapshot",
+            data: activeSnapshot({ sessionId: "new-session" }),
+          });
+        });
+        return "new-session";
+      });
+    const addFiles = vi
+      .spyOn(store, "addFiles")
+      .mockImplementation(() => upload);
+    const sendPrompt = vi.spyOn(store, "sendPrompt");
+    const replaceComposerText = vi.spyOn(store, "replaceComposerText");
+
+    try {
+      render(<Welcome />);
+      const message = screen.getByLabelText("First message");
+      fireEvent.change(message, { target: { value: "Owned by A" } });
+      fireEvent.change(screen.getByLabelText("Project directory"), {
+        target: { value: "/proj" },
+      });
+      const image = new File(["png"], "image.png", { type: "image/png" });
+      fireEvent.paste(message, {
+        clipboardData: {
+          files: [image],
+          items: [{ kind: "file", getAsFile: () => image }],
+        },
+      });
+      const startButton = screen.getByRole("button", {
+        name: "Start session",
+      });
+      await waitFor(() => expect(startButton).toBeEnabled());
+      fireEvent.click(startButton);
+      await waitFor(() => expect(addFiles).toHaveBeenCalledWith([image]));
+
+      act(() => {
+        socket.emit({
+          type: "snapshot",
+          data: activeSnapshot({ sessionId: "session-b" }),
+        });
+      });
+      await act(async () => {
+        releaseUpload();
+        await upload;
+      });
+      await waitFor(() => expect(store.getState().sessionId).toBe("session-b"));
+
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(sessionDraft("new-session")).toBe("Owned by A");
+      expect(replaceComposerText).not.toHaveBeenCalledWith("");
+    } finally {
+      releaseUpload();
+      newSession.mockRestore();
+      addFiles.mockRestore();
+      sendPrompt.mockRestore();
+      replaceComposerText.mockRestore();
+      setSessionDraft("new-session", "");
+    }
   });
 
   it("uses touch-first Return for a multiline first message instead of starting", async () => {

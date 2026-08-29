@@ -1,6 +1,7 @@
 import { AlertTriangle, FileText, Loader2, X } from "lucide-react";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { formatBytes } from "../format";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 
 export function AttachmentList({
@@ -30,7 +31,10 @@ export function AttachmentList({
                 <PersistedImage
                   sessionId={sessionId}
                   viewId={item.recalledArtifact.viewId}
-                  projectionKey={`${item.recalledArtifact.viewId}\u0000${item.recalledArtifact.incarnation}`}
+                  projectionKey={transcriptProjectionKey(
+                    item.recalledArtifact.viewId,
+                    item.recalledArtifact.incarnation,
+                  )}
                   reference={item.recalledArtifact.reference}
                   className="image-preview--attachment"
                 />

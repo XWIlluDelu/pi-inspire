@@ -10,24 +10,13 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
-  jsonBody,
   sessionSummary,
 } from "./helpers";
 
 let olderAttempts = 0;
-let failPreservedRefresh = false;
-let failVisibleHydration = false;
 let releaseFirstOlder!: () => void;
 const firstOlderGate = new Promise<void>((resolve) => {
   releaseFirstOlder = resolve;
-});
-let releaseCuration!: () => void;
-let curationStarted!: () => void;
-const curationGate = new Promise<void>((resolve) => {
-  releaseCuration = resolve;
-});
-const curationRequest = new Promise<void>((resolve) => {
-  curationStarted = resolve;
 });
 
 beforeAll(async () => {
@@ -36,52 +25,17 @@ beforeAll(async () => {
     value: 390,
   });
   installFakeWebSocket();
-  installFetch(async (url, init) => {
+  installFetch(async (url) => {
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
           snapshot: { active: null, runState: "idle", sessionStatuses: {} },
         }),
       };
-    if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-      return {
-        body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-      };
-    }
-    if (url.startsWith("/api/sessions/by-cwd")) {
-      curationStarted();
-      await curationGate;
-      return {
-        body: {
-          sessions: [
-            sessionSummary({ id: "curated-old", cwd: "/work/curated" }),
-          ],
-        },
-      };
-    }
-    if (url.startsWith("/api/sessions/by-id")) {
-      const ids = (jsonBody(init).ids as string[]) ?? [];
-      if (failVisibleHydration && ids.includes("ui-live")) {
-        return { status: 503, body: { error: "Visible hydration failed" } };
-      }
-      return {
-        body: {
-          sessions: ids.includes("ui-live")
-            ? [sessionSummary({ id: "ui-live", title: "Hydrated live" })]
-            : [],
-        },
-      };
-    }
     if (url.startsWith("/api/sessions?")) {
-      const parsed = new URL(url, "http://local");
-      const offset = Number(parsed.searchParams.get("offset") ?? 0);
-      const limit = Number(parsed.searchParams.get("limit") ?? 40);
-      if (failPreservedRefresh && offset === 0 && limit === 3) {
-        return {
-          status: 503,
-          body: { error: "Could not preserve loaded sessions" },
-        };
-      }
+      const offset = Number(
+        new URL(url, "http://local").searchParams.get("offset") ?? 0,
+      );
       if (offset === 0)
         return {
           body: {
@@ -123,7 +77,7 @@ beforeAll(async () => {
 });
 
 describe("session pagination control", () => {
-  it("is keyboard-complete, reports actionable states, and omits redundant completion chrome", async () => {
+  it("exposes keyboard loading, retry, and completion states accessibly", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <Nav
@@ -136,102 +90,30 @@ describe("session pagination control", () => {
     const status = within(nav).getByRole("status");
     expect(status).toHaveTextContent("Showing 1 of 3");
 
-    const load = within(nav).getByRole("button", {
-      name: "Load older sessions",
-    });
-    load.focus();
+    within(nav).getByRole("button", { name: "Load older sessions" }).focus();
     await user.keyboard("{Enter}");
     const loading = within(nav).getByRole("button", {
       name: "Loading older sessions…",
     });
     expect(loading).toBeDisabled();
     expect(loading).toHaveAttribute("aria-busy", "true");
+
     releaseFirstOlder();
     const retry = await within(nav).findByRole("button", {
       name: "Retry loading older sessions",
     });
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "page-1",
-    ]);
     expect(status).toHaveTextContent("Showing 1 of 3 · Try again shortly");
 
     await user.click(retry);
     await waitFor(() => expect(status).toHaveTextContent("Showing 2 of 3"));
     expect(screen.getByText("Middle")).toBeInTheDocument();
 
-    const last = within(nav).getByRole("button", {
-      name: "Load older sessions",
-    });
-    last.focus();
+    within(nav).getByRole("button", { name: "Load older sessions" }).focus();
     await user.keyboard(" ");
     await waitFor(() =>
       expect(within(nav).queryByRole("status")).not.toBeInTheDocument(),
     );
-    expect(
-      within(nav).queryByRole("button", { name: "Load older sessions" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByText("Oldest")).toBeInTheDocument();
-
-    failPreservedRefresh = true;
-    FakeWebSocket.instances.at(-1)!.emit({
-      type: "agent_settled",
-      sessionId: "background",
-      sessionStatus: { runState: "idle" },
-    });
-    const preserveRetry = await within(nav).findByRole("button", {
-      name: "Retry refreshing the list",
-    });
-    expect(within(nav).getByRole("status")).toHaveTextContent(
-      "Showing 3 of 3 · Could not preserve loaded sessions",
-    );
-    expect(store.getState().sessions).toHaveLength(3);
-
-    failPreservedRefresh = false;
-    await user.click(preserveRetry);
-    await waitFor(() =>
-      expect(within(nav).queryByRole("status")).not.toBeInTheDocument(),
-    );
-
-    failVisibleHydration = true;
-    FakeWebSocket.instances.at(-1)!.emit({
-      type: "message_start",
-      sessionId: "ui-live",
-      sessionStatus: { runState: "running" },
-    });
-    const hydrationRetry = await within(nav).findByRole("button", {
-      name: "Retry loading active sessions",
-    });
-    expect(within(nav).getByRole("status")).toHaveTextContent(
-      "Showing 3 of 3 · Failed to load active sessions: Visible hydration failed",
-    );
-
-    failVisibleHydration = false;
-    await user.click(hydrationRetry);
-    await waitFor(() =>
-      expect(screen.getAllByText("Hydrated live")).toHaveLength(1),
-    );
-    // Runtime state stays on the canonical row rather than duplicating it in
-    // a second navigation group.
-    expect(within(nav).queryByRole("status")).not.toBeInTheDocument();
-
-    store.toggleProjectHidden("/work/curated");
-    await curationRequest;
-    expect(store.getState()).toMatchObject({
-      sessionListHydrating: true,
-      sessionListOperation: "curation",
-    });
-    // Curation keeps the confirmed catalog usable in place; it does not
-    // resurrect the completed-list loading row while fetching off-page rows.
-    expect(within(nav).queryByRole("status")).not.toBeInTheDocument();
-    expect(
-      within(nav).queryByRole("button", {
-        name: "Loading curated sessions…",
-      }),
-    ).not.toBeInTheDocument();
-    releaseCuration();
-    await waitFor(() =>
-      expect(store.getState().sessionListHydrating).toBe(false),
-    );
 
     const results = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },

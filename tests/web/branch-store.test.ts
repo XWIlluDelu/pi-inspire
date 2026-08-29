@@ -1,68 +1,16 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { BranchTreeResponse } from "../../shared/contracts";
 import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  branchTree,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   type RouteResponse,
 } from "./helpers";
-
-function branchTree(): BranchTreeResponse {
-  return {
-    sessionId: "s1",
-    revision: 1,
-    incarnation: "tree-1",
-    durableLeafId: "a1",
-    effectiveLeafId: null,
-    activePath: ["u1", "a1"],
-    truncated: false,
-    health: { status: "ok" },
-    nodes: [
-      {
-        id: "u1",
-        parentId: null,
-        depth: 0,
-        type: "message",
-        role: "user",
-        label: "user",
-        snippet: "user",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: false,
-        canSwitch: false,
-        canEdit: false,
-        canFork: true,
-      },
-      {
-        id: "a1",
-        parentId: "u1",
-        depth: 1,
-        type: "message",
-        role: "assistant",
-        label: "assistant",
-        snippet: "answer",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: true,
-        canSwitch: true,
-        canEdit: false,
-        canFork: false,
-      },
-    ],
-  };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => {
-    resolve = accept;
-  });
-  return { promise, resolve };
-}
 
 async function setup(
   route: (

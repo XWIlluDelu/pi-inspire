@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { expect, it } from "vitest";
 import type { ComposerHistoryEntry } from "../../shared/contracts";
 import {
@@ -5,6 +6,7 @@ import {
   composerHistory,
   discardComposerHistory,
   hydrateComposerHistory,
+  isTextareaCaretOnVisualEdge,
   rememberComposerHistory,
 } from "../../src/composer-history";
 
@@ -77,4 +79,12 @@ it("does not let an evicted hydration replace a newer partition", async () => {
   for (let index = 0; index < 12; index += 1) {
     discardComposerHistory(`other-${index}`);
   }
+});
+
+it("recognizes the first line before a leading newline", () => {
+  const textarea = document.createElement("textarea");
+  textarea.value = "\nsecond line";
+  textarea.setSelectionRange(0, 0);
+
+  expect(isTextareaCaretOnVisualEdge(textarea, "first")).toBe(true);
 });

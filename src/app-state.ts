@@ -47,6 +47,19 @@ export interface TranscriptActivityRangeState extends TranscriptActivityRange {
 
 export type ActivityMaterializationMode = "all" | "tail";
 
+/** Whether a projection revision still contains the unchanged prefix ending at
+ * an earlier revision. */
+export function transcriptRevisionContains(
+  revision: number,
+  appendFromRevision: number,
+  ancestorRevision: number,
+): boolean {
+  return (
+    revision === ancestorRevision ||
+    (revision > ancestorRevision && appendFromRevision <= ancestorRevision)
+  );
+}
+
 export function contextUsage(stats: unknown): ContextUsage | null {
   if (!stats || typeof stats !== "object") return null;
   const raw = (stats as { contextUsage?: unknown }).contextUsage;
@@ -209,6 +222,25 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   error: string | null;
 }
 
+export function emptyResourceInspectionState(): Pick<
+  AppState,
+  | "fileBrowserView"
+  | "selectedResourceReference"
+  | "selectedResourceWorkspacePath"
+  | "resourcePreview"
+  | "resourceAvailability"
+  | "resourceWorkspacePaths"
+> {
+  return {
+    fileBrowserView: "browse",
+    selectedResourceReference: null,
+    selectedResourceWorkspacePath: null,
+    resourcePreview: null,
+    resourceAvailability: {},
+    resourceWorkspacePaths: {},
+  };
+}
+
 export function createInitialAppState(): AppState {
   return {
     ...emptyEventSlice(),
@@ -281,15 +313,12 @@ export function createInitialAppState(): AppState {
     pendingAction: null,
     resourcesOpen: false,
     contextMode: "files",
-    fileBrowserView: "browse",
+    ...emptyResourceInspectionState(),
     workspaceExplorerOpen: false,
     branchTree: null,
     branchTreeLoading: false,
     branchTreeError: null,
     branchActionId: null,
-    selectedResourceReference: null,
-    selectedResourceWorkspacePath: null,
-    resourcePreview: null,
     gitStatus: null,
     gitStatusError: null,
     gitStatusLoading: false,
@@ -297,8 +326,6 @@ export function createInitialAppState(): AppState {
     selectedGitPathId: null,
     selectedGitSide: null,
     gitDiff: null,
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
     error: null,
   };
 }

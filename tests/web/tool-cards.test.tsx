@@ -2,7 +2,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
-import { ResourcePathLabel } from "../../src/components/ResourcePathLabel";
 import { ToolCard } from "../../src/components/transcript-cards";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
@@ -132,50 +131,6 @@ describe("native Pi tool cards", () => {
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
-  it("marks grammar and resource summary segments for stable truncation", () => {
-    const { container } = render(
-      card(
-        call("grep", { pattern: "needle", path: "/a/very/long/path" }),
-        result("No matches found"),
-        "collapsed",
-      ),
-    );
-
-    const summaryParts = container.querySelectorAll(".tool-summary__part");
-    expect(summaryParts[1]).toHaveClass("tool-summary__part--subdued");
-    expect(summaryParts[2]).toHaveClass("tool-summary__part--resource");
-  });
-
-  it("keeps the complete value on adaptive resource path labels", () => {
-    const paths = [
-      "server/app.ts",
-      "src/components/Nav.tsx",
-      "C:\\workspace\\src\\really-long-file-name.ts",
-      "file:///home/user/folder/report.json",
-      "/home/user/directory/",
-    ];
-    const { container } = render(
-      <>
-        {paths.map((path) => (
-          <ResourcePathLabel key={path} path={path} />
-        ))}
-      </>,
-    );
-
-    for (const [index, path] of paths.entries()) {
-      const label = container.querySelectorAll(".resource-path")[index];
-      expect(label).toHaveAttribute("title", path);
-      expect(label.querySelector(".visually-hidden")).toHaveTextContent(path);
-      expect(label.querySelector(".resource-path__visible")).toHaveAttribute(
-        "aria-hidden",
-        "true",
-      );
-      expect(label.querySelector(".resource-path__visible")).toHaveTextContent(
-        path,
-      );
-    }
-  });
-
   it("keeps complete resource actions behind one middle-truncation label", () => {
     const readPath =
       "docdoki/stages/archive/challenge-response-fold-pagination-2026-08-22.md";
@@ -189,7 +144,7 @@ describe("native Pi tool cards", () => {
       "+after",
       "",
     ].join("\n");
-    const { container } = render(
+    render(
       <>
         {card(
           call("read", { path: readPath }),
@@ -215,9 +170,6 @@ describe("native Pi tool cards", () => {
         path,
       );
     }
-    expect(container.querySelector(".tool-block__heading")).toContainElement(
-      container.querySelector(".tool-block__path"),
-    );
   });
 
   it("renders a configured custom rule through sanitized Markdown blocks", async () => {

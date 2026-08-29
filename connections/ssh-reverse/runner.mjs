@@ -207,8 +207,7 @@ async function readState(path) {
   try {
     const value = JSON.parse(await readFile(path, "utf8"));
     return validState(value) ? value : null;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
+  } catch {
     return null;
   }
 }

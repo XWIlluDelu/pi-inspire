@@ -21,7 +21,7 @@ import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { supportedThinkingLevels } from "../model-options";
-import { setSessionDraft } from "../session-drafts";
+import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
@@ -339,12 +339,16 @@ export const Welcome = memo(function Welcome({
       store.replaceComposerText(message);
       for (const path of referencedProjectFiles) store.addProjectFile(path);
       if (files.length > 0) await store.addFiles(files);
+      if (
+        store.getState().sessionId !== opened ||
+        sessionDraft(opened) !== message
+      )
+        return;
       const sent = await store.sendPrompt(message);
-      if (sent) {
-        setSessionDraft(opened, "");
-        store.replaceComposerText("");
-        setDraft("");
-      }
+      if (!sent || sessionDraft(opened) !== message) return;
+      setSessionDraft(opened, "");
+      if (store.getState().sessionId === opened) store.replaceComposerText("");
+      setDraft("");
     } finally {
       setStarting(false);
     }

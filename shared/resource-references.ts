@@ -304,6 +304,25 @@ export function collectSessionResourceReferences(
     seen.add(resource.key);
     resources.push(resource);
   };
+  const addToolArgumentReferences = (
+    values: Record<string, unknown>,
+    metadata: Pick<SessionResourceReference, "toolName"> = {},
+  ) => {
+    for (const [key, value] of Object.entries(values)) {
+      if (!isToolResourceArgumentKey(key)) continue;
+      for (const rawReference of valuesForArgument(value)) {
+        const reference = trimReference(rawReference);
+        if (!isLocalResourceReference(reference)) continue;
+        add({
+          key: `file:${referenceKey(reference)}`,
+          reference,
+          label: reference,
+          source: "tool",
+          ...metadata,
+        });
+      }
+    }
+  };
 
   for (
     let messageIndex = messages.length - 1;
@@ -347,23 +366,9 @@ export function collectSessionResourceReferences(
         part.arguments &&
         typeof part.arguments === "object"
       ) {
-        const toolName = typeof part.name === "string" ? part.name : undefined;
-        for (const [key, value] of Object.entries(
-          part.arguments as Record<string, unknown>,
-        )) {
-          if (!isToolResourceArgumentKey(key)) continue;
-          for (const rawReference of valuesForArgument(value)) {
-            const reference = trimReference(rawReference);
-            if (!isLocalResourceReference(reference)) continue;
-            add({
-              key: `file:${referenceKey(reference)}`,
-              reference,
-              label: reference,
-              source: "tool",
-              toolName,
-            });
-          }
-        }
+        addToolArgumentReferences(part.arguments as Record<string, unknown>, {
+          toolName: typeof part.name === "string" ? part.name : undefined,
+        });
       }
       // Thinking parts are excluded on purpose: thinking visibility is an
       // independent preference, so its paths must not surface as resources.
@@ -378,23 +383,8 @@ export function collectSessionResourceReferences(
       }
     }
 
-    if (message.details && typeof message.details === "object") {
-      for (const [key, value] of Object.entries(
-        message.details as Record<string, unknown>,
-      )) {
-        if (!isToolResourceArgumentKey(key)) continue;
-        for (const rawReference of valuesForArgument(value)) {
-          const reference = trimReference(rawReference);
-          if (!isLocalResourceReference(reference)) continue;
-          add({
-            key: `file:${referenceKey(reference)}`,
-            reference,
-            label: reference,
-            source: "tool",
-          });
-        }
-      }
-    }
+    if (message.details && typeof message.details === "object")
+      addToolArgumentReferences(message.details as Record<string, unknown>);
   }
   return resources;
 }

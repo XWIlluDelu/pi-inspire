@@ -35,6 +35,7 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../../shared/contracts.js";
+import { sequentialUserTurnAnchors } from "../../shared/user-turns.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createInspireServer } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
@@ -1020,43 +1021,7 @@ class BenchmarkRuntime extends EventEmitter implements RuntimeLike {
     sessionId: string,
     start?: number,
   ): Promise<UserTurnIndexPage> {
-    const turns = this.messages.flatMap((value, index) => {
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return [];
-      const message = value as Record<string, unknown>;
-      if (message.role !== "user") return [];
-      const content =
-        typeof message.content === "string"
-          ? message.content
-          : Array.isArray(message.content)
-            ? message.content
-                .flatMap((part) =>
-                  part &&
-                  typeof part === "object" &&
-                  !Array.isArray(part) &&
-                  (part as Record<string, unknown>).type === "text" &&
-                  typeof (part as Record<string, unknown>).text === "string"
-                    ? [(part as Record<string, unknown>).text as string]
-                    : [],
-                )
-                .join(" ")
-            : "";
-      return [
-        {
-          id:
-            typeof message.__inspireMessageId === "string"
-              ? message.__inspireMessageId
-              : `benchmark-user:${index}`,
-          ordinal: 0,
-          snippet:
-            content.replace(/\s+/g, " ").trim().slice(0, 180) || "User message",
-          attachmentCount: 0,
-        },
-      ];
-    });
-    turns.forEach((turn, ordinal) => {
-      turn.ordinal = ordinal;
-    });
+    const turns = sequentialUserTurnAnchors(this.messages, "benchmark-user");
     const pageStart =
       start === undefined
         ? Math.max(0, turns.length - 100)

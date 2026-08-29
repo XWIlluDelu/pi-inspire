@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import {
   type ActiveSnapshot,
+  type BranchTreeResponse,
   defaultPreferences,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -47,6 +48,29 @@ export function installFetch(handler: RouteHandler) {
 
 export function jsonBody(init: RequestInit): Record<string, unknown> {
   return JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+}
+
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((complete, fail) => {
+    resolve = complete;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+export function installLocalStorage(): void {
+  const values = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, String(value)),
+      removeItem: (key: string) => values.delete(key),
+      clear: () => values.clear(),
+    },
+  });
 }
 
 // --- WebSocket stubbing (never connects unless told to) ---
@@ -105,6 +129,51 @@ export function installFakeWebSocket(): void {
 // --- Payloads ---
 
 export const DEFAULT_PREFS = defaultPreferences;
+
+export function branchTree(): BranchTreeResponse {
+  return {
+    sessionId: "s1",
+    revision: 1,
+    incarnation: "tree-1",
+    durableLeafId: "a1",
+    effectiveLeafId: null,
+    activePath: ["u1", "a1"],
+    truncated: false,
+    health: { status: "ok" },
+    nodes: [
+      {
+        id: "u1",
+        parentId: null,
+        depth: 0,
+        type: "message",
+        role: "user",
+        label: "user",
+        snippet: "user",
+        timestamp: "2026-08-01",
+        active: true,
+        leaf: false,
+        canSwitch: false,
+        canEdit: false,
+        canFork: true,
+      },
+      {
+        id: "a1",
+        parentId: "u1",
+        depth: 1,
+        type: "message",
+        role: "assistant",
+        label: "assistant",
+        snippet: "answer",
+        timestamp: "2026-08-01",
+        active: true,
+        leaf: true,
+        canSwitch: true,
+        canEdit: false,
+        canFork: false,
+      },
+    ],
+  };
+}
 
 type ActiveSnapshotValue = NonNullable<ActiveSnapshot["active"]>;
 type ActiveSnapshotOverrides = Omit<
