@@ -219,7 +219,7 @@ function DeferredSettings({
   );
 }
 
-export function resolveTheme(
+function resolveTheme(
   pref: ThemePreference,
   systemDark: boolean,
 ): "light" | "dark" {

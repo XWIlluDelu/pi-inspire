@@ -6,14 +6,7 @@ import {
   type WorkspaceBrowserState,
   WorkspaceController,
 } from "../../src/controllers/workspace-controller";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 function createHarness() {
   let transportGeneration = 1;

@@ -11,6 +11,7 @@ import {
   activeSnapshot,
   bootstrapPayload,
   DEFAULT_PREFS,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -31,17 +32,6 @@ const baseRoutes: RouteHandler = (url) => {
   return undefined;
 };
 
-function deferredResponse(): {
-  promise: Promise<RouteResponse>;
-  resolve(response: RouteResponse): void;
-} {
-  let resolve!: (response: RouteResponse) => void;
-  const promise = new Promise<RouteResponse>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
-
 function requestToken(init: RequestInit): string | null {
   const authorization = (init.headers as Record<string, string> | undefined)
     ?.Authorization;
@@ -50,7 +40,7 @@ function requestToken(init: RequestInit): string | null {
 
 function installDeferredBootstrapRoutes(...tokens: string[]) {
   const responses = new Map(
-    tokens.map((token) => [token, deferredResponse()] as const),
+    tokens.map((token) => [token, deferred<RouteResponse>()] as const),
   );
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) {
@@ -1456,8 +1446,8 @@ describe("transcript paging", () => {
   });
 
   it("keeps a newer prompt-map load coalesced when an obsolete load settles", async () => {
-    const staleResponse = deferredResponse();
-    const currentResponse = deferredResponse();
+    const staleResponse = deferred<RouteResponse>();
+    const currentResponse = deferred<RouteResponse>();
     let requests = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -1553,7 +1543,7 @@ describe("transcript paging", () => {
   });
 
   it("cancels an in-flight prompt-map seek when the branch view changes", async () => {
-    const first = deferredResponse();
+    const first = deferred<RouteResponse>();
     let firstRequested!: () => void;
     const firstStarted = new Promise<void>((resolve) => {
       firstRequested = resolve;
@@ -2577,8 +2567,8 @@ describe("thinking level control", () => {
   });
 
   it("does not let an older refusal undo a newer accepted level", async () => {
-    const xhigh = deferredResponse();
-    const low = deferredResponse();
+    const xhigh = deferred<RouteResponse>();
+    const low = deferred<RouteResponse>();
     installFetch((url, init) => {
       if (url.startsWith("/api/control/thinking")) {
         const body = jsonBody(init) as { level: string };
@@ -3199,7 +3189,7 @@ describe("navigation curation", () => {
   });
 
   it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
-    const pendingPatch = deferredResponse();
+    const pendingPatch = deferred<RouteResponse>();
     let patchStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       patchStarted = resolve;
@@ -3874,7 +3864,7 @@ describe("resource previews", () => {
   });
 
   it("ignores a superseded probe 401 after a fresh pairing succeeds", async () => {
-    const oldProbe = deferredResponse();
+    const oldProbe = deferred<RouteResponse>();
     let markProbeStarted!: () => void;
     const probeStarted = new Promise<void>((resolve) => {
       markProbeStarted = resolve;
@@ -4251,7 +4241,7 @@ describe("resource previews", () => {
   });
 
   it("rejects embedded-image bytes from a replaced projection incarnation", async () => {
-    const oldContent = deferredResponse();
+    const oldContent = deferred<RouteResponse>();
     let contentStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       contentStarted = resolve;
@@ -4300,7 +4290,7 @@ describe("resource previews", () => {
   });
 
   it("ignores an obsolete embedded-image authorization failure after transport replacement", async () => {
-    const oldContent = deferredResponse();
+    const oldContent = deferred<RouteResponse>();
     let contentStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       contentStarted = resolve;

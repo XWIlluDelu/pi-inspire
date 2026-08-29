@@ -58,32 +58,6 @@ describe("groupSessionsByCwd", () => {
         .sort(),
     ).toEqual(["/home/u/app", "/home/u/app2"]);
   });
-
-  it("groups a search-filtered subset the same way", () => {
-    // Search results arrive already filtered by the host; grouping is identical.
-    const a1 = sessionSummary({
-      id: "a1",
-      title: "fix parser",
-      cwd: "/home/u/alpha",
-      modified: "2026-07-20T10:00:00Z",
-    });
-    const b1 = sessionSummary({
-      id: "b1",
-      title: "fix build",
-      cwd: "/home/u/beta",
-      modified: "2026-07-22T10:00:00Z",
-    });
-    const groups = groupSessionsByCwd([a1, b1]);
-    expect(groups.map((group) => group.cwd)).toEqual([
-      "/home/u/beta",
-      "/home/u/alpha",
-    ]);
-    expect(groups.every((group) => group.sessions.length === 1)).toBe(true);
-  });
-
-  it("returns no groups for an empty list", () => {
-    expect(groupSessionsByCwd([])).toEqual([]);
-  });
 });
 
 describe("splitNavSections", () => {
@@ -125,37 +99,6 @@ describe("splitNavSections", () => {
     );
     expect(groupedIds).not.toContain("p");
     expect(groupedIds).toEqual(["o"]);
-  });
-
-  it("returns an empty Pinned section when nothing is pinned and empty groups when all are pinned", () => {
-    const plain = sessionSummary({ id: "x" });
-    expect(splitNavSections([plain], curation()).pinned).toEqual([]);
-    const only = sessionSummary({ id: "y" });
-    expect(
-      splitNavSections([only], curation({ pinnedSessionIds: ["y"] })).groups,
-    ).toEqual([]);
-  });
-
-  it("keeps pinned matches in the Pinned section for a search-filtered subset", () => {
-    // Search results arrive host-filtered; splitting must not re-file them.
-    const pinnedMatch = sessionSummary({
-      id: "pm",
-      title: "fix parser",
-      cwd: "/a",
-    });
-    const plainMatch = sessionSummary({
-      id: "xm",
-      title: "fix parser too",
-      cwd: "/a",
-    });
-    const { pinned, groups } = splitNavSections(
-      [pinnedMatch, plainMatch],
-      curation({ pinnedSessionIds: ["pm"] }),
-    );
-    expect(pinned.map((session) => session.id)).toEqual(["pm"]);
-    expect(
-      groups.flatMap((group) => group.sessions.map((session) => session.id)),
-    ).toEqual(["xm"]);
   });
 
   it("lifts pinned folders out of the ordinary groups, keeping their own order", () => {

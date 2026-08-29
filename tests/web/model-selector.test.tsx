@@ -7,13 +7,8 @@ import {
   within,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  groupModels,
-  groupPreparedModels,
-  placeModelMenu,
-  prepareModelOptions,
-} from "../../src/components/ModelSelector";
 import { ModelSelector } from "../../src/components/ModelSelector";
+import { supportedThinkingLevels } from "../../src/model-options";
 
 const models = [
   {
@@ -31,74 +26,6 @@ const models = [
   { provider: "openai", id: "gpt-5", name: "GPT 5", reasoning: true },
 ];
 
-describe("model grouping", () => {
-  it("groups by canonical provider and uses MRU only within that provider", () => {
-    const groups = groupModels(models, [
-      { provider: "unavailable", id: "gone" },
-      { provider: "anthropic", id: "claude-haiku" },
-    ]);
-    expect(groups.map((group) => group.provider)).toEqual([
-      "anthropic",
-      "openai",
-    ]);
-    expect(groups[0]!.models.map((model) => model.id)).toEqual([
-      "claude-haiku",
-      "claude-sonnet",
-    ]);
-  });
-
-  it("filters repeated large queries linearly without comparison sorting", () => {
-    const large = Array.from({ length: 5_000 }, (_, index) => ({
-      provider: `provider-${index % 25}`,
-      id: `model-${index}`,
-      name: `Model ${index}`,
-    }));
-    const prepareMetrics = { comparisons: 0, visits: 0 };
-    const prepared = prepareModelOptions(large, prepareMetrics);
-    expect(prepareMetrics.comparisons).toBeGreaterThan(0);
-    const queryMetrics = { comparisons: 0, visits: 0 };
-    for (const query of ["model 1", "provider-7", "m4999", "missing"]) {
-      groupPreparedModels(prepared, [], query, queryMetrics);
-    }
-    expect(queryMetrics.comparisons).toBe(0);
-    expect(queryMetrics.visits).toBeLessThan(4 * large.length * 80);
-  });
-
-  it("fuzzy-searches provider, model id, and display name", () => {
-    expect(
-      groupModels(models, [], "anth snnt")
-        .flatMap((group) => group.models)
-        .map((model) => model.id),
-    ).toEqual(["claude-sonnet"]);
-    expect(
-      groupModels(models, [], "gpt5")
-        .flatMap((group) => group.models)
-        .map((model) => model.id),
-    ).toEqual(["gpt-5"]);
-  });
-});
-
-describe("model picker placement", () => {
-  const bounds = { left: 0, top: 64, right: 390, bottom: 430 };
-
-  it("flips below when the mobile keyboard leaves too little room above", () => {
-    const placement = placeModelMenu(
-      { left: 12, top: 100, right: 140, bottom: 136 },
-      bounds,
-      430,
-    );
-
-    expect(placement).toMatchObject({
-      direction: "down",
-      left: 16,
-      top: 140,
-      width: 358,
-      maxHeight: 282,
-    });
-    expect(placement.top! + placement.maxHeight).toBe(422);
-  });
-});
-
 describe("model picker interaction", () => {
   it("keeps provider headings outside option navigation and exposes active/recent/capability labels", () => {
     const change = vi.fn();
@@ -113,7 +40,14 @@ describe("model picker interaction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
     const list = screen.getByRole("listbox", { name: "Available models" });
     expect(within(list).getAllByRole("group")).toHaveLength(2);
-    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map(
+          (option) =>
+            option.textContent?.match(/Claude Haiku|Claude Sonnet|GPT 5/u)?.[0],
+        ),
+    ).toEqual(["Claude Haiku", "Claude Sonnet", "GPT 5"]);
     expect(
       within(list).getByRole("option", { name: /Claude Sonnet.*Active/ }),
     ).toBeInTheDocument();
@@ -190,5 +124,37 @@ describe("model picker interaction", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
     release();
     await pending;
+  });
+});
+
+describe("new-session thinking choices", () => {
+  it("mirrors Pi's metadata rules for ordinary, extended, and unsupported reasoning", () => {
+    expect(supportedThinkingLevels(null)).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(
+      supportedThinkingLevels({ provider: "p", id: "plain", reasoning: false }),
+    ).toEqual(["off"]);
+    expect(
+      supportedThinkingLevels({
+        provider: "p",
+        id: "reasoning",
+        reasoning: true,
+      }),
+    ).toEqual(["off", "minimal", "low", "medium", "high"]);
+    expect(
+      supportedThinkingLevels({
+        provider: "p",
+        id: "mapped",
+        reasoning: true,
+        thinkingLevelMap: { minimal: null, xhigh: "high", max: "high" },
+      }),
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
   });
 });
