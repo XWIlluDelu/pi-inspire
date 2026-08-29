@@ -73,6 +73,33 @@ export class RuntimeSessionDeletionController {
     return session;
   }
 
+  private isSessionOpeningOrChanging(sessionId: string, path: string): boolean {
+    return (
+      this.host.hasSelectionReservation(sessionId) ||
+      this.host.hasLoadingSlot(sessionId) ||
+      this.host.hasLoadingPath(path) ||
+      this.host.hasOpening(sessionId) ||
+      this.host.hasProvisionalReservation(sessionId, path) ||
+      this.host.hasForkReservation(sessionId, path)
+    );
+  }
+
+  private hasDeletionBlockingState(slot: RuntimeSlot): boolean {
+    return (
+      slot.extensionResponsePending > 0 ||
+      isBusyRunState(slot.runState) ||
+      slot.pendingExtensionUiRequests.size > 0 ||
+      slot.pendingQueues.paused ||
+      slot.pendingQueues.steering.length > 0 ||
+      slot.pendingQueues.followUp.length > 0 ||
+      slot.persistenceExpectations.length > 0 ||
+      Boolean(slot.pendingPartialPersistence) ||
+      Boolean(slot.pendingBranchBridge) ||
+      Boolean(slot.conflict) ||
+      Boolean(slot.navigationLease)
+    );
+  }
+
   private async deleteSessionInside(
     sessionId: string,
     authorizedSession?: SessionRecord,
@@ -117,12 +144,7 @@ export class RuntimeSessionDeletionController {
     await this.host.loadingPath(path)?.catch(() => undefined);
     if (
       this.host.selectedSessionId() === sessionId ||
-      this.host.hasSelectionReservation(sessionId) ||
-      this.host.hasLoadingSlot(sessionId) ||
-      this.host.hasLoadingPath(path) ||
-      this.host.hasOpening(sessionId) ||
-      this.host.hasProvisionalReservation(sessionId, path) ||
-      this.host.hasForkReservation(sessionId, path)
+      this.isSessionOpeningOrChanging(sessionId, path)
     ) {
       throw Object.assign(
         new Error("The session is still being opened or changed"),
@@ -136,17 +158,7 @@ export class RuntimeSessionDeletionController {
       if (
         slot.activeOperations > 0 ||
         slot.mutationPending > 0 ||
-        slot.extensionResponsePending > 0 ||
-        isBusyRunState(slot.runState) ||
-        slot.pendingExtensionUiRequests.size > 0 ||
-        slot.pendingQueues.paused ||
-        slot.pendingQueues.steering.length > 0 ||
-        slot.pendingQueues.followUp.length > 0 ||
-        slot.persistenceExpectations.length > 0 ||
-        slot.pendingPartialPersistence ||
-        slot.pendingBranchBridge ||
-        slot.conflict ||
-        slot.navigationLease
+        this.hasDeletionBlockingState(slot)
       ) {
         throw Object.assign(
           new Error(
@@ -165,20 +177,7 @@ export class RuntimeSessionDeletionController {
             { status: 409 },
           );
         }
-        if (
-          slot.activeOperations > 1 ||
-          isBusyRunState(slot.runState) ||
-          slot.pendingExtensionUiRequests.size > 0 ||
-          slot.pendingQueues.paused ||
-          slot.pendingQueues.steering.length > 0 ||
-          slot.pendingQueues.followUp.length > 0 ||
-          slot.extensionResponsePending > 0 ||
-          slot.persistenceExpectations.length > 0 ||
-          slot.pendingPartialPersistence ||
-          slot.pendingBranchBridge ||
-          slot.conflict ||
-          slot.navigationLease
-        ) {
+        if (slot.activeOperations > 1 || this.hasDeletionBlockingState(slot)) {
           throw Object.assign(
             new Error(
               "Wait for the session's active work or interaction to finish before deleting it",
@@ -199,12 +198,7 @@ export class RuntimeSessionDeletionController {
 
     if (
       this.host.selectedSessionId() === sessionId ||
-      this.host.hasSelectionReservation(sessionId) ||
-      this.host.hasLoadingSlot(sessionId) ||
-      this.host.hasLoadingPath(path) ||
-      this.host.hasOpening(sessionId) ||
-      this.host.hasProvisionalReservation(sessionId, path) ||
-      this.host.hasForkReservation(sessionId, path)
+      this.isSessionOpeningOrChanging(sessionId, path)
     ) {
       throw Object.assign(
         new Error(
@@ -308,14 +302,7 @@ export class RuntimeSessionDeletionController {
           { status: 409 },
         );
       }
-      if (
-        this.host.hasSelectionReservation(sessionId) ||
-        this.host.hasLoadingSlot(sessionId) ||
-        this.host.hasLoadingPath(path) ||
-        this.host.hasOpening(sessionId) ||
-        this.host.hasProvisionalReservation(sessionId, path) ||
-        this.host.hasForkReservation(sessionId, path)
-      ) {
+      if (this.isSessionOpeningOrChanging(sessionId, path)) {
         throw Object.assign(
           new Error(
             "Wait for every session in Hidden to finish opening or changing before clearing it",
@@ -329,17 +316,7 @@ export class RuntimeSessionDeletionController {
         (slot.stopping ||
           slot.activeOperations > 0 ||
           slot.mutationPending > 0 ||
-          slot.extensionResponsePending > 0 ||
-          isBusyRunState(slot.runState) ||
-          slot.pendingExtensionUiRequests.size > 0 ||
-          slot.pendingQueues.paused ||
-          slot.pendingQueues.steering.length > 0 ||
-          slot.pendingQueues.followUp.length > 0 ||
-          slot.persistenceExpectations.length > 0 ||
-          slot.pendingPartialPersistence ||
-          slot.pendingBranchBridge ||
-          slot.conflict ||
-          slot.navigationLease)
+          this.hasDeletionBlockingState(slot))
       ) {
         throw Object.assign(
           new Error(

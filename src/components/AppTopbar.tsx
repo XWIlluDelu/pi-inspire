@@ -8,7 +8,7 @@ import {
   PanelRight,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   type ProjectionConflict,
@@ -173,6 +173,11 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
     }, shallowEqual);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [value, setValue] = useState("");
+  const editIncarnationRef = useRef(0);
+  const closeEditor = useCallback(() => {
+    editIncarnationRef.current += 1;
+    setEditingSessionId(null);
+  }, []);
   const { copied, copy } = useCopied();
   const editing = editingSessionId !== null && editingSessionId === sessionId;
 
@@ -180,10 +185,10 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
     // The editor belongs to the session whose heading opened it. Switching
     // sessions cancels that local editor before a submit can retarget it.
     if (editingSessionId !== null && editingSessionId !== sessionId) {
-      setEditingSessionId(null);
+      closeEditor();
       setValue("");
     }
-  }, [editingSessionId, sessionId]);
+  }, [closeEditor, editingSessionId, sessionId]);
 
   if (editing) {
     return (
@@ -193,16 +198,18 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
           event.preventDefault();
           const owner = editingSessionId;
           if (!owner || store.getState().sessionId !== owner) {
-            setEditingSessionId(null);
+            closeEditor();
             return;
           }
+          const incarnation = editIncarnationRef.current;
           void store.renameSession(owner, value).then((ok) => {
             if (
               ok &&
+              editIncarnationRef.current === incarnation &&
               editingSessionId === owner &&
               store.getState().sessionId === owner
             ) {
-              setEditingSessionId(null);
+              closeEditor();
             }
           });
         }}
@@ -215,7 +222,7 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault(); // leaving rename must not trigger the global Escape abort
-              setEditingSessionId(null);
+              closeEditor();
             }
           }}
         />
@@ -250,6 +257,7 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
             // The first-prompt heading is presentation only; rename starts
             // empty unless Pi already owns an explicit session name.
             setValue(sessionName);
+            editIncarnationRef.current += 1;
             setEditingSessionId(sessionId);
           }}
         >

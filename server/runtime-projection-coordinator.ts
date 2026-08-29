@@ -46,6 +46,25 @@ export class RuntimeProjectionCoordinator {
     private readonly diagnostics: DiagnosticLogger,
   ) {}
 
+  private recordOwnershipDecision(
+    slot: RuntimeSlot,
+    decision: OwnershipDecision,
+    fields: Record<string, unknown>,
+  ): void {
+    this.diagnostics.record(
+      decision.owned ? "debug" : "warning",
+      "persistence_ownership_decision",
+      {
+        sessionId: slot.id,
+        slotIncarnation: slot.incarnationId,
+        workerId: slot.bridge?.workerId,
+        childPid: slot.process?.pid,
+        owned: decision.owned,
+        ...fields,
+      },
+    );
+  }
+
   attach(slot: RuntimeSlot, projection: SessionProjectionView): void {
     projection.setOwnedAppendWindow?.(
       () =>
@@ -282,18 +301,7 @@ export class RuntimeProjectionCoordinator {
       } else {
         lastOwnership = await this.host.appendedEntriesOwnership(slot, result);
       }
-      this.diagnostics.record(
-        lastOwnership.owned ? "debug" : "warning",
-        "persistence_ownership_decision",
-        {
-          sessionId: slot.id,
-          slotIncarnation: slot.incarnationId,
-          workerId: slot.bridge?.workerId,
-          childPid: slot.process?.pid,
-          owned: lastOwnership.owned,
-          ...ownershipFields(),
-        },
-      );
+      this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
       if (!lastOwnership.owned) return false;
       this.captureWriterResult(slot, result);
       return true;
@@ -384,18 +392,7 @@ export class RuntimeProjectionCoordinator {
         lastOwnership = result.changed
           ? await this.host.appendedEntriesOwnership(slot, result)
           : { owned: false, reason: "not-append" };
-        this.diagnostics.record(
-          lastOwnership.owned ? "debug" : "warning",
-          "persistence_ownership_decision",
-          {
-            sessionId: slot.id,
-            slotIncarnation: slot.incarnationId,
-            workerId: slot.bridge?.workerId,
-            childPid: slot.process?.pid,
-            owned: lastOwnership.owned,
-            ...ownershipFields(),
-          },
-        );
+        this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
         if (lastOwnership.owned) {
           this.captureWriterResult(slot, result);
         } else {

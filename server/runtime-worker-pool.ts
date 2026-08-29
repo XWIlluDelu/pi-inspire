@@ -104,10 +104,9 @@ export class RuntimeWorkerPool {
     await this.pruneDormantSlots();
   }
 
-  private canReclaimProjection(slot: RuntimeSlot): boolean {
+  private isRetirableDormantSlot(slot: RuntimeSlot): boolean {
     return (
       slot.id !== this.host.selectedSessionId() &&
-      Boolean(slot.projection) &&
       !slot.process &&
       !slot.stopping &&
       slot.activeOperations === 0 &&
@@ -120,6 +119,10 @@ export class RuntimeWorkerPool {
       !this.host.hasSelectionReservation(slot.id) &&
       !this.host.hasForkReservation(slot.id, slot.sessionPath)
     );
+  }
+
+  private canReclaimProjection(slot: RuntimeSlot): boolean {
+    return Boolean(slot.projection) && this.isRetirableDormantSlot(slot);
   }
 
   private async reclaimDormantProjections(): Promise<void> {
@@ -141,9 +144,7 @@ export class RuntimeWorkerPool {
 
   private canPruneDormant(slot: RuntimeSlot): boolean {
     return (
-      slot.id !== this.host.selectedSessionId() &&
-      !slot.process &&
-      !slot.stopping &&
+      this.isRetirableDormantSlot(slot) &&
       !slot.attention &&
       !isBusyRunState(slot.runState) &&
       slot.runState !== "failed" &&
@@ -154,36 +155,16 @@ export class RuntimeWorkerPool {
       slot.pendingQueues.followUp.length === 0 &&
       !slot.conflict &&
       !slot.navigationLease &&
-      !slot.pendingBranchBridge &&
-      slot.activeOperations === 0 &&
-      slot.mutationPending === 0 &&
-      slot.extensionResponsePending === 0 &&
-      slot.persistenceExpectations.length === 0 &&
-      !slot.pendingPartialPersistence &&
-      !this.host.isOpening(slot.id) &&
-      !this.host.isLoading(slot.id) &&
-      !this.host.hasSelectionReservation(slot.id) &&
-      !this.host.hasForkReservation(slot.id, slot.sessionPath)
+      !slot.pendingBranchBridge
     );
   }
 
   private async pruneDormantSlots(): Promise<void> {
+    // Reclamation closes and clears a projection before its slot can prune.
     await this.reclaimDormantProjections();
-    const closing: Promise<void>[] = [];
     for (const slot of this.host.slots()) {
-      if (!this.canPruneDormant(slot)) continue;
-      this.host.removeSlot(slot);
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
-      closing.push(
-        projection
-          ?.close()
-          .catch((error) => this.host.logRuntimeError(slot.id, error)) ??
-          Promise.resolve(),
-      );
+      if (this.canPruneDormant(slot)) this.host.removeSlot(slot);
     }
-    await Promise.all(closing);
   }
 
   private canEvict(slot: RuntimeSlot): boolean {

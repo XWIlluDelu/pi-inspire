@@ -31,19 +31,28 @@ interface SessionManagementHost {
 /** Owns session metadata edits and destructive Hidden workflows, including
  * transport fencing, preference-write ordering, and committed-result repair. */
 export class SessionManagementController {
+  private readonly latestRename = new Map<string, symbol>();
+
   constructor(private readonly host: SessionManagementHost) {}
+
+  invalidateForTransportReplacement(): void {
+    this.latestRename.clear();
+  }
 
   renameSession = async (sessionId: string, name: string): Promise<boolean> => {
     const api = this.host.api();
     if (!api || !sessionId || !name.trim()) return false;
     const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
+    const request = Symbol(sessionId);
+    this.latestRename.set(sessionId, request);
+    const ownsRequest = (): boolean =>
       this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+      this.host.transportGeneration() === transportGeneration &&
+      this.latestRename.get(sessionId) === request;
     const trimmedName = name.trim();
     try {
       await api.renameSession(sessionId, trimmedName);
-      if (!ownsTransport()) return false;
+      if (!ownsRequest()) return false;
       // The response may return after a session switch; only the owning
       // session's visible title updates.
       if (this.host.state().sessionId === sessionId)
@@ -51,7 +60,7 @@ export class SessionManagementController {
       void this.host.refreshLoadedSessions();
       return true;
     } catch (error) {
-      if (!ownsTransport()) return false;
+      if (!ownsRequest()) return false;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return false;
@@ -65,6 +74,9 @@ export class SessionManagementController {
         );
       }
       return false;
+    } finally {
+      if (this.latestRename.get(sessionId) === request)
+        this.latestRename.delete(sessionId);
     }
   };
 

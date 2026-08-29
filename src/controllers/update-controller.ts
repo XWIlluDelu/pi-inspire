@@ -307,12 +307,14 @@ export class UpdateController {
   }
 
   private apply(response: UpdateCheckResponse): void {
-    this.host.patch({ inspireUpdateCheck: response });
-    if (response.kind === "current" || response.kind === "unreleased") {
-      this.host.patch({ availableUpdate: null });
-    } else if (response.kind === "available") {
-      this.host.patch({ availableUpdate: response.update });
-    }
+    const patch: Partial<UpdateControllerState> = {
+      inspireUpdateCheck: response,
+    };
+    if (response.kind === "current" || response.kind === "unreleased")
+      patch.availableUpdate = null;
+    else if (response.kind === "available")
+      patch.availableUpdate = response.update;
+    this.host.patch(patch);
   }
 
   private syncNoticeSnooze(): void {

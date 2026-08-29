@@ -31,6 +31,7 @@ import { userTurnSummary } from "../../shared/user-turns";
 import type { PendingManagementIntent } from "../api";
 import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 import {
   type ActivityMaterializationMode,
   store,
@@ -138,7 +139,10 @@ export const Transcript = memo(function Transcript({
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
   const [mobileTranscriptTool, setMobileTranscriptTool] =
     useState<MobileTranscriptTool>(null);
-  const projectionViewKey = `${viewId}\u0000${projectionIncarnation}`;
+  const projectionViewKey = transcriptProjectionKey(
+    viewId,
+    projectionIncarnation,
+  );
   const preserveActivityAnchorRef = useRef<
     (element: HTMLElement, alignment: "start" | "center" | "end") => void
   >(() => undefined);

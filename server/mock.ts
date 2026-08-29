@@ -522,6 +522,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return pending;
   }
 
+  private clearPending(pending: PendingQueues): boolean {
+    const entries = [...pending.steering, ...pending.followUp];
+    if (entries.length === 0) return false;
+    for (const entry of entries) this.pendingText.delete(entry.id);
+    pending.steering = [];
+    pending.followUp = [];
+    pending.revision += 1;
+    return true;
+  }
+
   private publishPending(sessionId: string): PendingQueues {
     const pending = this.pendingFor(sessionId);
     if (this.state.active?.sessionId === sessionId) {
@@ -861,18 +871,8 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         message: structuredClone(assistant),
       });
       const pending = this.pendingFor(sessionId);
-      if (
-        !pending.paused &&
-        (pending.steering.length > 0 || pending.followUp.length > 0)
-      ) {
-        for (const entry of [...pending.steering, ...pending.followUp]) {
-          this.pendingText.delete(entry.id);
-        }
-        pending.steering = [];
-        pending.followUp = [];
-        pending.revision += 1;
+      if (!pending.paused && this.clearPending(pending))
         this.publishPending(sessionId);
-      }
       this.emitSession(sessionId, { type: "agent_settled" });
     }, this.streamIntervalMs);
     this.timers.set(sessionId, timer);
@@ -940,13 +940,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       }
       case "clear": {
         requirePaused();
-        const entries = [...pending.steering, ...pending.followUp];
-        if (entries.length > 0) {
-          for (const entry of entries) this.pendingText.delete(entry.id);
-          pending.steering = [];
-          pending.followUp = [];
-          pending.revision += 1;
-        }
+        this.clearPending(pending);
         break;
       }
       case "convert": {
@@ -971,16 +965,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (
       request.action === "resume" &&
       !active.isStreaming &&
-      (pending.steering.length > 0 || pending.followUp.length > 0)
-    ) {
-      for (const entry of [...pending.steering, ...pending.followUp]) {
-        this.pendingText.delete(entry.id);
-      }
-      pending.steering = [];
-      pending.followUp = [];
-      pending.revision += 1;
+      this.clearPending(pending)
+    )
       this.publishPending(sessionId);
-    }
     return structuredClone(pending);
   }
 
@@ -1019,18 +1006,8 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (this.state.active?.sessionId === active.sessionId)
       this.state.runState = "aborted";
     const pending = this.pendingFor(active.sessionId);
-    if (
-      !pending.paused &&
-      (pending.steering.length > 0 || pending.followUp.length > 0)
-    ) {
-      for (const entry of [...pending.steering, ...pending.followUp]) {
-        this.pendingText.delete(entry.id);
-      }
-      pending.steering = [];
-      pending.followUp = [];
-      pending.revision += 1;
+    if (!pending.paused && this.clearPending(pending))
       this.publishPending(active.sessionId);
-    }
     this.emitSession(active.sessionId, { type: "agent_settled" });
   }
 

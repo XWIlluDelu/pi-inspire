@@ -174,6 +174,51 @@ describe("GitController", () => {
     });
   });
 
+  it("resolves a change once before opening its resource and diff", async () => {
+    const path = {
+      id: "main-path",
+      display: "src/main.ts",
+      utf8Path: "src/main.ts",
+      workspacePath: "src/main.ts",
+    };
+    const harness = createHarness();
+    harness.gitStatus.mockResolvedValue({
+      kind: "repository",
+      head: { kind: "branch", name: "main", oid: "abc" },
+      files: [
+        {
+          path,
+          unstaged: { kind: "modified" },
+          untracked: false,
+        },
+      ],
+      total: 1,
+      truncated: false,
+      groups: {
+        conflicted: [],
+        staged: [],
+        unstaged: [path.id],
+        untracked: [],
+      },
+    });
+    const diff = {
+      kind: "empty" as const,
+      path,
+      side: "unstaged" as const,
+      reason: "no-changes" as const,
+    };
+    harness.gitDiff.mockResolvedValue(diff);
+
+    await harness.controller.openChange(path.id);
+
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+    expect(harness.openResourceFromGit).toHaveBeenCalledWith(
+      path.workspacePath,
+    );
+    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
+    expect(harness.state().gitDiff).toEqual({ status: "ready", result: diff });
+  });
+
   it("preserves an explicit staged selection when the resource resolves", () => {
     const path = {
       id: "dual-path",

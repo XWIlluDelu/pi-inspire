@@ -43,6 +43,12 @@ export class TranscriptDataController {
 
   constructor(private readonly host: TranscriptDataControllerHost) {}
 
+  private transportOwner(api: Api | null): () => boolean {
+    const generation = this.host.transportGeneration();
+    return () =>
+      this.host.api() === api && this.host.transportGeneration() === generation;
+  }
+
   invalidate(): void {
     this.olderTranscriptRequest?.abort();
     this.olderTranscriptRequest = null;
@@ -64,10 +70,7 @@ export class TranscriptDataController {
     const incarnation = this.host.state().transcriptIncarnation;
     const generation = this.host.selectionGeneration();
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = this.transportOwner(api);
     if (
       !api ||
       !sessionId ||
@@ -192,10 +195,9 @@ export class TranscriptDataController {
   ): Promise<ComposerHistoryEntry[] | null> => {
     const api = this.host.api();
     const generation = this.host.selectionGeneration();
-    const transportGeneration = this.host.transportGeneration();
+    const ownsTransport = this.transportOwner(api);
     const ownsScope = () =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration &&
+      ownsTransport() &&
       this.host.selectionGeneration() === generation &&
       this.host.state().sessionId === sessionId &&
       this.host.state().transcriptViewId === viewId &&
@@ -319,10 +321,7 @@ export class TranscriptDataController {
     const incarnation = this.host.state().transcriptIncarnation;
     const generation = this.host.selectionGeneration();
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = this.transportOwner(api);
     if (!api || !sessionId || !viewId) return [];
     if (start !== undefined) {
       const cached = this.host
@@ -464,10 +463,7 @@ export class TranscriptDataController {
     const incarnation = this.host.state().transcriptIncarnation;
     const generation = this.host.selectionGeneration();
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = this.transportOwner(api);
     if (
       !api ||
       !sessionId ||
@@ -675,10 +671,7 @@ export class TranscriptDataController {
     const incarnation = this.host.state().transcriptIncarnation;
     const generation = this.host.selectionGeneration();
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = this.transportOwner(api);
     if (!api || !sessionId || !viewId) return;
     const requested = this.host
       .state()

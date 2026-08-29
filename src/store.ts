@@ -446,13 +446,7 @@ export class AppStore {
     });
   }
 
-  private handleAuthFailure(): void {
-    // Stop detaches its owned socket before closing it, so the close handler
-    // cannot schedule a retry with the rejected token.
-    this.connectionController.stop();
-    const transportGeneration = ++this.transportGeneration;
-    this.bootstrapRequest?.abort();
-    this.bootstrapRequest = null;
+  private invalidateTransportControllers(): void {
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
@@ -460,6 +454,17 @@ export class AppStore {
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
+    this.sessionManagement.invalidateForTransportReplacement();
+  }
+
+  private handleAuthFailure(): void {
+    // Stop detaches its owned socket before closing it, so the close handler
+    // cannot schedule a retry with the rejected token.
+    this.connectionController.stop();
+    const transportGeneration = ++this.transportGeneration;
+    this.bootstrapRequest?.abort();
+    this.bootstrapRequest = null;
+    this.invalidateTransportControllers();
     this.invalidateSessionListRequests();
     this.invalidateTransportRequests();
     this.runtimeEvents.clearLiveAttention();
@@ -519,13 +524,7 @@ export class AppStore {
       () => bootstrapRequest.abort(),
       BOOTSTRAP_TIMEOUT_MS,
     );
-    this.composer.invalidateForTransportReplacement();
-    this.updates.invalidateForTransportReplacement();
-    this.resources.invalidateForTransportReplacement();
-    this.git.invalidateForTransportReplacement();
-    this.workspace.invalidateForTransportReplacement();
-    this.selection.invalidateForReplacement();
-    this.branches.invalidateForTransportReplacement();
+    this.invalidateTransportControllers();
     this.invalidateTransportRequests();
     this.authToken = token;
     this.api = api;

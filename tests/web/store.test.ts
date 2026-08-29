@@ -4920,6 +4920,36 @@ describe("async completion ownership", () => {
     ]);
   });
 
+  it("keeps only the latest rename response for each session", async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/sessions/rename")) {
+        const name = String(jsonBody(init).name ?? "");
+        await (name === "First" ? firstGate : secondGate);
+        return { body: { ok: true } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const first = store.renameSession("s1", "First");
+    const second = store.renameSession("s1", "Second");
+    releaseSecond();
+    await expect(second).resolves.toBe(true);
+    expect(store.getState().sessionName).toBe("Second");
+
+    releaseFirst();
+    await expect(first).resolves.toBe(false);
+    expect(store.getState().sessionName).toBe("Second");
+  });
+
   it("a delayed rename response cannot retitle a different session", async () => {
     let releaseRename!: () => void;
     const renameGate = new Promise<void>(

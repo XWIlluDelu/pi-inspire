@@ -171,6 +171,30 @@ describe("BranchController", () => {
     expect(harness.handleAuthFailure).toHaveBeenCalledTimes(1);
   });
 
+  it("revalidates the current earlier branch before returning to latest", async () => {
+    const currentTree: BranchTreeResponse = {
+      ...tree(),
+      effectiveLeafId: "u1",
+      activePath: ["u1"],
+    };
+    const harness = createHarness({
+      transcriptEffectiveLeafId: "u1",
+      branchTree: currentTree,
+    });
+    harness.branchTree.mockResolvedValue(currentTree);
+    harness.navigateBranch.mockResolvedValue({} as BranchNavigateResponse);
+
+    await expect(harness.controller.returnToLatest()).resolves.toBe(true);
+
+    expect(harness.navigateBranch).toHaveBeenCalledWith({
+      sessionId: "s1",
+      revision: currentTree.revision,
+      targetId: "a1",
+      mode: "switch",
+    });
+    expect(harness.applyNavigation).toHaveBeenCalledTimes(1);
+  });
+
   it("commits a verified fork through the facade and refreshes the catalog", async () => {
     const harness = createHarness();
     harness.forkBranch.mockResolvedValue({} as BranchForkResponse);
