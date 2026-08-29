@@ -324,8 +324,7 @@ export class PreferenceController {
   ): Promise<boolean> {
     const request = ++this.completionAttentionRequest;
     if (completionAttention === "desktop") {
-      const NotificationApi =
-        typeof window !== "undefined" ? window.Notification : undefined;
+      const NotificationApi = window.Notification;
       if (!NotificationApi) {
         this.host.notify(
           "warning",

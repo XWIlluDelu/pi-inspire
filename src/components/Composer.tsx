@@ -332,7 +332,7 @@ export const Composer = memo(function Composer() {
         event.preventDefault();
         setDropActive(false);
         if (!sessionOpening)
-          void store.addFiles(Array.from(event.dataTransfer?.files ?? []));
+          void store.addFiles(Array.from(event.dataTransfer.files));
       }}
     >
       <input

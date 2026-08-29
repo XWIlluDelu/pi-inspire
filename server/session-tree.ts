@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { BranchNodeRole, BranchTreeNode } from "../shared/contracts.js";
 
@@ -18,9 +19,9 @@ function validateEntryIdentity(
     value.length > BRANCH_ENTRY_ID_MAX_CHARS ||
     Buffer.byteLength(value) > BRANCH_ENTRY_ID_MAX_BYTES
   ) {
-    throw Object.assign(
-      new Error(`Session tree ${kind} identity exceeds the projection limit`),
-      { status: 422 },
+    throw requestError(
+      `Session tree ${kind} identity exceeds the projection limit`,
+      422,
     );
   }
 }
@@ -152,7 +153,7 @@ export function projectSessionTree(
       role,
       label,
       snippet,
-      timestamp: String(entry.timestamp ?? ""),
+      timestamp: entry.timestamp,
       active: onPath,
       leaf: entry.id === effectiveLeafId,
       canSwitch: !isUser && entry.type !== "label",
@@ -182,9 +183,9 @@ export function projectSessionTree(
   if (
     Buffer.byteLength(JSON.stringify({ nodes, activePath })) > projectionBudget
   ) {
-    throw Object.assign(
-      new Error("Session tree projection exceeds its serialized limit"),
-      { status: 422 },
+    throw requestError(
+      "Session tree projection exceeds its serialized limit",
+      422,
     );
   }
   return { nodes, activePath, truncated };
@@ -195,10 +196,7 @@ export function boundedUserText(entry: SessionEntry, maxChars: number): string {
     entry.type !== "message" ||
     (entry.message as { role?: unknown }).role !== "user"
   ) {
-    throw Object.assign(
-      new Error("That entry is not an editable user message"),
-      { status: 409 },
-    );
+    throw requestError("That entry is not an editable user message", 409);
   }
   const content = (entry.message as { content?: unknown }).content;
   let text = "";
@@ -215,14 +213,8 @@ export function boundedUserText(entry: SessionEntry, maxChars: number): string {
       )
       .map((item) => item.text)
       .join("\n");
-  if (!text)
-    throw Object.assign(new Error("That user entry has no editable text"), {
-      status: 409,
-    });
+  if (!text) throw requestError("That user entry has no editable text", 409);
   if (text.length > maxChars)
-    throw Object.assign(
-      new Error("That user message exceeds the composer limit"),
-      { status: 413 },
-    );
+    throw requestError("That user message exceeds the composer limit", 413);
   return text;
 }

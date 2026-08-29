@@ -53,8 +53,7 @@ export function persistenceMessageKey(message: unknown): string | null {
 export function persistenceEntryKey(entry: SessionEntry): string | null {
   if (entry.type === "message") return persistenceMessageKey(entry.message);
   if (entry.type === "custom_message") return `custom:${entry.customType}`;
-  if (typeof entry.id === "string") return `entry:${entry.id}`;
-  return null;
+  return `entry:${entry.id}`;
 }
 
 export function exactEntryExpectation(
@@ -103,7 +102,7 @@ export function customMessageEntryMatches(
   return (
     record.role === "custom" &&
     entry.customType === record.customType &&
-    samePersistedJson(entry.content ?? [], record.content ?? []) &&
+    samePersistedJson(entry.content, record.content ?? []) &&
     entry.display === record.display &&
     samePersistedJson(entry.details, record.details)
   );

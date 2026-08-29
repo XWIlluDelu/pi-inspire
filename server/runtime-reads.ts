@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import type {
   ActiveSnapshot,
   ComposerHistoryPage,
@@ -9,6 +10,7 @@ import type {
 } from "../shared/contracts.js";
 import type { ResourceContext } from "./resources.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
+import type { SessionProjectionView } from "./session-projection.js";
 
 interface RuntimeReadControllerHost {
   assertAvailable(): void;
@@ -25,9 +27,7 @@ interface RuntimeReadControllerHost {
 
 function requireProjection(slot: RuntimeSlot) {
   if (!slot.projection)
-    throw Object.assign(new Error("Session projection is not available"), {
-      status: 503,
-    });
+    throw requestError("Session projection is not available", 503);
   return slot.projection;
 }
 
@@ -51,58 +51,53 @@ export class RuntimeReadController {
     }
   }
 
-  transcriptPage(
+  private projectionRead<T>(
     sessionId: string,
-    cursor: string,
-    deferActivity = false,
-  ): Promise<TranscriptPage> {
+    read: (
+      projection: SessionProjectionView,
+      slot: RuntimeSlot,
+      effectiveLeafId: string | null,
+    ) => T,
+  ): Promise<T> {
     this.host.assertAvailable();
     const slot = this.host.requireSlot(sessionId);
     return this.host.useSlot(slot, async () => {
       requireProjection(slot);
       await this.host.reconcileSlot(slot, true);
-      const projection = requireProjection(slot);
-      const effectiveLeafId = this.host.effectiveLeaf(slot);
-      return deferActivity
-        ? projection.visiblePage(cursor, effectiveLeafId, slot.viewId)
-        : projection.page(cursor, effectiveLeafId, slot.viewId);
+      return read(requireProjection(slot), slot, this.host.effectiveLeaf(slot));
     });
+  }
+
+  transcriptPage(
+    sessionId: string,
+    cursor: string,
+    deferActivity = false,
+  ): Promise<TranscriptPage> {
+    return this.projectionRead(
+      sessionId,
+      (projection, slot, effectiveLeafId) =>
+        deferActivity
+          ? projection.visiblePage(cursor, effectiveLeafId, slot.viewId)
+          : projection.page(cursor, effectiveLeafId, slot.viewId),
+    );
   }
 
   transcriptActivityPage(
     sessionId: string,
     cursor: string,
   ): Promise<TranscriptActivityPage> {
-    this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      requireProjection(slot);
-      await this.host.reconcileSlot(slot, true);
-      const projection = requireProjection(slot);
-      return projection.activityPage(
-        cursor,
-        this.host.effectiveLeaf(slot),
-        slot.viewId,
-      );
-    });
+    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
+      projection.activityPage(cursor, effectiveLeafId, slot.viewId),
+    );
   }
 
   transcriptUserTurns(
     sessionId: string,
     start?: number,
   ): Promise<UserTurnIndexPage> {
-    this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      requireProjection(slot);
-      await this.host.reconcileSlot(slot, true);
-      const projection = requireProjection(slot);
-      return projection.userTurnIndexPage(
-        start,
-        this.host.effectiveLeaf(slot),
-        slot.viewId,
-      );
-    });
+    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
+      projection.userTurnIndexPage(start, effectiveLeafId, slot.viewId),
+    );
   }
 
   transcriptUserTurn(
@@ -110,59 +105,49 @@ export class RuntimeReadController {
     targetMessageId: string,
     cursor?: string,
   ): Promise<UserTurnTranscriptPage> {
-    this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      requireProjection(slot);
-      await this.host.reconcileSlot(slot, true);
-      const projection = requireProjection(slot);
-      return projection.userTurnTranscriptPage(
+    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
+      projection.userTurnTranscriptPage(
         targetMessageId,
-        this.host.effectiveLeaf(slot),
+        effectiveLeafId,
         slot.viewId,
         cursor,
-      );
-    });
+      ),
+    );
   }
 
   composerHistory(sessionId: string, start = 0): Promise<ComposerHistoryPage> {
-    this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      requireProjection(slot);
-      await this.host.reconcileSlot(slot, true);
-      const projection = requireProjection(slot);
-      return projection.composerHistoryPage(
+    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
+      projection.composerHistoryPage(
         start,
-        this.host.effectiveLeaf(slot),
+        effectiveLeafId,
         slot.viewId,
         slot.cwd,
         (path) => this.host.promptFileName(path),
-      );
-    });
+      ),
+    );
   }
 
   resourceContext(sessionId: string): Promise<ResourceContext> {
     this.host.assertAvailable();
     const slot = this.host.selectedSlot();
     if (!slot || slot.id !== sessionId) {
-      throw Object.assign(
-        new Error("The resource does not belong to the visible session"),
-        { status: 409 },
+      throw requestError(
+        "The resource does not belong to the visible session",
+        409,
       );
     }
     return this.host.useSlot(slot, async () => {
       if (this.host.selectedSessionId() !== slot.id) {
-        throw Object.assign(
-          new Error("The resource does not belong to the visible session"),
-          { status: 409 },
+        throw requestError(
+          "The resource does not belong to the visible session",
+          409,
         );
       }
       await this.host.reconcileSlot(slot, true);
       if (this.host.selectedSessionId() !== slot.id || !slot.projection) {
-        throw Object.assign(
-          new Error("The resource does not belong to the visible branch view"),
-          { status: 409 },
+        throw requestError(
+          "The resource does not belong to the visible branch view",
+          409,
         );
       }
       const viewId = slot.viewId;
@@ -184,32 +169,29 @@ export class RuntimeReadController {
   ): Promise<unknown[]> {
     this.host.assertAvailable();
     return this.host.useSlot(slot, async () => {
-      if (
-        this.host.selectedSessionId() !== slot.id ||
-        slot.viewId !== viewId ||
-        slot.projection?.revision !== revision
-      ) {
-        throw Object.assign(
-          new Error(
-            "The resource does not belong to the visible branch revision",
-          ),
-          { status: 409 },
-        );
-      }
+      this.visibleProjection(slot, viewId, revision);
       await this.host.reconcileSlot(slot, true);
-      if (
-        this.host.selectedSessionId() !== slot.id ||
-        slot.viewId !== viewId ||
-        slot.projection?.revision !== revision
-      ) {
-        throw Object.assign(
-          new Error(
-            "The resource does not belong to the visible branch revision",
-          ),
-          { status: 409 },
-        );
-      }
-      return [...slot.projection.viewMessages(this.host.effectiveLeaf(slot))];
+      const projection = this.visibleProjection(slot, viewId, revision);
+      return [...projection.viewMessages(this.host.effectiveLeaf(slot))];
     });
+  }
+
+  private visibleProjection(
+    slot: RuntimeSlot,
+    viewId: string,
+    revision: number,
+  ): SessionProjectionView {
+    const projection = slot.projection;
+    if (
+      this.host.selectedSessionId() !== slot.id ||
+      slot.viewId !== viewId ||
+      projection?.revision !== revision
+    ) {
+      throw requestError(
+        "The resource does not belong to the visible branch revision",
+        409,
+      );
+    }
+    return projection;
   }
 }

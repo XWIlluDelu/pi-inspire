@@ -83,23 +83,18 @@ export class SessionManagementController {
   clearSessionDeleteError = (): void =>
     this.host.patch({ sessionDeleteError: null });
 
-  private forgetDeletedSessions(
-    sessionIds: ReadonlySet<string>,
-  ): AppState["sessionStatuses"] {
-    return this.host.forgetSessions(sessionIds);
-  }
-
   private preferencesWithoutSessions(
     sessionIds: ReadonlySet<string>,
   ): InspirePreferences {
+    const prefs = this.host.state().prefs;
     return {
-      ...this.host.state().prefs,
-      pinnedSessionIds: this.host
-        .state()
-        .prefs.pinnedSessionIds.filter((id) => !sessionIds.has(id)),
-      hiddenSessionIds: this.host
-        .state()
-        .prefs.hiddenSessionIds.filter((id) => !sessionIds.has(id)),
+      ...prefs,
+      pinnedSessionIds: prefs.pinnedSessionIds.filter(
+        (id) => !sessionIds.has(id),
+      ),
+      hiddenSessionIds: prefs.hiddenSessionIds.filter(
+        (id) => !sessionIds.has(id),
+      ),
     };
   }
 
@@ -153,7 +148,7 @@ export class SessionManagementController {
       const result = await api.deleteSession(sessionId);
       if (!ownsTransport()) return null;
       const deleted = new Set([sessionId]);
-      const sessionStatuses = this.forgetDeletedSessions(deleted);
+      const sessionStatuses = this.host.forgetSessions(deleted);
       const prefs = result.preferences
         ? this.host.reconcilePreferences(result.preferences, preferenceOwners)
         : this.preferencesWithoutSessions(deleted);
@@ -255,7 +250,7 @@ export class SessionManagementController {
       const deleted = new Set(
         result.deleted.map((session) => session.sessionId),
       );
-      const sessionStatuses = this.forgetDeletedSessions(deleted);
+      const sessionStatuses = this.host.forgetSessions(deleted);
       const remainingPrefs = this.preferencesWithoutSessions(deleted);
       const fallbackPrefs = result.failure
         ? remainingPrefs

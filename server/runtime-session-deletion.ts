@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { resolve } from "node:path";
 import {
   type HiddenClearResponse,
@@ -68,8 +69,7 @@ export class RuntimeSessionDeletionController {
     sessionId: string,
   ): Promise<SessionRecord> {
     const session = await this.host.catalogGet(sessionId);
-    if (!session)
-      throw Object.assign(new Error("Session not found"), { status: 404 });
+    if (!session) throw requestError("Session not found", 404);
     return session;
   }
 
@@ -86,7 +86,6 @@ export class RuntimeSessionDeletionController {
 
   private hasDeletionBlockingState(slot: RuntimeSlot): boolean {
     return (
-      slot.extensionResponsePending > 0 ||
       isBusyRunState(slot.runState) ||
       slot.pendingExtensionUiRequests.size > 0 ||
       slot.pendingQueues.paused ||
@@ -105,18 +104,18 @@ export class RuntimeSessionDeletionController {
     authorizedSession?: SessionRecord,
   ): Promise<SessionDeleteResponse> {
     if (this.host.selectedSessionId() === sessionId) {
-      throw Object.assign(
-        new Error("Switch to another session before deleting this one"),
-        { status: 409 },
+      throw requestError(
+        "Switch to another session before deleting this one",
+        409,
       );
     }
     if (
       this.host.hasSelectionReservation(sessionId) ||
       this.host.hasProvisionalReservation(sessionId)
     ) {
-      throw Object.assign(
-        new Error("Wait for the session to finish opening before deleting it"),
-        { status: 409 },
+      throw requestError(
+        "Wait for the session to finish opening before deleting it",
+        409,
       );
     }
     // Opening an existing session returns its read-only preview before the
@@ -130,11 +129,9 @@ export class RuntimeSessionDeletionController {
       this.host.hasSelectionReservation(sessionId) ||
       this.host.hasProvisionalReservation(sessionId)
     ) {
-      throw Object.assign(
-        new Error(
-          "The session became active while deletion was waiting for startup",
-        ),
-        { status: 409 },
+      throw requestError(
+        "The session became active while deletion was waiting for startup",
+        409,
       );
     }
 
@@ -146,25 +143,16 @@ export class RuntimeSessionDeletionController {
       this.host.selectedSessionId() === sessionId ||
       this.isSessionOpeningOrChanging(sessionId, path)
     ) {
-      throw Object.assign(
-        new Error("The session is still being opened or changed"),
-        { status: 409 },
-      );
+      throw requestError("The session is still being opened or changed", 409);
     }
 
     const slot = this.host.slot(sessionId);
     if (slot) {
       if (slot.stopping) await slot.stopping;
-      if (
-        slot.activeOperations > 0 ||
-        slot.mutationPending > 0 ||
-        this.hasDeletionBlockingState(slot)
-      ) {
-        throw Object.assign(
-          new Error(
-            "Wait for the session's active work or interaction to finish before deleting it",
-          ),
-          { status: 409 },
+      if (slot.activeOperations > 0 || this.hasDeletionBlockingState(slot)) {
+        throw requestError(
+          "Wait for the session's active work or interaction to finish before deleting it",
+          409,
         );
       }
       await this.host.mutateSlot(slot, async () => {
@@ -172,17 +160,15 @@ export class RuntimeSessionDeletionController {
           this.host.selectedSessionId() === sessionId ||
           this.host.slot(sessionId) !== slot
         ) {
-          throw Object.assign(
-            new Error("The session changed while deletion was being prepared"),
-            { status: 409 },
+          throw requestError(
+            "The session changed while deletion was being prepared",
+            409,
           );
         }
         if (slot.activeOperations > 1 || this.hasDeletionBlockingState(slot)) {
-          throw Object.assign(
-            new Error(
-              "Wait for the session's active work or interaction to finish before deleting it",
-            ),
-            { status: 409 },
+          throw requestError(
+            "Wait for the session's active work or interaction to finish before deleting it",
+            409,
           );
         }
         await this.host.stopWriter(slot);
@@ -200,11 +186,9 @@ export class RuntimeSessionDeletionController {
       this.host.selectedSessionId() === sessionId ||
       this.isSessionOpeningOrChanging(sessionId, path)
     ) {
-      throw Object.assign(
-        new Error(
-          "The session became active while deletion was being prepared",
-        ),
-        { status: 409 },
+      throw requestError(
+        "The session became active while deletion was being prepared",
+        409,
       );
     }
     // The initial forced catalog read established one unambiguous id/path.
@@ -234,11 +218,7 @@ export class RuntimeSessionDeletionController {
     const pending = this.deleting.get(sessionId);
     if (pending) return pending;
     if (this.hiddenDeletionIds.has(sessionId)) {
-      return Promise.reject(
-        Object.assign(new Error("That session is being deleted"), {
-          status: 409,
-        }),
-      );
+      return Promise.reject(requestError("That session is being deleted", 409));
     }
     const deletion = this.deleteSessionInside(sessionId);
     this.deleting.set(sessionId, deletion);
@@ -274,9 +254,7 @@ export class RuntimeSessionDeletionController {
     this.host.assertNotClosing();
     if (this.clearingHidden) {
       return Promise.reject(
-        Object.assign(new Error("Hidden is already being cleared"), {
-          status: 409,
-        }),
+        requestError("Hidden is already being cleared", 409),
       );
     }
     const deletion = this.clearHiddenSessionsInside(
@@ -297,17 +275,15 @@ export class RuntimeSessionDeletionController {
       const sessionId = session.id;
       const path = resolve(session.path);
       if (this.host.selectedSessionId() === sessionId) {
-        throw Object.assign(
-          new Error("Switch to another session before clearing Hidden"),
-          { status: 409 },
+        throw requestError(
+          "Switch to another session before clearing Hidden",
+          409,
         );
       }
       if (this.isSessionOpeningOrChanging(sessionId, path)) {
-        throw Object.assign(
-          new Error(
-            "Wait for every session in Hidden to finish opening or changing before clearing it",
-          ),
-          { status: 409 },
+        throw requestError(
+          "Wait for every session in Hidden to finish opening or changing before clearing it",
+          409,
         );
       }
       const slot = this.host.slot(sessionId);
@@ -315,14 +291,11 @@ export class RuntimeSessionDeletionController {
         slot &&
         (slot.stopping ||
           slot.activeOperations > 0 ||
-          slot.mutationPending > 0 ||
           this.hasDeletionBlockingState(slot))
       ) {
-        throw Object.assign(
-          new Error(
-            "Wait for every session in Hidden to finish active work or interaction before clearing it",
-          ),
-          { status: 409 },
+        throw requestError(
+          "Wait for every session in Hidden to finish active work or interaction before clearing it",
+          409,
         );
       }
     }
@@ -341,9 +314,7 @@ export class RuntimeSessionDeletionController {
         individualIds.has(session.id) || projectCwds.has(session.cwd),
     );
     if (records.length === 0)
-      throw Object.assign(new Error("No sessions remain in Hidden"), {
-        status: 404,
-      });
+      throw requestError("No sessions remain in Hidden", 404);
     const ids = new Set(records.map((session) => session.id));
     const expected = new Set(expectedSessionIds);
     if (
@@ -351,24 +322,19 @@ export class RuntimeSessionDeletionController {
       ids.size !== expected.size ||
       [...ids].some((sessionId) => !expected.has(sessionId))
     ) {
-      throw Object.assign(
-        new Error("Hidden changed; review it before clearing"),
-        { status: 409 },
-      );
+      throw requestError("Hidden changed; review it before clearing", 409);
     }
     if (
       ids.size !== records.length ||
       catalog.filter((session) => ids.has(session.id)).length !== ids.size
     ) {
-      throw Object.assign(
-        new Error("Hidden contains ambiguous Pi session identities"),
-        { status: 409 },
+      throw requestError(
+        "Hidden contains ambiguous Pi session identities",
+        409,
       );
     }
     if (records.some((session) => this.isDeleting(session.id))) {
-      throw Object.assign(new Error("A session in Hidden is being deleted"), {
-        status: 409,
-      });
+      throw requestError("A session in Hidden is being deleted", 409);
     }
     for (const session of records) this.hiddenDeletionIds.add(session.id);
     const deleted: HiddenClearResponse["deleted"] = [];

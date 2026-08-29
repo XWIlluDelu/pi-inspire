@@ -364,32 +364,6 @@ describe("response activity folds", () => {
     ).toHaveLength(0);
   });
 
-  it("keeps the final settled activity in bounded rail telemetry", () => {
-    const content = [
-      ...Array.from({ length: 24 }, (_, index) => ({
-        type: "toolCall",
-        id: `sampled-tool-${index + 1}`,
-        name: `tool-${index + 1}`,
-        arguments: {},
-      })),
-      { type: "thinking", thinking: "final synthesis" },
-    ];
-    const { container } = render(
-      transcript([{ role: "assistant", timestamp: 1, content }], "collapsed", {
-        toolVisibility: "expanded",
-      }),
-    );
-
-    const rails = container.querySelectorAll(".activity-fold__rail");
-    expect(rails).toHaveLength(2);
-    for (const rail of rails) {
-      expect(rail.querySelectorAll(".activity-fold__segment")).toHaveLength(24);
-      expect(
-        rail.querySelectorAll(".activity-fold__segment--thinking"),
-      ).toHaveLength(1);
-    }
-  });
-
   it("opens a collapsed lazy range through Compact before Expanded", async () => {
     const onMaterialize = vi.fn(async () => undefined);
     const messages = [

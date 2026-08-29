@@ -71,7 +71,7 @@ export interface PendingBranchBridge {
   result: Promise<BranchBridgeResult>;
 }
 
-interface PendingPartialPersistence {
+export interface PendingPartialPersistence {
   committedBytes: number;
   bytes: number;
   fingerprint: string;
@@ -107,6 +107,15 @@ export function emptyCustomActivityOwnership(): CustomActivityOwnership {
   };
 }
 
+export interface RuntimeOperationQueue {
+  tail: Promise<void>;
+  pending: number;
+}
+
+function emptyOperationQueue(): RuntimeOperationQueue {
+  return { tail: Promise.resolve(), pending: 0 };
+}
+
 export interface RuntimeSlot {
   id: string;
   cwd: string;
@@ -131,8 +140,7 @@ export interface RuntimeSlot {
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
   pendingExtensionUiOwners: Map<string, PiRpcProcess>;
   pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
-  extensionResponseTail: Promise<void>;
-  extensionResponsePending: number;
+  extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
   extensionDisplays: ExtensionDisplay[];
   extensionStatuses: Record<string, string>;
@@ -163,8 +171,7 @@ export interface RuntimeSlot {
   persistenceExpectations: PersistenceExpectation[];
   absorbedPersistenceEntries: Map<string, SessionEntry[]>;
   pendingPartialPersistence: PendingPartialPersistence | null;
-  mutationTail: Promise<void>;
-  mutationPending: number;
+  mutationQueue: RuntimeOperationQueue;
   eventTail: Promise<void>;
   projectionTail: Promise<void>;
   bridge: BranchBridgeIdentity | null;
@@ -210,8 +217,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     pendingExtensionUiRequests: new Map(),
     pendingExtensionUiOwners: new Map(),
     pendingExtensionUiTimers: new Map(),
-    extensionResponseTail: Promise.resolve(),
-    extensionResponsePending: 0,
+    extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
     extensionDisplays: [],
     extensionStatuses: {},
@@ -235,8 +241,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     persistenceExpectations: [],
     absorbedPersistenceEntries: new Map(),
     pendingPartialPersistence: null,
-    mutationTail: Promise.resolve(),
-    mutationPending: 0,
+    mutationQueue: emptyOperationQueue(),
     eventTail: Promise.resolve(),
     projectionTail: Promise.resolve(),
     pendingBranchBridge: null,

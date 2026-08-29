@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import {
   emptyPendingQueues,
   type ProjectionConflict,
@@ -129,24 +130,18 @@ export class RuntimeWorkerLifecycle {
     if (!(slot.projection instanceof PreviewProjection))
       await this.host.reconcile(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
-      throw Object.assign(
-        new Error(
-          slot.projection?.health.message ??
-            "Session projection is unavailable",
-        ),
-        { status: 409 },
+      throw requestError(
+        slot.projection?.health.message ?? "Session projection is unavailable",
+        409,
       );
     }
     if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(
-        new Error(
-          "Session file ends with an incomplete JSONL entry; repair or complete it before writing",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Session file ends with an incomplete JSONL entry; repair or complete it before writing",
+        409,
       );
     }
-    if (slot.conflict)
-      throw Object.assign(new Error(slot.conflict.message), { status: 409 });
+    if (slot.conflict) throw requestError(slot.conflict.message, 409);
     if (slot.process && slot.ready && !slot.process.available) {
       await this.stop(slot);
     }
@@ -162,15 +157,13 @@ export class RuntimeWorkerLifecycle {
           type: "session_projection_conflict",
           conflict,
         });
-        throw Object.assign(new Error(conflict.message), { status: 409 });
+        throw requestError(conflict.message, 409);
       }
       await this.stop(slot);
     }
     if (!slot.process || !slot.ready) await this.start(slot);
     if (!slot.process || !slot.ready)
-      throw Object.assign(new Error("Pi runtime failed to start"), {
-        status: 503,
-      });
+      throw requestError("Pi runtime failed to start", 503);
     this.host.captureWriterBaseline(slot);
     return slot as RuntimeSlot & { process: PiRpcProcess };
   }
@@ -179,11 +172,9 @@ export class RuntimeWorkerLifecycle {
     if (!slot.sessionPath || !slot.projection)
       throw new Error("Session file is not available");
     if (slot.projection.uncommittedBytes > 0) {
-      throw Object.assign(
-        new Error(
-          "Session file ends with an incomplete JSONL entry; repair or complete it before starting Pi",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Session file ends with an incomplete JSONL entry; repair or complete it before starting Pi",
+        409,
       );
     }
     if (slot.stopping) await slot.stopping;

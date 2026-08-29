@@ -528,9 +528,7 @@ export class GitController {
   }
 
   private pageVisible(): boolean {
-    return (
-      typeof document === "undefined" || document.visibilityState !== "hidden"
-    );
+    return document.visibilityState !== "hidden";
   }
 
   private readonly handleVisibilityChange = (): void => {
@@ -550,13 +548,13 @@ export class GitController {
   };
 
   private observeVisibility(): void {
-    if (this.observingVisibility || typeof document === "undefined") return;
+    if (this.observingVisibility) return;
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
     this.observingVisibility = true;
   }
 
   private unobserveVisibility(): void {
-    if (!this.observingVisibility || typeof document === "undefined") return;
+    if (!this.observingVisibility) return;
     document.removeEventListener(
       "visibilitychange",
       this.handleVisibilityChange,

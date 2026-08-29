@@ -12,7 +12,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
-import { isBusyRunState, type SessionSummary } from "../../shared/contracts";
+import {
+  isBusyRunState,
+  projectNameFromCwd,
+  type SessionSummary,
+} from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
@@ -38,11 +42,10 @@ const WorkspaceExplorer = memo(function WorkspaceExplorer({
 }: {
   selectedSessionId: string | null;
 }) {
-  const { activeSessionId, activeCwd, project, open } = useAppState(
+  const { activeSessionId, activeCwd, open } = useAppState(
     (state) => ({
       activeSessionId: state.sessionId,
       activeCwd: state.cwd,
-      project: state.project,
       open: state.workspaceExplorerOpen,
     }),
     shallowEqual,
@@ -70,7 +73,7 @@ const WorkspaceExplorer = memo(function WorkspaceExplorer({
           title={cwd}
         >
           <Folder size={13} aria-hidden />
-          <span className="explorer__title">{project}</span>
+          <span className="explorer__title">{projectNameFromCwd(cwd)}</span>
           <ChevronUp
             size={12}
             className={`chev-flip ${open ? "chev-flip--open" : ""}`}

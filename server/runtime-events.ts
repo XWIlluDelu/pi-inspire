@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
@@ -506,13 +507,9 @@ export class RuntimeEventController {
     if (!parsePendingExtensionUiRequest({ ...record, sessionId: slot.id }))
       return false;
     if (!slot.startupError) {
-      slot.startupError = Object.assign(
-        new Error(PI_STARTUP_RESPONSE_UI_ERROR),
-        {
-          status: 503,
-          code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
-        },
-      );
+      slot.startupError = requestError(PI_STARTUP_RESPONSE_UI_ERROR, 503, {
+        code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
+      });
     }
     if (!slot.startupStop) {
       slot.startupStop = rpc.stop().catch((error) => {

@@ -1,5 +1,4 @@
 import {
-  type AvailableUpdate,
   type BranchTreeResponse,
   type GitDiffSide,
   type GitStatusResponse,
@@ -100,14 +99,12 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
-  availableUpdate: AvailableUpdate | null;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
   sessionId: string | null;
   sessionName: string;
   cwd: string | null;
-  project: string | null;
   model: ModelOption | null;
   thinkingLevel: string;
   availableModels: ModelOption[];
@@ -258,14 +255,12 @@ export function createInitialAppState(): AppState {
     piUpdateCheck: null,
     inspireUpdateChecking: false,
     piUpdateChecking: false,
-    availableUpdate: null,
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
     prefs: defaultPreferences,
     sessionId: null,
     sessionName: "",
     cwd: null,
-    project: null,
     model: null,
     thinkingLevel: "medium",
     availableModels: [],

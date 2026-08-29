@@ -13,6 +13,7 @@ class ImmediateCloseSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  extensions = "";
   closeCount = 0;
 
   constructor(readonly url: string) {

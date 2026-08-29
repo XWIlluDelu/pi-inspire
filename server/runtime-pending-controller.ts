@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import {
   type PendingManagementAction,
   type PendingQueues,
@@ -39,17 +40,15 @@ export class RuntimePendingController {
       const slot = this.host.requireSlot(sessionId);
       return this.host.mutateSlot(slot, async () => {
         if (!slot.pendingQueues.managementAvailable) {
-          throw Object.assign(
-            new Error(
-              "The active Pi runtime does not support Pending management",
-            ),
-            { status: 409 },
+          throw requestError(
+            "The active Pi runtime does not support Pending management",
+            409,
           );
         }
         if (slot.pendingQueues.revision !== request.expectedRevision) {
-          throw Object.assign(
-            new Error("Pending changed; refresh before trying again"),
-            { status: 409 },
+          throw requestError(
+            "Pending changed; refresh before trying again",
+            409,
           );
         }
         const process = await this.host.ensureWriter(slot);
@@ -93,11 +92,12 @@ export class RuntimePendingController {
             return this.host.failUnknown(slot, error);
           const message =
             error instanceof Error ? error.message : String(error);
-          throw Object.assign(new Error(message), {
-            status: /pending|queue|unknown command|not found/i.test(message)
+          throw requestError(
+            message,
+            /pending|queue|unknown command|not found/i.test(message)
               ? 409
               : 500,
-          });
+          );
         }
         const pending = pendingQueuesFromRecord(
           result,
@@ -109,10 +109,7 @@ export class RuntimePendingController {
           !pending.managementAvailable ||
           pending.revision < request.expectedRevision
         ) {
-          throw Object.assign(
-            new Error("Pi returned an invalid Pending state"),
-            { status: 502 },
-          );
+          throw requestError("Pi returned an invalid Pending state", 502);
         }
         slot.pendingQueues = newestPendingQueues(slot.pendingQueues, pending);
         return structuredClone(slot.pendingQueues);
@@ -133,9 +130,9 @@ export class RuntimePendingController {
           !slot.ready ||
           !slot.pendingQueues.managementAvailable
         ) {
-          throw Object.assign(
-            new Error("The Pending messages are no longer available"),
-            { status: 409 },
+          throw requestError(
+            "The Pending messages are no longer available",
+            409,
           );
         }
         try {
@@ -151,27 +148,18 @@ export class RuntimePendingController {
               expectedRevision,
             });
             if (!Array.isArray(result.messages) || result.messages.length !== 1)
-              throw Object.assign(
-                new Error("Pi returned invalid Pending messages"),
-                { status: 502 },
-              );
+              throw requestError("Pi returned invalid Pending messages", 502);
             const value = result.messages[0];
             if (!value || typeof value !== "object" || Array.isArray(value))
-              throw Object.assign(
-                new Error("Pi returned invalid Pending messages"),
-                { status: 502 },
-              );
+              throw requestError("Pi returned invalid Pending messages", 502);
             const record = value as Record<string, unknown>;
             if (record.id !== messageId || typeof record.text !== "string")
-              throw Object.assign(
-                new Error("Pi returned the wrong Pending messages"),
-                { status: 502 },
-              );
+              throw requestError("Pi returned the wrong Pending messages", 502);
             textBytes += Buffer.byteLength(record.text, "utf8");
             if (textBytes > MAX_PENDING_TEXT_RESPONSE_BYTES)
-              throw Object.assign(
-                new Error("Pending text exceeds the 4 MiB copy limit"),
-                { status: 413 },
+              throw requestError(
+                "Pending text exceeds the 4 MiB copy limit",
+                413,
               );
             messages.push({ id: messageId, text: record.text });
           }
@@ -183,13 +171,14 @@ export class RuntimePendingController {
             throw error;
           const message =
             error instanceof Error ? error.message : String(error);
-          throw Object.assign(new Error(message), {
-            status: /exceeds.*limit/i.test(message)
+          throw requestError(
+            message,
+            /exceeds.*limit/i.test(message)
               ? 413
               : /pending|not found|unknown command/i.test(message)
                 ? 409
                 : 500,
-          });
+          );
         }
       });
     });

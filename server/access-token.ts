@@ -1,7 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { installationKey } from "./installation-key.js";
 import {
   inspireStateDirectory,
   supportsPosixPermissions,
@@ -15,16 +16,6 @@ const LEGACY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$|^[A-Za-z0-9_-]{128}$/;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 
-function accessTokenKey(root: string, host: string, port: number): string {
-  return createHash("sha256")
-    .update(root)
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
-}
-
 export function defaultAccessTokenPath(
   root: string,
   host: string,
@@ -32,7 +23,7 @@ export function defaultAccessTokenPath(
 ): string {
   return join(
     inspireStateDirectory(),
-    `${accessTokenKey(root, host, port)}.token`,
+    `${installationKey(root, host, port)}.token`,
   );
 }
 

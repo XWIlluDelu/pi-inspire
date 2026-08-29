@@ -166,47 +166,23 @@ export class BranchController {
     const sessionId = state.sessionId;
     const tree = state.branchTree;
     if (!api || !sessionId || !tree || this.actionsBlocked(state)) return false;
-    const actionId = `${mode}:${targetId}`;
-    const actionRequest = ++this.actionRequest;
-    const ticket = this.viewTicket(state);
-    const transportGeneration = this.host.transportGeneration();
-    const owns = (): boolean =>
-      actionRequest === this.actionRequest &&
-      this.ownsView(ticket) &&
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
-    this.host.patch({ branchActionId: actionId, branchTreeError: null });
-    try {
-      const response = await api.navigateBranch({
-        sessionId,
-        revision: tree.revision,
-        targetId,
-        mode,
-      });
-      if (!owns()) return false;
-      this.host.applyNavigation(response);
-      await this.loadTree();
-      return true;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        if (
-          transportGeneration === this.host.transportGeneration() &&
-          this.host.api() === api
-        ) {
-          this.host.handleAuthFailure();
-        }
-        return false;
-      }
-      if (!owns()) return false;
-      this.host.patch({
-        branchTreeError:
-          error instanceof Error ? error.message : "Branch navigation failed",
-      });
-      return false;
-    } finally {
-      if (owns() && this.host.state().branchActionId === actionId)
-        this.host.patch({ branchActionId: null });
-    }
+    return this.runAction(
+      `${mode}:${targetId}`,
+      api,
+      this.viewTicket(state),
+      () =>
+        api.navigateBranch({
+          sessionId,
+          revision: tree.revision,
+          targetId,
+          mode,
+        }),
+      async (response) => {
+        this.host.applyNavigation(response);
+        await this.loadTree();
+      },
+      "Branch navigation failed",
+    );
   }
 
   /** Refreshes the tree before checking the target capability, so a transcript
@@ -243,13 +219,34 @@ export class BranchController {
     const sessionId = state.sessionId;
     const tree = state.branchTree;
     if (!api || !sessionId || !tree || this.actionsBlocked(state)) return false;
-    const actionId = `fork:${targetId}`;
     const selectionRequest = this.host.beginForkSelection();
+    return this.runAction(
+      `fork:${targetId}`,
+      api,
+      { ...this.viewTicket(state), selectionRequest },
+      () =>
+        api.forkBranch({
+          sessionId,
+          revision: tree.revision,
+          targetId,
+        }),
+      (response) => {
+        this.host.applyFork(response);
+        this.host.refreshSessionCatalog();
+      },
+      "Fork failed",
+    );
+  }
+
+  private async runAction<T>(
+    actionId: string,
+    api: Api,
+    ticket: BranchViewTicket,
+    perform: () => Promise<T>,
+    commit: (response: T) => void | Promise<void>,
+    fallbackError: string,
+  ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
-    const ticket: BranchViewTicket = {
-      ...this.viewTicket(state),
-      selectionRequest,
-    };
     const transportGeneration = this.host.transportGeneration();
     const owns = (): boolean =>
       actionRequest === this.actionRequest &&
@@ -258,14 +255,9 @@ export class BranchController {
       this.host.transportGeneration() === transportGeneration;
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
     try {
-      const response = await api.forkBranch({
-        sessionId,
-        revision: tree.revision,
-        targetId,
-      });
+      const response = await perform();
       if (!owns()) return false;
-      this.host.applyFork(response);
-      this.host.refreshSessionCatalog();
+      await commit(response);
       return true;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -279,7 +271,7 @@ export class BranchController {
       }
       if (!owns()) return false;
       this.host.patch({
-        branchTreeError: error instanceof Error ? error.message : "Fork failed",
+        branchTreeError: error instanceof Error ? error.message : fallbackError,
       });
       return false;
     } finally {

@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -544,10 +545,9 @@ function resourceByteRange(
     ranges.type !== "bytes" ||
     ranges.length !== 1
   ) {
-    throw Object.assign(
-      new Error("The requested byte range cannot be served"),
-      { status: 416, contentRange: `bytes */${size}` },
-    );
+    throw requestError("The requested byte range cannot be served", 416, {
+      contentRange: `bytes */${size}`,
+    });
   }
   return ranges[0]!;
 }
@@ -969,11 +969,10 @@ export function createInspireServer(deps: AppDependencies): {
     response.set("X-Inspire-Authority", authorityId);
     const prompt = promptSchema.parse(request.body);
     if (prompt.authorityId !== authorityId)
-      throw Object.assign(
-        new Error(
-          "The Host restarted before this prompt delivery could be confirmed",
-        ),
-        { status: 409, code: "HOST_AUTHORITY_CHANGED" },
+      throw requestError(
+        "The Host restarted before this prompt delivery could be confirmed",
+        409,
+        { code: "HOST_AUTHORITY_CHANGED" },
       );
 
     retirePromptOperationResults();
@@ -982,24 +981,23 @@ export function createInspireServer(deps: AppDependencies): {
       .digest("hex");
     let operation = promptOperations.get(prompt.operationId);
     if (operation && operation.fingerprint !== fingerprint)
-      throw Object.assign(
-        new Error("That prompt operation ID was reused with different content"),
-        { status: 409, code: "PROMPT_OPERATION_MISMATCH" },
+      throw requestError(
+        "That prompt operation ID was reused with different content",
+        409,
+        { code: "PROMPT_OPERATION_MISMATCH" },
       );
     if (operation && !operation.promise)
-      throw Object.assign(
-        new Error(
-          "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
-        ),
-        { status: 409, code: "PROMPT_OPERATION_RESULT_RETIRED" },
+      throw requestError(
+        "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
+        409,
+        { code: "PROMPT_OPERATION_RESULT_RETIRED" },
       );
     if (!operation) {
       if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
-        throw Object.assign(
-          new Error(
-            "This Host has reached its process-lifetime prompt receipt limit",
-          ),
-          { status: 503, code: "PROMPT_OPERATION_CAPACITY" },
+        throw requestError(
+          "This Host has reached its process-lifetime prompt receipt limit",
+          503,
+          { code: "PROMPT_OPERATION_CAPACITY" },
         );
       const receipt: PromptOperationReceipt = {
         fingerprint,
@@ -1080,32 +1078,26 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ ok: true });
   });
 
+  const openSessionCwd = (sessionId: string): string => {
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) throw requestError("That session is not open on this host", 409);
+    return cwd;
+  };
+
   app.get("/api/files", async (request, response) => {
     const { sessionId, q, limit } = fileQuerySchema.parse(request.query);
-    const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd)
-      return response
-        .status(409)
-        .json({ error: "That session is not open on this host" });
+    const cwd = openSessionCwd(sessionId);
     response.json({ files: await searchProjectFiles(cwd, q, limit) });
   });
   app.get("/api/files/list", async (request, response) => {
     const { sessionId, dir, refresh } = fileListSchema.parse(request.query);
-    const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd)
-      return response
-        .status(409)
-        .json({ error: "That session is not open on this host" });
+    const cwd = openSessionCwd(sessionId);
     if (refresh) invalidateProjectIndex(cwd);
     response.json({ entries: await listProjectDirectory(cwd, dir) });
   });
   app.get("/api/git/status", async (request, response) => {
     const { sessionId } = gitStatusSchema.parse(request.query);
-    const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd)
-      return response
-        .status(409)
-        .json({ error: "That session is not open on this host" });
+    const cwd = openSessionCwd(sessionId);
     response.json(
       await withRequestSignal(request, response, (signal) =>
         deps.git.status(cwd, signal),
@@ -1114,11 +1106,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/git/diff", async (request, response) => {
     const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
-    const cwd = deps.runtime.sessionCwd(sessionId);
-    if (!cwd)
-      return response
-        .status(409)
-        .json({ error: "That session is not open on this host" });
+    const cwd = openSessionCwd(sessionId);
     response.json(
       await withRequestSignal(request, response, (signal) =>
         deps.git.diff(cwd, pathId, side, signal),
@@ -1139,13 +1127,9 @@ export function createInspireServer(deps: AppDependencies): {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       if (code === "ENOENT" || code === "ENOTDIR")
-        throw Object.assign(new Error("No such directory on the host"), {
-          status: 404,
-        });
+        throw requestError("No such directory on the host", 404);
       if (code === "EACCES" || code === "EPERM")
-        throw Object.assign(new Error("The host cannot read that directory"), {
-          status: 403,
-        });
+        throw requestError("The host cannot read that directory", 403);
       throw error;
     }
   });
@@ -1190,7 +1174,7 @@ export function createInspireServer(deps: AppDependencies): {
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
     const resource = deps.resources.get(
-      String(request.params.id),
+      request.params.id,
       sessionId,
       context.viewId,
     );
@@ -1778,9 +1762,9 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
-      server.closeIdleConnections?.();
+      server.closeIdleConnections();
       await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
-      server.closeAllConnections?.();
+      server.closeAllConnections();
       const drainedResult = await drained.then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),

@@ -32,6 +32,41 @@ interface TranscriptDataControllerHost {
   fail(message: string, severity?: "error" | "warning"): void;
 }
 
+interface TranscriptScope {
+  api: Api;
+  sessionId: string;
+  revision: number;
+  viewId: string;
+  incarnation: string | null;
+  selectionGeneration: number;
+  transportGeneration: number;
+}
+
+interface ScopedTranscriptPage {
+  sessionId: string;
+  revision: number;
+  appendFromRevision?: number;
+  viewId: string;
+  incarnation?: string | null;
+}
+
+function messageIdentity(message: ChatMessage): string {
+  return messageKey(message) ?? JSON.stringify(message);
+}
+
+function unseen<T>(
+  seen: Set<string>,
+  values: readonly T[],
+  identity: (value: T) => string,
+): T[] {
+  return values.filter((value) => {
+    const key = identity(value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Owns branch-bound transcript pagination, Prompt Map reads, composer-history
  * paging, and deferred activity materialization. */
 export class TranscriptDataController {
@@ -43,10 +78,82 @@ export class TranscriptDataController {
 
   constructor(private readonly host: TranscriptDataControllerHost) {}
 
-  private transportOwner(api: Api | null): () => boolean {
-    const generation = this.host.transportGeneration();
-    return () =>
-      this.host.api() === api && this.host.transportGeneration() === generation;
+  private captureScope(): TranscriptScope | null {
+    const state = this.host.state();
+    const api = this.host.api();
+    if (!api || !state.sessionId || !state.transcriptViewId) return null;
+    return {
+      api,
+      sessionId: state.sessionId,
+      revision: state.transcriptRevision,
+      viewId: state.transcriptViewId,
+      incarnation: state.transcriptIncarnation,
+      selectionGeneration: this.host.selectionGeneration(),
+      transportGeneration: this.host.transportGeneration(),
+    };
+  }
+
+  private ownsScope(scope: TranscriptScope, requireLineage = false): boolean {
+    const state = this.host.state();
+    return (
+      this.host.api() === scope.api &&
+      this.host.transportGeneration() === scope.transportGeneration &&
+      this.host.selectionGeneration() === scope.selectionGeneration &&
+      state.sessionId === scope.sessionId &&
+      state.transcriptViewId === scope.viewId &&
+      state.transcriptIncarnation === scope.incarnation &&
+      (!requireLineage ||
+        transcriptRevisionContains(
+          state.transcriptRevision,
+          state.transcriptAppendFromRevision,
+          scope.revision,
+        ))
+    );
+  }
+
+  private ownsPage(
+    scope: TranscriptScope,
+    request: AbortController,
+    page: ScopedTranscriptPage,
+  ): boolean {
+    return (
+      !request.signal.aborted &&
+      this.ownsScope(scope, true) &&
+      page.sessionId === scope.sessionId &&
+      transcriptRevisionContains(
+        page.revision,
+        page.appendFromRevision ?? page.revision,
+        scope.revision,
+      ) &&
+      page.viewId === scope.viewId &&
+      (page.incarnation ?? scope.incarnation) === scope.incarnation
+    );
+  }
+
+  private markMessagesSettled(messages: readonly ChatMessage[]): void {
+    for (const message of messages) {
+      const key = messageKey(message);
+      if (key) this.host.markSettled(key);
+    }
+  }
+
+  private async handleScopedReadError(
+    scope: TranscriptScope,
+    error: unknown,
+    handleFailure: () => void,
+  ): Promise<void> {
+    if (error instanceof ApiError && error.status === 409) {
+      await this.host.resync(
+        scope.sessionId,
+        scope.selectionGeneration,
+        undefined,
+        false,
+      );
+    } else if (error instanceof ApiError && error.status === 401) {
+      this.host.handleAuthFailure();
+    } else {
+      handleFailure();
+    }
   }
 
   invalidate(): void {
@@ -63,22 +170,11 @@ export class TranscriptDataController {
   }
 
   loadOlderMessages = async (): Promise<boolean> => {
-    const sessionId = this.host.state().sessionId;
+    const scope = this.captureScope();
     const cursor = this.host.state().olderMessagesCursor;
-    const revision = this.host.state().transcriptRevision;
-    const viewId = this.host.state().transcriptViewId;
-    const incarnation = this.host.state().transcriptIncarnation;
-    const generation = this.host.selectionGeneration();
-    const api = this.host.api();
-    const ownsTransport = this.transportOwner(api);
-    if (
-      !api ||
-      !sessionId ||
-      !cursor ||
-      !viewId ||
-      this.host.state().loadingOlderMessages
-    )
+    if (!scope || !cursor || this.host.state().loadingOlderMessages)
       return false;
+    const { api, sessionId, revision, viewId, incarnation } = scope;
     const request = new AbortController();
     this.olderTranscriptRequest = request;
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
@@ -89,55 +185,33 @@ export class TranscriptDataController {
         page.appendFromRevision ?? page.revision,
         revision,
       );
-      const currentLineageCompatible = transcriptRevisionContains(
-        this.host.state().transcriptRevision,
-        this.host.state().transcriptAppendFromRevision,
-        revision,
-      );
       if (
-        !ownsTransport() ||
-        this.host.state().sessionId !== sessionId ||
-        this.host.selectionGeneration() !== generation ||
-        !currentLineageCompatible ||
-        this.host.state().transcriptViewId !== viewId ||
-        this.host.state().transcriptIncarnation !== incarnation ||
+        !this.ownsScope(scope, true) ||
         page.sessionId !== sessionId ||
         !pageLineageCompatible ||
         (page.viewId ?? viewId) !== viewId ||
         (page.incarnation ?? incarnation) !== incarnation
       )
         return false;
-      const existing = new Set(
-        this.host
-          .state()
-          .messages.map(
-            (message) => messageKey(message) ?? JSON.stringify(message),
-          ),
+      const older = unseen(
+        new Set(this.host.state().messages.map(messageIdentity)),
+        page.messages.map(asMessage),
+        messageIdentity,
       );
-      const older = page.messages.map(asMessage).filter((message) => {
-        const key = messageKey(message) ?? JSON.stringify(message);
-        if (existing.has(key)) return false;
-        existing.add(key);
-        return true;
-      });
-      for (const message of older) {
-        const key = messageKey(message);
-        if (key) this.host.markSettled(key);
-      }
-      const existingRanges = new Set(
-        this.host.state().transcriptActivityRanges.map((range) => range.cursor),
-      );
-      const activityRanges = (page.activityRanges ?? [])
-        .filter((range) => {
-          if (existingRanges.has(range.cursor)) return false;
-          existingRanges.add(range.cursor);
-          return true;
-        })
-        .map((range) => ({
-          ...range,
-          status: "idle" as const,
-          error: null,
-        }));
+      this.markMessagesSettled(older);
+      const activityRanges = unseen(
+        new Set(
+          this.host
+            .state()
+            .transcriptActivityRanges.map((range) => range.cursor),
+        ),
+        page.activityRanges ?? [],
+        (range) => range.cursor,
+      ).map((range) => ({
+        ...range,
+        status: "idle" as const,
+        error: null,
+      }));
       this.host.patch({
         messages: [...older, ...this.host.state().messages],
         transcriptActivityRanges: [
@@ -150,19 +224,8 @@ export class TranscriptDataController {
       });
       return true;
     } catch (error) {
-      if (
-        request.signal.aborted ||
-        !ownsTransport() ||
-        this.host.selectionGeneration() !== generation ||
-        this.host.state().transcriptViewId !== viewId
-      ) {
-        return false;
-      }
-      if (error instanceof ApiError && error.status === 409) {
-        await this.host.resync(sessionId, generation, undefined, false);
-      } else if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-      } else {
+      if (request.signal.aborted || !this.ownsScope(scope)) return false;
+      await this.handleScopedReadError(scope, error, () =>
         this.host.patch({
           olderMessagesError:
             error instanceof Error
@@ -171,18 +234,13 @@ export class TranscriptDataController {
           ...(this.host.state().projectionError
             ? { error: this.host.state().projectionError }
             : {}),
-        });
-      }
+        }),
+      );
       return false;
     } finally {
       if (this.olderTranscriptRequest === request)
         this.olderTranscriptRequest = null;
-      if (
-        ownsTransport() &&
-        this.host.state().sessionId === sessionId &&
-        this.host.selectionGeneration() === generation &&
-        this.host.state().transcriptViewId === viewId
-      )
+      if (this.ownsScope(scope))
         this.host.patch({ loadingOlderMessages: false });
     }
   };
@@ -193,17 +251,16 @@ export class TranscriptDataController {
     incarnation: string | null,
     effectiveLeafId: string | null,
   ): Promise<ComposerHistoryEntry[] | null> => {
-    const api = this.host.api();
-    const generation = this.host.selectionGeneration();
-    const ownsTransport = this.transportOwner(api);
-    const ownsScope = () =>
-      ownsTransport() &&
-      this.host.selectionGeneration() === generation &&
-      this.host.state().sessionId === sessionId &&
-      this.host.state().transcriptViewId === viewId &&
-      this.host.state().transcriptIncarnation === incarnation &&
+    const scope = this.captureScope();
+    const ownsHistory = () =>
+      scope !== null &&
+      this.ownsScope(scope) &&
+      scope.sessionId === sessionId &&
+      scope.viewId === viewId &&
+      scope.incarnation === incarnation &&
       this.host.state().transcriptEffectiveLeafId === effectiveLeafId;
-    if (!api || !ownsScope()) return null;
+    if (!scope || !ownsHistory()) return null;
+    const { api } = scope;
 
     try {
       // A user append can shift newest-first offsets between bounded pages.
@@ -217,7 +274,7 @@ export class TranscriptDataController {
         while (true) {
           const page = await api.composerHistory(sessionId, start);
           if (
-            !ownsScope() ||
+            !ownsHistory() ||
             page.sessionId !== sessionId ||
             page.viewId !== viewId ||
             (page.incarnation ?? null) !== incarnation ||
@@ -299,7 +356,7 @@ export class TranscriptDataController {
       }
       return null;
     } catch (error) {
-      if (!ownsScope()) return null;
+      if (!ownsHistory()) return null;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
       } else if (!(error instanceof ApiError && error.status === 409)) {
@@ -315,14 +372,9 @@ export class TranscriptDataController {
   };
 
   loadPromptMapTurns = async (start?: number): Promise<UserTurnAnchor[]> => {
-    const sessionId = this.host.state().sessionId;
-    const revision = this.host.state().transcriptRevision;
-    const viewId = this.host.state().transcriptViewId;
-    const incarnation = this.host.state().transcriptIncarnation;
-    const generation = this.host.selectionGeneration();
-    const api = this.host.api();
-    const ownsTransport = this.transportOwner(api);
-    if (!api || !sessionId || !viewId) return [];
+    const scope = this.captureScope();
+    if (!scope) return [];
+    const { api, sessionId } = scope;
     if (start !== undefined) {
       const cached = this.host
         .state()
@@ -360,30 +412,7 @@ export class TranscriptDataController {
           start,
           request.signal,
         );
-        const pageLineageCompatible = transcriptRevisionContains(
-          page.revision,
-          page.appendFromRevision ?? page.revision,
-          revision,
-        );
-        const currentLineageCompatible = transcriptRevisionContains(
-          this.host.state().transcriptRevision,
-          this.host.state().transcriptAppendFromRevision,
-          revision,
-        );
-        if (
-          request.signal.aborted ||
-          !ownsTransport() ||
-          this.host.state().sessionId !== sessionId ||
-          this.host.selectionGeneration() !== generation ||
-          !currentLineageCompatible ||
-          this.host.state().transcriptViewId !== viewId ||
-          this.host.state().transcriptIncarnation !== incarnation ||
-          page.sessionId !== sessionId ||
-          !pageLineageCompatible ||
-          page.viewId !== viewId ||
-          (page.incarnation ?? incarnation) !== incarnation
-        )
-          return [];
+        if (!this.ownsPage(scope, request, page)) return [];
         const currentRevision = this.host.state().transcriptRevision;
         const staleAppendPage = page.revision < currentRevision;
         const promptMapTotal = staleAppendPage
@@ -414,37 +443,22 @@ export class TranscriptDataController {
         });
         return page.turns;
       } catch (error) {
-        if (
-          request.signal.aborted ||
-          !ownsTransport() ||
-          this.host.selectionGeneration() !== generation ||
-          this.host.state().transcriptViewId !== viewId
-        )
-          return [];
-        if (error instanceof ApiError && error.status === 409) {
-          await this.host.resync(sessionId, generation, undefined, false);
-        } else if (error instanceof ApiError && error.status === 401) {
-          this.host.handleAuthFailure();
-        } else {
+        if (request.signal.aborted || !this.ownsScope(scope)) return [];
+        await this.handleScopedReadError(scope, error, () =>
           this.host.patch({
             promptMapError:
               error instanceof Error
                 ? error.message
                 : "Failed to load the user-turn outline",
-          });
-        }
+          }),
+        );
         return [];
       } finally {
         if (this.userTurnIndexRequests.get(requestKey) === request)
           this.userTurnIndexRequests.delete(requestKey);
         if (this.userTurnIndexPromises.get(requestKey) === pending)
           this.userTurnIndexPromises.delete(requestKey);
-        if (
-          ownsTransport() &&
-          this.host.state().sessionId === sessionId &&
-          this.host.selectionGeneration() === generation &&
-          this.host.state().transcriptViewId === viewId
-        )
+        if (this.ownsScope(scope))
           this.host.patch({
             promptMapLoadingStarts: this.host
               .state()
@@ -457,23 +471,16 @@ export class TranscriptDataController {
   };
 
   navigatePromptMapTurn = async (ordinal: number): Promise<boolean> => {
-    const sessionId = this.host.state().sessionId;
-    const revision = this.host.state().transcriptRevision;
-    const viewId = this.host.state().transcriptViewId;
-    const incarnation = this.host.state().transcriptIncarnation;
-    const generation = this.host.selectionGeneration();
-    const api = this.host.api();
-    const ownsTransport = this.transportOwner(api);
+    const scope = this.captureScope();
     if (
-      !api ||
-      !sessionId ||
-      !viewId ||
+      !scope ||
       !Number.isSafeInteger(ordinal) ||
       ordinal < 0 ||
       ordinal >= this.host.state().promptMapTotal ||
       this.host.state().promptMapNavigatingOrdinal !== null
     )
       return false;
+    const { api, sessionId } = scope;
     this.host.patch({
       promptMapNavigatingOrdinal: ordinal,
       promptMapError: null,
@@ -493,7 +500,7 @@ export class TranscriptDataController {
             .state()
             .promptMapTurns.find((candidate) => candidate.ordinal === ordinal);
       }
-      if (!ownsTransport()) return false;
+      if (!this.ownsScope(scope)) return false;
       if (!turn) throw new Error("That user turn is no longer available");
       if (
         this.host
@@ -519,28 +526,8 @@ export class TranscriptDataController {
           continuationCursor,
           request.signal,
         );
-        const pageLineageCompatible = transcriptRevisionContains(
-          page.revision,
-          page.appendFromRevision ?? page.revision,
-          revision,
-        );
-        const currentLineageCompatible = transcriptRevisionContains(
-          this.host.state().transcriptRevision,
-          this.host.state().transcriptAppendFromRevision,
-          revision,
-        );
         if (
-          request.signal.aborted ||
-          !ownsTransport() ||
-          this.host.state().sessionId !== sessionId ||
-          this.host.selectionGeneration() !== generation ||
-          !currentLineageCompatible ||
-          this.host.state().transcriptViewId !== viewId ||
-          this.host.state().transcriptIncarnation !== incarnation ||
-          page.sessionId !== sessionId ||
-          !pageLineageCompatible ||
-          page.viewId !== viewId ||
-          (page.incarnation ?? incarnation) !== incarnation ||
+          !this.ownsPage(scope, request, page) ||
           page.targetMessageId !== turn.id
         )
           return false;
@@ -553,22 +540,11 @@ export class TranscriptDataController {
         }
       } while (continuationCursor);
 
-      const existing = new Set(
-        this.host
-          .state()
-          .messages.map(
-            (message) => messageKey(message) ?? JSON.stringify(message),
-          ),
+      const incoming = unseen(
+        new Set(this.host.state().messages.map(messageIdentity)),
+        pages.flatMap((page) => page.messages).map(asMessage),
+        messageIdentity,
       );
-      const incoming = pages
-        .flatMap((page) => page.messages)
-        .map(asMessage)
-        .filter((message) => {
-          const key = messageKey(message) ?? JSON.stringify(message);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        });
       const messages = [...this.host.state().messages, ...incoming].sort(
         (left, right) => {
           const leftIndex = left.__inspireMessageIndex;
@@ -578,25 +554,20 @@ export class TranscriptDataController {
           return leftIndex - rightIndex;
         },
       );
-      for (const message of incoming) {
-        const key = messageKey(message);
-        if (key) this.host.markSettled(key);
-      }
-      const existingRanges = new Set(
-        this.host.state().transcriptActivityRanges.map((range) => range.cursor),
-      );
-      const activityRanges = pages
-        .flatMap((page) => page.activityRanges ?? [])
-        .filter((range) => {
-          if (existingRanges.has(range.cursor)) return false;
-          existingRanges.add(range.cursor);
-          return true;
-        })
-        .map((range) => ({
-          ...range,
-          status: "idle" as const,
-          error: null,
-        }));
+      this.markMessagesSettled(incoming);
+      const activityRanges = unseen(
+        new Set(
+          this.host
+            .state()
+            .transcriptActivityRanges.map((range) => range.cursor),
+        ),
+        pages.flatMap((page) => page.activityRanges ?? []),
+        (range) => range.cursor,
+      ).map((range) => ({
+        ...range,
+        status: "idle" as const,
+        error: null,
+      }));
       const firstPage = pages[0]!;
       const currentEarliest = this.host
         .state()
@@ -624,25 +595,15 @@ export class TranscriptDataController {
       });
       return true;
     } catch (error) {
-      if (
-        request?.signal.aborted ||
-        !ownsTransport() ||
-        this.host.selectionGeneration() !== generation ||
-        this.host.state().transcriptViewId !== viewId
-      )
-        return false;
-      if (error instanceof ApiError && error.status === 409) {
-        await this.host.resync(sessionId, generation, undefined, false);
-      } else if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-      } else {
+      if (request?.signal.aborted || !this.ownsScope(scope)) return false;
+      await this.handleScopedReadError(scope, error, () =>
         this.host.patch({
           promptMapError:
             error instanceof Error
               ? error.message
               : "Failed to load that user turn",
-        });
-      }
+        }),
+      );
       return false;
     } finally {
       const ownsNavigation = request
@@ -650,12 +611,7 @@ export class TranscriptDataController {
         : this.host.state().promptMapNavigatingOrdinal === ordinal;
       if (ownsNavigation) {
         if (request) this.userTurnTranscriptRequest = null;
-        if (
-          ownsTransport() &&
-          this.host.state().sessionId === sessionId &&
-          this.host.selectionGeneration() === generation &&
-          this.host.state().transcriptViewId === viewId
-        )
+        if (this.ownsScope(scope))
           this.host.patch({ promptMapNavigatingOrdinal: null });
       }
     }
@@ -666,13 +622,9 @@ export class TranscriptDataController {
     beforeCommit?: () => void,
     mode: ActivityMaterializationMode = "all",
   ): Promise<void> => {
-    const sessionId = this.host.state().sessionId;
-    const viewId = this.host.state().transcriptViewId;
-    const incarnation = this.host.state().transcriptIncarnation;
-    const generation = this.host.selectionGeneration();
-    const api = this.host.api();
-    const ownsTransport = this.transportOwner(api);
-    if (!api || !sessionId || !viewId) return;
+    const scope = this.captureScope();
+    if (!scope) return;
+    const { api, sessionId, viewId, incarnation } = scope;
     const requested = this.host
       .state()
       .transcriptActivityRanges.filter(
@@ -763,14 +715,7 @@ export class TranscriptDataController {
       }),
     );
 
-    if (
-      !ownsTransport() ||
-      this.host.state().sessionId !== sessionId ||
-      this.host.selectionGeneration() !== generation ||
-      this.host.state().transcriptIncarnation !== incarnation ||
-      this.host.state().transcriptViewId !== viewId
-    )
-      return;
+    if (!this.ownsScope(scope)) return;
     const conflict = results.find(
       (result) =>
         result.error instanceof ApiError && result.error.status === 409,
@@ -789,7 +734,12 @@ export class TranscriptDataController {
               : range,
           ),
       });
-      await this.host.resync(sessionId, generation, undefined, false);
+      await this.host.resync(
+        sessionId,
+        scope.selectionGeneration,
+        undefined,
+        false,
+      );
       return;
     }
     if (
@@ -815,11 +765,7 @@ export class TranscriptDataController {
     const completed = new Set<string>();
     const remainders = new Map<string, TranscriptActivityRangeState>();
     const failures = new Map<string, string>();
-    const existing = new Set(
-      nextMessages.map(
-        (message) => messageKey(message) ?? JSON.stringify(message),
-      ),
-    );
+    const existing = new Set(nextMessages.map(messageIdentity));
     for (const result of results) {
       if (result.error) {
         if (
@@ -850,22 +796,16 @@ export class TranscriptDataController {
         );
         continue;
       }
-      const materialized = result.messages
-        .filter((message) => {
-          const key = messageKey(message) ?? JSON.stringify(message);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        })
-        .map((message) => ({
-          ...message,
-          __inspireActivityRangeCursor: result.range.cursor,
-        }));
+      const materialized = unseen(
+        existing,
+        result.messages,
+        messageIdentity,
+      ).map((message) => ({
+        ...message,
+        __inspireActivityRangeCursor: result.range.cursor,
+      }));
       nextMessages.splice(insertAt, 0, ...materialized);
-      for (const message of materialized) {
-        const key = messageKey(message);
-        if (key) this.host.markSettled(key);
-      }
+      this.markMessagesSettled(materialized);
       completed.add(result.range.cursor);
       if (result.remainder)
         remainders.set(result.range.cursor, result.remainder);

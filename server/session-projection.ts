@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import {
   createHash,
   createHmac,
@@ -418,12 +419,7 @@ function isLinearAppend(
 ): boolean {
   let parentId = currentLeafId;
   for (const entry of entries) {
-    if (
-      typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
-      entry.parentId !== parentId
-    )
-      return false;
+    if (entry.parentId !== parentId) return false;
     parentId = entry.id;
   }
   return !entries.some((entry) => entry.type === "compaction");
@@ -570,9 +566,9 @@ function boundedTranscriptItem(
 }
 
 function oversizedTranscriptItem(): never {
-  throw Object.assign(
-    new Error("A projected transcript message exceeds the browser page budget"),
-    { status: 422 },
+  throw requestError(
+    "A projected transcript message exceeds the browser page budget",
+    422,
   );
 }
 
@@ -736,22 +732,16 @@ interface ParsedCursor {
 function parseCursor(cursor: string): ParsedCursor {
   const [payload, supplied] = cursor.split(".");
   if (!payload || !supplied)
-    throw Object.assign(new Error("Transcript cursor is invalid"), {
-      status: 400,
-    });
+    throw requestError("Transcript cursor is invalid", 400);
   const expected = createHmac("sha256", CURSOR_KEY).update(payload).digest();
   let actual: Buffer;
   try {
     actual = Buffer.from(supplied, "base64url");
   } catch {
-    throw Object.assign(new Error("Transcript cursor is invalid"), {
-      status: 400,
-    });
+    throw requestError("Transcript cursor is invalid", 400);
   }
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw Object.assign(new Error("Transcript cursor is invalid"), {
-      status: 400,
-    });
+    throw requestError("Transcript cursor is invalid", 400);
   }
   try {
     const parsed = JSON.parse(
@@ -797,9 +787,7 @@ function parseCursor(cursor: string): ParsedCursor {
       viewId: parsed.viewId,
     };
   } catch {
-    throw Object.assign(new Error("Transcript cursor is invalid"), {
-      status: 400,
-    });
+    throw requestError("Transcript cursor is invalid", 400);
   }
 }
 
@@ -810,8 +798,6 @@ function healthError(error: unknown): ProjectionHealth {
 
 export interface SessionProjectionReadHooks {
   afterFullReadChunk?(): Promise<void> | void;
-  afterPrefixReadChunk?(): Promise<void> | void;
-  afterMessageProjection?(): void;
 }
 
 export class SessionProjection
@@ -915,11 +901,9 @@ export class SessionProjection
       : projection.revision > 0;
     if (!loaded) {
       await projection.close();
-      throw Object.assign(
-        new Error(
-          projection.health.message ?? "Session projection could not be loaded",
-        ),
-        { status: projection.currentFailureStatus ?? 422 },
+      throw requestError(
+        projection.health.message ?? "Session projection could not be loaded",
+        projection.currentFailureStatus ?? 422,
       );
     }
     projection.startWatching();
@@ -1079,10 +1063,7 @@ export class SessionProjection
 
   userText(id: string, maxChars: number): string {
     const entry = this.currentEntriesById.get(id);
-    if (!entry)
-      throw Object.assign(new Error("Branch target does not exist"), {
-        status: 404,
-      });
+    if (!entry) throw requestError("Branch target does not exist", 404);
     return boundedUserText(entry, maxChars);
   }
 
@@ -1093,9 +1074,7 @@ export class SessionProjection
       effectiveLeafId !== null &&
       !this.currentEntriesById.has(effectiveLeafId)
     ) {
-      throw Object.assign(new Error("Effective branch leaf does not exist"), {
-        status: 409,
-      });
+      throw requestError("Effective branch leaf does not exist", 409);
     }
     const tree = projectSessionTree(this.currentEntries, effectiveLeafId);
     const response: BranchTreeResponse = {
@@ -1110,9 +1089,9 @@ export class SessionProjection
       health: this.health,
     };
     if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
-      throw Object.assign(
-        new Error("Session tree response exceeds its serialized limit"),
-        { status: 422 },
+      throw requestError(
+        "Session tree response exceeds its serialized limit",
+        422,
       );
     }
     return response;
@@ -1126,9 +1105,7 @@ export class SessionProjection
       effectiveLeafId !== null &&
       !this.currentEntriesById.has(effectiveLeafId)
     ) {
-      throw Object.assign(new Error("Effective branch leaf does not exist"), {
-        status: 409,
-      });
+      throw requestError("Effective branch leaf does not exist", 409);
     }
     return contextMessages(
       this.currentEntries,
@@ -1190,13 +1167,13 @@ export class SessionProjection
         dirname(this.path),
         { persistent: false },
         (_event, name) => {
-          if (name && String(name) !== basename(this.path)) return;
+          if (name && name !== basename(this.path)) return;
           if (this.watchTimer) clearTimeout(this.watchTimer);
           this.watchTimer = setTimeout(() => {
             this.watchTimer = null;
             this.reconcileFromHint();
           }, WATCH_DEBOUNCE_MS);
-          this.watchTimer.unref?.();
+          this.watchTimer.unref();
         },
       );
       this.watcher.on("error", (error) => {
@@ -1213,7 +1190,7 @@ export class SessionProjection
       () => this.reconcileFromHint(),
       RECONCILE_INTERVAL_MS,
     );
-    this.pollTimer.unref?.();
+    this.pollTimer.unref();
   }
 
   private reconcileFromHint(): void {
@@ -1417,7 +1394,7 @@ export class SessionProjection
         error &&
         typeof error === "object" &&
         Number.isInteger((error as { status?: unknown }).status)
-          ? Number((error as { status: number }).status)
+          ? (error as { status: number }).status
           : 422;
       return {
         changed: false,
@@ -1481,7 +1458,6 @@ export class SessionProjection
           })) {
             const chunk = raw as Buffer;
             hash.update(chunk);
-            await this.readHooks?.afterPrefixReadChunk?.();
             prefixBytes += chunk.length;
           }
         }
@@ -1603,9 +1579,9 @@ export class SessionProjection
           this.initialSourceIdentity &&
           !sameObject(before, this.initialSourceIdentity)
         ) {
-          throw Object.assign(
-            new Error("The session changed since the catalog was loaded"),
-            { status: 409 },
+          throw requestError(
+            "The session changed since the catalog was loaded",
+            409,
           );
         }
         const hash = createHash("sha256");
@@ -1702,11 +1678,9 @@ export class SessionProjection
           header.cwd !== this.initialCwd &&
           !(await sameDirectory(header.cwd, this.initialCwd))
         ) {
-          throw Object.assign(
-            new Error(
-              "The session working directory changed since the catalog was loaded",
-            ),
-            { status: 409 },
+          throw requestError(
+            "The session working directory changed since the catalog was loaded",
+            409,
           );
         }
         if (
@@ -1846,31 +1820,21 @@ export class SessionProjection
   ): { decoded: ParsedCursor; messages: readonly unknown[] } {
     const decoded = parseCursor(cursor);
     if (decoded.kind !== expectedKind) {
-      throw Object.assign(
-        new Error("Transcript cursor has the wrong purpose"),
-        {
-          status: 400,
-        },
-      );
+      throw requestError("Transcript cursor has the wrong purpose", 400);
     }
     if (decoded.sessionId !== this.sessionId) {
-      throw Object.assign(
-        new Error("Transcript cursor belongs to another session"),
-        { status: 409 },
-      );
+      throw requestError("Transcript cursor belongs to another session", 409);
     }
     if (decoded.incarnation !== this.incarnation) {
-      throw Object.assign(
-        new Error(
-          "Transcript cursor belongs to an expired projection incarnation",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Transcript cursor belongs to an expired projection incarnation",
+        409,
       );
     }
     if (decoded.viewId !== viewId) {
-      throw Object.assign(
-        new Error("Transcript cursor belongs to another branch view"),
-        { status: 409 },
+      throw requestError(
+        "Transcript cursor belongs to another branch view",
+        409,
       );
     }
     if (decoded.effectiveLeafId !== effectiveLeafId) {
@@ -1884,11 +1848,9 @@ export class SessionProjection
       // Cursors survive a strictly append-only continuation of the same
       // branch. A switch to a sibling or ancestor view remains stale.
       if (!appendDescendant || decoded.revision < this.appendFromRevision) {
-        throw Object.assign(
-          new Error(
-            "Transcript cursor is stale or belongs to another branch view",
-          ),
-          { status: 409 },
+        throw requestError(
+          "Transcript cursor is stale or belongs to another branch view",
+          409,
         );
       }
     }
@@ -1898,16 +1860,14 @@ export class SessionProjection
       decoded.revision < this.appendFromRevision ||
       knownFingerprint !== decoded.fingerprint
     ) {
-      throw Object.assign(
-        new Error("Transcript cursor is stale; refresh the session"),
-        { status: 409 },
+      throw requestError(
+        "Transcript cursor is stale; refresh the session",
+        409,
       );
     }
     const messages = this.viewMessages(effectiveLeafId);
     if (decoded.before > messages.length) {
-      throw Object.assign(new Error("Transcript cursor is invalid"), {
-        status: 400,
-      });
+      throw requestError("Transcript cursor is invalid", 400);
     }
     return { decoded, messages };
   }
@@ -1987,9 +1947,7 @@ export class SessionProjection
       this.userTurnIndexes.set(indexKey, { revision: this.revision, turns });
     }
     if (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
-      throw Object.assign(new Error("User-turn index offset is invalid"), {
-        status: 400,
-      });
+      throw requestError("User-turn index offset is invalid", 400);
     const pageStart =
       start === undefined
         ? Math.max(0, turns.length - USER_TURN_INDEX_PAGE_SIZE)
@@ -2063,6 +2021,35 @@ export class SessionProjection
     });
   }
 
+  private activityRange(
+    rangeStart: number,
+    rangeEnd: number,
+    afterMessageId: string | null,
+    kinds: ReadonlySet<TranscriptActivityKind>,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptActivityRange | null {
+    return kinds.size > 0
+      ? {
+          cursor: activityCursorFor(
+            this.sessionId,
+            this.incarnation,
+            this.currentFingerprint,
+            this.revision,
+            rangeStart,
+            rangeEnd,
+            effectiveLeafId,
+            viewId,
+          ),
+          afterMessageId,
+          messageCount: rangeEnd - rangeStart,
+          kinds: (["thinking", "tool"] as const).filter((kind) =>
+            kinds.has(kind),
+          ),
+        }
+      : null;
+  }
+
   userTurnTranscriptPage(
     targetMessageId: string,
     effectiveLeafId: string | null = this.currentLeafId,
@@ -2081,12 +2068,7 @@ export class SessionProjection
         ),
     );
     if (target < 0)
-      throw Object.assign(
-        new Error("User turn does not exist in this branch"),
-        {
-          status: 404,
-        },
-      );
+      throw requestError("User turn does not exist in this branch", 404);
     let turnEnd = target + 1;
     while (turnEnd < source.length) {
       const value = source[turnEnd];
@@ -2113,9 +2095,7 @@ export class SessionProjection
         validated.before <= target ||
         validated.before >= turnEnd
       )
-        throw Object.assign(new Error("User-turn cursor is invalid"), {
-          status: 400,
-        });
+        throw requestError("User-turn cursor is invalid", 400);
       cursor = validated.before;
     }
 
@@ -2130,31 +2110,6 @@ export class SessionProjection
     }
     let pendingStart: number | null = null;
     const pendingKinds = new Set<TranscriptActivityKind>();
-    const makeRange = (
-      rangeStart: number,
-      rangeEnd: number,
-      afterMessageId: string | null,
-      kinds: ReadonlySet<TranscriptActivityKind>,
-    ): TranscriptActivityRange | null =>
-      kinds.size > 0
-        ? {
-            cursor: activityCursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              rangeStart,
-              rangeEnd,
-              effectiveLeafId,
-              viewId,
-            ),
-            afterMessageId,
-            messageCount: rangeEnd - rangeStart,
-            kinds: (["thinking", "tool"] as const).filter((kind) =>
-              kinds.has(kind),
-            ),
-          }
-        : null;
     const shell = (
       nextMessages: unknown[],
       nextRanges: TranscriptActivityRange[],
@@ -2209,11 +2164,17 @@ export class SessionProjection
         continue;
       }
       const item = boundedTranscriptItem(value, cursor);
-      this.readHooks?.afterMessageProjection?.();
       const range =
         pendingStart === null
           ? null
-          : makeRange(pendingStart, cursor, previousVisibleId, pendingKinds);
+          : this.activityRange(
+              pendingStart,
+              cursor,
+              previousVisibleId,
+              pendingKinds,
+              effectiveLeafId,
+              viewId,
+            );
       const nextMessages = [...messages, item.value];
       const nextRanges = [...activityRanges, ...(range ? [range] : [])];
       if (
@@ -2235,11 +2196,13 @@ export class SessionProjection
     }
 
     if (cursor === turnEnd && pendingStart !== null) {
-      const trailing = makeRange(
+      const trailing = this.activityRange(
         pendingStart,
         turnEnd,
         previousVisibleId,
         pendingKinds,
+        effectiveLeafId,
+        viewId,
       );
       if (
         trailing &&
@@ -2304,7 +2267,6 @@ export class SessionProjection
         source[index],
         index < persistedLength ? index : undefined,
       );
-      this.readHooks?.afterMessageProjection?.();
       const projected = item.value;
       const serialized = item.serialized;
       const candidateMessagesBytes =
@@ -2365,32 +2327,6 @@ export class SessionProjection
             )
           : null,
     });
-    const range = (
-      rangeStart: number,
-      rangeEnd: number,
-      afterMessageId: string | null,
-      kinds: ReadonlySet<TranscriptActivityKind>,
-    ): TranscriptActivityRange | null =>
-      kinds.size > 0
-        ? {
-            cursor: activityCursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              rangeStart,
-              rangeEnd,
-              effectiveLeafId,
-              viewId,
-            ),
-            afterMessageId,
-            messageCount: rangeEnd - rangeStart,
-            kinds: (["thinking", "tool"] as const).filter((kind) =>
-              kinds.has(kind),
-            ),
-          }
-        : null;
-
     while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
       const sourceItem = source[index];
@@ -2403,15 +2339,16 @@ export class SessionProjection
       }
 
       const item = boundedTranscriptItem(sourceItem, index);
-      this.readHooks?.afterMessageProjection?.();
       const nextRange =
         pendingActivityEnd === null
           ? null
-          : range(
+          : this.activityRange(
               index + 1,
               pendingActivityEnd,
               projectedMessageId(sourceItem),
               pendingKinds,
+              effectiveLeafId,
+              viewId,
             );
       const candidateMessages = [...reversed, item.value].reverse();
       const candidateRanges = [
@@ -2436,7 +2373,14 @@ export class SessionProjection
     }
 
     if (start === 0 && pendingActivityEnd !== null) {
-      const leading = range(0, pendingActivityEnd, null, pendingKinds);
+      const leading = this.activityRange(
+        0,
+        pendingActivityEnd,
+        null,
+        pendingKinds,
+        effectiveLeafId,
+        viewId,
+      );
       if (leading) {
         const withLeading = shell(
           0,
@@ -2495,7 +2439,6 @@ export class SessionProjection
     while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
       const item = boundedTranscriptItem(source[index], index);
-      this.readHooks?.afterMessageProjection?.();
       const candidate = [...reversed, item.value].reverse();
       if (
         Buffer.byteLength(JSON.stringify(shell(index, candidate))) >

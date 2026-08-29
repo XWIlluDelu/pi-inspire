@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
@@ -23,16 +24,12 @@ export async function resolveProjectDirectory(cwd: string): Promise<string> {
         String((error as NodeJS.ErrnoException).code),
       )
     ) {
-      throw Object.assign(new Error("Project path does not exist"), {
-        status: 400,
-      });
+      throw requestError("Project path does not exist", 400);
     }
     throw error;
   }
   if (!details.isDirectory()) {
-    throw Object.assign(new Error("Project path is not a directory"), {
-      status: 400,
-    });
+    throw requestError("Project path is not a directory", 400);
   }
   return root;
 }

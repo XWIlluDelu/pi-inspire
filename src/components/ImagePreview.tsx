@@ -71,8 +71,8 @@ function ImageLightbox({
       }, 0);
     gestureRef.current = null;
     setPanning(false);
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
@@ -117,7 +117,7 @@ function ImageLightbox({
               origin: pan,
               moved: false,
             };
-            event.currentTarget.setPointerCapture?.(event.pointerId);
+            event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerMove={(event) => {
             const gesture = gestureRef.current;

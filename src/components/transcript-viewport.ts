@@ -394,8 +394,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   useEffect(() => {
     const content = contentRef.current;
     const scrollport = scrollRef.current;
-    if ((!content && !scrollport) || typeof ResizeObserver === "undefined")
-      return;
+    if (!content && !scrollport) return;
     const observer = new ResizeObserver(scheduleGeometricFollow);
     if (content) observer.observe(content);
     if (scrollport) observer.observe(scrollport);

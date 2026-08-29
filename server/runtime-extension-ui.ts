@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import {
   type ExtensionUiRequest,
   parsePendingExtensionUiRequest,
@@ -128,7 +129,7 @@ export class RuntimeExtensionUiController {
         return;
       this.remove(slot, request.id, "expired");
     }, delay);
-    timer.unref?.();
+    timer.unref();
     slot.pendingExtensionUiTimers.set(request.id, timer);
   }
 
@@ -140,9 +141,9 @@ export class RuntimeExtensionUiController {
     const requestId = typeof response.id === "string" ? response.id : "";
     const slot = this.host.slot(sessionId);
     if (!slot)
-      throw Object.assign(
-        new Error("The extension request no longer has a live Pi runtime"),
-        { status: 409 },
+      throw requestError(
+        "The extension request no longer has a live Pi runtime",
+        409,
       );
     const { sessionId: _owner, ...wireResponse } = response;
     await this.host.extensionResponseSlot(slot, async () => {
@@ -151,44 +152,37 @@ export class RuntimeExtensionUiController {
         slot.conflict ||
         slot.projection?.health.status === "error"
       ) {
-        throw Object.assign(
-          new Error(
-            slot.conflict?.message ??
-              slot.projection?.health.message ??
-              "The extension request owner changed",
-          ),
-          { status: 409 },
+        throw requestError(
+          slot.conflict?.message ??
+            slot.projection?.health.message ??
+            "The extension request owner changed",
+          409,
         );
       }
       await this.host.reconcileSlot(slot, true);
       if (!this.host.ownsSlot(sessionId, slot))
-        throw Object.assign(new Error("The extension request owner changed"), {
-          status: 409,
-        });
+        throw requestError("The extension request owner changed", 409);
       this.host.throwIfConflicted(slot);
       const request = slot.pendingExtensionUiRequests.get(requestId);
       const process = slot.pendingExtensionUiOwners.get(requestId);
       if (!request || !process)
-        throw Object.assign(
-          new Error("The extension request is no longer pending"),
-          { status: 409 },
-        );
+        throw requestError("The extension request is no longer pending", 409);
       if (
         request.sessionId !== sessionId ||
         slot.process !== process ||
         !slot.ready ||
         this.host.processOwner(process) !== slot
       ) {
-        throw Object.assign(
-          new Error("The extension request no longer belongs to this worker"),
-          { status: 409 },
+        throw requestError(
+          "The extension request no longer belongs to this worker",
+          409,
         );
       }
       if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
         this.remove(slot, requestId, "expired");
-        throw Object.assign(
-          new Error("The extension request expired before the response"),
-          { status: 409 },
+        throw requestError(
+          "The extension request expired before the response",
+          409,
         );
       }
       try {

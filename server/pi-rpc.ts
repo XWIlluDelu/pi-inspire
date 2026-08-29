@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { TextDecoder } from "node:util";
@@ -77,11 +78,9 @@ function encodeOutboundFrame(value: Record<string, unknown>): string {
   const frame = `${JSON.stringify(value)}\n`;
   const bytes = Buffer.byteLength(frame);
   if (bytes > MAX_RPC_OUTBOUND_LINE_BYTES) {
-    throw Object.assign(
-      new Error(
-        `Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`,
-      ),
-      { status: 413 },
+    throw requestError(
+      `Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`,
+      413,
     );
   }
   return frame;
@@ -369,7 +368,7 @@ export class PiRpcProcess extends EventEmitter {
       if (child.exitCode !== null || child.signalCode !== null) finish();
       if (!settled) {
         hard = setTimeout(finish, 1_000);
-        hard.unref?.();
+        hard.unref();
       }
     });
   }
@@ -404,16 +403,8 @@ export class PiRpcProcess extends EventEmitter {
       command: commandName,
     });
     const response = await new Promise<RpcResponse>((resolve, reject) => {
-      const pending: PendingRequest = {
-        resolve,
-        reject,
-        command: commandName,
-        written: false,
-        mayMutate,
-        responseFence,
-        timer: undefined as unknown as NodeJS.Timeout,
-      };
-      pending.timer = setTimeout(() => {
+      let pending: PendingRequest;
+      const timer = setTimeout(() => {
         if (this.pending.get(id) !== pending) return;
         this.pending.delete(id);
         this.diagnostic("error", "rpc_timeout", {
@@ -447,6 +438,15 @@ export class PiRpcProcess extends EventEmitter {
         error.stopped = this.stopForProtocolFailure(error);
         reject(error);
       }, timeoutMs);
+      pending = {
+        resolve,
+        reject,
+        command: commandName,
+        written: false,
+        mayMutate,
+        responseFence,
+        timer,
+      };
       this.pending.set(id, pending);
       try {
         child.stdin.write(frame, (error) => {
@@ -535,7 +535,7 @@ export class PiRpcProcess extends EventEmitter {
           "Pi extension response outcome is unknown after its stdin write timed out",
         );
       }, timeoutMs);
-      timer.unref?.();
+      timer.unref();
       try {
         child.stdin.write(frame, (error) => {
           if (settled) return;
@@ -610,9 +610,9 @@ export class PiRpcProcess extends EventEmitter {
         }
         this.signalWorkerTree(child, "SIGKILL");
         hard = setTimeout(settle, 1_000);
-        hard.unref?.();
+        hard.unref();
       }, 1_500);
-      force.unref?.();
+      force.unref();
     });
     this.stopPromise = stopped;
     for (const pending of this.pending.values()) {

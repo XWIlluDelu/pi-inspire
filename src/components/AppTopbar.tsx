@@ -13,6 +13,7 @@ import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   type ProjectionConflict,
   projectionConflictSeverity,
+  projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
@@ -167,7 +168,7 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
           !state.hasOlderMessages,
         ),
         cwd: state.cwd,
-        project: state.project,
+        project: state.cwd ? projectNameFromCwd(state.cwd) : null,
         projectDisplay: state.prefs.projectDisplay,
       };
     }, shallowEqual);

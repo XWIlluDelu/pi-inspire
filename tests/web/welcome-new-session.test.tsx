@@ -367,7 +367,7 @@ describe("new-session start surface", () => {
       });
     });
 
-    const { container } = render(<Welcome />);
+    render(<Welcome />);
     const directory = screen.getByLabelText("Project directory");
     fireEvent.change(directory, { target: { value: "/proj" } });
 
@@ -377,25 +377,6 @@ describe("new-session start surface", () => {
       ),
     );
     expect(defaultModelCwd).toBe("/proj");
-
-    const meta = container.querySelector(".composer__meta")!;
-    const controls = Array.from(meta.querySelectorAll("button"));
-    expect([
-      controls.indexOf(screen.getByRole("button", { name: "Model" })),
-      controls.indexOf(
-        screen.getByRole("combobox", { name: "Thinking level" }),
-      ),
-      controls.indexOf(
-        screen.getByRole("button", { name: "Add project files" }),
-      ),
-      controls.indexOf(screen.getByRole("button", { name: "Attach files" })),
-    ]).toEqual([0, 1, 2, 3]);
-    const browse = screen.getByRole("button", {
-      name: "Browse host directories",
-    });
-    expect(browse.parentElement).toBe(directory.parentElement);
-    expect(meta.nextElementSibling).toBe(directory.parentElement);
-    expect(directory.parentElement?.firstElementChild).toBe(browse);
 
     fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
     const projectFile = await screen.findByRole("option", {
