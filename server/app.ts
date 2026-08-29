@@ -25,7 +25,6 @@ import {
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
   type NewSessionDefaults,
-  type PiUpdateCheckResponse,
   THINKING_LEVELS,
 } from "../shared/contracts.js";
 import {
@@ -53,9 +52,21 @@ import type {
   ToolPresentationConfigLike,
   ToolPresentationConfigurationState,
 } from "./tool-presentation-config.js";
+import {
+  UpdateCoordinator,
+  type UpdateCoordinatorLike,
+} from "./update-coordinator.js";
 import type { UpdateCheckerLike } from "./update-checker.js";
 
 const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
+const updateSnoozeSchema = z
+  .object({
+    identity: z
+      .string()
+      .min(1)
+      .max(64 * 1024),
+  })
+  .strict();
 const openSchema = z.object({
   id: z.string().min(1).max(MAX_SESSION_ID_CHARS),
 });
@@ -400,6 +411,9 @@ interface AppDependencies {
   updateChecker?: UpdateCheckerLike;
   /** Read-only Pi and configured-package update observation. */
   piUpdateChecker?: PiUpdateCheckerLike;
+  /** Shared update-state owner. Production supplies the persistent deployment
+   * instance; internal hosts may use the in-memory checker fallback. */
+  updateCoordinator?: UpdateCoordinatorLike;
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
@@ -599,6 +613,13 @@ export function createInspireServer(deps: AppDependencies): {
 } {
   const app = express();
   const authorityId = randomUUID();
+  const updateCoordinator =
+    deps.updateCoordinator ??
+    new UpdateCoordinator({
+      currentPiVersion: deps.piVersion,
+      inspireChecker: deps.updateChecker,
+      piChecker: deps.piUpdateChecker,
+    });
   type PromptOperationResponse = {
     accepted: true;
     historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
@@ -721,24 +742,32 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/update", async (request, response) => {
-    response.json(
-      deps.updateChecker
-        ? await deps.updateChecker.check(request.query.refresh === "1")
-        : { kind: "unavailable" },
+    const updateStatus = await updateCoordinator.checkInspire(
+      request.query.refresh === "1",
     );
+    response.json({
+      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
+      updateStatus,
+    });
   });
 
   app.get("/api/pi-update", async (request, response) => {
-    const unavailable: PiUpdateCheckResponse = {
-      currentVersion: deps.piVersion,
-      pi: { kind: "unavailable" },
-      extensions: { kind: "unavailable" },
-    };
-    response.json(
-      deps.piUpdateChecker
-        ? await deps.piUpdateChecker.check(request.query.refresh === "1")
-        : unavailable,
+    const updateStatus = await updateCoordinator.checkPi(
+      request.query.refresh === "1",
     );
+    response.json({
+      ...(updateStatus.piUpdateCheck ?? {
+        currentVersion: deps.piVersion,
+        pi: { kind: "unavailable" },
+        extensions: { kind: "unavailable" },
+      }),
+      updateStatus,
+    });
+  });
+
+  app.post("/api/update/snooze", async (request, response) => {
+    const { identity } = updateSnoozeSchema.parse(request.body);
+    response.json(await updateCoordinator.dismiss(identity));
   });
 
   /** A successful response is a short exclusive lease. The local user timer
@@ -753,17 +782,23 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/bootstrap", async (_request, response) => {
     const startedAt = performance.now();
-    const [preferenceState, toolPresentationState, availableModels, snapshot] =
-      await Promise.all([
-        deps.preferences.inspect(),
-        deps.toolPresentations
-          ? deps.toolPresentations.inspect()
-          : Promise.resolve<ToolPresentationConfigurationState>({
-              configuration: emptyToolPresentationConfiguration(),
-            }),
-        deps.availableModels ? deps.availableModels() : Promise.resolve([]),
-        deps.runtime.snapshot(),
-      ]);
+    const [
+      preferenceState,
+      toolPresentationState,
+      availableModels,
+      updateStatus,
+      snapshot,
+    ] = await Promise.all([
+      deps.preferences.inspect(),
+      deps.toolPresentations
+        ? deps.toolPresentations.inspect()
+        : Promise.resolve<ToolPresentationConfigurationState>({
+            configuration: emptyToolPresentationConfiguration(),
+          }),
+      deps.availableModels ? deps.availableModels() : Promise.resolve([]),
+      updateCoordinator.status(),
+      deps.runtime.snapshot(),
+    ]);
     const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
@@ -774,6 +809,7 @@ export function createInspireServer(deps: AppDependencies): {
       version: deps.version,
       piVersion: deps.piVersion,
       mock: deps.mock,
+      updateStatus,
       preferences: preferenceState.preferences,
       ...(preferenceState.warning
         ? { preferencesWarning: preferenceState.warning }
@@ -976,9 +1012,12 @@ export function createInspireServer(deps: AppDependencies): {
         authorityId: _authorityId,
         ...request
       } = prompt;
-      const promise = deps.runtime
-        .prompt(request)
-        .then((historyEntry) => ({ accepted: true as const, historyEntry }));
+      const promise = deps.runtime.prompt(request).then((historyEntry) => {
+        // This runs only for the first successful acceptance of an operation;
+        // response retries reuse the same receipt without retriggering checks.
+        void updateCoordinator.promptAccepted();
+        return { accepted: true as const, historyEntry };
+      });
       receipt.promise = promise;
       void promise.then(
         (result) => {
@@ -1615,6 +1654,9 @@ export function createInspireServer(deps: AppDependencies): {
     pendingStreamBatch.approximateBytes += compactEncoded.bytes;
     scheduleStreamBatch();
   };
+  const unsubscribeUpdateStatus = updateCoordinator.subscribe((status) =>
+    publishRuntimeEvent({ type: "update_status", updateStatus: status }),
+  );
   deps.runtime.on("event", publishRuntimeEvent);
 
   server.on("upgrade", (request, socket, head) => {
@@ -1671,8 +1713,11 @@ export function createInspireServer(deps: AppDependencies): {
       socket.terminate();
     });
     socket.on("close", () => forgetSocket(socket));
-    void deps.runtime.snapshot().then(
-      (snapshot) => {
+    void Promise.all([
+      deps.runtime.snapshot(),
+      updateCoordinator.status(),
+    ]).then(
+      ([snapshot, updateStatus]) => {
         const queued = joining.get(socket);
         // Pending batches exclude this joining socket, which already queued
         // their complete projections. Flush before it becomes established.
@@ -1691,6 +1736,7 @@ export function createInspireServer(deps: AppDependencies): {
             type: "snapshot",
             authorityId,
             snapshotDigest,
+            updateStatus,
             ...(unchanged ? { unchanged: true } : { data: snapshot }),
           });
         } catch {
@@ -1719,6 +1765,7 @@ export function createInspireServer(deps: AppDependencies): {
       streamBatchTimer = null;
       pendingStreamBatch = null;
       deps.runtime.off("event", publishRuntimeEvent);
+      unsubscribeUpdateStatus();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening
@@ -1746,11 +1793,16 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
+      const updateResult = await updateCoordinator.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
       const failures = [
         runtimeResult,
         drainedResult,
         resourceResult,
         attachmentResult,
+        updateResult,
       ]
         .filter(
           (result): result is { status: "rejected"; reason: unknown } =>

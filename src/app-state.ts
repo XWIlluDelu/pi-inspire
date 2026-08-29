@@ -101,6 +101,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
   availableUpdate: AvailableUpdate | null;
+  availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
   sessionId: string | null;
@@ -258,6 +259,7 @@ export function createInitialAppState(): AppState {
     inspireUpdateChecking: false,
     piUpdateChecking: false,
     availableUpdate: null,
+    availableUpdateIdentity: null,
     updateSnoozedUntil: null,
     prefs: defaultPreferences,
     sessionId: null,

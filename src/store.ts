@@ -312,6 +312,7 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     transportGeneration: () => this.transportGeneration,
+    notify: (kind, text) => this.notify(kind, text),
   });
   private readonly connectionController = new ConnectionController({
     state: () => ({
@@ -320,7 +321,14 @@ export class AppStore {
       snapshotDigest: this.snapshotDigest,
     }),
     patch: (patch) => this.set(patch),
-    applyEvent: (event) => this.runtimeEvents.apply(event),
+    applyEvent: (event) => {
+      if (event.type === "snapshot") {
+        this.updates.applySnapshot(event.updateStatus);
+        if (event.unchanged !== true) this.runtimeEvents.apply(event);
+      } else if (!this.updates.applyEvent(event)) {
+        this.runtimeEvents.apply(event);
+      }
+    },
     recordSnapshotDigest: (digest) => {
       this.snapshotDigest = digest;
     },
@@ -561,23 +569,13 @@ export class AppStore {
         preferenceOwners,
       );
       configureToolPresentationRegistry(boot.toolPresentations);
-      const staleInspireUpdate =
-        this.state.availableUpdate !== null &&
-        this.state.availableUpdate.currentVersion !== boot.version;
+      const updateProjection = this.updates.bootstrap(boot.updateStatus);
       this.set({
         prefs: preferences,
         mock: boot.mock,
         version: boot.version,
         piVersion: boot.piVersion,
-        ...(this.state.version && this.state.version !== boot.version
-          ? { inspireUpdateCheck: null }
-          : {}),
-        ...(this.state.piVersion && this.state.piVersion !== boot.piVersion
-          ? { piUpdateCheck: null }
-          : {}),
-        ...(staleInspireUpdate
-          ? { availableUpdate: null, updateSnoozedUntil: null }
-          : {}),
+        ...updateProjection,
         availableModels: Array.isArray(boot.availableModels)
           ? boot.availableModels
           : [],
@@ -593,7 +591,6 @@ export class AppStore {
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
-      this.updates.start();
       this.connectionController.connect(reconnectToken);
       const autoContinueIntent = this.selectionIntentGeneration;
       void this.loadSessions(this.state.sessionQuery).then(() => {
@@ -1069,9 +1066,7 @@ export class AppStore {
     message: string,
     behavior?: "steer" | "followUp",
   ): Promise<PromptAcceptedResponse | false> => {
-    const accepted = await this.composer.send(message, behavior);
-    if (accepted) this.updates.promptAccepted();
-    return accepted;
+    return this.composer.send(message, behavior);
   };
 
   abort = async (): Promise<void> => {

@@ -203,42 +203,116 @@ describe("local host API", () => {
 
   it("keeps release update status behind local authentication", async () => {
     await request(application.server).get("/api/update").expect(401);
-    await request(application.server)
+    const response = await request(application.server)
       .get("/api/update")
       .set("Authorization", `Bearer ${token}`)
-      .expect(200, {
-        kind: "available",
-        update: {
-          currentVersion: "0.1.0-test",
-          latestVersion: "0.2.0",
-          releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
-        },
-      });
+      .expect(200);
+    expect(response.body).toMatchObject({
+      kind: "available",
+      update: {
+        currentVersion: "0.1.0-test",
+        latestVersion: "0.2.0",
+        releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
+      },
+      updateStatus: {
+        inspireUpdateChecking: false,
+        availableUpdateIdentity: '[["inspire","0.2.0"]]',
+      },
+    });
   });
 
   it("keeps Pi and extension update status behind local authentication", async () => {
     await request(application.server).get("/api/pi-update").expect(401);
-    await request(application.server)
+    const response = await request(application.server)
       .get("/api/pi-update")
       .query({ refresh: "1" })
       .set("Authorization", `Bearer ${token}`)
-      .expect(200, {
-        currentVersion: "0.80.10",
-        pi: {
-          kind: "available",
-          latestVersion: "0.84.3",
-          releaseUrl: "https://pi.dev/changelog",
-        },
-        extensions: {
-          kind: "available",
-          updates: [
-            {
-              displayName: "pi-web-access",
-              type: "npm",
-            },
-          ],
-        },
+      .expect(200);
+    expect(response.body).toMatchObject({
+      currentVersion: "0.80.10",
+      pi: {
+        kind: "available",
+        latestVersion: "0.84.3",
+        releaseUrl: "https://pi.dev/changelog",
+      },
+      extensions: {
+        kind: "available",
+        updates: [
+          {
+            displayName: "pi-web-access",
+            type: "npm",
+          },
+        ],
+      },
+      updateStatus: { piUpdateChecking: false },
+    });
+  });
+
+  it("broadcasts one update acknowledgement to every connected view", async () => {
+    await request(application.server)
+      .get("/api/update")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const observed = await request(application.server)
+      .get("/api/pi-update")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const identity = observed.body.updateStatus
+      .availableUpdateIdentity as string;
+    expect(identity).toBeTruthy();
+
+    const connect = async (): Promise<WebSocket> => {
+      const socket = new WebSocket(
+        `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+      );
+      await new Promise<void>((resolveSnapshot, rejectSnapshot) => {
+        const onMessage = (data: WebSocket.RawData) => {
+          const frame = JSON.parse(data.toString()) as { type?: string };
+          if (frame.type !== "snapshot") return;
+          socket.off("message", onMessage);
+          resolveSnapshot();
+        };
+        socket.on("message", onMessage);
+        socket.once("error", rejectSnapshot);
       });
+      return socket;
+    };
+    const [localView, remoteView] = await Promise.all([connect(), connect()]);
+    try {
+      const nextUpdate = (socket: WebSocket) =>
+        new Promise<Record<string, unknown>>((resolveUpdate, rejectUpdate) => {
+          const onMessage = (data: WebSocket.RawData) => {
+            const frame = JSON.parse(data.toString()) as Record<
+              string,
+              unknown
+            >;
+            if (frame.type !== "update_status") return;
+            socket.off("message", onMessage);
+            resolveUpdate(frame);
+          };
+          socket.on("message", onMessage);
+          socket.once("error", rejectUpdate);
+        });
+      const localEvent = nextUpdate(localView);
+      const remoteEvent = nextUpdate(remoteView);
+
+      const dismissed = await request(application.server)
+        .post("/api/update/snooze")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ identity })
+        .expect(200);
+      const [localFrame, remoteFrame] = await Promise.all([
+        localEvent,
+        remoteEvent,
+      ]);
+      expect(localFrame.updateStatus).toMatchObject({
+        updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
+      });
+      expect(remoteFrame.updateStatus).toEqual(localFrame.updateStatus);
+    } finally {
+      localView.close();
+      remoteView.close();
+    }
   });
 
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
@@ -1446,6 +1520,7 @@ describe("local host API", () => {
         type: "snapshot",
         authorityId: application.authorityId,
         snapshotDigest: bootstrap.body.snapshotDigest,
+        updateStatus: bootstrap.body.updateStatus,
         unchanged: true,
       });
     } finally {

@@ -109,7 +109,7 @@ describe("ConnectionController", () => {
     expect(host.reconnect).toHaveBeenCalledWith("retry-token");
   });
 
-  it("opens from an unchanged snapshot confirmation without reapplying state", () => {
+  it("opens from an unchanged runtime snapshot after applying its out-of-band witness", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
@@ -122,12 +122,32 @@ describe("ConnectionController", () => {
       unchanged: true,
     });
 
-    expect(host.applyEvent).not.toHaveBeenCalled();
+    expect(host.applyEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "snapshot", unchanged: true }),
+    );
     expect(host.recordSnapshotDigest).toHaveBeenCalledWith(snapshotDigest);
     expect(host.patch).toHaveBeenLastCalledWith({
       connection: "open",
       connectionProblem: null,
     });
+  });
+
+  it("keeps Host-wide update events outside the runtime snapshot digest", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.emit(snapshot);
+    host.invalidateSnapshotDigest.mockClear();
+    host.applyEvent.mockClear();
+
+    socket.emit({ type: "update_status", updateStatus: { revision: 1 } });
+    expect(host.applyEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "update_status" }),
+    );
+    expect(host.invalidateSnapshotDigest).not.toHaveBeenCalled();
   });
 
   it("publishes open only after applying the authoritative first snapshot", () => {

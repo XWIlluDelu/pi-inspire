@@ -51,6 +51,10 @@ import {
   ToolPresentationConfigStore,
 } from "./tool-presentation-config.js";
 import { GitHubReleaseUpdateChecker } from "./update-checker.js";
+import {
+  defaultUpdateStatePath,
+  UpdateCoordinator,
+} from "./update-coordinator.js";
 
 const moduleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const inferredRoot = await readFile(
@@ -222,6 +226,13 @@ const maintenanceRestart = mock
       runningSource,
       diagnostics,
     });
+const updateCoordinator = new UpdateCoordinator({
+  currentPiVersion: piInstallation.version,
+  inspireChecker: updateChecker,
+  piChecker: piUpdateChecker,
+  statePath: mock ? undefined : defaultUpdateStatePath(root, host, port),
+  diagnostics,
+});
 
 const application = createInspireServer({
   token,
@@ -236,8 +247,7 @@ const application = createInspireServer({
   version: packageJson.version,
   piVersion: piInstallation.version,
   maintenanceRestart,
-  updateChecker,
-  piUpdateChecker,
+  updateCoordinator,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
   distDir: join(root, "dist"),
