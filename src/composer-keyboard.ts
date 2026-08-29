@@ -23,9 +23,7 @@ export function shouldSubmitComposerEnter(
     event.isComposing
   )
     return false;
-  const touchFirst =
-    typeof window !== "undefined" &&
-    window.matchMedia(TOUCH_COMPOSER_QUERY).matches;
+  const touchFirst = window.matchMedia(TOUCH_COMPOSER_QUERY).matches;
   if (touchFirst) return false;
   const modifier = event.ctrlKey || event.metaKey;
   return desktopSendKey === "mod-enter" ? modifier : !modifier;

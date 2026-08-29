@@ -132,7 +132,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     if (!active) return;
     dragRef.current = null;
     commit(active.size);
-    if (target.hasPointerCapture?.(pointerId))
+    if (target.hasPointerCapture(pointerId))
       target.releasePointerCapture(pointerId);
     setDragging(false);
     document.body.classList.remove("pane-resizing", "pane-resizing--vertical");
@@ -202,7 +202,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           const measured = measure();
           if (!measured || measured.max <= measured.min) return;
           event.preventDefault();
-          event.currentTarget.setPointerCapture?.(event.pointerId);
+          event.currentTarget.setPointerCapture(event.pointerId);
           dragRef.current = {
             startCoordinate: event.clientX,
             metrics: measured,

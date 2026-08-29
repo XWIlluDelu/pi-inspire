@@ -15,7 +15,6 @@ import {
   type HostDirListing,
   type HostRootsResponse,
   type LaunchPreference,
-  type ModelIdentity,
   type ModelOption,
   type NewSessionDefaults,
   type NewSessionOptions,
@@ -24,7 +23,6 @@ import {
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   projectionConflictSeverity,
-  projectNameFromCwd,
   type ReadingWidthPreference,
   type SessionDeleteDisposition,
   type ThemePreference,
@@ -163,7 +161,7 @@ export class AppStore {
         },
       });
     },
-    refreshSessionCatalog: () => void this.refreshLoadedSessions(),
+    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
     notify: (kind, text) => this.notify(kind, text),
   });
   private readonly preferences = new PreferenceController({
@@ -197,7 +195,7 @@ export class AppStore {
     api: () => this.api,
     transportGeneration: () => this.transportGeneration,
     beginOpening: (sessionId) => {
-      this.invalidateBranchForSelectionIntent();
+      this.branches.invalidateForSelectionIntent();
       this.set({ sessionActionError: null });
       this.selectionIntentGeneration += 1;
       const ticket = ++this.selectionRequest;
@@ -224,8 +222,8 @@ export class AppStore {
     resyncSelected: (sessionId) =>
       void this.resync(sessionId, this.selectionGeneration),
     setActionError: (sessionActionError) => this.set({ sessionActionError }),
-    rememberModel: (model) => this.rememberModel(model),
-    refreshSessionCatalog: () => void this.refreshLoadedSessions(),
+    rememberModel: (model) => this.preferences.rememberModel(model),
+    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
@@ -242,7 +240,7 @@ export class AppStore {
         this.readyWhileOpening.set(sessionId, this.openingOwner);
     },
     clearRuntimeReady: (sessionId) => this.readyWhileOpening.delete(sessionId),
-    refreshLoadedSessions: () => this.refreshLoadedSessions(),
+    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
     markProjectionStale: () => this.branches.markProjectionStale(),
@@ -293,9 +291,9 @@ export class AppStore {
     transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
-    refreshLoadedSessions: () => this.refreshLoadedSessions(),
+    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     preserveLoadedSessions: (query, offset, total) =>
-      this.preserveLoadedSessions(query, offset, total),
+      this.catalog.preserve(query, offset, total),
     forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
     flushPreferences: () => this.preferences.flush(),
     capturePreferenceOwners: () => this.preferences.captureOwners(),
@@ -409,7 +407,7 @@ export class AppStore {
     for (const sessionId of sessionIds) {
       this.catalog.remove(sessionId);
       delete sessionStatuses[sessionId];
-      this.discardSessionComposer(sessionId);
+      this.composer.discard(sessionId);
     }
     this.runtimeEvents.forgetAttention(sessionIds);
     return sessionStatuses;
@@ -428,10 +426,6 @@ export class AppStore {
       editorText: { text, nonce: (this.state.editorText?.nonce ?? 0) + 1 },
     });
   };
-
-  private invalidateSessionListRequests(): void {
-    this.catalog.invalidate();
-  }
 
   private invalidateTransportRequests(): void {
     this.resyncRequest += 1;
@@ -473,7 +467,7 @@ export class AppStore {
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
     this.invalidateTransportControllers();
-    this.invalidateSessionListRequests();
+    this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.clearLiveAttention();
     this.authToken = null;
@@ -490,10 +484,6 @@ export class AppStore {
   }
 
   // --- Bootstrap ---
-
-  private invalidateBranchForSelectionIntent(): void {
-    this.branches.invalidateForSelectionIntent();
-  }
 
   private claimOpening(owner: number, sessionId: string | null): void {
     this.readyWhileOpening.clear();
@@ -536,7 +526,7 @@ export class AppStore {
     this.invalidateTransportRequests();
     this.authToken = token;
     this.api = api;
-    this.invalidateSessionListRequests();
+    this.catalog.invalidate();
     const ownsBootstrap = (): boolean =>
       generation === this.transportGeneration && this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
@@ -617,7 +607,7 @@ export class AppStore {
         this.set({
           connection: "offline",
           connectionProblem:
-            typeof navigator !== "undefined" && navigator.onLine === false
+            navigator.onLine === false
               ? { kind: "device-offline" }
               : error instanceof ApiError &&
                   error.edge === "ssh-reverse" &&
@@ -686,9 +676,8 @@ export class AppStore {
           this.state.transcriptRevision,
         ),
     );
-    const projectionReplaced = Boolean(
-      sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
-    );
+    const projectionReplaced =
+      sameProjectionOwner && revisionChanged && !projectionLineageCompatible;
     const nextWorkspaceState = sessionChanged
       ? this.workspace.changeOwner(cwd)
       : null;
@@ -713,7 +702,7 @@ export class AppStore {
         projectionLineageCompatible &&
         page &&
         ((page.revision === this.state.transcriptRevision &&
-          (this.state.hasOlderMessages !== Boolean(page.hasOlder) ||
+          (this.state.hasOlderMessages !== page.hasOlder ||
             this.state.olderMessagesCursor !== (page.olderCursor ?? null))) ||
           page.revision > this.state.transcriptRevision),
     );
@@ -769,7 +758,7 @@ export class AppStore {
         : "error";
     const clearedProjectionError =
       !projectionError && this.state.error === this.state.projectionError;
-    const sessionStatuses = snapshot.sessionStatuses ?? {};
+    const sessionStatuses = snapshot.sessionStatuses;
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
     this.runtimeEvents.reconcileAttentionArms(sessionStatuses);
@@ -777,7 +766,6 @@ export class AppStore {
       sessionId: active?.sessionId ?? null,
       sessionName: active?.sessionName ?? "",
       cwd,
-      project: cwd ? projectNameFromCwd(cwd) : null,
       model: (active?.model as AppState["model"]) ?? null,
       thinkingLevel:
         typeof active?.thinkingLevel === "string"
@@ -1012,16 +1000,6 @@ export class AppStore {
    * controller owns query generations, pagination, hydration, and retries. */
   loadSessions = (query: string): Promise<void> => this.catalog.load(query);
 
-  private preserveLoadedSessions = (
-    query: string,
-    preserveOffset: number,
-    preserveTotal: number,
-  ): Promise<void> =>
-    this.catalog.preserve(query, preserveOffset, preserveTotal);
-
-  private refreshLoadedSessions = (): Promise<void> =>
-    this.catalog.refreshLoaded();
-
   loadOlderSessions = (): Promise<void> => this.catalog.loadOlder();
 
   retrySessionList = (): Promise<void> => this.catalog.retryCurrent();
@@ -1182,10 +1160,6 @@ export class AppStore {
     }
   };
 
-  private rememberModel(model: ModelIdentity): void {
-    this.preferences.rememberModel(model);
-  }
-
   setModel = async (provider: string, modelId: string): Promise<void> => {
     const sessionId = this.state.sessionId;
     const api = this.api;
@@ -1198,7 +1172,7 @@ export class AppStore {
       if (!ownsTransport()) return;
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
-      this.rememberModel({ provider, id: modelId });
+      this.preferences.rememberModel({ provider, id: modelId });
       await this.resync(sessionId, this.selectionGeneration);
     } catch (error) {
       if (!ownsTransport()) return;
@@ -1250,10 +1224,6 @@ export class AppStore {
   };
 
   // --- Composer attachments & project files ---
-
-  private discardSessionComposer(sessionId: string): void {
-    this.composer.discard(sessionId);
-  }
 
   previewComposerHistoryEntry = (
     scope: ComposerHistoryScope,

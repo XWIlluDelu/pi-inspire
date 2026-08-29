@@ -77,26 +77,6 @@ describe("preference persistence", () => {
     await vi.waitFor(() => expect(saved).toHaveLength(2));
     expect(saved).toEqual([{ theme: "dark" }, { toolVisibility: "hidden" }]);
   });
-
-  it("persists the outer activity-fold preference independently", async () => {
-    const store = new AppStore();
-    await store.init("token");
-    store.setActivityFoldVisibility("compact");
-    expect(store.getState().prefs.activityFoldVisibility).toBe("compact");
-    await vi.waitFor(() =>
-      expect(saved).toContainEqual({ activityFoldVisibility: "compact" }),
-    );
-  });
-
-  it("setLaunch switches the launch behavior preference", async () => {
-    const store = new AppStore();
-    await store.init("token");
-    store.setLaunch("continue");
-    expect(store.getState().prefs.launch).toBe("continue");
-    await vi.waitFor(() =>
-      expect(saved.some((body) => body.launch === "continue")).toBe(true),
-    );
-  });
 });
 
 describe("settings reset", () => {

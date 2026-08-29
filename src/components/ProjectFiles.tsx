@@ -123,7 +123,7 @@ export function ProjectFilePicker({
   useEffect(() => {
     const option = document.getElementById(`${listId}-option-${activeIndex}`);
     if (option && listRef.current?.contains(option))
-      option.scrollIntoView?.({ block: "nearest" });
+      option.scrollIntoView({ block: "nearest" });
   }, [activeIndex, listId, results]);
 
   return (

@@ -17,7 +17,6 @@ function emit(): void {
 }
 
 function readAvailability(): InstallAvailability {
-  if (typeof window === "undefined") return "unavailable";
   if (
     window.matchMedia("(display-mode: standalone)").matches ||
     window.matchMedia("(display-mode: window-controls-overlay)").matches
@@ -52,14 +51,12 @@ export async function requestInstall(): Promise<
   return outcome;
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeinstallprompt", (event) => {
-    event.preventDefault();
-    deferredPrompt = event as BeforeInstallPromptEvent;
-    emit();
-  });
-  window.addEventListener("appinstalled", () => {
-    deferredPrompt = null;
-    emit();
-  });
-}
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredPrompt = event as BeforeInstallPromptEvent;
+  emit();
+});
+window.addEventListener("appinstalled", () => {
+  deferredPrompt = null;
+  emit();
+});

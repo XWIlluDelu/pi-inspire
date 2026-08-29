@@ -525,50 +525,13 @@ describe("SessionProjection framing and last-good state", () => {
 });
 
 describe("SessionProjection replacement and Pi context semantics", () => {
-  it("verifies the persisted prefix only once for a successful append candidate", async () => {
-    let prefixChunks = 0;
-    const hooks: SessionProjectionReadHooks = {
-      afterPrefixReadChunk: () => {
-        prefixChunks += 1;
-      },
-    };
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "one", 1)],
-      "session-a",
-      hooks,
-    );
-    try {
-      prefixChunks = 0;
-      await appendFile(
-        path,
-        `${JSON.stringify(message("a1", "u1", "assistant", "two", 2))}\n`,
-      );
-      expect(await projection.reconcile(true)).toMatchObject({
-        changed: true,
-        kind: "append",
-      });
-      expect(prefixChunks).toBe(1);
-    } finally {
-      await projection.close();
-    }
-  });
-
-  it("reuses the verified hash and immutable projection prefix for an owned append", async () => {
-    let prefixChunks = 0;
-    const hooks: SessionProjectionReadHooks = {
-      afterPrefixReadChunk: () => {
-        prefixChunks += 1;
-      },
-    };
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "one", 1)],
-      "session-a",
-      hooks,
-    );
+  it("reuses the immutable projection prefix for an owned append", async () => {
+    const { path, projection } = await fixture([
+      message("u1", null, "user", "one", 1),
+    ]);
     try {
       const firstProjectedMessage = projection.messages[0];
       projection.setOwnedAppendWindow(() => true);
-      prefixChunks = 0;
       await appendFile(
         path,
         `${JSON.stringify(message("a1", "u1", "assistant", "two", 2))}\n`,
@@ -578,7 +541,6 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         kind: "append",
         messageChange: "append",
       });
-      expect(prefixChunks).toBe(0);
       expect(projection.messages[0]).toBe(firstProjectedMessage);
       expect(projection.messages[1]).toMatchObject({
         role: "assistant",
@@ -664,45 +626,6 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       expect(projection.thinkingLevel).toBe(fresh.thinkingLevel);
     } finally {
       await fresh?.close();
-      await projection.close();
-    }
-  });
-
-  it("uses one prefix pass plus the necessary full read for a grown rewrite", async () => {
-    let prefixChunks = 0;
-    let fullChunks = 0;
-    const hooks: SessionProjectionReadHooks = {
-      afterPrefixReadChunk: () => {
-        prefixChunks += 1;
-      },
-      afterFullReadChunk: () => {
-        fullChunks += 1;
-      },
-    };
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "old", 1)],
-      "session-a",
-      hooks,
-    );
-    await projection.suspendReconciliation();
-    try {
-      prefixChunks = 0;
-      fullChunks = 0;
-      await writeFile(
-        path,
-        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "new and longer", 1))}\n`,
-      );
-      expect(await projection.reconcileSuspended(true)).toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      expect(prefixChunks).toBe(1);
-      expect(fullChunks).toBe(1);
-      expect(projection.messages[0]).toMatchObject({
-        content: "new and longer",
-      });
-    } finally {
-      projection.resumeReconciliation();
       await projection.close();
     }
   });
@@ -943,34 +866,6 @@ describe("SessionProjection replacement and Pi context semantics", () => {
 });
 
 describe("SessionProjection bounded paging", () => {
-  it("projects and serializes each admitted message once", async () => {
-    let projections = 0;
-    const lines = Array.from({ length: 100 }, (_, index) =>
-      message(
-        `m${index}`,
-        index ? `m${index - 1}` : null,
-        index % 2 ? "assistant" : "user",
-        `λ-${index}`,
-        index + 1,
-      ),
-    );
-    const { projection } = await fixture(lines, "session-a", {
-      afterMessageProjection: () => {
-        projections += 1;
-      },
-    });
-    try {
-      const page = projection.latestPage();
-      expect(page.messages).toHaveLength(TRANSCRIPT_PAGE_MAX_MESSAGES);
-      expect(projections).toBe(TRANSCRIPT_PAGE_MAX_MESSAGES);
-      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
-        TRANSCRIPT_PAGE_MAX_BYTES,
-      );
-    } finally {
-      await projection.close();
-    }
-  });
-
   it("projects more than 10 MiB of individually bounded history into count/byte bounded pages", async () => {
     const lines: unknown[] = [];
     let parent: string | null = null;

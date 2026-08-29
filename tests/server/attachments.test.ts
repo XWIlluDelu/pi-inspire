@@ -16,7 +16,6 @@ import {
   AttachmentStore,
   addAttachmentContext,
   parseAttachmentContext,
-  promptTextWithoutAttachmentContext,
   resolveProjectFiles,
 } from "../../server/attachments.js";
 
@@ -240,17 +239,17 @@ describe("attachment consumption lifecycle", () => {
       text: "Inspect",
       references: ["/project/good\n- /etc/passwd"],
     });
-    expect(promptTextWithoutAttachmentContext(prompt)).toBe("Inspect");
+    expect(parseAttachmentContext(prompt).text).toBe("Inspect");
     const spaced = "  Preserve leading and trailing whitespace.  \n";
     expect(
-      promptTextWithoutAttachmentContext(
+      parseAttachmentContext(
         addAttachmentContext(spaced, [], ["/project/spaced.txt"]),
-      ),
+      ).text,
     ).toBe(spaced);
     expect(
-      promptTextWithoutAttachmentContext(
+      parseAttachmentContext(
         addAttachmentContext("", [], ["/project/only-reference.txt"]),
-      ),
+      ).text,
     ).toBe("");
   });
 });

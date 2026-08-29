@@ -328,9 +328,7 @@ export class ResourceController {
   }
 
   private revokePreviewObjectUrl(): void {
-    if (this.previewObjectUrl && typeof URL.revokeObjectURL === "function") {
-      URL.revokeObjectURL(this.previewObjectUrl);
-    }
+    if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
     this.previewObjectUrl = null;
   }
 
@@ -544,10 +542,7 @@ export class ResourceController {
       if (textLike) {
         const text = await blob.text();
         if (stale()) return;
-        if (
-          descriptor.kind === "html" &&
-          typeof URL.createObjectURL === "function"
-        ) {
+        if (descriptor.kind === "html") {
           this.previewObjectUrl = URL.createObjectURL(
             new Blob([injectHtmlPreviewCsp(text)], { type: "text/html" }),
           );
@@ -589,9 +584,7 @@ export class ResourceController {
         });
         return;
       }
-      if (typeof URL.createObjectURL === "function") {
-        this.previewObjectUrl = URL.createObjectURL(blob);
-      }
+      this.previewObjectUrl = URL.createObjectURL(blob);
       this.host.patch({
         resourcePreview: {
           status: "ready",

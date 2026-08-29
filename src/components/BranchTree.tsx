@@ -29,7 +29,7 @@ const AUTO_EXPAND_MAX_GROUPS = 4;
 const AUTO_EXPAND_MAX_NODES = 24;
 
 function confirmAction(message: string): boolean {
-  return typeof window === "undefined" || window.confirm(message);
+  return window.confirm(message);
 }
 
 function editFromPrompt(node: BranchTreeNode): void {
@@ -584,7 +584,7 @@ export function BranchTree() {
     const target = rowsRef.current?.querySelector<HTMLElement>(
       '.branch-turn[data-current="true"]',
     );
-    target?.scrollIntoView?.({ block: "nearest" });
+    target?.scrollIntoView({ block: "nearest" });
   }, [tree]);
 
   if (!state.sessionId)

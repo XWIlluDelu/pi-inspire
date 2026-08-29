@@ -136,7 +136,7 @@ export function PromptMap({
   useLayoutEffect(() => {
     const nav = navRef.current;
     const root = container?.current;
-    if (!nav || !root || typeof ResizeObserver === "undefined") return;
+    if (!nav || !root) return;
     if (mobileActive) {
       nav.style.removeProperty("left");
       nav.style.removeProperty("top");

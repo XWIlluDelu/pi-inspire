@@ -19,6 +19,7 @@ import {
   isSupportedPromptImageMimeType,
 } from "./image-content.js";
 import { escapesBase } from "./paths.js";
+import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
@@ -31,10 +32,6 @@ interface ResolvedComposerHistoryArtifacts {
   files: AttachmentContextFile[];
   fileBytes: number;
   projectFiles: string[];
-}
-
-function requestError(message: string, status: number): Error {
-  return Object.assign(new Error(message), { status });
 }
 
 function effectiveLeaf(slot: RuntimeSlot): string | null {

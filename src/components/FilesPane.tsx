@@ -6,7 +6,10 @@ import {
   useMemo,
   useRef,
 } from "react";
-import type { ResourceProbeResult } from "../../shared/contracts";
+import {
+  projectNameFromCwd,
+  type ResourceProbeResult,
+} from "../../shared/contracts";
 import type { ResourceRow } from "../resources";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import { gitChangeForWorkspacePath, store } from "../store";
@@ -22,6 +25,10 @@ import {
 } from "./WorkspaceBrowser";
 
 type ResourceStanding = ResourceProbeResult | undefined;
+
+function workspaceLabel(cwd: string | null): string {
+  return cwd ? projectNameFromCwd(cwd) : "Project files";
+}
 
 function parentPath(path: string): string | null {
   const end = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -143,7 +150,7 @@ function FileBrowser({
     });
   }, [rows, state.resourceAvailability, state.resourceWorkspacePaths]);
   const searching = Boolean(state.workspaceQuery.trim());
-  const projectLabel = state.project ?? "Project files";
+  const projectLabel = workspaceLabel(state.cwd);
   const selectedPath = selectedWorkspacePath(state);
   return (
     <div className="files-browser">
@@ -220,7 +227,7 @@ function FileBrowser({
 }
 
 function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
-  const projectLabel = state.project ?? "Project files";
+  const projectLabel = workspaceLabel(state.cwd);
   return (
     <button
       type="button"

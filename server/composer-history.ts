@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { createHash } from "node:crypto";
 import { basename, relative, resolve } from "node:path";
 import {
@@ -161,9 +162,7 @@ export function projectComposerHistoryPage(
 ): ComposerHistoryPage {
   const history = composerHistoryEntries(messages, cwd, fileNameForPath);
   if (!Number.isSafeInteger(start) || start < 0 || start > history.length) {
-    throw Object.assign(new Error("Composer history offset is invalid"), {
-      status: 400,
-    });
+    throw requestError("Composer history offset is invalid", 400);
   }
 
   const entries: ComposerHistoryEntry[] = [];
@@ -182,9 +181,9 @@ export function projectComposerHistoryPage(
       Buffer.byteLength(JSON.stringify(entry)) + (entries.length > 0 ? 1 : 0);
     if (serializedBytes + addedBytes > MAX_COMPOSER_HISTORY_PAGE_BYTES) {
       if (entries.length === 0) {
-        throw Object.assign(
-          new Error("A composer history entry exceeds the response limit"),
-          { status: 422 },
+        throw requestError(
+          "A composer history entry exceeds the response limit",
+          422,
         );
       }
       break;

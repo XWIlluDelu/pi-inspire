@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   isBusyRunState,
@@ -5,7 +6,11 @@ import {
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
-import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
+import type {
+  OwnershipDecision,
+  PendingPartialPersistence,
+  RuntimeSlot,
+} from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
@@ -142,16 +147,15 @@ export class RuntimeProjectionCoordinator {
   }
 
   writerBaselineMatches(slot: RuntimeSlot): boolean {
+    const projection = slot.projection;
+    if (!projection) return false;
     return (
-      Boolean(slot.projection) &&
-      slot.workerProjectionRevision === slot.projection?.revision &&
-      slot.workerProjectionFingerprint === slot.projection?.fingerprint &&
-      slot.workerProjectionSourceIdentity === slot.projection?.sourceIdentity &&
-      slot.workerProjectionSourceVersion === slot.projection?.sourceVersion &&
+      slot.workerProjectionRevision === projection.revision &&
+      slot.workerProjectionFingerprint === projection.fingerprint &&
+      slot.workerProjectionSourceIdentity === projection.sourceIdentity &&
+      slot.workerProjectionSourceVersion === projection.sourceVersion &&
       slot.workerProjectionObservedBytes ===
-        (slot.projection
-          ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-          : null)
+        projection.committedBytes + projection.uncommittedBytes
     );
   }
 
@@ -211,17 +215,8 @@ export class RuntimeProjectionCoordinator {
     if (prior) clearTimeout(prior.timer);
     const deadline =
       prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
-    const lease = {
-      committedBytes: result.committedBytes,
-      bytes: result.uncommittedBytes,
-      fingerprint: result.uncommittedFingerprint,
-      sourceIdentity: result.sourceIdentity,
-      sourceVersion: result.sourceVersion,
-      observedBytes: result.committedBytes + result.uncommittedBytes,
-      deadline,
-      timer: undefined as unknown as ReturnType<typeof setTimeout>,
-    };
-    lease.timer = setTimeout(
+    let lease: PendingPartialPersistence;
+    const timer = setTimeout(
       () => {
         if (slot.pendingPartialPersistence !== lease) return;
         void this.reconcile(slot, true)
@@ -242,7 +237,17 @@ export class RuntimeProjectionCoordinator {
       },
       Math.max(0, deadline - Date.now()),
     );
-    lease.timer.unref?.();
+    timer.unref();
+    lease = {
+      committedBytes: result.committedBytes,
+      bytes: result.uncommittedBytes,
+      fingerprint: result.uncommittedFingerprint,
+      sourceIdentity: result.sourceIdentity,
+      sourceVersion: result.sourceVersion,
+      observedBytes: result.committedBytes + result.uncommittedBytes,
+      deadline,
+      timer,
+    };
     slot.pendingPartialPersistence = lease;
   }
 
@@ -276,9 +281,9 @@ export class RuntimeProjectionCoordinator {
       ownershipSource: lastOwnership?.source,
       ownershipRejection: lastOwnership?.reason,
       workerWitness: lastOwnership?.workerWitness,
-      appendedEntries: Array.isArray(result.appendedEntries)
-        ? result.appendedEntries.map((entry) => describeSessionEntry(entry))
-        : [],
+      appendedEntries: (result.appendedEntries ?? []).map((entry) =>
+        describeSessionEntry(entry),
+      ),
       previousRevision: result.previousRevision,
       revision: result.revision,
       previousFingerprint: result.previousFingerprint,
@@ -432,9 +437,7 @@ export class RuntimeProjectionCoordinator {
     startupAttestation = false,
   ): Promise<ProjectionReconcileResult> {
     if (!slot.projection)
-      throw Object.assign(new Error("Session projection is not available"), {
-        status: 503,
-      });
+      throw requestError("Session projection is not available", 503);
     await slot.projectionTail;
     const result = startupAttestation
       ? await slot.projection.reconcileSuspended(force)

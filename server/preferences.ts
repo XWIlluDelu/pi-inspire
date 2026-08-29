@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -155,11 +156,9 @@ export class PreferencesStore {
 
   private invalidSourceError(current: DiskPreferences): Error | null {
     return current.warning
-      ? Object.assign(
-          new Error(
-            `${current.warning} The saved file at ${this.path} was left unchanged.`,
-          ),
-          { status: 409 },
+      ? requestError(
+          `${current.warning} The saved file at ${this.path} was left unchanged.`,
+          409,
         )
       : null;
   }

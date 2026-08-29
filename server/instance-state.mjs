@@ -246,7 +246,7 @@ async function expectedState(state, expected) {
 async function authenticatedHealth(state, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref?.();
+  timeout.unref();
   try {
     const response = await fetch(
       `http://${displayHost(state.host)}:${state.port}/api/health`,
@@ -293,7 +293,7 @@ export async function inspectInstance(path, expected, options = {}) {
 async function requestAuthenticatedShutdown(state, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref?.();
+  timeout.unref();
   try {
     const response = await fetch(
       `http://${displayHost(state.host)}:${state.port}/api/host/shutdown`,

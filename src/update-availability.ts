@@ -2,10 +2,11 @@ import type {
   AvailableUpdate,
   PiExtensionUpdate,
   PiUpdateCheckResponse,
+  UpdateCheckResponse,
 } from "../shared/contracts";
 
 interface UpdateAvailabilityState {
-  availableUpdate: AvailableUpdate | null;
+  inspireUpdateCheck: UpdateCheckResponse | null;
   piUpdateCheck: PiUpdateCheckResponse | null;
 }
 
@@ -25,6 +26,10 @@ export interface AvailableUpdates {
 export function availableUpdates(
   state: UpdateAvailabilityState,
 ): AvailableUpdates | null {
+  const inspire =
+    state.inspireUpdateCheck?.kind === "available"
+      ? state.inspireUpdateCheck.update
+      : null;
   const piCheck = state.piUpdateCheck;
   const piStatus = piCheck?.pi;
   const pi: AvailablePiUpdate | null =
@@ -42,10 +47,10 @@ export function availableUpdates(
           left.displayName.localeCompare(right.displayName),
         )
       : [];
-  if (!state.availableUpdate && !pi && extensions.length === 0) return null;
+  if (!inspire && !pi && extensions.length === 0) return null;
 
   return {
-    inspire: state.availableUpdate,
+    inspire,
     pi,
     extensions,
   };

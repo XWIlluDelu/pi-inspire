@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -212,9 +213,7 @@ const readNewSessionDefaults = async (cwd: string) => {
     };
   }
   if (!modelRuntime)
-    throw Object.assign(new Error("Pi's model catalog is unavailable"), {
-      status: 503,
-    });
+    throw requestError("Pi's model catalog is unavailable", 503);
   return resolveNewSessionDefaults(modelRuntime, cwd);
 };
 const maintenanceRestart = mock

@@ -90,6 +90,7 @@ export class FakeWebSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  extensions = "";
   private opened = false;
 
   constructor(public url: string) {

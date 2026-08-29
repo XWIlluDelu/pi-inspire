@@ -422,10 +422,7 @@ export class RuntimePersistenceOwnershipController {
     const appendedEntries = result.appendedEntries;
     if (!projection) return { owned: false, reason: "projection-unavailable" };
     if (!rpc) return { owned: false, reason: "worker-unavailable" };
-    if (
-      !Array.isArray(appendedEntries) ||
-      result.previousLeafId === undefined
-    ) {
+    if (!appendedEntries || result.previousLeafId === undefined) {
       return { owned: false, reason: "entries-unavailable" };
     }
     const expectedParentId =
@@ -500,7 +497,7 @@ export class RuntimePersistenceOwnershipController {
     const initialMaterialization = result.initialMaterialization;
     if (!projection) return { owned: false, reason: "projection-unavailable" };
     if (result.kind !== "append") return { owned: false, reason: "not-append" };
-    if (!Array.isArray(result.appendedEntries))
+    if (!result.appendedEntries)
       return { owned: false, reason: "entries-unavailable" };
     if (slot.workerProjectionRevision !== result.previousRevision)
       return { owned: false, reason: "revision-mismatch" };

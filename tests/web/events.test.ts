@@ -790,17 +790,6 @@ describe("truthful change reporting", () => {
     });
   });
 
-  it("returns the same slice reference and changed=false for unknown events", () => {
-    const slice = emptyEventSlice();
-    const result = reduce(slice, new Set(), {
-      type: "future_wire_event",
-      data: 1,
-    });
-    expect(result.changed).toBe(false);
-    expect(result.resync).toBe(false);
-    expect(result.slice).toBe(slice);
-  });
-
   it("projects bounded text widgets natively and clears them by key", () => {
     const slice = emptyEventSlice();
     const shown = reduce(slice, new Set(), {

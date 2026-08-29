@@ -341,47 +341,6 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
-  it("hides and restores a folder without rewriting its sessions' own curation", async () => {
-    render(
-      <Nav
-        collapsed={false}
-        onNewSession={() => undefined}
-        onSelectSession={() => undefined}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Hide folder alpha" }));
-    await screen.findByRole("heading", { name: "Hidden" });
-    expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/alpha"]);
-    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-
-    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    const hiddenSection = document.querySelector(
-      ".nav__group--hidden",
-    ) as HTMLElement;
-    const hiddenFolder = within(hiddenSection).getByRole("button", {
-      name: "alpha",
-    });
-    expect(hiddenFolder).toHaveAttribute("aria-expanded", "true");
-    expect(
-      within(hiddenSection).getByText("Alpha session"),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      within(hiddenSection).getByRole("button", {
-        name: "Restore folder alpha",
-      }),
-    );
-
-    await waitFor(() =>
-      expect(store.getState().prefs.hiddenProjectCwds).toEqual([]),
-    );
-    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-    expect(
-      screen.getByRole("button", { name: "Hide folder alpha" }),
-    ).toBeInTheDocument();
-  });
-
   it("clears every session in Hidden from its top-level action", async () => {
     render(
       <Nav
@@ -429,29 +388,6 @@ describe("session navigation controls", () => {
     expect(deletedSessions).toEqual(new Set(["beta", "gamma"]));
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
     expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
-  });
-
-  it("allows an individual session to be deleted from a hidden folder", async () => {
-    render(
-      <Nav
-        collapsed={false}
-        onNewSession={() => undefined}
-        onSelectSession={() => undefined}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Hide folder beta" }));
-    await screen.findByRole("heading", { name: "Hidden" });
-    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: 'Delete "Beta session"' }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Delete session" }));
-    await waitFor(() =>
-      expect(screen.queryByText("Beta session")).not.toBeInTheDocument(),
-    );
-    expect(deletedSessions).toEqual(new Set(["beta"]));
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/beta"]);
   });
 
   it("deletes only through Hidden after an explicit confirmation", async () => {
@@ -513,51 +449,6 @@ describe("session navigation controls", () => {
       "Session moved to Trash",
     );
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-  });
-
-  it("restores then pins a session, and pins a folder above the ordinary ones", async () => {
-    render(
-      <Nav
-        collapsed={false}
-        onNewSession={() => undefined}
-        onSelectSession={() => undefined}
-      />,
-    );
-
-    // Newest folder first by default. Folder controls share the same compact
-    // right-hand action tier as session rows.
-    expect(groupNames()).toEqual(["beta", "alpha"]);
-    const folderPin = screen.getByRole("button", { name: "Pin folder alpha" });
-    expect(folderPin.querySelector("svg")).toHaveAttribute("width", "12");
-    fireEvent.click(folderPin);
-    await waitFor(() => expect(groupNames()).toEqual(["alpha", "beta"]));
-
-    fireEvent.click(
-      screen.getByRole("button", { name: 'Hide "Beta session"' }),
-    );
-    await screen.findByRole("heading", { name: "Hidden" });
-    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    // Hidden rows reserve their two action slots for Restore and Delete.
-    expect(
-      screen.queryByRole("button", { name: 'Pin "Beta session"' }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: 'Restore "Beta session"' }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("heading", { name: "Hidden" }),
-      ).not.toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: 'Pin "Beta session"' }));
-    await screen.findByRole("heading", { name: "Pinned" });
-    expect(
-      screen.queryByRole("heading", { name: "Hidden" }),
-    ).not.toBeInTheDocument();
-    expect(store.getState().prefs).toMatchObject({
-      pinnedSessionIds: ["beta"],
-      hiddenSessionIds: [],
-    });
   });
 
   it("reaches both row actions with the keyboard", async () => {

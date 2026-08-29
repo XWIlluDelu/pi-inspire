@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
@@ -70,9 +71,9 @@ function sameFileObject(left: FileIdentity, right: FileIdentity): boolean {
 const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
 
 function changedResourceError(): Error & { status: number } {
-  return Object.assign(
-    new Error("The referenced file changed on disk; open it again"),
-    { status: 409 },
+  return requestError(
+    "The referenced file changed on disk; open it again",
+    409,
   );
 }
 
@@ -202,16 +203,12 @@ function decoded(value: string): string {
 /** Resolve only filesystem syntax; authorization and realpath checks follow. */
 function exactWorkspacePath(workspacePath: string, cwd: string): string {
   if (isAbsolute(workspacePath) || workspacePath.includes("\0")) {
-    throw Object.assign(new Error("The workspace path is not valid"), {
-      status: 400,
-    });
+    throw requestError("The workspace path is not valid", 400);
   }
   const root = resolve(cwd);
   const candidate = resolve(root, workspacePath);
   if (escapesBase(relative(root, candidate))) {
-    throw Object.assign(new Error("The workspace path is not valid"), {
-      status: 400,
-    });
+    throw requestError("The workspace path is not valid", 400);
   }
   return candidate;
 }
@@ -376,14 +373,10 @@ function resourceCursorOffset(
   try {
     value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
   } catch {
-    throw Object.assign(new Error("The resource cursor is not valid"), {
-      status: 400,
-    });
+    throw requestError("The resource cursor is not valid", 400);
   }
   if (!value || typeof value !== "object") {
-    throw Object.assign(new Error("The resource cursor is not valid"), {
-      status: 400,
-    });
+    throw requestError("The resource cursor is not valid", 400);
   }
   const record = value as Record<string, unknown>;
   if (
@@ -391,9 +384,9 @@ function resourceCursorOffset(
     record.viewId !== index.viewId ||
     record.revision !== index.revision
   ) {
-    throw Object.assign(
-      new Error("The referenced-file view changed; reload the list"),
-      { status: 409 },
+    throw requestError(
+      "The referenced-file view changed; reload the list",
+      409,
     );
   }
   if (
@@ -401,9 +394,7 @@ function resourceCursorOffset(
     Number(record.offset) < 0 ||
     Number(record.offset) > index.resources.length
   ) {
-    throw Object.assign(new Error("The resource cursor is not valid"), {
-      status: 400,
-    });
+    throw requestError("The resource cursor is not valid", 400);
   }
   return Number(record.offset);
 }
@@ -549,9 +540,7 @@ export class ResourceStore {
       limit < 1 ||
       limit > MAX_RESOURCE_LIST_PAGE_SIZE
     ) {
-      throw Object.assign(new Error("The resource page size is not valid"), {
-        status: 400,
-      });
+      throw requestError("The resource page size is not valid", 400);
     }
     const offset = options.cursor
       ? resourceCursorOffset(options.cursor, index)
@@ -626,10 +615,7 @@ export class ResourceStore {
     if (embeddedReference) {
       const embedded = (await getIndex()).embedded.get(reference);
       if (!embedded) {
-        throw Object.assign(
-          new Error("The embedded image is no longer available"),
-          { status: 404 },
-        );
+        throw requestError("The embedded image is no longer available", 404);
       }
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
@@ -660,9 +646,7 @@ export class ResourceStore {
         typeof (error as { status?: unknown }).status === "number"
       )
         throw error;
-      throw Object.assign(new Error("The file reference is not valid"), {
-        status: 400,
-      });
+      throw requestError("The file reference is not valid", 400);
     }
 
     // Previewable set: files the transcript references, plus files the
@@ -678,11 +662,9 @@ export class ResourceStore {
       ));
     const indexed = await isIndexedProjectFile(context.cwd, lexicalPath);
     if (!indexed && (exactWorkspaceSelection || !(await isCited()))) {
-      throw Object.assign(
-        new Error(
-          "The file is not part of this session's workspace or transcript",
-        ),
-        { status: 403 },
+      throw requestError(
+        "The file is not part of this session's workspace or transcript",
+        403,
       );
     }
 
@@ -698,12 +680,10 @@ export class ResourceStore {
     const matches = name ? await indexedBasenameMatches(context.cwd, name) : [];
     const recovered = matches.length === 1 ? matches[0]! : null;
     if (path === null && matches.length > 1) {
-      throw Object.assign(
-        new Error(`"${name}" names ${matches.length} files in this workspace`),
-        {
-          status: 409,
-          matches,
-        },
+      throw requestError(
+        `"${name}" names ${matches.length} files in this workspace`,
+        409,
+        { matches },
       );
     }
     const selectedPath = recovered
@@ -712,9 +692,7 @@ export class ResourceStore {
     if (path === null && recovered)
       path = await realpath(selectedPath).catch(() => null);
     if (path === null) {
-      throw Object.assign(new Error("The referenced file was not found"), {
-        status: 404,
-      });
+      throw requestError("The referenced file was not found", 404);
     }
 
     // Index authority ends at the workspace boundary: a project symlink
@@ -736,11 +714,9 @@ export class ResourceStore {
       (recovered !== null && !canonicalIndexed) ||
       (!canonicalIndexed && (exactWorkspaceSelection || !(await isCited())))
     ) {
-      throw Object.assign(
-        new Error(
-          "The file is not part of this session's workspace or transcript",
-        ),
-        { status: 403 },
+      throw requestError(
+        "The file is not part of this session's workspace or transcript",
+        403,
       );
     }
 
@@ -753,14 +729,9 @@ export class ResourceStore {
       anchor = opened.handle;
       const details = opened.details;
       if (!details.isFile())
-        throw Object.assign(new Error("The reference is not a file"), {
-          status: 400,
-        });
+        throw requestError("The reference is not a file", 400);
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw Object.assign(
-          new Error("The referenced file is too large to preview"),
-          { status: 413 },
-        );
+        throw requestError("The referenced file is too large to preview", 413);
       }
       const mimeType = mimeTypeFor(path);
       const workspacePath =
@@ -820,10 +791,7 @@ export class ResourceStore {
       !resource.fileId ||
       !resource.anchor
     ) {
-      throw Object.assign(
-        new Error("The resource preview is no longer available"),
-        { status: 404 },
-      );
+      throw requestError("The resource preview is no longer available", 404);
     }
     let anchored: BigIntStats;
     try {
@@ -850,9 +818,7 @@ export class ResourceStore {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        throw Object.assign(new Error("The referenced file was not found"), {
-          status: 404,
-        });
+        throw requestError("The referenced file was not found", 404);
       }
       if (
         code === "EACCES" ||
@@ -873,10 +839,7 @@ export class ResourceStore {
         throw changedResourceError();
       }
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw Object.assign(
-          new Error("The referenced file is too large to preview"),
-          { status: 413 },
-        );
+        throw requestError("The referenced file is too large to preview", 413);
       }
       return { handle, size: Number(details.size) };
     } catch (error) {
@@ -929,10 +892,7 @@ export class ResourceStore {
       resource.descriptor.sessionId !== sessionId ||
       resource.descriptor.viewId !== viewId
     ) {
-      throw Object.assign(
-        new Error("The resource preview is no longer available"),
-        { status: 404 },
-      );
+      throw requestError("The resource preview is no longer available", 404);
     }
     return resource;
   }
@@ -945,9 +905,9 @@ export class ResourceStore {
       resource.descriptor.sessionId !== context.sessionId ||
       resource.descriptor.viewId !== context.viewId
     ) {
-      throw Object.assign(
-        new Error("The resource preview belongs to another branch view"),
-        { status: 409 },
+      throw requestError(
+        "The resource preview belongs to another branch view",
+        409,
       );
     }
     // embeddedContent revalidates an embedded reference against the same message
@@ -971,17 +931,14 @@ export class ResourceStore {
       // index membership is revoked. A textual reference that originally had
       // both authorities may still retain its independent exact citation.
       if (resource.authority === "workspace") {
-        throw Object.assign(
-          new Error("The file is no longer in the workspace index"),
-          { status: 403 },
-        );
+        throw requestError("The file is no longer in the workspace index", 403);
       }
     }
     const index = await this.citationIndex(context);
     if (!referencedByIndex(index, context, resource.descriptor.reference)) {
-      throw Object.assign(
-        new Error("The resource is no longer cited by the visible branch"),
-        { status: 403 },
+      throw requestError(
+        "The resource is no longer cited by the visible branch",
+        403,
       );
     }
   }
@@ -1012,10 +969,7 @@ export class ResourceStore {
         ? decodeCanonicalBase64(record.data)
         : null;
     if (!data || !embedded) {
-      throw Object.assign(
-        new Error("The embedded image is no longer available"),
-        { status: 404 },
-      );
+      throw requestError("The embedded image is no longer available", 404);
     }
     return { data, mimeType: embedded.mimeType };
   }

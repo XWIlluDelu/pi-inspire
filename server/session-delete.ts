@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { type BigIntStats, constants } from "node:fs";
 import {
   chmod,
@@ -103,9 +104,17 @@ async function readFirstLine(handle: FileHandle): Promise<string> {
     chunks.push(chunk);
     length += bytesRead;
   }
-  throw Object.assign(new Error("The session header is missing or too large"), {
-    status: 409,
-  });
+  throw requestError("The session header is missing or too large", 409);
+}
+
+async function existingSessionStats(path: string): Promise<BigIntStats> {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw requestError("Session not found", 404);
+    throw error;
+  }
 }
 
 async function inspectSessionFile(
@@ -113,33 +122,18 @@ async function inspectSessionFile(
 ): Promise<SessionFileIdentity> {
   const path = resolve(session.path);
   if (extname(path).toLowerCase() !== ".jsonl") {
-    throw Object.assign(
-      new Error("The catalog entry is not a Pi session file"),
-      { status: 409 },
-    );
+    throw requestError("The catalog entry is not a Pi session file", 409);
   }
 
-  const before = await lstat(path, { bigint: true }).catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT")
-        throw Object.assign(new Error("Session not found"), { status: 404 });
-      throw error;
-    },
-  );
+  const before = await existingSessionStats(path);
   if (!before.isFile() || before.isSymbolicLink()) {
-    throw Object.assign(
-      new Error("The catalog entry is not a regular session file"),
-      { status: 409 },
-    );
+    throw requestError("The catalog entry is not a regular session file", 409);
   }
   if (
     !session.source ||
     !sameFileVersion(fileIdentity(before), session.source)
   ) {
-    throw Object.assign(
-      new Error("The session changed since the catalog was loaded"),
-      { status: 409 },
-    );
+    throw requestError("The session changed since the catalog was loaded", 409);
   }
 
   // O_NOFOLLOW closes the lstat/open symlink swap on the local Linux host.
@@ -148,12 +142,11 @@ async function inspectSessionFile(
     constants.O_RDONLY |
       (process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0)),
   ).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT")
-      throw Object.assign(new Error("Session not found"), { status: 404 });
+    if (error.code === "ENOENT") throw requestError("Session not found", 404);
     if (error.code === "ELOOP") {
-      throw Object.assign(
-        new Error("The catalog entry is not a regular session file"),
-        { status: 409 },
+      throw requestError(
+        "The catalog entry is not a regular session file",
+        409,
       );
     }
     throw error;
@@ -165,20 +158,14 @@ async function inspectSessionFile(
       !opened.isFile() ||
       !sameFileVersion(openedIdentity, fileIdentity(before))
     ) {
-      throw Object.assign(
-        new Error("The session file changed while deletion was being prepared"),
-        { status: 409 },
+      throw requestError(
+        "The session file changed while deletion was being prepared",
+        409,
       );
     }
     const firstLine = await readFirstLine(handle);
     const afterRead = await handle.stat({ bigint: true });
-    const linked = await lstat(path, { bigint: true }).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT")
-          throw Object.assign(new Error("Session not found"), { status: 404 });
-        throw error;
-      },
-    );
+    const linked = await existingSessionStats(path);
     const currentIdentity = fileIdentity(afterRead);
     if (
       !afterRead.isFile() ||
@@ -186,9 +173,9 @@ async function inspectSessionFile(
       !sameFileVersion(openedIdentity, currentIdentity) ||
       !sameFileVersion(currentIdentity, fileIdentity(linked))
     ) {
-      throw Object.assign(
-        new Error("The session file changed while deletion was being prepared"),
-        { status: 409 },
+      throw requestError(
+        "The session file changed while deletion was being prepared",
+        409,
       );
     }
     let header: unknown;
@@ -196,9 +183,7 @@ async function inspectSessionFile(
       header = JSON.parse(firstLine.replace(/\r$/, ""));
     } catch (error) {
       if (error instanceof SyntaxError) {
-        throw Object.assign(new Error("The session header is invalid"), {
-          status: 409,
-        });
+        throw requestError("The session header is invalid", 409);
       }
       throw error;
     }
@@ -211,9 +196,9 @@ async function inspectSessionFile(
       record.id !== session.id ||
       record.cwd !== session.cwd
     ) {
-      throw Object.assign(
-        new Error("The session file identity does not match the catalog"),
-        { status: 409 },
+      throw requestError(
+        "The session file identity does not match the catalog",
+        409,
       );
     }
     return currentIdentity;
@@ -275,9 +260,9 @@ async function quarantineSession(
   } catch (error) {
     await removeEmptyDirectory(directory);
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw Object.assign(
-        new Error("The session file changed while deletion was being prepared"),
-        { status: 409 },
+      throw requestError(
+        "The session file changed while deletion was being prepared",
+        409,
       );
     }
     throw error;
@@ -288,9 +273,9 @@ async function quarantineSession(
     // No automatic restore is safe here. A replacement at the private
     // pathname must never be promoted back into the public Pi catalog.
     if (!moved) await removeEmptyDirectory(directory);
-    throw Object.assign(
-      new Error("The session file changed while deletion was being prepared"),
-      { status: 409 },
+    throw requestError(
+      "The session file changed while deletion was being prepared",
+      409,
     );
   }
   quarantine.identity = moved;
@@ -314,11 +299,9 @@ async function permanentlyDeleteQuarantine(
   // Leave it isolated: no unknown object may re-enter the public catalog or
   // become the fallback unlink target.
   if (!sameFileVersion(current, inspected)) {
-    throw Object.assign(
-      new Error(
-        "The private session payload changed before permanent deletion and was preserved for recovery",
-      ),
-      { status: 409 },
+    throw requestError(
+      "The private session payload changed before permanent deletion and was preserved for recovery",
+      409,
     );
   }
 
@@ -333,30 +316,24 @@ async function permanentlyDeleteQuarantine(
     await rename(quarantine.path, purgePath);
   } catch (error) {
     await removeEmptyDirectory(purgeDirectory);
-    throw Object.assign(
-      new Error(
-        "The private session payload changed before permanent deletion and was preserved for recovery",
-      ),
-      { status: 409, cause: error },
+    throw requestError(
+      "The private session payload changed before permanent deletion and was preserved for recovery",
+      409,
+      { cause: error },
     );
   }
   const purged = await fileIdentityAt(purgePath);
   if (!purged || !sameRenamedFileVersion(purged, inspected)) {
-    throw Object.assign(
-      new Error(
-        "The private session payload changed before permanent deletion and was preserved for recovery",
-      ),
-      { status: 409 },
+    throw requestError(
+      "The private session payload changed before permanent deletion and was preserved for recovery",
+      409,
     );
   }
 
   try {
     await unlink(purgePath);
   } catch (error) {
-    const failure = Object.assign(
-      new Error("The session could not be deleted"),
-      { status: 500 },
-    );
+    const failure = requestError("The session could not be deleted", 500);
     (failure as Error & { cause?: unknown }).cause = {
       trashError,
       unlinkError: error,
@@ -394,19 +371,17 @@ export async function deleteSessionFile(
       return "trashed";
     }
     if (!sameFileVersion(current, quarantine.identity)) {
-      throw Object.assign(
-        new Error(
-          "The private session payload changed during Trash and was preserved for recovery",
-        ),
-        { status: 409 },
+      throw requestError(
+        "The private session payload changed during Trash and was preserved for recovery",
+        409,
       );
     }
     // A nominally successful adapter that leaves the authorized payload in
     // quarantine has not committed deletion. Retain the payload privately
     // rather than racing a restoration through the old public pathname.
-    throw Object.assign(
-      new Error("The Trash operation did not move the session payload"),
-      { status: 502 },
+    throw requestError(
+      "The Trash operation did not move the session payload",
+      502,
     );
   }
   return permanentlyDeleteQuarantine(

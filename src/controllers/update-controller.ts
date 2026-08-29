@@ -1,5 +1,4 @@
 import {
-  type AvailableUpdate,
   type HostUpdateStatus,
   type PiUpdateCheckResponse,
   type UpdateCheckResponse,
@@ -12,15 +11,17 @@ interface UpdateControllerState {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
-  availableUpdate: AvailableUpdate | null;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
 
+type UpdateApi = Pick<Api, "update" | "piUpdate" | "snoozeUpdate">;
+type UpdateKind = "inspire" | "pi";
+
 interface UpdateControllerHost {
   state(): UpdateControllerState;
   patch(patch: Partial<UpdateControllerState>): void;
-  api(): Pick<Api, "update" | "piUpdate" | "snoozeUpdate"> | null;
+  api(): UpdateApi | null;
   transportGeneration(): number;
   notify(kind: "warning", text: string): void;
 }
@@ -56,10 +57,6 @@ function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
     piUpdateCheck: status.piUpdateCheck,
     inspireUpdateChecking: status.inspireUpdateChecking,
     piUpdateChecking: status.piUpdateChecking,
-    availableUpdate:
-      status.inspireUpdateCheck?.kind === "available"
-        ? status.inspireUpdateCheck.update
-        : null,
     availableUpdateIdentity: status.availableUpdateIdentity,
     updateSnoozedUntil: status.updateSnoozedUntil,
   };
@@ -68,8 +65,10 @@ function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
 /** Projects the Host-owned update state and owns only browser request races. */
 export class UpdateController {
   private requestGeneration = 0;
-  private inspireRequest = 0;
-  private piRequest = 0;
+  private readonly checkRequests: Record<UpdateKind, number> = {
+    inspire: 0,
+    pi: 0,
+  };
   private snoozeRequest = 0;
   private statusRevision = -1;
   private snoozing = false;
@@ -78,8 +77,8 @@ export class UpdateController {
 
   invalidateForTransportReplacement(): void {
     this.requestGeneration += 1;
-    this.inspireRequest += 1;
-    this.piRequest += 1;
+    this.checkRequests.inspire += 1;
+    this.checkRequests.pi += 1;
     this.snoozeRequest += 1;
     this.statusRevision = -1;
     this.snoozing = false;
@@ -114,11 +113,11 @@ export class UpdateController {
   }
 
   refreshInspire(): void {
-    this.checkInspire();
+    this.check("inspire", (api) => api.update(true));
   }
 
   refreshPi(): void {
-    this.checkPi();
+    this.check("pi", (api) => api.piUpdate(true));
   }
 
   snooze(): void {
@@ -152,7 +151,7 @@ export class UpdateController {
   }
 
   private owns(
-    api: Pick<Api, "update" | "piUpdate" | "snoozeUpdate">,
+    api: UpdateApi,
     requestGeneration: number,
     transportGeneration: number,
   ): boolean {
@@ -163,17 +162,30 @@ export class UpdateController {
     );
   }
 
-  private checkInspire(): void {
+  private check(
+    kind: UpdateKind,
+    perform: (api: UpdateApi) => Promise<{ updateStatus: HostUpdateStatus }>,
+  ): void {
     const api = this.host.api();
-    if (!api || this.host.state().inspireUpdateChecking) return;
-    const request = ++this.inspireRequest;
+    const checking =
+      kind === "inspire"
+        ? this.host.state().inspireUpdateChecking
+        : this.host.state().piUpdateChecking;
+    if (!api || checking) return;
+    const request = ++this.checkRequests[kind];
     const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
-    this.host.patch({ inspireUpdateChecking: true });
-    void api.update(true).then(
+    const patchChecking = (value: boolean) =>
+      this.host.patch(
+        kind === "inspire"
+          ? { inspireUpdateChecking: value }
+          : { piUpdateChecking: value },
+      );
+    patchChecking(true);
+    void perform(api).then(
       (result) => {
         if (
-          request !== this.inspireRequest ||
+          request !== this.checkRequests[kind] ||
           !this.owns(api, requestGeneration, transportGeneration)
         )
           return;
@@ -181,38 +193,11 @@ export class UpdateController {
       },
       () => {
         if (
-          request !== this.inspireRequest ||
+          request !== this.checkRequests[kind] ||
           !this.owns(api, requestGeneration, transportGeneration)
         )
           return;
-        this.host.patch({ inspireUpdateChecking: false });
-      },
-    );
-  }
-
-  private checkPi(): void {
-    const api = this.host.api();
-    if (!api || this.host.state().piUpdateChecking) return;
-    const request = ++this.piRequest;
-    const requestGeneration = this.requestGeneration;
-    const transportGeneration = this.host.transportGeneration();
-    this.host.patch({ piUpdateChecking: true });
-    void api.piUpdate(true).then(
-      (result) => {
-        if (
-          request !== this.piRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        this.applyStatus(checkedStatus(result.updateStatus));
-      },
-      () => {
-        if (
-          request !== this.piRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        this.host.patch({ piUpdateChecking: false });
+        patchChecking(false);
       },
     );
   }

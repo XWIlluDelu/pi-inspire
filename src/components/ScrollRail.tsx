@@ -32,7 +32,6 @@ export function ScrollRail({
     const thumb = thumbRef.current;
     const root = container.current;
     if (!rail || !thumb || !root) return;
-    if (typeof ResizeObserver === "undefined") return; // jsdom
 
     let el: HTMLElement | null = null;
     let resizeObserver: ResizeObserver | null = null;
