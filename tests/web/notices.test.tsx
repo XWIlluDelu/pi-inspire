@@ -7,6 +7,11 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  HostUpdateStatus,
+  PiUpdateCheckResponse,
+  UpdateCheckResponse,
+} from "../../shared/contracts";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
 import {
@@ -19,8 +24,28 @@ import {
 
 describe("right-corner notices", () => {
   const writeText = vi.fn(async () => undefined);
-  let updateResponse: Record<string, unknown>;
-  let piUpdateResponse: Record<string, unknown>;
+  let updateResponse: UpdateCheckResponse;
+  let piUpdateResponse: PiUpdateCheckResponse;
+  let observedUpdate: UpdateCheckResponse | null;
+  let observedPiUpdate: PiUpdateCheckResponse | null;
+  let updateRevision: number;
+  let snoozedUntil: number | null;
+
+  function updateStatus(): HostUpdateStatus {
+    const hasUpdate =
+      observedUpdate?.kind === "available" ||
+      observedPiUpdate?.pi.kind === "available" ||
+      observedPiUpdate?.extensions.kind === "available";
+    return {
+      revision: updateRevision,
+      inspireUpdateCheck: observedUpdate,
+      piUpdateCheck: observedPiUpdate,
+      inspireUpdateChecking: false,
+      piUpdateChecking: false,
+      availableUpdateIdentity: hasUpdate ? "test-update-identity" : null,
+      updateSnoozedUntil: snoozedUntil,
+    };
+  }
 
   beforeEach(() => {
     writeText.mockClear();
@@ -37,6 +62,10 @@ describe("right-corner notices", () => {
       pi: { kind: "current", latestVersion: "0.84.2" },
       extensions: { kind: "none" },
     };
+    observedUpdate = null;
+    observedPiUpdate = null;
+    updateRevision = 0;
+    snoozedUntil = null;
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
@@ -50,8 +79,25 @@ describe("right-corner notices", () => {
           }),
         };
       }
-      if (url.startsWith("/api/pi-update")) return { body: piUpdateResponse };
-      if (url.startsWith("/api/update")) return { body: updateResponse };
+      if (url.startsWith("/api/update/snooze")) {
+        snoozedUntil = Date.now() + 24 * 60 * 60 * 1_000;
+        updateRevision += 1;
+        return { body: updateStatus() };
+      }
+      if (url.startsWith("/api/pi-update")) {
+        observedPiUpdate = piUpdateResponse;
+        updateRevision += 1;
+        return {
+          body: { ...piUpdateResponse, updateStatus: updateStatus() },
+        };
+      }
+      if (url.startsWith("/api/update")) {
+        observedUpdate = updateResponse;
+        updateRevision += 1;
+        return {
+          body: { ...updateResponse, updateStatus: updateStatus() },
+        };
+      }
       if (url.startsWith("/api/sessions"))
         return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
       return undefined;
@@ -133,7 +179,6 @@ describe("right-corner notices", () => {
         updates: [
           {
             type: "npm",
-            source: "npm:@cortexkit/pi-magic-context",
             displayName: "@cortexkit/pi-magic-context",
           },
         ],
@@ -195,9 +240,9 @@ describe("right-corner notices", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Close updates for 24 hours" }),
     );
-    expect(screen.queryByText("Updates available")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("inspire.update-snooze")).toContain(
-      "0.3.0",
+    await waitFor(() =>
+      expect(screen.queryByText("Updates available")).not.toBeInTheDocument(),
     );
+    expect(store.getState().updateSnoozedUntil).toBe(snoozedUntil);
   });
 });

@@ -3,6 +3,7 @@ import {
   type ActiveSnapshot,
   type BranchTreeResponse,
   defaultPreferences,
+  type HostUpdateStatus,
   type SessionSummary,
 } from "../../shared/contracts";
 
@@ -33,9 +34,12 @@ export function installFetch(handler: RouteHandler) {
       typeof route.body === "object" &&
       "snapshot" in route.body
     ) {
-      FakeWebSocket.bootstrapSnapshot = (
-        route.body as { snapshot: ActiveSnapshot }
-      ).snapshot;
+      const bootstrap = route.body as {
+        snapshot: ActiveSnapshot;
+        updateStatus?: HostUpdateStatus;
+      };
+      FakeWebSocket.bootstrapSnapshot = bootstrap.snapshot;
+      FakeWebSocket.bootstrapUpdateStatus = bootstrap.updateStatus;
     }
     return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
@@ -81,6 +85,7 @@ export const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
 export class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   static bootstrapSnapshot: ActiveSnapshot | undefined;
+  static bootstrapUpdateStatus: HostUpdateStatus | undefined;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -101,6 +106,7 @@ export class FakeWebSocket {
         type: "snapshot",
         authorityId: TEST_HOST_AUTHORITY,
         snapshotDigest: TEST_SNAPSHOT_DIGEST,
+        updateStatus: FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
         data: snapshot,
       });
   }
@@ -113,6 +119,8 @@ export class FakeWebSocket {
         ? {
             authorityId: TEST_HOST_AUTHORITY,
             snapshotDigest: TEST_SNAPSHOT_DIGEST,
+            updateStatus:
+              FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
             ...event,
           }
         : event;
@@ -123,6 +131,7 @@ export class FakeWebSocket {
 export function installFakeWebSocket(): void {
   FakeWebSocket.instances = [];
   FakeWebSocket.bootstrapSnapshot = undefined;
+  FakeWebSocket.bootstrapUpdateStatus = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 }
 
@@ -239,6 +248,21 @@ export function sessionSummary(
   };
 }
 
+function hostUpdateStatus(
+  overrides: Partial<HostUpdateStatus> = {},
+): HostUpdateStatus {
+  return {
+    revision: 0,
+    inspireUpdateCheck: null,
+    piUpdateCheck: null,
+    inspireUpdateChecking: false,
+    piUpdateChecking: false,
+    availableUpdateIdentity: null,
+    updateSnoozedUntil: null,
+    ...overrides,
+  };
+}
+
 export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
   return {
     appName: "inspire",
@@ -247,6 +271,7 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     version: "0.1.0",
     piVersion: "0.80.10",
     mock: false,
+    updateStatus: hostUpdateStatus(),
     preferences: DEFAULT_PREFS,
     availableModels: [
       {

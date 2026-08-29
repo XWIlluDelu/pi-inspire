@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AvailableUpdate,
+  type HostUpdateStatus,
+  type InspireUpdateCheckResult,
   type PiUpdateCheckResponse,
-  UPDATE_SNOOZE_MS,
+  type PiUpdateCheckResult,
   type UpdateCheckResponse,
 } from "../../shared/contracts";
 import { UpdateController } from "../../src/controllers/update-controller";
+import { AppStore } from "../../src/store";
+import {
+  activeSnapshot,
+  bootstrapPayload,
+  FakeWebSocket,
+  installFakeWebSocket,
+  installFetch,
+} from "./helpers";
 
 interface State {
   version: string;
@@ -16,20 +26,8 @@ interface State {
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
   availableUpdate: AvailableUpdate | null;
+  availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
-}
-
-function installLocalStorage(): void {
-  const values = new Map<string, string>();
-  Object.defineProperty(window, "localStorage", {
-    configurable: true,
-    value: {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => values.set(key, String(value)),
-      removeItem: (key: string) => values.delete(key),
-      clear: () => values.clear(),
-    },
-  });
 }
 
 function available(latestVersion = "1.1.0"): UpdateCheckResponse {
@@ -43,7 +41,55 @@ function available(latestVersion = "1.1.0"): UpdateCheckResponse {
   };
 }
 
-function harness(initialResponse: UpdateCheckResponse = available()) {
+function piAvailable(latestVersion = "0.84.3"): PiUpdateCheckResponse {
+  return {
+    currentVersion: "0.84.2",
+    pi: {
+      kind: "available",
+      latestVersion,
+      releaseUrl: "https://pi.dev/changelog",
+    },
+    extensions: { kind: "none" },
+  };
+}
+
+function updateStatus(
+  revision: number,
+  overrides: Partial<HostUpdateStatus> = {},
+): HostUpdateStatus {
+  return {
+    revision,
+    inspireUpdateCheck: null,
+    piUpdateCheck: null,
+    inspireUpdateChecking: false,
+    piUpdateChecking: false,
+    availableUpdateIdentity: null,
+    updateSnoozedUntil: null,
+    ...overrides,
+  };
+}
+
+function inspireResult(
+  updateStatus: HostUpdateStatus,
+): InspireUpdateCheckResult {
+  return {
+    ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
+    updateStatus,
+  };
+}
+
+function piResult(updateStatus: HostUpdateStatus): PiUpdateCheckResult {
+  return {
+    ...(updateStatus.piUpdateCheck ?? {
+      currentVersion: "0.84.2",
+      pi: { kind: "unavailable" },
+      extensions: { kind: "unavailable" },
+    }),
+    updateStatus,
+  };
+}
+
+function harness() {
   let state: State = {
     version: "1.0.0",
     piVersion: "0.84.2",
@@ -52,22 +98,30 @@ function harness(initialResponse: UpdateCheckResponse = available()) {
     inspireUpdateChecking: false,
     piUpdateChecking: false,
     availableUpdate: null,
+    availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
-  let response = initialResponse;
+  let inspireResponse = updateStatus(2, {
+    inspireUpdateCheck: available(),
+    availableUpdateIdentity: '[["inspire","1.1.0"]]',
+  });
+  let piResponse = updateStatus(4, {
+    inspireUpdateCheck: available(),
+    piUpdateCheck: piAvailable(),
+    availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
+  });
+  let snoozeResponse = updateStatus(5, {
+    inspireUpdateCheck: available(),
+    piUpdateCheck: piAvailable(),
+    availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
+    updateSnoozedUntil: 2_000_000,
+  });
   let transportGeneration = 1;
-  let piResponse: PiUpdateCheckResponse = {
-    currentVersion: "0.84.2",
-    pi: {
-      kind: "available",
-      latestVersion: "0.84.3",
-      releaseUrl: "https://pi.dev/changelog",
-    },
-    extensions: { kind: "none" },
-  };
+  const notify = vi.fn();
   const api = {
-    update: vi.fn(async () => response),
-    piUpdate: vi.fn(async () => piResponse),
+    update: vi.fn(async () => inspireResult(inspireResponse)),
+    piUpdate: vi.fn(async () => piResult(piResponse)),
+    snoozeUpdate: vi.fn(async () => snoozeResponse),
   };
   const controller = new UpdateController({
     state: () => state,
@@ -76,16 +130,24 @@ function harness(initialResponse: UpdateCheckResponse = available()) {
     },
     api: () => api,
     transportGeneration: () => transportGeneration,
+    notify,
   });
   return {
     controller,
     api,
+    notify,
     state: () => state,
-    respondWith: (next: UpdateCheckResponse) => {
-      response = next;
+    bootstrap: (status: HostUpdateStatus) => {
+      state = { ...state, ...controller.bootstrap(status) };
     },
-    respondPiWith: (next: PiUpdateCheckResponse) => {
-      piResponse = next;
+    respondInspireWith: (status: HostUpdateStatus) => {
+      inspireResponse = status;
+    },
+    respondPiWith: (status: HostUpdateStatus) => {
+      piResponse = status;
+    },
+    respondSnoozeWith: (status: HostUpdateStatus) => {
+      snoozeResponse = status;
     },
     replaceTransport: () => {
       transportGeneration += 1;
@@ -94,59 +156,13 @@ function harness(initialResponse: UpdateCheckResponse = available()) {
   };
 }
 
-beforeEach(installLocalStorage);
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 describe("update status controller", () => {
-  it("restores an available update after a 24-hour browser-local snooze", async () => {
-    vi.useFakeTimers({ now: new Date("2026-08-21T00:00:00Z") });
+  it("projects one authoritative bootstrap and the two independent manual checks", async () => {
     const test = harness();
-    test.controller.refreshInspire();
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateChecking).toBe(false),
-    );
-
-    expect(test.state().availableUpdate?.latestVersion).toBe("1.1.0");
-    test.controller.snooze();
-    expect(test.state().updateSnoozedUntil).toBe(Date.now() + UPDATE_SNOOZE_MS);
-    expect(window.localStorage.getItem("inspire.update-snooze")).toContain(
-      "1.1.0",
-    );
-
-    await vi.advanceTimersByTimeAsync(UPDATE_SNOOZE_MS - 1);
-    expect(test.state().updateSnoozedUntil).not.toBeNull();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(test.state().updateSnoozedUntil).toBeNull();
-    expect(test.state().availableUpdate?.latestVersion).toBe("1.1.0");
-  });
-
-  it("shows a newer release without inheriting the previous release's snooze", async () => {
-    vi.useFakeTimers({ now: new Date("2026-08-21T00:00:00Z") });
-    const test = harness();
-    test.controller.refreshInspire();
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateChecking).toBe(false),
-    );
-    test.controller.snooze();
-
-    test.respondWith(available("1.2.0"));
-    test.controller.refreshInspire();
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateChecking).toBe(false),
-    );
-    expect(test.state()).toMatchObject({
-      availableUpdate: { latestVersion: "1.2.0" },
-      updateSnoozedUntil: null,
-    });
-  });
-
-  it("runs the two manual checks independently with cache bypass", async () => {
-    const test = harness({ kind: "unreleased" });
+    test.bootstrap(updateStatus(0));
 
     test.controller.refreshPi();
+    expect(test.state().piUpdateChecking).toBe(true);
     await vi.waitFor(() => expect(test.state().piUpdateChecking).toBe(false));
     expect(test.api.piUpdate).toHaveBeenCalledWith(true);
     expect(test.state().piUpdateCheck?.pi).toMatchObject({
@@ -154,120 +170,152 @@ describe("update status controller", () => {
       latestVersion: "0.84.3",
     });
 
+    test.respondInspireWith(
+      updateStatus(6, {
+        inspireUpdateCheck: { kind: "unreleased" },
+        piUpdateCheck: piAvailable(),
+        availableUpdateIdentity: '[["pi","0.84.3"]]',
+      }),
+    );
     test.controller.refreshInspire();
     await vi.waitFor(() =>
       expect(test.state().inspireUpdateChecking).toBe(false),
     );
     expect(test.api.update).toHaveBeenCalledWith(true);
-    expect(test.state().inspireUpdateCheck).toEqual({ kind: "unreleased" });
+    expect(test.state()).toMatchObject({
+      inspireUpdateCheck: { kind: "unreleased" },
+      availableUpdate: null,
+      availableUpdateIdentity: '[["pi","0.84.3"]]',
+    });
   });
 
-  it("checks both sources once on the first accepted prompt after 08:00 local time", async () => {
-    vi.useFakeTimers({ now: new Date(2026, 7, 21, 7, 59) });
-    const test = harness({ kind: "current" });
-
-    test.controller.start();
-    expect(test.api.update).not.toHaveBeenCalled();
-    expect(test.api.piUpdate).not.toHaveBeenCalled();
-    test.controller.promptAccepted();
-    expect(test.api.update).not.toHaveBeenCalled();
-    expect(test.api.piUpdate).not.toHaveBeenCalled();
-
-    vi.setSystemTime(new Date(2026, 7, 21, 8, 0));
-    test.controller.promptAccepted();
-    await Promise.resolve();
-    expect(test.api.update).toHaveBeenLastCalledWith(false);
-    expect(test.api.piUpdate).toHaveBeenLastCalledWith(false);
-    expect(window.localStorage.getItem("inspire.update-check-day")).toBe(
-      "2026-08-21",
-    );
-
-    test.controller.promptAccepted();
-    expect(test.api.update).toHaveBeenCalledTimes(1);
-    expect(test.api.piUpdate).toHaveBeenCalledTimes(1);
-
-    const reloaded = harness({ kind: "current" });
-    reloaded.controller.start();
-    reloaded.controller.promptAccepted();
-    expect(reloaded.api.update).not.toHaveBeenCalled();
-    expect(reloaded.api.piUpdate).not.toHaveBeenCalled();
-
-    vi.setSystemTime(new Date(2026, 7, 22, 8, 0));
-    reloaded.controller.promptAccepted();
-    await Promise.resolve();
-    expect(reloaded.api.update).toHaveBeenCalledTimes(1);
-    expect(reloaded.api.piUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  it("snoozes the combined update identity and reveals newly changed updates", async () => {
-    vi.useFakeTimers({ now: new Date(2026, 7, 21, 9, 0) });
+  it("sends the Host-issued identity and adopts its shared snooze", async () => {
     const test = harness();
-    test.controller.refreshPi();
-    await vi.waitFor(() => expect(test.state().piUpdateChecking).toBe(false));
-    test.controller.refreshInspire();
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateChecking).toBe(false),
+    test.bootstrap(
+      updateStatus(4, {
+        inspireUpdateCheck: available(),
+        piUpdateCheck: piAvailable(),
+        availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
+      }),
     );
 
     test.controller.snooze();
-    expect(test.state().updateSnoozedUntil).not.toBeNull();
-    expect(window.localStorage.getItem("inspire.update-snooze")).toContain(
-      "0.84.3",
+    await vi.waitFor(() =>
+      expect(test.state().updateSnoozedUntil).toBe(2_000_000),
+    );
+    expect(test.api.snoozeUpdate).toHaveBeenCalledWith(
+      '[["inspire","1.1.0"],["pi","0.84.3"]]',
+    );
+  });
+
+  it("adopts Host broadcasts and ignores an older HTTP completion", async () => {
+    const test = harness();
+    test.bootstrap(updateStatus(1));
+    let resolveUpdate!: (status: HostUpdateStatus) => void;
+    test.api.update.mockImplementationOnce(
+      () =>
+        new Promise<InspireUpdateCheckResult>((resolve) => {
+          resolveUpdate = (status) => resolve(inspireResult(status));
+        }),
     );
 
-    test.respondPiWith({
-      currentVersion: "0.84.2",
-      pi: {
-        kind: "available",
-        latestVersion: "0.84.4",
-        releaseUrl: "https://pi.dev/changelog",
-      },
-      extensions: { kind: "none" },
-    });
-    test.controller.refreshPi();
-    await vi.waitFor(() => expect(test.state().piUpdateChecking).toBe(false));
-    expect(test.state().updateSnoozedUntil).toBeNull();
+    test.controller.refreshInspire();
+    expect(
+      test.controller.applyEvent({
+        type: "update_status",
+        updateStatus: updateStatus(8, {
+          inspireUpdateCheck: available("1.2.0"),
+          availableUpdateIdentity: '[["inspire","1.2.0"]]',
+          updateSnoozedUntil: 3_000_000,
+        }),
+      }),
+    ).toBe(true);
+    resolveUpdate(
+      updateStatus(7, {
+        inspireUpdateCheck: available("1.1.0"),
+        availableUpdateIdentity: '[["inspire","1.1.0"]]',
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(test.state().availableUpdate?.latestVersion).toBe("1.2.0"),
+    );
+    expect(test.state().updateSnoozedUntil).toBe(3_000_000);
   });
 
   it("does not publish a response owned by a replaced transport", async () => {
-    let resolveUpdate!: (response: UpdateCheckResponse) => void;
-    const pending = new Promise<UpdateCheckResponse>((resolve) => {
-      resolveUpdate = resolve;
+    const test = harness();
+    test.bootstrap(updateStatus(1));
+    let resolveUpdate!: (status: HostUpdateStatus) => void;
+    test.api.update.mockImplementationOnce(
+      () =>
+        new Promise<InspireUpdateCheckResult>((resolve) => {
+          resolveUpdate = (status) => resolve(inspireResult(status));
+        }),
+    );
+
+    test.controller.refreshInspire();
+    test.replaceTransport();
+    resolveUpdate(
+      updateStatus(2, {
+        inspireUpdateCheck: available(),
+        availableUpdateIdentity: '[["inspire","1.1.0"]]',
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(test.state().availableUpdate).toBeNull();
+  });
+
+  it("fails a malformed Host update event instead of silently diverging", () => {
+    const test = harness();
+    expect(() =>
+      test.controller.applyEvent({
+        type: "update_status",
+        updateStatus: { revision: "new" },
+      }),
+    ).toThrow("invalid update status");
+  });
+});
+
+describe("Host update projection", () => {
+  beforeEach(installFakeWebSocket);
+
+  it("closes the bootstrap race with the shared state carried by the stream snapshot", async () => {
+    let authoritative = updateStatus(3, {
+      piUpdateCheck: piAvailable(),
+      availableUpdateIdentity: '[["pi","0.84.3"]]',
     });
-    let state: State = {
-      version: "1.0.0",
-      piVersion: "0.84.2",
-      inspireUpdateCheck: null,
-      piUpdateCheck: null,
-      inspireUpdateChecking: false,
-      piUpdateChecking: false,
-      availableUpdate: null,
-      updateSnoozedUntil: null,
-    };
-    let transportGeneration = 1;
-    const api = {
-      update: vi.fn(() => pending),
-      piUpdate: vi.fn(async () => ({
-        currentVersion: "0.84.2",
-        pi: { kind: "current" as const, latestVersion: "0.84.2" },
-        extensions: { kind: "none" as const },
-      })),
-    };
-    const controller = new UpdateController({
-      state: () => state,
-      patch: (patch) => {
-        state = { ...state, ...patch };
-      },
-      api: () => api,
-      transportGeneration: () => transportGeneration,
+    installFetch((url) => {
+      if (url.startsWith("/api/bootstrap")) {
+        return {
+          body: bootstrapPayload({
+            version: "0.3.0",
+            piVersion: "0.84.2",
+            updateStatus: authoritative,
+            snapshot: activeSnapshot(),
+          }),
+        };
+      }
+      if (url.startsWith("/api/sessions"))
+        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      return undefined;
     });
 
-    controller.refreshInspire();
-    transportGeneration += 1;
-    controller.invalidateForTransportReplacement();
-    resolveUpdate(available());
-    await pending;
-    await Promise.resolve();
-    expect(state.availableUpdate).toBeNull();
+    const store = new AppStore();
+    await store.init("token");
+    expect(store.getState().piUpdateCheck?.pi.kind).toBe("available");
+
+    const socket = FakeWebSocket.instances.at(-1)!;
+    authoritative = updateStatus(4, {
+      piUpdateCheck: piAvailable(),
+      availableUpdateIdentity: '[["pi","0.84.3"]]',
+      updateSnoozedUntil: 4_000_000,
+    });
+    FakeWebSocket.bootstrapUpdateStatus = authoritative;
+    socket.open(activeSnapshot());
+    expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
+
+    await store.init("token");
+    expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
   });
 });
