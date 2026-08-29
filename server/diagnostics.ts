@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -10,6 +10,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { installationKey } from "./installation-key.js";
 import {
   inspireStateDirectory,
   supportsPosixPermissions,
@@ -50,16 +51,6 @@ const MAX_OBJECT_KEYS = 50;
 const MAX_DEPTH = 4;
 const REDACTED_KEY =
   /(?:authorization|cookie|token|password|secret|credential|prompt|message|content|payload|result|stderr|environment|(?:^|[_-])env(?:$|[_-])|headers|toolOutput|api[_-]?key|bearer)/i;
-
-function installationKey(root: string, host: string, port: number): string {
-  return createHash("sha256")
-    .update(root)
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
-}
 
 export function defaultDiagnosticLogPath(
   root: string,

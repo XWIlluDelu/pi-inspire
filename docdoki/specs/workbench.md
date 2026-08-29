@@ -10,6 +10,7 @@ covers:
   - server/app.ts
   - server/update-checker.ts
   - server/pi-update-checker.ts
+  - server/update-coordinator.ts
   - server/semantic-version.ts
   - src/api.ts
   - src/main.tsx
@@ -24,6 +25,7 @@ covers:
   - src/controllers/workspace-controller.ts
   - src/controllers/update-controller.ts
   - src/update-availability.ts
+  - src/install-app.ts
   - src/App.tsx
   - src/components/AppTopbar.tsx
   - src/components/EarlierBranchBanner.tsx

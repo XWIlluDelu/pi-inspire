@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  type AvailableUpdate,
   type HostUpdateStatus,
   type InspireUpdateCheckResult,
   type PiUpdateCheckResponse,
@@ -25,7 +24,6 @@ interface State {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
-  availableUpdate: AvailableUpdate | null;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
@@ -97,7 +95,6 @@ function harness() {
     piUpdateCheck: null,
     inspireUpdateChecking: false,
     piUpdateChecking: false,
-    availableUpdate: null,
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
@@ -184,7 +181,6 @@ describe("update status controller", () => {
     expect(test.api.update).toHaveBeenCalledWith(true);
     expect(test.state()).toMatchObject({
       inspireUpdateCheck: { kind: "unreleased" },
-      availableUpdate: null,
       availableUpdateIdentity: '[["pi","0.84.3"]]',
     });
   });
@@ -237,7 +233,10 @@ describe("update status controller", () => {
       }),
     );
     await vi.waitFor(() =>
-      expect(test.state().availableUpdate?.latestVersion).toBe("1.2.0"),
+      expect(test.state().inspireUpdateCheck).toMatchObject({
+        kind: "available",
+        update: { latestVersion: "1.2.0" },
+      }),
     );
     expect(test.state().updateSnoozedUntil).toBe(3_000_000);
   });
@@ -263,7 +262,7 @@ describe("update status controller", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
-    expect(test.state().availableUpdate).toBeNull();
+    expect(test.state().inspireUpdateCheck).toBeNull();
   });
 
   it("fails a malformed Host update event instead of silently diverging", () => {

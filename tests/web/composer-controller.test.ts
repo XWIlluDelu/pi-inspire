@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PromptAcceptedResponse } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../../src/api";
 import {
   ComposerController,
@@ -61,9 +62,14 @@ function createHarness(sessionId = "session-a") {
   };
 }
 
+const acceptedPrompt: PromptAcceptedResponse = {
+  accepted: true,
+  historyEntry: null,
+};
+
 describe("ComposerController", () => {
   it("clears only the delivered partition and preserves an attachment staged during send", async () => {
-    const pending = deferred<void>();
+    const pending = deferred<PromptAcceptedResponse>();
     const harness = createHarness();
     harness.prompt.mockReturnValue(pending.promise);
     harness.uploadAttachments.mockResolvedValue({
@@ -75,7 +81,7 @@ describe("ComposerController", () => {
     await harness.controller.addFiles([
       new File(["next"], "next.txt", { type: "text/plain" }),
     ]);
-    pending.resolve();
+    pending.resolve(acceptedPrompt);
 
     await expect(sending).resolves.toEqual({
       accepted: true,
@@ -355,14 +361,14 @@ describe("ComposerController", () => {
   });
 
   it("cannot clear a composer after its transport was replaced", async () => {
-    const pending = deferred<void>();
+    const pending = deferred<PromptAcceptedResponse>();
     const harness = createHarness();
     harness.prompt.mockReturnValue(pending.promise);
     harness.controller.addProjectFile("/workspace/kept.ts");
 
     const sending = harness.controller.send("send");
     harness.replaceTransport();
-    pending.resolve();
+    pending.resolve(acceptedPrompt);
 
     await expect(sending).resolves.toBe(false);
     expect(harness.slice()).toEqual({

@@ -54,57 +54,32 @@ export class SessionSelectionController {
     // to supersede. A newer intent must still invalidate a pending open.
     if (id === state.sessionId && state.openingSessionId === null) return;
     if (id === state.openingSessionId) return;
-    const transportGeneration = this.host.transportGeneration();
-    const ticket = this.host.beginOpening(id);
-    try {
-      const snapshot = await api.openSession(id);
-      if (!this.owns(ticket, api, transportGeneration)) return;
-      this.host.applySnapshot(snapshot);
-      this.host.ensureSessionVisible(id);
-      this.host.setActionError(null);
-      if (this.host.consumeReadyWhileOpening(id, ticket)) {
-        this.host.resyncSelected(id);
-      }
-    } catch (error) {
-      if (this.owns(ticket, api, transportGeneration)) {
-        if (error instanceof ApiError && error.status === 401)
-          this.host.handleAuthFailure();
-        else
-          this.host.setActionError(
-            error instanceof Error ? error.message : "Failed to open session",
-          );
-      }
-    } finally {
-      this.host.releaseOpening(ticket);
-    }
+    await this.runSelection(
+      id,
+      api,
+      () => api.openSession(id),
+      "Failed to open session",
+      undefined,
+      (_snapshot, ticket) => {
+        this.host.ensureSessionVisible(id);
+        if (this.host.consumeReadyWhileOpening(id, ticket)) {
+          this.host.resyncSelected(id);
+        }
+      },
+    );
   }
 
   async deselect(): Promise<boolean> {
     const api = this.host.api();
     if (!api) return false;
-    const transportGeneration = this.host.transportGeneration();
-    const ticket = this.host.beginOpening(null);
-    try {
-      const snapshot = await api.deselectSession();
-      if (!this.owns(ticket, api, transportGeneration)) return false;
-      this.host.applySnapshot(snapshot);
-      this.host.setActionError(null);
-      return snapshot.active === null;
-    } catch (error) {
-      if (this.owns(ticket, api, transportGeneration)) {
-        if (error instanceof ApiError && error.status === 401)
-          this.host.handleAuthFailure();
-        else
-          this.host.setActionError(
-            error instanceof Error
-              ? error.message
-              : "Failed to open New session",
-          );
-      }
-      return false;
-    } finally {
-      this.host.releaseOpening(ticket);
-    }
+    return this.runSelection(
+      null,
+      api,
+      () => api.deselectSession(),
+      "Failed to open New session",
+      false,
+      (snapshot) => snapshot.active === null,
+    );
   }
 
   /** Creates a session without inventing a fallback project root. */
@@ -126,34 +101,51 @@ export class SessionSelectionController {
       );
       return null;
     }
+    return this.runSelection(
+      null,
+      api,
+      () => api.newSession(target, options),
+      "Failed to create session",
+      null,
+      (snapshot) => {
+        const sessionId = snapshot.active?.sessionId ?? null;
+        if (sessionId) this.host.ensureSessionVisible(sessionId);
+        if (options.model) this.host.rememberModel(options.model);
+        this.host.refreshSessionCatalog();
+        return sessionId;
+      },
+    );
+  }
+
+  private async runSelection<T>(
+    openingSessionId: string | null,
+    api: Api,
+    request: () => Promise<ActiveSnapshot>,
+    fallbackMessage: string,
+    staleResult: T,
+    afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
+  ): Promise<T> {
     const transportGeneration = this.host.transportGeneration();
-    const ticket = this.host.beginOpening(null);
+    const ticket = this.host.beginOpening(openingSessionId);
     try {
-      const snapshot = await api.newSession(target, options);
-      if (!this.owns(ticket, api, transportGeneration)) return null;
+      const snapshot = await request();
+      if (!this.host.ownsOpening(ticket, api, transportGeneration))
+        return staleResult;
       this.host.applySnapshot(snapshot);
-      const sessionId = snapshot.active?.sessionId ?? null;
-      if (sessionId) this.host.ensureSessionVisible(sessionId);
-      if (options.model) this.host.rememberModel(options.model);
       this.host.setActionError(null);
-      this.host.refreshSessionCatalog();
-      return sessionId;
+      return afterApply(snapshot, ticket);
     } catch (error) {
-      if (this.owns(ticket, api, transportGeneration)) {
+      if (this.host.ownsOpening(ticket, api, transportGeneration)) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else
           this.host.setActionError(
-            error instanceof Error ? error.message : "Failed to create session",
+            error instanceof Error ? error.message : fallbackMessage,
           );
       }
-      return null;
+      return staleResult;
     } finally {
       this.host.releaseOpening(ticket);
     }
-  }
-
-  private owns(ticket: number, api: Api, transportGeneration: number): boolean {
-    return this.host.ownsOpening(ticket, api, transportGeneration);
   }
 }

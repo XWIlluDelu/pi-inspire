@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { SettingsManager } from "./pi-runtime.js";
 import {
   MAX_CURATED_SESSION_RESULTS,
@@ -180,9 +181,9 @@ export class SessionCatalog implements SessionCatalogLike {
       await this.refresh();
     }
     if (this.ambiguousIds.has(id)) {
-      throw Object.assign(
-        new Error("The session identity is ambiguous in the Pi catalog"),
-        { status: 409 },
+      throw requestError(
+        "The session identity is ambiguous in the Pi catalog",
+        409,
       );
     }
     return this.byId.get(id);
@@ -247,11 +248,9 @@ export class SessionCatalog implements SessionCatalogLike {
       MAX_CURATED_SESSION_RESULTS + 1,
     );
     if (sessions.length > MAX_CURATED_SESSION_RESULTS) {
-      throw Object.assign(
-        new Error(
-          `Curated folders contain more than ${MAX_CURATED_SESSION_RESULTS.toLocaleString("en-US")} sessions`,
-        ),
-        { status: 413 },
+      throw requestError(
+        `Curated folders contain more than ${MAX_CURATED_SESSION_RESULTS.toLocaleString("en-US")} sessions`,
+        413,
       );
     }
     return sessions.map((session) => this.project(session));

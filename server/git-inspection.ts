@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type {
@@ -676,16 +677,11 @@ export class GitInspectionService implements GitInspectionLike {
       pathId.length > MAX_PATH_ID_LENGTH ||
       !/^[A-Za-z0-9_-]+$/.test(pathId)
     ) {
-      throw Object.assign(new Error("Invalid Git path identity"), {
-        status: 400,
-      });
+      throw requestError("Invalid Git path identity", 400);
     }
     const inspected = await this.inspect(cwd, signal);
     if (!inspected)
-      throw Object.assign(
-        new Error("That session is not in a Git repository"),
-        { status: 409 },
-      );
+      throw requestError("That session is not in a Git repository", 409);
     const change = inspected.response.files.find(
       (file) => file.path.id === pathId,
     );
@@ -696,9 +692,9 @@ export class GitInspectionService implements GitInspectionLike {
         : (change?.unstaged ??
           (change?.untracked ? { kind: "added" } : undefined)));
     if (!change || !authorized)
-      throw Object.assign(
-        new Error("That path and diff side are not present in fresh status"),
-        { status: 409 },
+      throw requestError(
+        "That path and diff side are not present in fresh status",
+        409,
       );
     const base = { path: change.path, side } as const;
     if (change.conflict)

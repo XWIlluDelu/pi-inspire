@@ -318,8 +318,8 @@ function summarize(value: unknown, max = 90): string | undefined {
       if (text) return text.slice(0, max);
     }
     for (const key of ["path", "file", "command", "query", "url"]) {
-      if (typeof record[key] === "string")
-        return String(record[key]).slice(0, max);
+      const field = record[key];
+      if (typeof field === "string") return field.slice(0, max);
     }
   }
   try {

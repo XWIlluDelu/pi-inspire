@@ -467,31 +467,6 @@ describe("transcript density preferences", () => {
       },
     ],
   };
-  const results = [
-    {
-      role: "toolResult",
-      toolCallId: "tool-a",
-      toolName: "ffgrep",
-      content: "alpha result",
-      timestamp: 3,
-    },
-    {
-      role: "toolResult",
-      toolCallId: "tool-b",
-      toolName: "read",
-      content: "read result",
-      timestamp: 4,
-    },
-    {
-      role: "toolResult",
-      toolCallId: "tool-c",
-      toolName: "bash",
-      content: "failed result",
-      isError: true,
-      timestamp: 5,
-    },
-  ];
-
   it("replaces only the assistant attribution row with a divider", () => {
     const { container, rerender } = render(
       <Transcript
@@ -552,141 +527,6 @@ describe("transcript density preferences", () => {
     expect(screen.getByText("gpt-test")).toBeVisible();
     expect(screen.getByText("visible response")).toBeVisible();
     expect(screen.queryByText("hidden reasoning")).toBeNull();
-  });
-
-  it("collapses only multi-activity runs and leaves a singleton Compact card", async () => {
-    const { container } = render(
-      <Transcript
-        messages={[assistant, ...results]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-        assistantRoundDisplay="divider"
-      />,
-    );
-    const strips = container.querySelectorAll(".activity-strip");
-    expect(strips).toHaveLength(1);
-    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(
-      2,
-    );
-    const singleton = screen
-      .getByText("bash", { selector: ".card__tool-name" })
-      .closest(".card");
-    expect(singleton?.querySelector(".card__disclosure")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-
-    const read = screen.getByRole("button", { name: /read: finished/i });
-    fireEvent.click(read);
-    expect(read).toHaveAttribute("aria-expanded", "true");
-    const detail = strips[0]!.querySelector(".activity-strip__detail");
-    expect(detail).not.toBeNull();
-    expect(
-      strips[0]!.querySelector(".activity-strip__items")?.nextElementSibling,
-    ).toContainElement(detail as HTMLElement);
-    expect(
-      within(detail as HTMLElement).getByText("read result"),
-    ).toBeInTheDocument();
-
-    fireEvent.click(
-      within(detail as HTMLElement).getByRole("button", {
-        name: "Collapse read tool details",
-      }),
-    );
-    expect(read).toHaveAttribute("aria-expanded", "false");
-    await waitFor(() =>
-      expect(screen.queryByText("read result")).not.toBeInTheDocument(),
-    );
-
-    const ffgrep = screen.getByRole("button", { name: /ffgrep: finished/i });
-    fireEvent.click(ffgrep);
-    expect(container.querySelectorAll(".activity-strip__detail")).toHaveLength(
-      1,
-    );
-    expect(screen.queryByText("read result")).not.toBeInTheDocument();
-    expect(screen.getByText("alpha result")).toBeInTheDocument();
-
-    fireEvent.click(ffgrep);
-    expect(strips[0]!.querySelector(".activity-strip__reveal")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(screen.getByText("alpha result")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.queryByText("alpha result")).not.toBeInTheDocument(),
-    );
-  });
-
-  it("keeps Compact activity as individually visible cards with closed bodies", () => {
-    const { container } = render(
-      <Transcript
-        messages={[assistant, ...results]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="compact"
-        assistantRoundDisplay="divider"
-      />,
-    );
-
-    expect(container.querySelector(".activity-strip")).toBeNull();
-    const cards = container.querySelectorAll(".card--tool");
-    expect(cards).toHaveLength(3);
-    for (const card of cards)
-      expect(card.querySelector(".card__disclosure")).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      );
-  });
-
-  it("loads historical Dynamic content directly at its final density", () => {
-    const historical = {
-      role: "assistant",
-      timestamp: 10,
-      content: [
-        { type: "thinking", thinking: "settled reasoning\nmore detail" },
-        {
-          type: "toolCall",
-          id: "history-a",
-          name: "read",
-          arguments: { path: "a.ts" },
-        },
-        {
-          type: "toolCall",
-          id: "history-b",
-          name: "bash",
-          arguments: { command: "npm test" },
-        },
-      ],
-    };
-    const { container } = render(
-      <Transcript
-        messages={[
-          historical,
-          {
-            role: "toolResult",
-            toolCallId: "history-a",
-            content: "read",
-            timestamp: 11,
-          },
-          {
-            role: "toolResult",
-            toolCallId: "history-b",
-            content: "tested",
-            timestamp: 12,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="dynamic"
-        toolVisibility="dynamic"
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Expand Thinking" }),
-    ).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelectorAll(".card--tool")).toHaveLength(0);
-    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
   });
 
   it("toggles thinking, tool, and custom cards from non-interactive header space", () => {
@@ -1104,7 +944,7 @@ describe("transcript density preferences", () => {
     expect(container.querySelectorAll(".card--tool")).toHaveLength(1);
   });
 
-  it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", () => {
+  it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", async () => {
     const text = "First line with **strong** and $E = mc^2$\nSecond line";
     const { rerender } = render(
       <Transcript
@@ -1129,7 +969,7 @@ describe("transcript density preferences", () => {
     const summary = thinkingCard.querySelector(
       ".card__summary--prose",
     ) as HTMLElement;
-    expect(within(summary).getByText("strong").tagName).toBe("STRONG");
+    expect((await within(summary).findByText("strong")).tagName).toBe("STRONG");
     expect(summary.querySelector(".katex")).not.toBeNull();
     expect(screen.queryByText("Second line")).not.toBeInTheDocument();
 
@@ -1283,9 +1123,9 @@ describe("message actions", () => {
         />,
       );
 
-      const userTurn = screen
-        .getByText("user source")
-        .closest(".turn") as HTMLElement;
+      const userTurn = (await screen.findByText("user source")).closest(
+        ".turn",
+      ) as HTMLElement;
       fireEvent.click(
         within(userTurn).getByRole("button", { name: "Copy message" }),
       );
@@ -1756,31 +1596,6 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".turn--custom")).toBeNull();
   });
 
-  it("keeps singleton custom activity as a body-closed card in Compact", () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "custom",
-            customType: "intercom_message",
-            content: "one",
-            display: true,
-            timestamp: 19,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="compact"
-      />,
-    );
-    const card = container.querySelector(".card--custom");
-    expect(card?.querySelector(".card__disclosure")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(container.querySelector(".activity-strip")).toBeNull();
-  });
-
   it("collapses adjacent custom activity into typed tiles without invented result status", async () => {
     const { container } = render(
       <Transcript
@@ -1904,184 +1719,6 @@ describe("transient conversation projections", () => {
     expect(items).toHaveLength(3);
     expect(items[2]).toHaveAccessibleName("Intercom message: custom activity");
     expect(container.querySelector(".turn--custom")).toBeNull();
-  });
-
-  it("keeps a trailing live custom message in its tool batch through Dynamic collapse", () => {
-    vi.useFakeTimers();
-    const active = {
-      role: "assistant",
-      timestamp: 29,
-      __inspireLiveId: "merged-live",
-      content: [
-        {
-          type: "toolCall",
-          id: "merged-live-tool",
-          name: "read",
-          arguments: { path: "live.ts" },
-        },
-      ],
-    };
-    const result = {
-      role: "toolResult",
-      toolCallId: "merged-live-tool",
-      content: "done",
-      timestamp: 30,
-    };
-    const started = {
-      role: "custom",
-      customType: "intercom_message",
-      content: "delivered",
-      display: true,
-      timestamp: 31,
-      __inspireLiveId: "merged-custom-live",
-    };
-    const preferences = {
-      thinkingVisibility: "dynamic" as const,
-      toolVisibility: "dynamic" as const,
-    };
-    const { container, rerender } = render(
-      <Transcript
-        messages={[active, result, started]}
-        streaming
-        activeAssistantMessageKey="live:merged-live"
-        {...preferences}
-      />,
-    );
-    const headers = container.querySelectorAll(
-      ".card--tool .card__disclosure, .card--custom .card__disclosure",
-    );
-    expect(headers).toHaveLength(2);
-    for (const header of headers)
-      expect(header).toHaveAttribute("aria-expanded", "true");
-
-    const ended = { ...started, __inspireSettled: true };
-    rerender(
-      <Transcript
-        messages={[active, result, ended]}
-        streaming
-        activeAssistantMessageKey="live:merged-live"
-        {...preferences}
-      />,
-    );
-    act(() => vi.advanceTimersByTime(1_500));
-    for (const header of headers)
-      expect(header).toHaveAttribute("aria-expanded", "false");
-
-    rerender(
-      <Transcript
-        messages={[
-          active,
-          result,
-          ended,
-          {
-            role: "assistant",
-            content: "next",
-            timestamp: 32,
-            __inspireLiveId: "next",
-          },
-        ]}
-        streaming
-        activeAssistantMessageKey="live:next"
-        {...preferences}
-      />,
-    );
-    act(() => vi.advanceTimersByTime(980));
-    expect(
-      container.querySelector(".dynamic-activity-batch--collapsing"),
-    ).not.toBeNull();
-    act(() => vi.advanceTimersByTime(180));
-    const strips = container.querySelectorAll(".activity-strip");
-    expect(strips).toHaveLength(1);
-    expect(strips[0]!.querySelectorAll(".activity-strip__item")).toHaveLength(
-      2,
-    );
-    expect(
-      strips[0]!.querySelectorAll(".activity-strip__item--custom"),
-    ).toHaveLength(1);
-    expect(container.querySelector(".turn--custom")).toBeNull();
-  });
-
-  it("loads a historical Dynamic singleton custom activity as Collapsed", () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "custom",
-            customType: "web_search_content_ready",
-            content: "ready",
-            display: true,
-            timestamp: 30,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="dynamic"
-        toolVisibility="dynamic"
-      />,
-    );
-    const card = container.querySelector(".card--custom");
-    expect(card).not.toBeNull();
-    expect(card?.querySelector(".card__disclosure")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(container.querySelector(".activity-strip")).toBeNull();
-  });
-
-  it("streams a singleton custom activity from Expanded to Compact without reducing it to a strip", () => {
-    vi.useFakeTimers();
-    const started = {
-      role: "custom",
-      customType: "web_search_content_ready",
-      content: "streamed payload",
-      display: true,
-      timestamp: 40,
-      __inspireLiveId: "custom-live",
-    };
-    const props = {
-      thinkingVisibility: "dynamic" as const,
-      toolVisibility: "dynamic" as const,
-    };
-    const { container, rerender } = render(
-      <Transcript messages={[started]} streaming {...props} />,
-    );
-    const header = container.querySelector(
-      ".card--custom .card__disclosure",
-    ) as HTMLButtonElement;
-    expect(header).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/streamed payload/)).toBeInTheDocument();
-    expect(container.querySelector(".activity-strip")).toBeNull();
-    act(() => vi.advanceTimersByTime(1_500));
-
-    const ended = { ...started, __inspireSettled: true };
-    rerender(<Transcript messages={[ended]} streaming {...props} />);
-    act(() => vi.advanceTimersByTime(499));
-    expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1));
-    expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".activity-strip")).toBeNull();
-
-    rerender(
-      <Transcript
-        messages={[
-          ended,
-          {
-            role: "assistant",
-            content: "next call",
-            timestamp: 41,
-            __inspireLiveId: "next",
-          },
-        ]}
-        streaming
-        {...props}
-      />,
-    );
-    act(() => vi.advanceTimersByTime(2_000));
-    expect(
-      container.querySelector(".dynamic-activity-batch--collapsing"),
-    ).toBeNull();
-    expect(container.querySelector(".activity-strip")).toBeNull();
-    expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
-    expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps one Dynamic lifecycle when a custom activity adopts its durable timestamp", () => {

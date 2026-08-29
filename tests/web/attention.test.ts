@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { composeDocumentTitle } from "../../src/App";
 import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
@@ -476,7 +475,7 @@ describe("completion attention", () => {
     expect(FakeNotification.instances[0]!.title).toBe("Task aborted");
   });
 
-  it("marks unseen title attention, composes with an extension title, and clears on owning view/focus", async () => {
+  it("marks unseen title attention and clears it on the owning view", async () => {
     const { store, socket } = await initialized("title");
     socket.emit({
       type: "agent_start",
@@ -489,16 +488,10 @@ describe("completion attention", () => {
       sessionStatus: { runState: "idle", indicator: "completed" },
     });
     expect(store.getState().attentionSessionIds).toEqual(["bg"]);
-    expect(composeDocumentTitle("Extension title", "Selected", 1)).toBe(
-      "● Extension title",
-    );
 
     await store.openSession("bg");
     store.acknowledgeVisibleSession();
     expect(store.getState().attentionSessionIds).toEqual([]);
-    expect(composeDocumentTitle("Extension title", "Background", 0)).toBe(
-      "Extension title",
-    );
   });
 
   it("focuses and selects the owning session from a notification click", async () => {

@@ -300,9 +300,7 @@ export class ComposerController {
       const sentPaths = new Set(projectFiles);
       for (const item of composer.attachments) {
         if (!sentIds.has(item.localId)) continue;
-        if (item.previewUrl && typeof URL.revokeObjectURL === "function") {
-          URL.revokeObjectURL(item.previewUrl);
-        }
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       }
       composer.attachments = composer.attachments.filter(
         (item) => !sentIds.has(item.localId),
@@ -315,7 +313,7 @@ export class ComposerController {
       this.host.clearVisibleError(sessionId);
       return {
         accepted: true,
-        historyEntry: response?.historyEntry ?? null,
+        historyEntry: response.historyEntry,
       };
     } catch (error) {
       if (!ownsTransport()) return false;
@@ -472,10 +470,7 @@ export class ComposerController {
         mimeType: file.type || "application/octet-stream",
         size: file.size,
         kind: isImage ? "image" : "file",
-        previewUrl:
-          isImage && typeof URL.createObjectURL === "function"
-            ? URL.createObjectURL(file)
-            : undefined,
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
         status: "uploading",
       };
     });
@@ -570,9 +565,7 @@ export class ComposerController {
     const target = composer.attachments.find(
       (item) => item.localId === localId,
     );
-    if (target?.previewUrl && typeof URL.revokeObjectURL === "function") {
-      URL.revokeObjectURL(target.previewUrl);
-    }
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
     composer.attachments = composer.attachments.filter(
       (item) => item.localId !== localId,
     );
@@ -627,9 +620,7 @@ export class ComposerController {
 
   private releaseAttachments(items: readonly PendingAttachment[]): void {
     for (const attachment of items) {
-      if (attachment.previewUrl && typeof URL.revokeObjectURL === "function") {
-        URL.revokeObjectURL(attachment.previewUrl);
-      }
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       if (attachment.uploadedId) {
         void this.host
           .api()

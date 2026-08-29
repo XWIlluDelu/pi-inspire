@@ -12,10 +12,7 @@ export const DYNAMIC_FOLD_CLOSE_DELAY_MS = 800;
 const DYNAMIC_TOOL_COMPACT_MIN_MS = 800;
 
 export function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
-  );
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 type DynamicActivityPhase = "cards" | "collapsing" | "collapsed";

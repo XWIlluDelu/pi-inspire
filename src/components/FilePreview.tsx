@@ -413,11 +413,10 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       preview?.status === "ready" &&
       hasSourceAndPreview(descriptor, preview.text),
   );
-  const sourceOnly = Boolean(
+  const sourceOnly =
     descriptor?.kind === "text" &&
-      preview?.status === "ready" &&
-      preview.text !== undefined,
-  );
+    preview?.status === "ready" &&
+    preview.text !== undefined;
   const defaultView: FileViewMode = sourceOnly ? "source" : "preview";
   const viewMode =
     descriptor && fileView?.resourceId === descriptor.id

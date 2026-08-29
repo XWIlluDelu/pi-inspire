@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type {
@@ -103,9 +104,7 @@ export class PreviewProjection
     _effectiveLeafId?: string | null,
     _viewId?: string,
   ): TranscriptPage {
-    throw Object.assign(new Error("This transcript has no older page"), {
-      status: 409,
-    });
+    throw requestError("This transcript has no older page", 409);
   }
 
   visiblePage(
@@ -121,9 +120,7 @@ export class PreviewProjection
     _effectiveLeafId?: string | null,
     _viewId?: string,
   ): TranscriptActivityPage {
-    throw Object.assign(new Error("This transcript has no deferred activity"), {
-      status: 409,
-    });
+    throw requestError("This transcript has no deferred activity", 409);
   }
 
   userTurnIndexPage(
@@ -191,10 +188,7 @@ export class PreviewProjection
   }
 
   branchTree(): BranchTreeResponse {
-    throw Object.assign(
-      new Error("Branch history is unavailable for this preview"),
-      { status: 503 },
-    );
+    throw requestError("Branch history is unavailable for this preview", 503);
   }
 
   entry(_id: string): SessionEntry | null {
@@ -206,10 +200,7 @@ export class PreviewProjection
   }
 
   userText(_id: string, _maxChars: number): string {
-    throw Object.assign(
-      new Error("Branch history is unavailable for this preview"),
-      { status: 503 },
-    );
+    throw requestError("Branch history is unavailable for this preview", 503);
   }
 
   viewMessages(): readonly unknown[] {

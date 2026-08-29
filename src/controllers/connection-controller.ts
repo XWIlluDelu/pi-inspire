@@ -89,16 +89,16 @@ export type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
 interface ConnectionControllerHost {
   state(): {
     bootstrapped: boolean;
-    authorityId?: string | null;
-    snapshotDigest?: string | null;
+    authorityId: string | null;
+    snapshotDigest: string | null;
   };
   patch(patch: {
     connection?: ManagedConnectionState;
     connectionProblem?: ManagedConnectionProblem;
   }): void;
   applyEvent(event: WireEvent): void;
-  recordSnapshotDigest?(digest: string): void;
-  invalidateSnapshotDigest?(): void;
+  recordSnapshotDigest(digest: string): void;
+  invalidateSnapshotDigest(): void;
   /** A deliberate replacement invalidates ownership tied to the old stream. */
   onTransportReplaced(): void;
   /** An unexpected close invalidates stream-owned state before retrying. */
@@ -124,8 +124,8 @@ function parseWireEvent(data: unknown): WireEvent | null {
 
 function authoritativeSnapshot(
   event: WireEvent,
-  expectedAuthority: string | null | undefined,
-  expectedDigest: string | null | undefined,
+  expectedAuthority: string | null,
+  expectedDigest: string | null,
 ): { kind: "full" | "unchanged"; digest: string | null } | null {
   if (event.type !== "snapshot") return null;
   if (
@@ -156,8 +156,6 @@ function authoritativeSnapshot(
     !Object.values(statuses).every(isSessionRuntimeStatus)
   )
     return null;
-  // Production snapshots always carry their authority-bound digest. Unit hosts
-  // without an authority retain the smaller legacy fixture contract.
   if (expectedAuthority && !digest) return null;
   return { kind: "full", digest };
 }
@@ -213,8 +211,8 @@ export class ConnectionController {
 
     const previous = this.socket;
     if (previous) {
-      // Detach before close: an eager test double must not synchronously turn
-      // this deliberate replacement into an unexpected reconnect.
+      // Detach before close so this deliberate replacement cannot be observed
+      // as an unexpected disconnect.
       this.socket = null;
       this.host.onTransportReplaced();
       previous.close();
@@ -258,8 +256,7 @@ export class ConnectionController {
         }
         try {
           this.host.applyEvent(event);
-          if (snapshot.digest)
-            this.host.recordSnapshotDigest?.(snapshot.digest);
+          if (snapshot.digest) this.host.recordSnapshotDigest(snapshot.digest);
         } catch {
           this.failSocket(socket, "bootstrap");
           return;
@@ -275,9 +272,7 @@ export class ConnectionController {
         recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
           phase,
           snapshot: snapshot.kind,
-          compression:
-            typeof socket.extensions === "string" &&
-            socket.extensions.includes("permessage-deflate"),
+          compression: socket.extensions.includes("permessage-deflate"),
           characters: String(frame.data).length,
         });
         this.beginStreamMetrics();
@@ -300,13 +295,12 @@ export class ConnectionController {
           return;
         }
         if (!this.applySocketEvent(socket, event)) return;
-        if (snapshot.digest) this.host.recordSnapshotDigest?.(snapshot.digest);
+        if (snapshot.digest) this.host.recordSnapshotDigest(snapshot.digest);
         return;
       }
       // Host-wide update status is carried on the authenticated stream but is
       // not part of the runtime snapshot digest.
-      if (event.type !== "update_status")
-        this.host.invalidateSnapshotDigest?.();
+      if (event.type !== "update_status") this.host.invalidateSnapshotDigest();
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);
@@ -570,9 +564,7 @@ export class ConnectionController {
   }
 
   private pageVisible(): boolean {
-    return (
-      typeof document === "undefined" || document.visibilityState !== "hidden"
-    );
+    return document.visibilityState !== "hidden";
   }
 
   private clearReconnectTimer(): void {

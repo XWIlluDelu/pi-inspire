@@ -165,12 +165,9 @@ export function useFloatingMenuPlacement(
 
     const target = resolveTarget();
     const center = target?.context.closest<HTMLElement>(".center");
-    const resizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(schedule);
+    const resizeObserver = new ResizeObserver(schedule);
     for (const element of new Set([...(target?.observe ?? []), center])) {
-      if (element) resizeObserver?.observe(element);
+      if (element) resizeObserver.observe(element);
     }
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
@@ -180,7 +177,7 @@ export function useFloatingMenuPlacement(
 
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
-      resizeObserver?.disconnect();
+      resizeObserver.disconnect();
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);
       window.visualViewport?.removeEventListener("resize", schedule);

@@ -45,10 +45,7 @@ function localAttachment(file: File): WelcomeAttachment {
     mimeType: file.type || "application/octet-stream",
     size: file.size,
     kind: image ? "image" : "file",
-    previewUrl:
-      image && typeof URL.createObjectURL === "function"
-        ? URL.createObjectURL(file)
-        : undefined,
+    previewUrl: image ? URL.createObjectURL(file) : undefined,
     status: "ready",
   };
 }
@@ -380,7 +377,7 @@ export const Welcome = memo(function Welcome({
         onDrop={(event) => {
           event.preventDefault();
           setDropActive(false);
-          addFiles(Array.from(event.dataTransfer?.files ?? []));
+          addFiles(Array.from(event.dataTransfer.files));
         }}
       >
         <input

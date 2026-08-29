@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath } from "node:fs/promises";
@@ -107,6 +108,7 @@ import {
   emptyCustomActivityOwnership,
   type PendingBranchBridge,
   type PersistenceExpectation,
+  type RuntimeOperationQueue,
   type RuntimeSlot,
 } from "./runtime-slot.js";
 import { projectSafeValue } from "./safe-projection.js";
@@ -146,9 +148,9 @@ function assertPublicPrompt(slot: RuntimeSlot, entered: string): void {
     (entered.startsWith(reserved) &&
       /^\s/u.test(entered.slice(reserved.length)))
   ) {
-    throw Object.assign(
-      new Error("That command is reserved for internal branch navigation"),
-      { status: 403 },
+    throw requestError(
+      "That command is reserved for internal branch navigation",
+      403,
     );
   }
 }
@@ -462,19 +464,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         workerOptions: (cwd, args, bridge) =>
           this.workerOptions(cwd, args, bridge),
         newBridgeIdentity,
-        attachProcess: (slot, rpc) => this.attachProcess(slot, rpc),
+        attachProcess: (slot, rpc) => this.processRegistry.attach(slot, rpc),
         detachProcess: (rpc) => this.processRegistry.detach(rpc),
         reconcile: (slot, force, startupAttestation) =>
           this.reconcileSlot(slot, force, startupAttestation),
         clearPendingExtensionUi: (slot, reason) =>
           this.extensionUi.clear(slot, reason),
-        clearWriterBaseline: (slot) => this.clearWriterProjectionBaseline(slot),
+        clearWriterBaseline: (slot) =>
+          this.projectionCoordinator.clearWriterBaseline(slot),
         captureWriterBaseline: (slot) =>
-          this.captureWriterProjectionBaseline(slot),
+          this.projectionCoordinator.captureWriterBaseline(slot),
         writerBaselineMatches: (slot) =>
-          this.writerProjectionBaselineMatches(slot),
-        writerOwnershipActive: (slot) => this.writerOwnershipActive(slot),
-        clearPartialPersistence: (slot) => this.clearPartialPersistence(slot),
+          this.projectionCoordinator.writerBaselineMatches(slot),
+        writerOwnershipActive: (slot) =>
+          this.projectionCoordinator.writerOwnershipActive(slot),
+        clearPartialPersistence: (slot) =>
+          this.projectionCoordinator.clearPartialPersistence(slot),
         setProjectionConflict: (slot, kind, message, diagnosticFields) =>
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         renewView: (slot) => this.renewView(slot),
@@ -500,7 +505,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           sessionPath && this.forkReservationsByPath.has(resolve(sessionPath)),
         ),
       detachProcess: (_slot, rpc) => this.processRegistry.detach(rpc),
-      clearWriterBaseline: (slot) => this.clearWriterProjectionBaseline(slot),
+      clearWriterBaseline: (slot) =>
+        this.projectionCoordinator.clearWriterBaseline(slot),
       renewView: (slot) => this.renewView(slot),
       removeSlot: (slot) => {
         if (this.slots.get(slot.id) === slot) this.slots.delete(slot.id);
@@ -533,7 +539,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       () => this.expireMaintenanceRestart(),
       MAINTENANCE_RESTART_LEASE_MS,
     );
-    this.maintenanceRestartTimer.unref?.();
+    this.maintenanceRestartTimer.unref();
     this.diagnostics.record("info", "maintenance_restart_reserved", {
       expiresAt,
     });
@@ -555,11 +561,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private hasInFlightRuntimeOperation(): boolean {
     if (
       this.loadingSlots.size > 0 ||
-      this.loadingPaths.size > 0 ||
       this.opening.size > 0 ||
       this.selectionReservations.size > 0 ||
       this.forkReservationsById.size > 0 ||
-      this.forkReservationsByPath.size > 0 ||
       this.provisionalSlots.size > 0 ||
       this.deletions.hasInFlight()
     )
@@ -567,8 +571,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return [...this.slots.values()].some(
       (slot) =>
         slot.activeOperations > 0 ||
-        slot.mutationPending > 0 ||
-        slot.extensionResponsePending > 0 ||
         slot.stopping !== null ||
         slot.startupStop !== null ||
         slot.startupPhase === "starting" ||
@@ -594,9 +596,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
     if (this.maintenanceRestartExpiresAt !== null)
-      throw Object.assign(
-        new Error("INSΠRE is preparing a scheduled maintenance restart"),
-        { status: 503 },
+      throw requestError(
+        "INSΠRE is preparing a scheduled maintenance restart",
+        503,
       );
   }
 
@@ -681,10 +683,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.loadingSlots.has(id) ||
       this.loadingPaths.has(path)
     ) {
-      throw Object.assign(
-        new Error("Fork destination is already being attached"),
-        { status: 409 },
-      );
+      throw requestError("Fork destination is already being attached", 409);
     }
     let settle!: () => void;
     let released = false;
@@ -755,38 +754,45 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  /** One FIFO gate owns worker startup and every persistence-capable command. */
-  private mutateSlot<T>(
+  private queueSlotOperation<T>(
     slot: RuntimeSlot,
+    queue: RuntimeOperationQueue,
     operation: () => Promise<T>,
   ): Promise<T> {
     const guarded = () => {
-      if (this.closing)
-        throw Object.assign(new Error("Runtime is closing"), { status: 503 });
+      if (this.closing) throw requestError("Runtime is closing", 503);
       return operation();
     };
     slot.activeOperations += 1;
-    slot.mutationPending += 1;
+    queue.pending += 1;
     this.touch(slot);
     let run: Promise<T>;
-    if (slot.mutationPending === 1) {
+    if (queue.pending === 1) {
       try {
         run = Promise.resolve(guarded());
       } catch (error) {
         run = Promise.reject(error);
       }
     } else {
-      run = slot.mutationTail.then(guarded, guarded);
+      run = queue.tail.then(guarded, guarded);
     }
-    slot.mutationTail = run.then(
+    queue.tail = run.then(
       () => undefined,
       () => undefined,
     );
     return run.finally(() => {
       slot.activeOperations -= 1;
-      slot.mutationPending -= 1;
+      queue.pending -= 1;
       this.scheduleIdleWorkerEviction();
     });
+  }
+
+  /** One FIFO gate owns worker startup and every persistence-capable command. */
+  private mutateSlot<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.queueSlotOperation(slot, slot.mutationQueue, operation);
   }
 
   /** Extension responses are non-persisting and must be deliverable while a
@@ -796,53 +802,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const guarded = () => {
-      if (this.closing)
-        throw Object.assign(new Error("Runtime is closing"), { status: 503 });
-      return operation();
-    };
-    slot.activeOperations += 1;
-    slot.extensionResponsePending += 1;
-    this.touch(slot);
-    let run: Promise<T>;
-    if (slot.extensionResponsePending === 1) {
-      try {
-        run = Promise.resolve(guarded());
-      } catch (error) {
-        run = Promise.reject(error);
-      }
-    } else {
-      run = slot.extensionResponseTail.then(guarded, guarded);
-    }
-    slot.extensionResponseTail = run.then(
-      () => undefined,
-      () => undefined,
+    return this.queueSlotOperation(
+      slot,
+      slot.extensionResponseQueue,
+      operation,
     );
-    return run.finally(() => {
-      slot.activeOperations -= 1;
-      slot.extensionResponsePending -= 1;
-      this.scheduleIdleWorkerEviction();
-    });
-  }
-
-  private captureWriterProjectionBaseline(slot: RuntimeSlot): void {
-    this.projectionCoordinator.captureWriterBaseline(slot);
-  }
-
-  private clearWriterProjectionBaseline(slot: RuntimeSlot): void {
-    this.projectionCoordinator.clearWriterBaseline(slot);
-  }
-
-  private writerProjectionBaselineMatches(slot: RuntimeSlot): boolean {
-    return this.projectionCoordinator.writerBaselineMatches(slot);
-  }
-
-  private writerOwnershipActive(slot: RuntimeSlot): boolean {
-    return this.projectionCoordinator.writerOwnershipActive(slot);
-  }
-
-  private clearPartialPersistence(slot: RuntimeSlot): void {
-    this.projectionCoordinator.clearPartialPersistence(slot);
   }
 
   private setProjectionConflict(
@@ -903,13 +867,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private throwIfConflicted(slot: RuntimeSlot): void {
     if (slot.conflict || slot.projection?.health.status === "error") {
-      throw Object.assign(
-        new Error(
-          slot.conflict?.message ??
-            slot.projection?.health.message ??
-            "Session projection is unavailable",
-        ),
-        { status: 409 },
+      throw requestError(
+        slot.conflict?.message ??
+          slot.projection?.health.message ??
+          "Session projection is unavailable",
+        409,
       );
     }
   }
@@ -940,10 +902,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       `Pi ${error.command} outcome is unknown; the worker was stopped and disk state reconciled`,
     );
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
-    throw Object.assign(new Error(conflict.message), {
-      status: 504,
-      outcomeUnknown: true,
-    });
+    throw requestError(conflict.message, 504, { outcomeUnknown: true });
   }
 
   private async reconcileAcceptedPersistence(
@@ -980,10 +939,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // Other mutations still fail because their requested final state could
       // have been superseded by the conflicting projection.
       if (acceptedIsSuccess) return false;
-      throw Object.assign(new Error(conflict.message), {
-        status: 409,
-        accepted: true,
-      });
+      throw requestError(conflict.message, 409, { accepted: true });
     }
   }
 
@@ -1057,28 +1013,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private assertNotClosing(): void {
-    if (this.closing)
-      throw Object.assign(new Error("Runtime is closing"), { status: 503 });
-  }
-
-  private isDeletingSession(sessionId: string): boolean {
-    return this.deletions.isDeleting(sessionId);
+    if (this.closing) throw requestError("Runtime is closing", 503);
   }
 
   /** Writes are addressed: the caller names the session, and a concurrent
    * selection change on the host can never redirect them. */
   private requireSlot(sessionId: string): RuntimeSlot {
     this.assertNotClosing();
-    if (this.isDeletingSession(sessionId)) {
-      throw Object.assign(new Error("That session is being deleted"), {
-        status: 409,
-      });
+    if (this.deletions.isDeleting(sessionId)) {
+      throw requestError("That session is being deleted", 409);
     }
     const slot = this.slots.get(sessionId);
-    if (!slot)
-      throw Object.assign(new Error("That session is not open on this host"), {
-        status: 409,
-      });
+    if (!slot) throw requestError("That session is not open on this host", 409);
     return slot;
   }
 
@@ -1127,10 +1073,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  private attachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void {
-    this.processRegistry.attach(slot, rpc);
-  }
-
   private handleProcessExit(
     slot: RuntimeSlot,
     _rpc: PiRpcProcess,
@@ -1140,7 +1082,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.ready = false;
     slot.compactionReturnState = null;
     slot.activeAssistantCorrelation = null;
-    this.clearWriterProjectionBaseline(slot);
+    this.projectionCoordinator.clearWriterBaseline(slot);
     slot.bridge = null;
     this.renewView(slot);
     if (slot.navigationLease) slot.branchRevision += 1;
@@ -1150,7 +1092,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.pendingBranchBridge = null;
     }
     if (slot.pendingPartialPersistence) {
-      this.clearPartialPersistence(slot);
+      this.projectionCoordinator.clearPartialPersistence(slot);
       this.setProjectionConflict(
         slot,
         "incomplete-persistence",
@@ -1330,14 +1272,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       return await realpath(resolved);
     } catch (error) {
-      // Test-only preview adapters intentionally use virtual paths. Real
-      // workspaces still require a canonical physical identity.
+      // A custom preview source may intentionally model a virtual workspace.
       if (
         this.loadPreview !== loadSessionPreview &&
         (error as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
+      )
         return resolved;
-      }
       throw error;
     }
   }
@@ -1374,9 +1314,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async prepareSlot(session: SessionRecord): Promise<RuntimeSlot> {
     this.assertNotClosing();
     if (this.deletions.isDeleting(session.id)) {
-      throw Object.assign(new Error("That session is being deleted"), {
-        status: 409,
-      });
+      throw requestError("That session is being deleted", 409);
     }
     const path = resolve(session.path);
     while (true) {
@@ -1394,9 +1332,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
     this.assertNotClosing();
     if (this.deletions.isDeleting(session.id)) {
-      throw Object.assign(new Error("That session is being deleted"), {
-        status: 409,
-      });
+      throw requestError("That session is being deleted", 409);
     }
     let existing = this.slots.get(session.id);
     if (existing?.stopping) await existing.stopping;
@@ -1413,9 +1349,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         resolve(slot.sessionPath) === path,
     );
     if (pathOwner)
-      throw Object.assign(
-        new Error("Session path is already owned by another session"),
-        { status: 409 },
+      throw requestError(
+        "Session path is already owned by another session",
+        409,
       );
     const pending = this.loadingSlots.get(session.id);
     if (pending) return pending;
@@ -1423,9 +1359,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (pendingPath) {
       const loaded = await pendingPath;
       if (loaded.id === session.id) return loaded;
-      throw Object.assign(
-        new Error("Session path is already owned by another session"),
-        { status: 409 },
+      throw requestError(
+        "Session path is already owned by another session",
+        409,
       );
     }
 
@@ -1461,7 +1397,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.pendingQueues = emptyPendingQueues();
         current.extensionDisplays = [];
         current.extensionStatuses = {};
-        this.clearWriterProjectionBaseline(current);
+        this.projectionCoordinator.clearWriterBaseline(current);
         current.overlay = [];
         current.overlayItemBytes = [];
         current.overlayBytes = 2;
@@ -1507,7 +1443,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (
       slot.process &&
       slot.ready &&
-      this.writerProjectionBaselineMatches(slot)
+      this.projectionCoordinator.writerBaselineMatches(slot)
     )
       return slot;
     const pending = this.opening.get(slot.id);
@@ -1531,10 +1467,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async openSessionInside(id: string): Promise<ActiveSnapshot> {
     this.assertNotClosing();
-    if (this.isDeletingSession(id)) {
-      throw Object.assign(new Error("That session is being deleted"), {
-        status: 409,
-      });
+    if (this.deletions.isDeleting(id)) {
+      throw requestError("That session is being deleted", 409);
     }
     const selection = ++this.selectionSequence;
     this.selectionReservations.set(
@@ -1543,8 +1477,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     );
     try {
       const session = await this.catalog.get(id);
-      if (!session)
-        throw Object.assign(new Error("Session not found"), { status: 404 });
+      if (!session) throw requestError("Session not found", 404);
 
       const slot = await this.prepareSlot(session);
       const ready = Boolean(slot.process && slot.ready);
@@ -1663,7 +1596,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       finishProvisional = resolveCompletion;
     });
     this.provisionalSlots.set(provisionalId, { slot, completion });
-    this.attachProcess(slot, rpc);
+    this.processRegistry.attach(slot, rpc);
     try {
       slot.startupPhase = "starting";
       await rpc.start();
@@ -1693,7 +1626,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ({ slot: existing }) =>
             existing !== slot && existing.id === sessionId,
         ) ||
-        this.isDeletingSession(sessionId) ||
+        this.deletions.isDeleting(sessionId) ||
         this.forkReservationsById.has(sessionId) ||
         (reportedPath !== null && this.forkReservationsByPath.has(reportedPath))
       )
@@ -1732,12 +1665,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           const initialEntries = await this.readNewSessionEntries(slot, rpc);
           await pendingProjection.reconcileSuspended(true);
           if (pendingProjection.health.status === "error") {
-            throw Object.assign(
-              new Error(
-                pendingProjection.health.message ??
-                  "The new session file could not be verified",
-              ),
-              { status: 409 },
+            throw requestError(
+              pendingProjection.health.message ??
+                "The new session file could not be verified",
+              409,
             );
           }
           if (
@@ -1745,11 +1676,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             pendingProjection.attestInitialMaterialization(initialEntries) ===
               "mismatch"
           ) {
-            throw Object.assign(
-              new Error(
-                "The new session file appeared with entries that do not match its Pi worker",
-              ),
-              { status: 409 },
+            throw requestError(
+              "The new session file appeared with entries that do not match its Pi worker",
+              409,
             );
           }
           projection = pendingProjection;
@@ -1798,7 +1727,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         availableModels: [],
         commands: [],
       };
-      this.captureWriterProjectionBaseline(slot);
+      this.projectionCoordinator.captureWriterBaseline(slot);
       this.attachProjection(slot, projection);
       projection.resumeReconciliation();
       // Extensions may have asked for input while the slot still carried its
@@ -1812,9 +1741,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const extras = await this.readRuntimeExtras(slot, rpc);
       this.assertNotClosing();
       if (slot.process !== rpc || !slot.ready || !rpc.available) {
-        throw Object.assign(
-          new Error("Pi exited before the new session became ready"),
-          { status: 503 },
+        throw requestError(
+          "Pi exited before the new session became ready",
+          503,
         );
       }
       slot.preview = {
@@ -1924,12 +1853,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       throw error;
     }
-    if (this.slots.get(slot.id) !== slot || this.isDeletingSession(slot.id)) {
+    if (
+      this.slots.get(slot.id) !== slot ||
+      this.deletions.isDeleting(slot.id)
+    ) {
       this.attachments.restage(request.attachmentIds);
-      throw Object.assign(
-        new Error("The session changed before prompt delivery"),
-        { status: 409 },
-      );
+      throw requestError("The session changed before prompt delivery", 409);
     }
 
     let enteredGate = false;
@@ -1960,9 +1889,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
           const readySlot = await this.ensureFreshWriterInsideGate(slot);
           if (!readySlot.process || !readySlot.ready) {
-            throw Object.assign(new Error("Pi runtime failed to start"), {
-              status: 503,
-            });
+            throw requestError("Pi runtime failed to start", 503);
           }
           assertPublicPrompt(readySlot, message);
           if (request.historyArtifacts) {
@@ -1988,11 +1915,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 (path, index) => path !== history.projectFiles[index],
               );
             if (changed) {
-              throw Object.assign(
-                new Error(
-                  "A recalled attachment changed before prompt delivery",
-                ),
-                { status: 409 },
+              throw requestError(
+                "A recalled attachment changed before prompt delivery",
+                409,
               );
             }
             history = refreshed;
@@ -2013,11 +1938,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ];
           const expectedProjectFiles = [...new Set(selectedProjectFiles)];
           if (expectedProjectFiles.length > MAX_PROJECT_FILES) {
-            throw Object.assign(
-              new Error(
-                `At most ${MAX_PROJECT_FILES} project files per message`,
-              ),
-              { status: 413 },
+            throw requestError(
+              `At most ${MAX_PROJECT_FILES} project files per message`,
+              413,
             );
           }
           // Revalidate direct and recalled project files together after every
@@ -2188,9 +2111,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.reconcileSlot(slot, true);
       this.throwIfConflicted(slot);
       if (!slot.projection)
-        throw Object.assign(new Error("Session projection is not available"), {
-          status: 503,
-        });
+        throw requestError("Session projection is not available", 503);
       return {
         ...slot.projection.branchTree(this.effectiveLeaf(slot)),
         revision: slot.branchRevision,
@@ -2203,9 +2124,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     revision: number,
   ): void {
     if (slot.branchRevision !== revision) {
-      throw Object.assign(
-        new Error("Branch view is stale; refresh before changing history"),
-        { status: 409 },
+      throw requestError(
+        "Branch view is stale; refresh before changing history",
+        409,
       );
     }
   }
@@ -2219,11 +2140,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.pendingQueues.steering.length > 0 ||
       slot.pendingQueues.followUp.length > 0
     ) {
-      throw Object.assign(
-        new Error(
-          "Branch navigation requires an idle session with no pending dialog or queue",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Branch navigation requires an idle session with no pending dialog or queue",
+        409,
       );
     }
   }
@@ -2266,10 +2185,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       message,
     );
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
-    throw Object.assign(new Error(message), {
-      status: 504,
-      outcomeUnknown: true,
-    });
+    throw requestError(message, 504, { outcomeUnknown: true });
   }
 
   async navigateBranch(
@@ -2291,34 +2207,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const projection = ready.projection;
       const bridge = ready.bridge;
       if (!projection || !bridge)
-        throw Object.assign(
-          new Error("Branch navigation bridge is unavailable"),
-          { status: 503 },
-        );
+        throw requestError("Branch navigation bridge is unavailable", 503);
       const target = projection.entry(request.targetId);
-      if (!target)
-        throw Object.assign(new Error("Branch target does not exist"), {
-          status: 404,
-        });
+      if (!target) throw requestError("Branch target does not exist", 404);
 
       let navigationTarget = request.targetId;
       let editorText: string | undefined;
       if (request.mode === "edit") {
         editorText = projection.userText(request.targetId, MAX_PROMPT_CHARS);
         if (target.parentId === null) {
-          throw Object.assign(
-            new Error(
-              "Editing the root user message is not supported by Pi's public navigation API",
-            ),
-            { status: 409 },
+          throw requestError(
+            "Editing the root user message is not supported by Pi's public navigation API",
+            409,
           );
         }
         navigationTarget = target.parentId;
       } else if (target.type === "message" && target.role === "user") {
-        throw Object.assign(
-          new Error("Use Edit from here for a user message"),
-          { status: 409 },
-        );
+        throw requestError("Use Edit from here for a user message", 409);
       }
 
       const beforeLeaf = this.effectiveLeaf(slot);
@@ -2331,15 +2236,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const sourceProjectionRevision = projection.revision;
       const sourceProjectionFingerprint = projection.fingerprint;
       if (!tail)
-        throw Object.assign(
-          new Error("An empty session cannot change branches"),
-          { status: 409 },
-        );
+        throw requestError("An empty session cannot change branches", 409);
       if (slot.pendingBranchBridge)
-        throw Object.assign(
-          new Error("A branch operation is already pending"),
-          { status: 409 },
-        );
+        throw requestError("A branch operation is already pending", 409);
 
       const pending = this.makePendingBranch(slot, bridge);
       const bridgeRequest: BranchBridgeRequest = {
@@ -2367,7 +2266,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               reject(new Error("Timed out waiting for branch bridge result")),
             this.branchBridgeTimeoutMs,
           );
-          timeout.unref?.();
+          timeout.unref();
         }),
       ]);
       const [resultOutcome, promptOutcome] = await Promise.allSettled([
@@ -2434,9 +2333,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             "Cancelled branch navigation changed the effective leaf",
           );
-        throw Object.assign(
-          new Error("Branch navigation was cancelled by an extension"),
-          { status: 409 },
+        throw requestError(
+          "Branch navigation was cancelled by an extension",
+          409,
         );
       }
       if (!result.ok || result.error) {
@@ -2445,10 +2344,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             "Failed branch navigation changed the effective leaf",
           );
-        throw Object.assign(
-          new Error(result.error ?? "Branch navigation failed"),
-          { status: 409 },
-        );
+        throw requestError(result.error ?? "Branch navigation failed", 409);
       }
       if (result.effectiveLeaf !== navigationTarget) {
         return this.failUnknownBranchOutcome(
@@ -2492,9 +2388,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const source = this.requireSlot(request.sessionId);
     return this.mutateSlot(source, async () => {
       if (this.selectedSessionId !== source.id) {
-        throw Object.assign(
-          new Error("Fork requires the source session to remain selected"),
-          { status: 409 },
+        throw requestError(
+          "Fork requires the source session to remain selected",
+          409,
         );
       }
       await this.reconcileSlot(source, true);
@@ -2503,19 +2399,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const projection = source.projection;
       const sourcePath = source.sessionPath;
       if (!projection || !sourcePath) {
-        throw Object.assign(
-          new Error("Fork requires a materialized source Session"),
-          { status: 409 },
-        );
+        throw requestError("Fork requires a materialized source Session", 409);
       }
       const tree = projection.branchTree(this.effectiveLeaf(source));
       const node = tree.nodes.find(
         (candidate) => candidate.id === request.targetId,
       );
       if (!node?.canFork) {
-        throw Object.assign(
-          new Error("Fork requires a user message on the active branch"),
-          { status: 409 },
+        throw requestError(
+          "Fork requires a user message on the active branch",
+          409,
         );
       }
       const editorText = projection.userText(
@@ -2543,7 +2436,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           destinationId === source.id ||
           this.slots.has(destinationId) ||
           this.loadingSlots.has(destinationId) ||
-          this.isDeletingSession(destinationId) ||
+          this.deletions.isDeleting(destinationId) ||
           [...this.provisionalSlots.values()].some(
             ({ slot }) => slot.id === destinationId,
           );
@@ -2561,9 +2454,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               resolve(slot.sessionPath) === destinationPath,
           );
         if (identityCollision || pathCollision) {
-          throw Object.assign(
-            new Error("Pi returned an invalid or colliding fork identity"),
-            { status: 409 },
+          throw requestError(
+            "Pi returned an invalid or colliding fork identity",
+            409,
           );
         }
 
@@ -2588,10 +2481,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           stagedProjection.leafId !== node.parentId ||
           stagedProjection.entry(request.targetId) !== null
         ) {
-          throw Object.assign(
-            new Error("Pi produced an invalid fork destination"),
-            { status: 409 },
-          );
+          throw requestError("Pi produced an invalid fork destination", 409);
         }
         await stagedProjection.close();
         stagedProjection = null;
@@ -2603,9 +2493,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           destinationPath,
         );
         if (await this.catalog.get(destinationId)) {
-          throw Object.assign(
-            new Error("The fork destination identity already exists"),
-            { status: 409 },
+          throw requestError(
+            "The fork destination identity already exists",
+            409,
           );
         }
         if (
@@ -2615,9 +2505,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.loadingSlots.has(destinationId) ||
           this.loadingPaths.has(destinationPath)
         ) {
-          throw Object.assign(
-            new Error("Fork destination ownership changed before publication"),
-            { status: 409 },
+          throw requestError(
+            "Fork destination ownership changed before publication",
+            409,
           );
         }
 
@@ -2711,9 +2601,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.catalog.invalidate();
         const message = `Fork created Session ${destinationId}, but INSΠRE could not attach it. Refresh Sessions and open that destination instead of retrying the fork`;
         this.logRuntimeError(destinationId, error, "fork_post_publish");
-        throw Object.assign(new Error(message, { cause: error }), {
-          status: 409,
-        });
+        throw requestError(message, 409, { cause: error });
       } finally {
         reservation?.release();
         if (!published)
@@ -2733,10 +2621,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         let slot = initialSlot;
         if (!slot.projection) {
           const session = await this.catalog.get(sessionId);
-          if (!session)
-            throw Object.assign(new Error("Session not found"), {
-              status: 404,
-            });
+          if (!session) throw requestError("Session not found", 404);
           slot = await this.prepareSlot(session);
         }
         await this.mutateSlot(slot, async () => {
@@ -2782,9 +2667,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     await this.useSlot(slot, async () => {
       const rpc = slot.process;
       if (!rpc || !slot.ready) {
-        throw Object.assign(new Error("There is no live Pi runtime to abort"), {
-          status: 409,
-        });
+        throw requestError("There is no live Pi runtime to abort", 409);
       }
       await rpc.request({ type: "abort" });
       this.extensionUi.clear(slot, "aborted");
@@ -3097,7 +2980,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       for (const expectation of slot.persistenceExpectations)
         expectation.settle(null);
       slot.persistenceExpectations = [];
-      this.clearPartialPersistence(slot);
+      this.projectionCoordinator.clearPartialPersistence(slot);
       if (slot.pendingBranchBridge) {
         slot.pendingBranchBridge.reject(new Error("Runtime is closing"));
         slot.pendingBranchBridge = null;
@@ -3130,8 +3013,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...this.deletions.settled(),
       ...provisional.map((entry) => entry.completion),
       ...[...ownedSlots].flatMap((slot) => [
-        slot.mutationTail,
-        slot.extensionResponseTail,
+        slot.mutationQueue.tail,
+        slot.extensionResponseQueue.tail,
         slot.eventTail,
         slot.projectionTail,
       ]),
@@ -3151,8 +3034,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     await Promise.allSettled([
       ...this.stopSlotsForClose(finalSlots),
       ...[...finalSlots].flatMap((slot) => [
-        slot.mutationTail,
-        slot.extensionResponseTail,
+        slot.mutationQueue.tail,
+        slot.extensionResponseQueue.tail,
         slot.eventTail,
         slot.projectionTail,
       ]),

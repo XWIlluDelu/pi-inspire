@@ -71,21 +71,25 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
+async function readPiManifest(root: string): Promise<PiPackageManifest | null> {
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(root, "package.json"), "utf8"),
+    ) as PiPackageManifest;
+    return manifest.name === PI_PACKAGE_NAME ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
 async function findPackageRoot(entryPath: string): Promise<{
   root: string;
   manifest: PiPackageManifest;
 } | null> {
   let directory = dirname(entryPath);
   while (true) {
-    const manifestPath = join(directory, "package.json");
-    try {
-      const manifest = JSON.parse(
-        await readFile(manifestPath, "utf8"),
-      ) as PiPackageManifest;
-      if (manifest.name === PI_PACKAGE_NAME) {
-        return { root: directory, manifest };
-      }
-    } catch {}
+    const manifest = await readPiManifest(directory);
+    if (manifest) return { root: directory, manifest };
     const parent = dirname(directory);
     if (parent === directory) return null;
     directory = parent;
@@ -133,14 +137,10 @@ async function adjacentPackageRoot(
     resolve(directory, "..", "node_modules", PI_PACKAGE_NAME),
   ];
   for (const root of candidates) {
-    try {
-      const physicalRoot = await realpath(root);
-      const manifest = JSON.parse(
-        await readFile(join(physicalRoot, "package.json"), "utf8"),
-      ) as PiPackageManifest;
-      if (manifest.name === PI_PACKAGE_NAME)
-        return { root: physicalRoot, manifest };
-    } catch {}
+    const physicalRoot = await realpath(root).catch(() => null);
+    if (!physicalRoot) continue;
+    const manifest = await readPiManifest(physicalRoot);
+    if (manifest) return { root: physicalRoot, manifest };
   }
   return null;
 }

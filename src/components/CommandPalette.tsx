@@ -215,8 +215,7 @@ export const CommandPalette = memo(function CommandPalette({
         id: `palette-${palette}`,
         group: "Preferences",
         title: `Palette: ${PALETTE_LABELS[palette]}`,
-        hint:
-          (state.prefs.palette ?? "amber") === palette ? "current" : undefined,
+        hint: state.prefs.palette === palette ? "current" : undefined,
         run: () => store.setPalette(palette),
       });
     }
@@ -260,9 +259,7 @@ export const CommandPalette = memo(function CommandPalette({
         group: "Preferences",
         title: `Activity groups: ${preferenceChoiceLabel(value)}`,
         hint:
-          (state.prefs.activityFoldVisibility ?? "dynamic") === value
-            ? "current"
-            : undefined,
+          state.prefs.activityFoldVisibility === value ? "current" : undefined,
         run: () => store.setActivityFoldVisibility(value),
       });
     }
@@ -329,12 +326,9 @@ export const CommandPalette = memo(function CommandPalette({
     else sections.set(item.group, [{ item, index: itemIndex }]);
   });
 
-  // Keyboard navigation must keep the active row visible (jsdom has no
-  // scrollIntoView, hence the guard).
   useEffect(() => {
     const active = listRef.current?.querySelector('[aria-selected="true"]');
-    if (active && typeof active.scrollIntoView === "function")
-      active.scrollIntoView({ block: "nearest" });
+    active?.scrollIntoView({ block: "nearest" });
   }, [clamped, filtered.length]);
 
   const runItem = (item: PaletteItem | undefined) => {

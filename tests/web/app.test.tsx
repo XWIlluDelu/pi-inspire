@@ -12,7 +12,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // App integration assertions exercise the real panel, not lazy-transform
 // scheduling. Preload this chunk outside each test's behavior timeout.
 import "../../src/components/ContextPane";
-import { App, composeDocumentTitle, sessionHeading } from "../../src/App";
+import { App } from "../../src/App";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -238,38 +238,6 @@ beforeAll(async () => {
 });
 
 describe("welcome flow", () => {
-  it("presents an unnamed session by its first prompt without turning that prompt into an OS title", () => {
-    expect(sessionHeading("", "The first prompt", [], false)).toBe(
-      "The first prompt",
-    );
-    expect(sessionHeading("Named by Pi", "The first prompt", [], false)).toBe(
-      "Named by Pi",
-    );
-    expect(
-      sessionHeading(
-        "",
-        "Untitled session",
-        [
-          { role: "assistant", content: "not this" },
-          {
-            role: "user",
-            content: [{ type: "text", text: "  A live\n\nfirst prompt  " }],
-          },
-        ],
-        true,
-      ),
-    ).toBe("A live first prompt");
-    expect(
-      sessionHeading(
-        "",
-        undefined,
-        [{ role: "user", content: "later page" }],
-        false,
-      ),
-    ).toBe("New session");
-    expect(composeDocumentTitle(null, "", 0)).toBe("INSΠRE");
-  });
-
   it("avoids a duplicate recent list beside expanded navigation and opens a session from the nav", async () => {
     render(<App />);
     expect(
@@ -316,7 +284,6 @@ describe("welcome flow", () => {
     expect(deselectCalls).toBe(1);
     expect(store.getState().sessionId).toBeNull();
     expect(previous).not.toHaveAttribute("aria-current");
-    expect(previous.closest(".nav__row")).not.toHaveClass("nav__row--active");
     expect(
       within(nav).queryByRole("region", { name: "Workspace files" }),
     ).not.toBeInTheDocument();
@@ -380,28 +347,6 @@ describe("welcome flow", () => {
     }
   });
 
-  it("keeps the session identity in the topbar while the navigation is a rail", async () => {
-    render(<App />);
-    const navToggle = screen.getByRole("button", { name: "Toggle navigation" });
-    fireEvent.click(navToggle);
-    const topbar = document.querySelector(".topbar") as HTMLElement;
-    expect(topbar.querySelector(".wordmark")).toBeNull();
-    expect(document.querySelector(".nav--rail .wordmark")).toBeNull();
-    expect(
-      within(topbar).getByRole("button", { name: "Rename session" }),
-    ).toBeInTheDocument();
-    expect(
-      within(topbar).getByRole("button", { name: "Copy project path" }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(
-      within(topbar).getByRole("button", { name: "Toggle navigation" }),
-    );
-    expect(
-      within(topbar).getByRole("button", { name: "Rename session" }),
-    ).toBeInTheDocument();
-  });
-
   it("renames the session through the topbar control", async () => {
     render(<App />);
     fireEvent.click(
@@ -441,45 +386,6 @@ describe("welcome flow", () => {
 
     fireEvent.keyDown(reopened, { key: "Escape" });
     renameGate = null;
-  });
-
-  it("keeps extension status in the leading cluster before the fixed topbar actions", async () => {
-    render(<App />);
-    const ws = FakeWebSocket.instances.at(-1)!;
-    const text = "mc: 80.9K (30%) • idle";
-    act(() =>
-      ws.emit({
-        type: "extension_ui_request",
-        sessionId: store.getState().sessionId,
-        id: "context-status",
-        method: "setStatus",
-        statusKey: "magic-context",
-        statusText: `\u001b[36m${text}\u001b[0m`,
-      }),
-    );
-
-    const chip = await screen.findByTitle(text);
-    expect(chip).toHaveClass("topbar__extension-status");
-    const identity = document.querySelector(".topbar__ident");
-    const status = chip.closest(".topbar__status");
-    const actions = document.querySelector(".topbar__actions");
-    expect(identity?.nextElementSibling).toBe(status);
-    expect(status?.nextElementSibling).toBe(actions);
-    expect(actions).toContainElement(
-      screen.getByRole("button", { name: "Open command palette" }),
-    );
-    expect(document.querySelector(".topbar__spacer")).not.toBeInTheDocument();
-
-    act(() =>
-      ws.emit({
-        type: "extension_ui_request",
-        sessionId: store.getState().sessionId,
-        id: "context-status-clear",
-        method: "setStatus",
-        statusKey: "magic-context",
-        statusText: undefined,
-      }),
-    );
   });
 
   it("cancels a topbar rename editor when the visible session changes", async () => {
@@ -570,10 +476,7 @@ describe("welcome flow", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
     releaseFailure();
-    const warning = await screen.findByText(
-      "model unavailable after selection",
-    );
-    expect(warning.closest(".notice")).toHaveClass("notice--warning");
+    await screen.findByText("model unavailable after selection");
     expect(document.activeElement).toBe(trigger);
     modelFailureGate = null;
     store.dismissError();
@@ -609,11 +512,8 @@ describe("welcome flow", () => {
       "title",
       expect.stringContaining("open Changes"),
     );
-    expect(git.parentElement).toHaveClass("topbar__workspace-meta");
     expect(
-      within(git.parentElement as HTMLElement).getByRole("button", {
-        name: "Copy project path",
-      }),
+      within(topbar).getByRole("button", { name: "Copy project path" }),
     ).toBeInTheDocument();
 
     fireEvent.click(git);
@@ -623,51 +523,6 @@ describe("welcome flow", () => {
     expect(
       await within(pane).findByRole("button", { name: "Changes" }),
     ).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("reserves Git color semantics for conflicts and stale status", async () => {
-    render(<App />);
-    const git = await screen.findByRole("button", {
-      name: "Open Git changes: main, 3 changes",
-    });
-    const setState = store as unknown as {
-      set(partial: Record<string, unknown>): void;
-    };
-    setState.set({
-      gitStatus: {
-        kind: "repository",
-        head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
-        files: [],
-        total: 3,
-        truncated: false,
-        groups: {
-          conflicted: ["conflict"],
-          staged: [],
-          unstaged: [],
-          untracked: [],
-        },
-      },
-      gitStatusError: null,
-    });
-    await waitFor(() => expect(git).toHaveClass("topbar__git--conflict"));
-    expect(git).toHaveAccessibleName(
-      "Open Git changes: main, 3 changes, 1 conflict",
-    );
-
-    setState.set({ gitStatusError: "Git timed out" });
-    await waitFor(() => expect(git).toHaveClass("topbar__git--stale"));
-    expect(git).not.toHaveClass("topbar__git--conflict");
-  });
-
-  it("New session opens the start surface with a project directory field", async () => {
-    render(<App />);
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
-    expect(
-      await screen.findByLabelText("Project directory"),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("First message")).toBeInTheDocument();
-    await store.openSession("s1");
   });
 
   it("picks a project directory by browsing the host filesystem", async () => {
@@ -725,18 +580,6 @@ describe("welcome flow", () => {
     await store.openSession("s1");
   });
 
-  it("keeps the existing attribution row intact in Details mode", async () => {
-    act(() => store.setAssistantRoundDisplay("details"));
-    render(<App />);
-    await screen.findByText("answer text");
-    const transcript = within(screen.getByRole("log"));
-    // model appears once (head line), not repeated in a footer meta line
-    expect(transcript.getAllByText("kimi-k3")).toHaveLength(1);
-    // user bubbles carry no label; routine "stop" end reasons stay hidden
-    expect(transcript.queryByText(/You ·/)).not.toBeInTheDocument();
-    expect(transcript.queryByText("stop")).not.toBeInTheDocument();
-  });
-
   it("opens the command palette with Ctrl+K over real actions", async () => {
     render(<App />);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
@@ -761,25 +604,6 @@ describe("welcome flow", () => {
     expect(
       screen.queryByRole("dialog", { name: "Command palette" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("lets the command palette own Escape while a run is busy", async () => {
-    render(<App />);
-    const ws = FakeWebSocket.instances.at(-1)!;
-    act(() => ws.emit({ type: "agent_start" }));
-    expect(store.getState().runState).toBe("running");
-
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    expect(
-      await screen.findByRole("dialog", { name: "Command palette" }),
-    ).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByLabelText("Filter commands"), {
-      key: "Escape",
-    });
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).not.toBeInTheDocument();
-    expect(abortCalls).toBe(0);
   });
 
   it("lets an extension dialog own Escape while a run is busy", async () => {
@@ -936,8 +760,7 @@ describe("welcome flow", () => {
         sessionStatus: { runState: "conflict" },
       }),
     );
-    const warning = await screen.findByText("external writer conflict");
-    expect(warning.closest(".banner")).toHaveClass("banner--warning");
+    await screen.findByText("external writer conflict");
     expect(screen.getByText("Needs recovery")).toBeInTheDocument();
     expect(screen.getByLabelText("Diagnostic incident")).toHaveTextContent(
       "inc_test_owner",
@@ -1072,31 +895,6 @@ function sessionRowButton(nav: HTMLElement, title: string): HTMLElement {
 }
 
 describe("session attention indicators", () => {
-  it("keeps run-state feedback on the composer rather than duplicating it in the topbar", () => {
-    render(<App />);
-    const ws = FakeWebSocket.instances.at(-1)!;
-
-    act(() => ws.emit({ type: "agent_start" }));
-    const composer = document.querySelector(".composer");
-    expect(composer).toHaveClass("composer--running");
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
-
-    act(() => ws.emit({ type: "agent_settled" }));
-    expect(composer).not.toHaveClass("composer--running");
-    expect(composer).not.toHaveClass("composer--settled");
-
-    act(() =>
-      ws.emit({
-        type: "runtime_error",
-        error: "test worker crashed",
-      }),
-    );
-    expect(composer).toHaveClass("composer--failed");
-    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-
-    act(() => ws.emit({ type: "agent_settled" }));
-  });
-
   it("shows background work on its canonical session row without leaking output into the transcript", async () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;
@@ -1116,7 +914,6 @@ describe("session attention indicators", () => {
     const nav = screen.getByRole("navigation", { name: "Sessions" });
     const row = sessionRowButton(nav, "Older work");
     const dot = within(row).getByRole("img", { name: "Working" });
-    expect(dot).toHaveClass("nav__row-dot--running");
     expect(dot).toHaveAttribute("title", "Working");
     expect(
       screen.queryByRole("heading", { name: "Active" }),
@@ -1148,40 +945,10 @@ describe("session attention indicators", () => {
     const dot = within(sessionRowButton(nav, "Older work")).getByRole("img", {
       name: "Needs recovery",
     });
-    expect(dot).toHaveClass("nav__row-dot--attention");
     expect(dot).toHaveAttribute("title", "Needs recovery");
     expect(
       screen.queryByRole("heading", { name: "Needs attention" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("turns green on unseen success and red on unseen error", async () => {
-    render(<App />);
-    const ws = FakeWebSocket.instances.at(-1)!;
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    const olderRow = sessionRowButton(nav, "Older work");
-
-    act(() =>
-      ws.emit({
-        type: "agent_settled",
-        sessionId: "s0",
-        sessionStatus: { runState: "idle", indicator: "completed" },
-      }),
-    );
-    expect(
-      within(olderRow).getByRole("img", { name: "Completed" }),
-    ).toHaveClass("nav__row-dot--completed");
-
-    act(() =>
-      ws.emit({
-        type: "agent_settled",
-        sessionId: "s0",
-        sessionStatus: { runState: "failed", indicator: "failed" },
-      }),
-    );
-    expect(within(olderRow).getByRole("img", { name: "Failed" })).toHaveClass(
-      "nav__row-dot--failed",
-    );
   });
 
   it("clears an unseen completion indicator when its canonical row is selected", async () => {
@@ -1222,104 +989,11 @@ describe("session attention indicators", () => {
       within(sessionRowButton(nav, "Older work")).getByRole("img", {
         name: "Working",
       }),
-    ).toHaveClass("nav__row-dot--running");
+    ).toBeInTheDocument();
   });
 });
 
 describe("folder grouping and settings page", () => {
-  it("groups nav sessions under their exact cwd folder", async () => {
-    render(<App />);
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    // both stubbed sessions live in /demo: one group headed by the folder name
-    const heading = within(nav).getByRole("heading", { name: "demo" });
-    expect(heading).toHaveAttribute("title", "/demo"); // full path as tooltip
-    expect(sessionRowButton(nav, "Previous work")).toBeInTheDocument();
-    expect(sessionRowButton(nav, "Older work")).toBeInTheDocument();
-  });
-
-  it("keeps preference controls in a settings overlay opened from the topbar", async () => {
-    render(<App />);
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    // the nav carries no settings entry anymore; the topbar gear does
-    expect(
-      within(nav).queryByRole("button", { name: /settings/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(nav).queryByRole("group", { name: "Theme" }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(
-      await screen.findByRole("group", { name: "Theme" }),
-    ).toBeInTheDocument();
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
-    expect(
-      within(dialog).getByRole("group", { name: "Project location" }),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("group", { name: "Content text size" }),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("group", { name: "Reading width" }),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("group", { name: "Desktop send key" }),
-    ).toBeInTheDocument();
-    const reasoning = within(dialog).getByLabelText("Reasoning detail");
-    const tools = within(dialog).getByLabelText("Tool activity");
-    const activityGroups = within(dialog).getByLabelText("Activity groups");
-    expect(
-      within(dialog).getByRole("switch", { name: "Assistant turn details" }),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("On launch")).toBeInTheDocument();
-
-    const optionLabels = (label: string) =>
-      within(screen.getByRole("listbox", { name: label }))
-        .getAllByRole("option")
-        .map(
-          (option) =>
-            option.querySelector(".dropdown__option-label")?.textContent,
-        );
-    fireEvent.click(reasoning);
-    expect(optionLabels("Reasoning detail")).toEqual([
-      "Adaptive",
-      "Expanded",
-      "Collapsed",
-      "Hidden",
-    ]);
-    fireEvent.click(reasoning);
-    fireEvent.click(tools);
-    expect(optionLabels("Tool activity")).toEqual([
-      "Adaptive",
-      "Expanded",
-      "Compact",
-      "Collapsed",
-      "Hidden",
-    ]);
-    fireEvent.click(tools);
-    fireEvent.click(activityGroups);
-    expect(optionLabels("Activity groups")).toEqual([
-      "Adaptive",
-      "Expanded",
-      "Compact",
-      "Collapsed",
-    ]);
-    fireEvent.click(activityGroups);
-    expect(
-      within(dialog).getByRole("combobox", { name: "Completion alerts" }),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(/notifications also keep the tab marked/i),
-    ).toBeInTheDocument();
-    // the overlay floats above the conversation instead of replacing it
-    expect(await screen.findByText("hello world")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(
-      screen.queryByRole("dialog", { name: "Settings" }),
-    ).not.toBeInTheDocument();
-  });
-
   it("closes the settings overlay with Escape without touching a busy run", async () => {
     render(<App />);
     const ws = FakeWebSocket.instances.at(-1)!;

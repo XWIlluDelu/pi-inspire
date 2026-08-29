@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -355,9 +356,9 @@ export class MockGitInspection implements GitInspectionLike {
     side: GitDiffSide,
   ): Promise<GitDiffResponse> {
     if (pathId !== mockGitPath.id || side !== "unstaged") {
-      throw Object.assign(
-        new Error("That path and diff side are not present in fresh status"),
-        { status: 409 },
+      throw requestError(
+        "That path and diff side are not present in fresh status",
+        409,
       );
     }
     const source = await readFile(
@@ -569,9 +570,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   ): NonNullable<ActiveSnapshot["active"]> {
     const session = this.sessions.get(sessionId);
     if (!session)
-      throw Object.assign(new Error("That session is not open on this host"), {
-        status: 409,
-      });
+      throw requestError("That session is not open on this host", 409);
     return session;
   }
 
@@ -690,9 +689,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
 
   async deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
     if (this.activeSessionId === sessionId) {
-      throw Object.assign(
-        new Error("Switch to another session before deleting this one"),
-        { status: 409 },
+      throw requestError(
+        "Switch to another session before deleting this one",
+        409,
       );
     }
     const status = this.state.sessionStatuses[sessionId];
@@ -706,16 +705,13 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       (pending?.steering.length ?? 0) > 0 ||
       (pending?.followUp.length ?? 0) > 0
     ) {
-      throw Object.assign(
-        new Error(
-          "Wait for the session's active work to finish before deleting it",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Wait for the session's active work to finish before deleting it",
+        409,
       );
     }
     const index = summaries.findIndex((session) => session.id === sessionId);
-    if (index < 0)
-      throw Object.assign(new Error("Session not found"), { status: 404 });
+    if (index < 0) throw requestError("Session not found", 404);
     summaries.splice(index, 1);
     this.sessions.delete(sessionId);
     if (pending) {
@@ -740,24 +736,19 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         individualIds.has(session.id) || projectCwds.has(session.cwd),
     );
     if (targets.length === 0)
-      throw Object.assign(new Error("No sessions remain in Hidden"), {
-        status: 404,
-      });
+      throw requestError("No sessions remain in Hidden", 404);
     const expected = new Set(expectedSessionIds);
     if (
       expected.size !== expectedSessionIds.length ||
       targets.length !== expected.size ||
       targets.some((session) => !expected.has(session.id))
     ) {
-      throw Object.assign(
-        new Error("Hidden changed; review it before clearing"),
-        { status: 409 },
-      );
+      throw requestError("Hidden changed; review it before clearing", 409);
     }
     if (targets.some((session) => session.id === this.activeSessionId)) {
-      throw Object.assign(
-        new Error("Switch to another session before clearing Hidden"),
-        { status: 409 },
+      throw requestError(
+        "Switch to another session before clearing Hidden",
+        409,
       );
     }
     const deleted: Array<{
@@ -887,16 +878,11 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const active = this.requireSession(sessionId);
     const pending = this.pendingFor(sessionId);
     if (request.expectedRevision !== pending.revision) {
-      throw Object.assign(new Error("Pending messages changed; retry"), {
-        status: 409,
-      });
+      throw requestError("Pending messages changed; retry", 409);
     }
     const requirePaused = () => {
       if (!pending.paused) {
-        throw Object.assign(
-          new Error("Pause Pending input before modifying it"),
-          { status: 409 },
-        );
+        throw requestError("Pause Pending input before modifying it", 409);
       }
     };
     const remove = (id: string) => {
@@ -930,9 +916,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         requirePaused();
         const removed = remove(request.messageId);
         if (!removed) {
-          throw Object.assign(new Error("Pending message not found"), {
-            status: 409,
-          });
+          throw requestError("Pending message not found", 409);
         }
         this.pendingText.delete(removed.id);
         pending.revision += 1;
@@ -950,9 +934,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         if (!target.some((item) => item.id === request.messageId)) {
           const moved = remove(request.messageId);
           if (!moved) {
-            throw Object.assign(new Error("Pending message not found"), {
-              status: 409,
-            });
+            throw requestError("Pending message not found", 409);
           }
           target.push(moved);
           pending.revision += 1;
@@ -981,16 +963,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       [...pending.steering, ...pending.followUp].map((item) => item.id),
     );
     if (new Set(messageIds).size !== messageIds.length) {
-      throw Object.assign(new Error("Pending message ids must be unique"), {
-        status: 400,
-      });
+      throw requestError("Pending message ids must be unique", 400);
     }
     return messageIds.map((id) => {
       const text = currentIds.has(id) ? this.pendingText.get(id) : undefined;
       if (text === undefined) {
-        throw Object.assign(new Error("Pending message not found"), {
-          status: 409,
-        });
+        throw requestError("Pending message not found", 409);
       }
       return { id, text };
     });
@@ -1213,9 +1191,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       request.targetId !== BRANCH_LATEST_LEAF_ID ||
       request.revision !== active.transcriptPage.revision
     ) {
-      throw Object.assign(new Error("Mock branch target is unavailable"), {
-        status: 409,
-      });
+      throw requestError("Mock branch target is unavailable", 409);
     }
     active.effectiveLeafId = BRANCH_LATEST_LEAF_ID;
     active.navigationLeased = false;
@@ -1234,9 +1210,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       request.targetId !== BRANCH_EARLIER_LEAF_ID ||
       request.revision !== source.transcriptPage.revision
     ) {
-      throw Object.assign(new Error("Mock branch target is unavailable"), {
-        status: 409,
-      });
+      throw requestError("Mock branch target is unavailable", 409);
     }
     const sessionId = `mock-branch-fork-${++this.nextSession}`;
     const destination = structuredClone(source);
@@ -1271,9 +1245,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async resourceContext(sessionId: string): Promise<ResourceContext> {
     const active = this.state.active;
     if (!active || active.sessionId !== sessionId) {
-      throw Object.assign(
-        new Error("The resource does not belong to the visible session"),
-        { status: 409 },
+      throw requestError(
+        "The resource does not belong to the visible session",
+        409,
       );
     }
     return {

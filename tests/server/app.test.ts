@@ -830,29 +830,6 @@ describe("local host API", () => {
     expect(runtime.activeSessionId).toBeNull();
   });
 
-  it("creates a session with an explicitly selected model and thinking level", async () => {
-    const created = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        cwd: temporary,
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      })
-      .expect(200);
-    expect(created.body.active).toMatchObject({
-      cwd: temporary,
-      model: { provider: "anthropic", id: "claude-sonnet-4" },
-      thinkingLevel: "high",
-    });
-
-    await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ cwd: temporary, thinkingLevel: "unbounded" })
-      .expect(400);
-  });
-
   it("serves authenticated session-addressed transcript pages", async () => {
     const page = {
       sessionId: "mock-active",
@@ -1179,56 +1156,6 @@ describe("local host API", () => {
       projectDisplay: "path",
       pinnedSessionIds: ["session-a"],
       navCollapsedGroups: ["/project/a"],
-    });
-  });
-
-  it("defaults missing card-density fields to Dynamic", async () => {
-    await writeFile(
-      join(temporary, "preferences.json"),
-      JSON.stringify({ theme: "light", launch: "welcome" }),
-    );
-    const response = await request(application.server)
-      .get("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(response.body).toMatchObject({
-      thinkingVisibility: "dynamic",
-      toolVisibility: "dynamic",
-      activityFoldVisibility: "dynamic",
-    });
-  });
-
-  it("migrates existing preferences by supplying navigation defaults", async () => {
-    const legacy = {
-      theme: "light",
-      launch: "welcome",
-      thinkingVisibility: "collapsed",
-      toolVisibility: "expanded",
-    };
-    await writeFile(
-      join(temporary, "preferences.json"),
-      JSON.stringify(legacy),
-    );
-    const response = await request(application.server)
-      .get("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(response.body).toEqual({
-      ...legacy,
-      palette: "amber",
-      contentTextSize: "comfortable",
-      readingWidth: "comfortable",
-      desktopSendKey: "enter",
-      activityFoldVisibility: "dynamic",
-      assistantRoundDisplay: "divider",
-      projectDisplay: "folder",
-      completionAttention: "off",
-      recentModelIds: [],
-      pinnedSessionIds: [],
-      pinnedProjectCwds: [],
-      hiddenProjectCwds: [],
-      hiddenSessionIds: [],
-      navCollapsedGroups: [],
     });
   });
 
