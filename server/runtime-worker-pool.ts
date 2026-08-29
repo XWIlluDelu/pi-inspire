@@ -110,8 +110,6 @@ export class RuntimeWorkerPool {
       !slot.process &&
       !slot.stopping &&
       slot.activeOperations === 0 &&
-      slot.mutationPending === 0 &&
-      slot.extensionResponsePending === 0 &&
       slot.persistenceExpectations.length === 0 &&
       !slot.pendingPartialPersistence &&
       !this.host.isOpening(slot.id) &&
@@ -182,8 +180,6 @@ export class RuntimeWorkerPool {
         !slot.pendingBranchBridge &&
         !slot.pendingPartialPersistence &&
         slot.activeOperations === 0 &&
-        slot.mutationPending === 0 &&
-        slot.extensionResponsePending === 0 &&
         slot.persistenceExpectations.length === 0 &&
         !this.host.isOpening(slot.id) &&
         !this.host.isLoading(slot.id) &&

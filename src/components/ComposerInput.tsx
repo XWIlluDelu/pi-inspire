@@ -68,7 +68,7 @@ function CompletionMenu({
 }) {
   const refs = useRef<Array<HTMLDivElement | null>>([]);
   useEffect(() => {
-    refs.current[active]?.scrollIntoView?.({ block: "nearest" });
+    refs.current[active]?.scrollIntoView({ block: "nearest" });
   }, [active]);
   let previousGroup = "";
   return (

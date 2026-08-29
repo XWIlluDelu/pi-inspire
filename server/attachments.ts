@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
@@ -54,7 +55,7 @@ function isImage(mimeType: string): boolean {
 }
 
 function payloadTooLarge(message: string): Error {
-  return Object.assign(new Error(message), { status: 413 });
+  return requestError(message, 413);
 }
 
 function processExists(pid: number): boolean {
@@ -309,9 +310,9 @@ export class AttachmentStore {
       .map((id) => this.values.get(id))
       .filter((item): item is StoredAttachment => Boolean(item));
     if (files.length !== unique.length)
-      throw Object.assign(
-        new Error("One or more attachments expired; add them again"),
-        { status: 409 },
+      throw requestError(
+        "One or more attachments expired; add them again",
+        409,
       );
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
@@ -329,9 +330,9 @@ export class AttachmentStore {
     // One staging, one send: a file already leased to an in-flight prompt or
     // consumed by a delivered one cannot join a second message.
     if (files.some((file) => file.state !== "staged")) {
-      throw Object.assign(
-        new Error("One or more attachments already belong to another message"),
-        { status: 409 },
+      throw requestError(
+        "One or more attachments already belong to another message",
+        409,
       );
     }
     // Lease before the first await: from here the prompt owns these files,

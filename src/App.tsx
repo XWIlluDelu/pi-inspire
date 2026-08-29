@@ -339,15 +339,10 @@ function HostUnavailable({
 }: {
   problem: NonNullable<ReturnType<typeof store.getState>["connectionProblem"]>;
 }) {
-  const host =
-    typeof window === "undefined"
-      ? "the configured address"
-      : window.location.host;
-  const localHost =
-    typeof window !== "undefined" &&
-    /^(localhost|127(?:\.\d+){3}|\[::1\])(?::\d+)?$/u.test(
-      window.location.host,
-    );
+  const host = window.location.host;
+  const localHost = /^(localhost|127(?:\.\d+){3}|\[::1\])(?::\d+)?$/u.test(
+    host,
+  );
   const copy = connectionProblemText(problem, host);
   return (
     <div className="token-gate">
@@ -558,7 +553,7 @@ const Notices = memo(function Notices({
       inspireUpdateChecking: source.inspireUpdateChecking,
       piUpdateChecking: source.piUpdateChecking,
       updateSnoozedUntil: source.updateSnoozedUntil,
-      availableUpdate: source.availableUpdate,
+      inspireUpdateCheck: source.inspireUpdateCheck,
       piUpdateCheck: source.piUpdateCheck,
     }),
     shallowEqual,
@@ -584,7 +579,7 @@ const Notices = memo(function Notices({
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+    () => window.matchMedia(query).matches,
   );
   useEffect(() => {
     const media = window.matchMedia(query);
@@ -660,7 +655,7 @@ const ConversationStage = memo(function ConversationStage() {
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
-      activityFoldVisibility={state.activityFoldVisibility ?? "dynamic"}
+      activityFoldVisibility={state.activityFoldVisibility}
       assistantRoundDisplay={state.assistantRoundDisplay}
       hasOlder={state.hasOlderMessages}
       loadingOlder={state.loadingOlderMessages}
@@ -843,7 +838,7 @@ export function App() {
         state.prefs.theme,
         media.matches,
       );
-      document.documentElement.dataset.palette = state.prefs.palette || "amber";
+      document.documentElement.dataset.palette = state.prefs.palette;
       document.documentElement.dataset.contentTextSize =
         state.prefs.contentTextSize;
       document.documentElement.dataset.readingWidth = state.prefs.readingWidth;

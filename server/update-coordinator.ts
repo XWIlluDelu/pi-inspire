@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -151,7 +152,7 @@ function initialPersistedState(): PersistedUpdateState {
 }
 
 function httpConflict(message: string): Error {
-  return Object.assign(new Error(message), { status: 409 });
+  return requestError(message, 409);
 }
 
 /**
@@ -170,7 +171,6 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   private piUpdateChecking = false;
   private inspireInFlight: Promise<HostUpdateStatus> | null = null;
   private piInFlight: Promise<HostUpdateStatus> | null = null;
-  private automaticQueue = Promise.resolve();
   private mutationQueue = Promise.resolve();
   private snoozeTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
@@ -190,40 +190,12 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
     return this.snapshot();
   }
 
-  async checkInspire(force = false): Promise<HostUpdateStatus> {
-    await this.ready;
-    if (this.inspireInFlight) return this.inspireInFlight;
-    if (this.closed) return this.snapshot();
-
-    const task = this.performInspireCheck(force);
-    this.inspireInFlight = task;
-    void task.then(
-      () => {
-        if (this.inspireInFlight === task) this.inspireInFlight = null;
-      },
-      () => {
-        if (this.inspireInFlight === task) this.inspireInFlight = null;
-      },
-    );
-    return task;
+  checkInspire(force = false): Promise<HostUpdateStatus> {
+    return this.check("inspire", force);
   }
 
-  async checkPi(force = false): Promise<HostUpdateStatus> {
-    await this.ready;
-    if (this.piInFlight) return this.piInFlight;
-    if (this.closed) return this.snapshot();
-
-    const task = this.performPiCheck(force);
-    this.piInFlight = task;
-    void task.then(
-      () => {
-        if (this.piInFlight === task) this.piInFlight = null;
-      },
-      () => {
-        if (this.piInFlight === task) this.piInFlight = null;
-      },
-    );
-    return task;
+  checkPi(force = false): Promise<HostUpdateStatus> {
+    return this.check("pi", force);
   }
 
   async dismiss(identity: string): Promise<HostUpdateStatus> {
@@ -232,10 +204,10 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   }
 
   promptAccepted(): Promise<void> {
-    const task = this.automaticQueue.then(() => this.runAutomaticCheck());
-    this.automaticQueue = task.catch((error) => {
-      this.recordFailure("automatic_update_check_failed", error);
-    });
+    const task = this.runAutomaticCheck();
+    void task.catch((error) =>
+      this.recordFailure("automatic_update_check_failed", error),
+    );
     return task;
   }
 
@@ -277,34 +249,51 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
     return this.publish();
   }
 
-  private async performInspireCheck(force: boolean): Promise<HostUpdateStatus> {
-    this.inspireUpdateChecking = true;
-    this.publish();
-    try {
-      this.inspireUpdateCheck = this.options.inspireChecker
-        ? await this.options.inspireChecker.check(force)
-        : { kind: "unavailable" };
-    } catch {
-      this.inspireUpdateCheck = { kind: "unavailable" };
-    } finally {
-      this.inspireUpdateChecking = false;
-    }
+  private async check(
+    kind: "inspire" | "pi",
+    force: boolean,
+  ): Promise<HostUpdateStatus> {
+    await this.ready;
+    const inFlight =
+      kind === "inspire" ? this.inspireInFlight : this.piInFlight;
+    if (inFlight) return inFlight;
     if (this.closed) return this.snapshot();
-    await this.reconcileSnooze();
-    return this.publish();
+
+    const task = this.performCheck(kind, force);
+    if (kind === "inspire") this.inspireInFlight = task;
+    else this.piInFlight = task;
+    const clear = () => {
+      if (kind === "inspire" && this.inspireInFlight === task)
+        this.inspireInFlight = null;
+      if (kind === "pi" && this.piInFlight === task) this.piInFlight = null;
+    };
+    void task.then(clear, clear);
+    return task;
   }
 
-  private async performPiCheck(force: boolean): Promise<HostUpdateStatus> {
-    this.piUpdateChecking = true;
+  private async performCheck(
+    kind: "inspire" | "pi",
+    force: boolean,
+  ): Promise<HostUpdateStatus> {
+    if (kind === "inspire") this.inspireUpdateChecking = true;
+    else this.piUpdateChecking = true;
     this.publish();
     try {
-      this.piUpdateCheck = this.options.piChecker
-        ? await this.options.piChecker.check(force)
-        : this.unavailablePiCheck();
+      if (kind === "inspire") {
+        this.inspireUpdateCheck = this.options.inspireChecker
+          ? await this.options.inspireChecker.check(force)
+          : { kind: "unavailable" };
+      } else {
+        this.piUpdateCheck = this.options.piChecker
+          ? await this.options.piChecker.check(force)
+          : this.unavailablePiCheck();
+      }
     } catch {
-      this.piUpdateCheck = this.unavailablePiCheck();
+      if (kind === "inspire") this.inspireUpdateCheck = { kind: "unavailable" };
+      else this.piUpdateCheck = this.unavailablePiCheck();
     } finally {
-      this.piUpdateChecking = false;
+      if (kind === "inspire") this.inspireUpdateChecking = false;
+      else this.piUpdateChecking = false;
     }
     if (this.closed) return this.snapshot();
     await this.reconcileSnooze();
@@ -461,7 +450,7 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
       this.snoozeTimer = null;
       void this.expireSnooze(snooze);
     }, delay);
-    (this.snoozeTimer as { unref?: () => void }).unref?.();
+    this.snoozeTimer.unref();
   }
 
   private async expireSnooze(

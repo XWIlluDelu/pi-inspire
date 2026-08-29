@@ -234,7 +234,7 @@ export const Transcript = memo(function Transcript({
         const row = viewport.scrollRef.current?.querySelector<HTMLElement>(
           `[data-transcript-row="${rowIndex}"]`,
         );
-        row?.scrollIntoView?.({ block: "center" });
+        row?.scrollIntoView({ block: "center" });
       });
     },
   });
@@ -265,7 +265,6 @@ export const Transcript = memo(function Transcript({
   }, [mobileTranscriptTool]);
 
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
       if (!narrow.matches) setMobileTranscriptTool(null);
@@ -473,10 +472,7 @@ export const Transcript = memo(function Transcript({
       onKeyDownCapture={(event) => {
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          if (
-            typeof window.matchMedia === "function" &&
-            window.matchMedia("(max-width: 900px)").matches
-          ) {
+          if (window.matchMedia("(max-width: 900px)").matches) {
             setMobileTranscriptTool("search");
           }
           searchInputRef.current?.focus();

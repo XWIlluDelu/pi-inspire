@@ -53,11 +53,7 @@ export class RuntimeEventController {
   constructor(private readonly host: RuntimeEventHost) {}
 
   private isForeground(): boolean {
-    return (
-      typeof document !== "undefined" &&
-      document.visibilityState === "visible" &&
-      document.hasFocus()
-    );
+    return document.visibilityState === "visible" && document.hasFocus();
   }
 
   private publishTitleAttention(): void {
@@ -176,8 +172,7 @@ export class RuntimeEventController {
     this.publishTitleAttention();
     if (this.host.state().prefs.completionAttention === "title") return;
     if (this.host.state().prefs.completionAttention !== "desktop") return;
-    const NotificationApi =
-      typeof window !== "undefined" ? window.Notification : undefined;
+    const NotificationApi = window.Notification;
     if (!NotificationApi || NotificationApi.permission !== "granted") return;
     const project = this.host
       .state()

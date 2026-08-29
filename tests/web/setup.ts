@@ -29,6 +29,17 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   })) as unknown as typeof window.matchMedia;
 }
 
+if (typeof window !== "undefined") {
+  URL.createObjectURL ??= () => "blob:test";
+  URL.revokeObjectURL ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+  HTMLElement.prototype.setPointerCapture ??= () => {};
+  HTMLElement.prototype.releasePointerCapture ??= () => {};
+  HTMLElement.prototype.hasPointerCapture ??= () => false;
+  globalThis.CSS ??= {} as typeof CSS;
+  CSS.escape ??= (value) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
+
 // Fetch/WebSocket stubs are installed per test file (beforeAll) or per test
 // (beforeEach); vitest isolates files, so globals must NOT be unstubbed
 // between tests of the same file.

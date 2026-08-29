@@ -20,7 +20,6 @@ export type ContextPaneView = Pick<
   | "workspaceQuery"
   | "workspaceLoadingDirs"
   | "workspaceSearchLoading"
-  | "project"
   | "cwd"
   | "gitStatus"
   | "gitStatusError"
@@ -49,7 +48,6 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     workspaceQuery: state.workspaceQuery,
     workspaceLoadingDirs: state.workspaceLoadingDirs,
     workspaceSearchLoading: state.workspaceSearchLoading,
-    project: state.project,
     cwd: state.cwd,
     gitStatus: state.gitStatus,
     gitStatusError: state.gitStatusError,

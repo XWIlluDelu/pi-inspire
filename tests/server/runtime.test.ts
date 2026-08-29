@@ -395,10 +395,12 @@ describe("RuntimeController concurrent sessions", () => {
       });
       const slots = (
         runtime as unknown as {
-          slots: Map<string, { mutationPending: number }>;
+          slots: Map<string, { mutationQueue: { pending: number } }>;
         }
       ).slots;
-      await vi.waitFor(() => expect(slots.get("a")?.mutationPending).toBe(2));
+      await vi.waitFor(() =>
+        expect(slots.get("a")?.mutationQueue.pending).toBe(2),
+      );
 
       await rm(selected);
       release();

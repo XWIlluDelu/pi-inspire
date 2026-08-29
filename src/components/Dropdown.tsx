@@ -66,13 +66,9 @@ export function Dropdown({
     return () => window.removeEventListener("mousedown", onOutside);
   }, [open]);
 
-  // Keyboard navigation keeps the active option visible (jsdom lacks
-  // scrollIntoView, hence the guard).
   useEffect(() => {
     if (!open) return;
-    const element = listRef.current?.children[active];
-    if (element && typeof element.scrollIntoView === "function")
-      element.scrollIntoView({ block: "nearest" });
+    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
   }, [open, active]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {

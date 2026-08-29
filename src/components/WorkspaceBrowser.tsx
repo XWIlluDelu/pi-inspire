@@ -199,15 +199,12 @@ export function WorkspaceTree({
   useLayoutEffect(() => {
     const request = state.workspaceRevealRequest;
     if (!revealRequests || !request) return;
-    const escaped =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(request.path)
-        : request.path.replace(/["\\]/g, "\\$&");
+    const escaped = CSS.escape(request.path);
     const target = rootRef.current?.querySelector<HTMLElement>(
       `[data-workspace-path="${escaped}"]`,
     );
     if (!target || !store.consumeWorkspaceRevealRequest(request.nonce)) return;
-    target.scrollIntoView?.({ block: "nearest" });
+    target.scrollIntoView({ block: "nearest" });
   }, [revealRequests, state.workspaceLevels, state.workspaceRevealRequest]);
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {

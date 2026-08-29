@@ -1,3 +1,4 @@
+import { requestError } from "./request-error.js";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -88,11 +89,9 @@ export class RuntimeStartupAttestor {
       projection.tailEntryId !== baseline.tailEntryId ||
       projection.leafId !== baseline.leafId
     ) {
-      throw Object.assign(
-        new Error(
-          "Session changed after worker creation but before Pi startup",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Session changed after worker creation but before Pi startup",
+        409,
       );
     }
   }
@@ -103,11 +102,9 @@ export class RuntimeStartupAttestor {
     baseline: StartupProjectionBaseline,
   ): Promise<void> {
     const fail = (): never => {
-      throw Object.assign(
-        new Error(
-          "Session changed on disk while the Pi runtime was starting; retry after reconciliation",
-        ),
-        { status: 409 },
+      throw requestError(
+        "Session changed on disk while the Pi runtime was starting; retry after reconciliation",
+        409,
       );
     };
     if (
@@ -251,11 +248,9 @@ export class RuntimeStartupAttestor {
       type: "get_entries",
     });
     if (slot.process !== rpc) {
-      throw Object.assign(
-        new Error(
-          "The new-session worker changed while its entries were inspected",
-        ),
-        { status: 409 },
+      throw requestError(
+        "The new-session worker changed while its entries were inspected",
+        409,
       );
     }
     return parseRpcEntryChain(response, {

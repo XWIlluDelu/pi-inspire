@@ -316,8 +316,8 @@ function toolSummary(call: ToolCallContent): string {
   if (args && typeof args === "object") {
     const record = args as Record<string, unknown>;
     for (const key of ["path", "file", "command", "query", "url"]) {
-      if (typeof record[key] === "string")
-        return String(record[key]).slice(0, 90);
+      const value = record[key];
+      if (typeof value === "string") return value.slice(0, 90);
     }
     const first = Object.values(record).find(
       (value) => typeof value === "string",

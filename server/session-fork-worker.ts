@@ -212,8 +212,8 @@ async function snapshotVerifiedPrefix(
 function isUserMessage(
   entry: SessionEntry | undefined,
 ): entry is SessionMessageEntry {
-  return Boolean(
-    entry?.type === "message" && objectValue(entry.message)?.role === "user",
+  return (
+    entry?.type === "message" && objectValue(entry.message)?.role === "user"
   );
 }
 

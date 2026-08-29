@@ -46,6 +46,33 @@ export interface SessionCatalogPatch {
   sessionListError?: string | null;
 }
 
+function baseLoadingPatch(
+  operation: "reset" | "refresh" | "preserve",
+): SessionCatalogPatch {
+  return {
+    sessionListLoading: true,
+    sessionListLoadingOlder: false,
+    sessionListHydrating: false,
+    sessionListOperation: operation,
+    sessionListError: null,
+  };
+}
+
+function uniqueSessions(
+  ...sources: Iterable<SessionSummary>[]
+): SessionSummary[] {
+  const sessions: SessionSummary[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    for (const session of source) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
+      sessions.push(session);
+    }
+  }
+  return sessions;
+}
+
 type HydrationOwner = { id: string; query: string; ticket: number };
 type SessionListRetry =
   | { kind: "reset"; query: string }
@@ -86,6 +113,14 @@ export class SessionCatalogController {
 
   constructor(private readonly host: SessionCatalogControllerHost) {}
 
+  private beginListGeneration(): number {
+    this.cancelCurationRequest();
+    this.curationPending = false;
+    this.olderPromise = null;
+    this.retry = null;
+    return ++this.loadTicket;
+  }
+
   /** Invalidates all owned work when bootstrap/auth changes the API client.
    * Confirmed rows stay visible, but a former transport cannot publish over the
    * current generation or turn a later successful pairing into a 401. */
@@ -118,15 +153,11 @@ export class SessionCatalogController {
   load(query: string): Promise<void> {
     this.clearSearchTimer();
     if (!this.host.api()) return Promise.resolve();
-    this.cancelCurationRequest();
-    this.curationPending = false;
     const state = this.host.state();
     const queryChanged = query !== state.sessionQuery;
-    const ticket = ++this.loadTicket;
     // A prior append may finish on the wire, but it cannot coalesce with this
     // generation or publish its rows.
-    this.olderPromise = null;
-    this.retry = null;
+    const ticket = this.beginListGeneration();
     if (queryChanged) this.basePages = [];
     this.host.patch({
       ...(queryChanged
@@ -137,11 +168,7 @@ export class SessionCatalogController {
             sessionListNextOffset: 0,
           }
         : {}),
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "reset",
-      sessionListError: null,
+      ...baseLoadingPatch("reset"),
     });
     return this.requestReset(query, ticket);
   }
@@ -149,22 +176,14 @@ export class SessionCatalogController {
   /** Search changes query ownership synchronously, then issues its debounced
    * reset. Old-query pages cannot remain rendered or win while typing. */
   search(query: string): void {
-    ++this.loadTicket;
-    this.cancelCurationRequest();
-    this.curationPending = false;
-    this.olderPromise = null;
-    this.retry = null;
+    this.beginListGeneration();
     this.basePages = [];
     this.host.patch({
       sessionQuery: query,
       sessions: query.trim() ? [] : [...this.hydration.values()],
       sessionListTotal: 0,
       sessionListNextOffset: 0,
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "reset",
-      sessionListError: null,
+      ...baseLoadingPatch("reset"),
     });
     this.clearSearchTimer();
     this.searchTimer = setTimeout(() => void this.load(query), 180);
@@ -188,18 +207,8 @@ export class SessionCatalogController {
   ): Promise<void> {
     if (!this.host.api() || query !== this.host.state().sessionQuery)
       return Promise.resolve();
-    this.cancelCurationRequest();
-    this.curationPending = false;
-    const ticket = ++this.loadTicket;
-    this.olderPromise = null;
-    this.retry = null;
-    this.host.patch({
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "preserve",
-      sessionListError: null,
-    });
+    const ticket = this.beginListGeneration();
+    this.host.patch(baseLoadingPatch("preserve"));
     return this.requestReset(
       query,
       ticket,
@@ -251,14 +260,7 @@ export class SessionCatalogController {
             "Session paging did not advance from its requested offset",
           );
         }
-        const seen = new Set(this.basePages.map((session) => session.id));
-        const appended = [...this.basePages];
-        for (const session of page.sessions) {
-          if (seen.has(session.id)) continue;
-          seen.add(session.id);
-          appended.push(session);
-        }
-        this.basePages = appended;
+        this.basePages = uniqueSessions(this.basePages, page.sessions);
         this.retry = null;
         this.host.patch({
           sessionListTotal: page.total,
@@ -311,18 +313,8 @@ export class SessionCatalogController {
       return;
     }
     const query = retryQuery;
-    this.cancelCurationRequest();
-    this.curationPending = false;
-    const ticket = ++this.loadTicket;
-    this.olderPromise = null;
-    this.retry = null;
-    this.host.patch({
-      sessionListLoading: true,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: "refresh",
-      sessionListError: null,
-    });
+    const ticket = this.beginListGeneration();
+    this.host.patch(baseLoadingPatch("refresh"));
     try {
       await api.refreshSessions();
       if (!this.owns(ticket, query, api)) return;
@@ -480,14 +472,7 @@ export class SessionCatalogController {
             this.owns(ticket, query, api),
           );
       if (!hydration || !this.owns(ticket, query, api)) return;
-      const deduped: SessionSummary[] = [];
-      const seen = new Set<string>();
-      for (const session of rows) {
-        if (seen.has(session.id)) continue;
-        seen.add(session.id);
-        deduped.push(session);
-      }
-      this.basePages = deduped;
+      this.basePages = uniqueSessions(rows);
       this.hydration = hydration;
       this.pruneHydration();
       this.retry = null;
@@ -535,21 +520,12 @@ export class SessionCatalogController {
 
   private publishUnion(): void {
     const state = this.host.state();
-    const sessions: SessionSummary[] = [];
-    const seen = new Set<string>();
-    for (const session of this.basePages) {
-      if (seen.has(session.id)) continue;
-      seen.add(session.id);
-      sessions.push(session);
-    }
-    if (!state.sessionQuery.trim()) {
-      for (const session of this.hydration.values()) {
-        if (seen.has(session.id)) continue;
-        seen.add(session.id);
-        sessions.push(session);
-      }
-    }
-    this.host.patch({ sessions });
+    this.host.patch({
+      sessions: uniqueSessions(
+        this.basePages,
+        state.sessionQuery.trim() ? [] : this.hydration.values(),
+      ),
+    });
   }
 
   private curationIds(prefs: InspirePreferences): Set<string> {

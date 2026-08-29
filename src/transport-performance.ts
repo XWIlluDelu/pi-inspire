@@ -2,7 +2,7 @@ const PREFIX = "inspire:";
 const MAX_ENTRIES_PER_METRIC = 64;
 
 export function transportNow(): number {
-  return globalThis.performance?.now?.() ?? Date.now();
+  return performance.now();
 }
 
 /** Records privacy-safe transport timings in the browser Performance timeline.
@@ -13,16 +13,15 @@ export function recordTransportMeasure(
   startedAt: number,
   detail: Record<string, string | number | boolean | null>,
 ): void {
-  const timeline = globalThis.performance;
-  if (!timeline?.measure || typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
   const qualified = `${PREFIX}${name}`;
   try {
     if (
-      timeline.getEntriesByName(qualified, "measure").length >=
+      performance.getEntriesByName(qualified, "measure").length >=
       MAX_ENTRIES_PER_METRIC
     )
-      timeline.clearMeasures(qualified);
-    timeline.measure(qualified, {
+      performance.clearMeasures(qualified);
+    performance.measure(qualified, {
       start: startedAt,
       end: transportNow(),
       detail,
