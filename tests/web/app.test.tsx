@@ -28,12 +28,14 @@ let renamedTo: string | null = null;
 let abortCalls = 0;
 let deselectCalls = 0;
 let modelFailureGate: Promise<void> | null = null;
+let renameGate: Promise<void> | null = null;
 
 beforeAll(async () => {
   renamedTo = null;
   abortCalls = 0;
   deselectCalls = 0;
   modelFailureGate = null;
+  renameGate = null;
   const summary = sessionSummary();
   const older = sessionSummary({ id: "s0", title: "Older work" });
   installFakeWebSocket();
@@ -127,7 +129,9 @@ beforeAll(async () => {
     }
     if (url.startsWith("/api/sessions/rename")) {
       renamedTo = String(jsonBody(init).name ?? "");
-      return { body: { ok: true } };
+      return (renameGate ?? Promise.resolve()).then(() => ({
+        body: { ok: true },
+      }));
     }
     if (url.startsWith("/api/sessions")) {
       return {
@@ -410,6 +414,33 @@ describe("welcome flow", () => {
       await screen.findByRole("heading", { name: "Spectral analysis" }),
     ).toBeInTheDocument();
     expect(renamedTo).toBe("Spectral analysis");
+  });
+
+  it("does not let an old rename completion close a reopened editor", async () => {
+    let releaseRename!: () => void;
+    renameGate = new Promise<void>((resolve) => {
+      releaseRename = resolve;
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Rename session" }),
+    );
+    const firstEditor = screen.getByLabelText("Session name");
+    fireEvent.change(firstEditor, { target: { value: "Old request" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
+    await waitFor(() => expect(renamedTo).toBe("Old request"));
+
+    fireEvent.keyDown(firstEditor, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    const reopened = screen.getByLabelText("Session name");
+    releaseRename();
+    await waitFor(() =>
+      expect(store.getState().sessionName).toBe("Old request"),
+    );
+    expect(reopened).toBeInTheDocument();
+
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    renameGate = null;
   });
 
   it("keeps extension status in the leading cluster before the fixed topbar actions", async () => {

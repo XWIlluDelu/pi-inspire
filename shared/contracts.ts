@@ -675,17 +675,27 @@ function extensionUiExpiry(
   };
 }
 
-export function parseExtensionUiRequest(
-  value: unknown,
-): SupportedExtensionUiRequest | null {
+interface ParsedExtensionUiEvent {
+  event: Record<string, unknown>;
+  sessionId: string;
+  id: string;
+  method: string;
+}
+
+function parseExtensionUiEvent(value: unknown): ParsedExtensionUiEvent | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
   const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
   const id = typeof event.id === "string" ? event.id : "";
   const method = typeof event.method === "string" ? event.method : "";
+  return sessionId && id && method ? { event, sessionId, id, method } : null;
+}
+
+function supportedExtensionUiRequest(
+  parsed: ParsedExtensionUiEvent,
+): SupportedExtensionUiRequest | null {
+  const { event, sessionId, id, method } = parsed;
   if (
-    !sessionId ||
-    !id ||
     !EXTENSION_DIALOG_METHODS.has(
       method as SupportedExtensionUiRequest["method"],
     )
@@ -707,6 +717,13 @@ export function parseExtensionUiRequest(
   };
 }
 
+export function parseExtensionUiRequest(
+  value: unknown,
+): SupportedExtensionUiRequest | null {
+  const parsed = parseExtensionUiEvent(value);
+  return parsed ? supportedExtensionUiRequest(parsed) : null;
+}
+
 /** Unknown extension UI methods are conservatively response-bearing unless Pi
  * explicitly identifies them as one-way display output. This prevents a
  * future dialog promise from hanging while still giving future display
@@ -714,20 +731,12 @@ export function parseExtensionUiRequest(
 export function parsePendingExtensionUiRequest(
   value: unknown,
 ): ExtensionUiRequest | null {
-  const supported = parseExtensionUiRequest(value);
+  const parsed = parseExtensionUiEvent(value);
+  if (!parsed) return null;
+  const supported = supportedExtensionUiRequest(parsed);
   if (supported) return supported;
-  if (!value || typeof value !== "object") return null;
-  const event = value as Record<string, unknown>;
-  const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
-  const id = typeof event.id === "string" ? event.id : "";
-  const method = typeof event.method === "string" ? event.method : "";
-  if (
-    !sessionId ||
-    !id ||
-    !method ||
-    EXTENSION_ONE_WAY_METHODS.has(method) ||
-    event.responseRequired === false
-  )
+  const { event, sessionId, id, method } = parsed;
+  if (EXTENSION_ONE_WAY_METHODS.has(method) || event.responseRequired === false)
     return null;
   return {
     sessionId,

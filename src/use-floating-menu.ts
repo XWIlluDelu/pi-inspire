@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 
-export interface FloatingMenuBounds {
+interface FloatingMenuBounds {
   left: number;
   top: number;
   right: number;
@@ -45,7 +45,7 @@ function samePlacement(
   );
 }
 
-export function placeFloatingMenu(
+function placeFloatingMenu(
   anchor: FloatingMenuBounds,
   bounds: FloatingMenuBounds,
   layoutHeight: number,

@@ -1,5 +1,5 @@
 import { SearchX } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
@@ -82,12 +82,14 @@ export const CommandPalette = memo(function CommandPalette({
   const [renameInitialValue, setRenameInitialValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const exitRename = () => {
+  const renameIncarnationRef = useRef(0);
+  const exitRename = useCallback(() => {
+    renameIncarnationRef.current += 1;
     setRenaming(false);
     setRenameSessionId(null);
     setRenameValue("");
     setRenameInitialValue("");
-  };
+  }, []);
   const dialogRef = useModalFocus<HTMLDivElement>(
     true,
     "command-palette",
@@ -108,13 +110,8 @@ export const CommandPalette = memo(function CommandPalette({
   }, [renaming]);
 
   useEffect(() => {
-    if (renaming && renameSessionId !== state.sessionId) {
-      setRenaming(false);
-      setRenameSessionId(null);
-      setRenameValue("");
-      setRenameInitialValue("");
-    }
-  }, [renameSessionId, renaming, state.sessionId]);
+    if (renaming && renameSessionId !== state.sessionId) exitRename();
+  }, [exitRename, renameSessionId, renaming, state.sessionId]);
 
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
@@ -187,6 +184,7 @@ export const CommandPalette = memo(function CommandPalette({
         title: "Rename session…",
         keepOpen: true,
         run: () => {
+          renameIncarnationRef.current += 1;
           setRenameSessionId(state.sessionId);
           setRenameValue(state.heading);
           setRenameInitialValue(state.heading);
@@ -355,7 +353,14 @@ export const CommandPalette = memo(function CommandPalette({
       onClose();
       return;
     }
-    if (await store.renameSession(owner, name)) onClose();
+    const incarnation = renameIncarnationRef.current;
+    if (
+      (await store.renameSession(owner, name)) &&
+      renameIncarnationRef.current === incarnation &&
+      renameSessionId === owner &&
+      store.getState().sessionId === owner
+    )
+      onClose();
   };
 
   return (

@@ -9,6 +9,7 @@ import {
   type SessionCatalogPatch,
   type SessionCatalogState,
 } from "../../src/controllers/session-catalog-controller";
+import { deferred } from "./helpers";
 
 function session(id: string): SessionSummary {
   return {
@@ -20,16 +21,6 @@ function session(id: string): SessionSummary {
     modified: "2026-08-14T00:00:00.000Z",
     messageCount: 1,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((complete, fail) => {
-    resolve = complete;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
 }
 
 function createHarness() {

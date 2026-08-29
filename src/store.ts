@@ -47,6 +47,8 @@ import {
   type AppState,
   contextUsage,
   createInitialAppState,
+  emptyResourceInspectionState,
+  transcriptRevisionContains,
 } from "./app-state";
 import type { PiCommand } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
@@ -444,13 +446,7 @@ export class AppStore {
     });
   }
 
-  private handleAuthFailure(): void {
-    // Stop detaches its owned socket before closing it, so the close handler
-    // cannot schedule a retry with the rejected token.
-    this.connectionController.stop();
-    const transportGeneration = ++this.transportGeneration;
-    this.bootstrapRequest?.abort();
-    this.bootstrapRequest = null;
+  private invalidateTransportControllers(): void {
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
@@ -458,6 +454,17 @@ export class AppStore {
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
     this.branches.invalidateForTransportReplacement();
+    this.sessionManagement.invalidateForTransportReplacement();
+  }
+
+  private handleAuthFailure(): void {
+    // Stop detaches its owned socket before closing it, so the close handler
+    // cannot schedule a retry with the rejected token.
+    this.connectionController.stop();
+    const transportGeneration = ++this.transportGeneration;
+    this.bootstrapRequest?.abort();
+    this.bootstrapRequest = null;
+    this.invalidateTransportControllers();
     this.invalidateSessionListRequests();
     this.invalidateTransportRequests();
     this.runtimeEvents.clearLiveAttention();
@@ -517,13 +524,7 @@ export class AppStore {
       () => bootstrapRequest.abort(),
       BOOTSTRAP_TIMEOUT_MS,
     );
-    this.composer.invalidateForTransportReplacement();
-    this.updates.invalidateForTransportReplacement();
-    this.resources.invalidateForTransportReplacement();
-    this.git.invalidateForTransportReplacement();
-    this.workspace.invalidateForTransportReplacement();
-    this.selection.invalidateForReplacement();
-    this.branches.invalidateForTransportReplacement();
+    this.invalidateTransportControllers();
     this.invalidateTransportRequests();
     this.authToken = token;
     this.api = api;
@@ -682,10 +683,11 @@ export class AppStore {
     const projectionLineageCompatible = Boolean(
       sameProjectionOwner &&
         page &&
-        (page.revision === this.state.transcriptRevision ||
-          (page.revision > this.state.transcriptRevision &&
-            (page.appendFromRevision ?? page.revision) <=
-              this.state.transcriptRevision)),
+        transcriptRevisionContains(
+          page.revision,
+          page.appendFromRevision ?? page.revision,
+          this.state.transcriptRevision,
+        ),
     );
     const projectionReplaced = Boolean(
       sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
@@ -878,16 +880,13 @@ export class AppStore {
             pendingAction: null,
             windowTitle: null,
             contextMode: "files",
-            fileBrowserView: "browse",
             workspaceExplorerOpen: false,
             ...(nextWorkspaceState ?? emptyWorkspaceBrowserState()),
             branchTree: null,
             branchTreeLoading: false,
             branchTreeError: null,
             branchActionId: null,
-            selectedResourceReference: null,
-            selectedResourceWorkspacePath: null,
-            resourcePreview: null,
+            ...emptyResourceInspectionState(),
             gitStatus: null,
             gitStatusError: null,
             gitStatusLoading: false,
@@ -895,8 +894,6 @@ export class AppStore {
             selectedGitPathId: null,
             selectedGitSide: null,
             gitDiff: null,
-            resourceAvailability: {},
-            resourceWorkspacePaths: {},
             // Composer work belongs to its session; the switch swaps in the
             // destination's staged slice.
             ...this.composer.slice(nextSessionId),
@@ -908,22 +905,10 @@ export class AppStore {
                 ? "Branch history is stale — refresh to use branch actions"
                 : null,
               branchActionId: null,
-              fileBrowserView: "browse",
-              selectedResourceReference: null,
-              selectedResourceWorkspacePath: null,
-              resourcePreview: null,
-              resourceAvailability: {},
-              resourceWorkspacePaths: {},
+              ...emptyResourceInspectionState(),
             }
           : projectionReplaced
-            ? {
-                fileBrowserView: "browse",
-                selectedResourceReference: null,
-                selectedResourceWorkspacePath: null,
-                resourcePreview: null,
-                resourceAvailability: {},
-                resourceWorkspacePaths: {},
-              }
+            ? emptyResourceInspectionState()
             : {}),
     });
     // Snapshots restore projection only. Attention is armed exclusively by

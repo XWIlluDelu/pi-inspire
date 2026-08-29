@@ -1,6 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
 import express, {
@@ -40,6 +39,7 @@ import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
+import { resolveProjectDirectory } from "./paths.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
   invalidateProjectIndex,
@@ -408,34 +408,6 @@ interface AppDependencies {
   shutdown?: () => void | Promise<void>;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
-}
-
-async function prospectiveWorkspaceRoot(cwd: string): Promise<string> {
-  let root: string;
-  let details;
-  try {
-    root = await realpath(resolve(cwd));
-    details = await stat(root);
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      ["ENOENT", "ENOTDIR"].includes(
-        String((error as NodeJS.ErrnoException).code),
-      )
-    ) {
-      throw Object.assign(new Error("Project path does not exist"), {
-        status: 400,
-      });
-    }
-    throw error;
-  }
-  if (!details.isDirectory()) {
-    throw Object.assign(new Error("Project path is not a directory"), {
-      status: 400,
-    });
-  }
-  return root;
 }
 
 function bearerToken(request: Request): string | undefined {
@@ -854,7 +826,7 @@ export function createInspireServer(deps: AppDependencies): {
   // worker and prompt boundary re-resolve the workspace and file references.
   app.get("/api/new-session/defaults", async (request, response) => {
     const { cwd } = newSessionDefaultsQuerySchema.parse(request.query);
-    const root = await prospectiveWorkspaceRoot(cwd);
+    const root = await resolveProjectDirectory(cwd);
     if (!deps.newSessionDefaults) {
       return response
         .status(503)
@@ -864,7 +836,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.get("/api/new-session/files", async (request, response) => {
     const { cwd, q, limit } = newSessionFileQuerySchema.parse(request.query);
-    const root = await prospectiveWorkspaceRoot(cwd);
+    const root = await resolveProjectDirectory(cwd);
     response.json({
       cwd: root,
       files: await searchProjectFiles(root, q, limit),

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -51,6 +51,7 @@ import {
   PiRpcOutcomeUnknownError,
   PiRpcProcess,
 } from "./pi-rpc.js";
+import { resolveProjectDirectory } from "./paths.js";
 import { PreviewProjection } from "./preview-projection.js";
 import {
   assertPromptArtifactBudget,
@@ -81,6 +82,7 @@ import {
 import {
   type ActiveSessionSnapshot,
   loadSessionPreview,
+  sessionProjectionSnapshot,
 } from "./session-preview.js";
 import {
   discardStagedSessionFork,
@@ -1356,23 +1358,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       };
     }
     const projection = await SessionProjection.open(session);
-    const page = projection.latestPage();
     return {
       projection,
-      preview: {
-        sessionId: session.id,
-        sessionFile: projection.path,
-        sessionName: session.name,
-        cwd: workspaceRoot,
-        model: projection.model,
-        thinkingLevel: projection.thinkingLevel,
-        isStreaming: false,
-        isCompacting: false,
-        transcriptPage: page,
-        projectionHealth: projection.health,
-        availableModels: [],
-        commands: [],
-      },
+      preview: sessionProjectionSnapshot(session, projection, workspaceRoot),
     };
   }
 
@@ -1643,29 +1631,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
-    let cwd: string;
-    let details;
-    try {
-      cwd = await this.resolveWorkspaceRoot(cwdInput);
-      details = await stat(cwd);
-    } catch (error) {
-      if (
-        error &&
-        typeof error === "object" &&
-        ["ENOENT", "ENOTDIR"].includes(
-          String((error as NodeJS.ErrnoException).code),
-        )
-      ) {
-        throw Object.assign(new Error("Project path does not exist"), {
-          status: 400,
-        });
-      }
-      throw error;
-    }
-    if (!details.isDirectory())
-      throw Object.assign(new Error("Project path is not a directory"), {
-        status: 400,
-      });
+    const cwd = await resolveProjectDirectory(cwdInput);
     this.assertNotClosing();
 
     const name = options.name?.trim().slice(0, 160) || undefined;

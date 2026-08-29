@@ -10,59 +10,7 @@ import {
   type BranchControllerPatch,
   type BranchControllerState,
 } from "../../src/controllers/branch-controller";
-
-function tree(): BranchTreeResponse {
-  return {
-    sessionId: "s1",
-    revision: 1,
-    incarnation: "tree-1",
-    durableLeafId: "a1",
-    effectiveLeafId: null,
-    activePath: ["u1", "a1"],
-    truncated: false,
-    health: { status: "ok" },
-    nodes: [
-      {
-        id: "u1",
-        parentId: null,
-        depth: 0,
-        type: "message",
-        role: "user",
-        label: "user",
-        snippet: "user",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: false,
-        canSwitch: false,
-        canEdit: false,
-        canFork: true,
-      },
-      {
-        id: "a1",
-        parentId: "u1",
-        depth: 1,
-        type: "message",
-        role: "assistant",
-        label: "assistant",
-        snippet: "answer",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: true,
-        canSwitch: true,
-        canEdit: false,
-        canFork: false,
-      },
-    ],
-  };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
+import { branchTree as tree, deferred } from "./helpers";
 
 function createHarness(initial: Partial<BranchControllerState> = {}) {
   let state: BranchControllerState = {
@@ -169,6 +117,30 @@ describe("BranchController", () => {
     await harness.controller.loadTree();
 
     expect(harness.handleAuthFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("revalidates the current earlier branch before returning to latest", async () => {
+    const currentTree: BranchTreeResponse = {
+      ...tree(),
+      effectiveLeafId: "u1",
+      activePath: ["u1"],
+    };
+    const harness = createHarness({
+      transcriptEffectiveLeafId: "u1",
+      branchTree: currentTree,
+    });
+    harness.branchTree.mockResolvedValue(currentTree);
+    harness.navigateBranch.mockResolvedValue({} as BranchNavigateResponse);
+
+    await expect(harness.controller.returnToLatest()).resolves.toBe(true);
+
+    expect(harness.navigateBranch).toHaveBeenCalledWith({
+      sessionId: "s1",
+      revision: currentTree.revision,
+      targetId: "a1",
+      mode: "switch",
+    });
+    expect(harness.applyNavigation).toHaveBeenCalledTimes(1);
   });
 
   it("commits a verified fork through the facade and refreshes the catalog", async () => {

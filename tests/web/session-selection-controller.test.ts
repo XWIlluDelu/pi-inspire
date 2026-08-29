@@ -5,14 +5,7 @@ import {
   SessionSelectionController,
   type SessionSelectionState,
 } from "../../src/controllers/session-selection-controller";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 function snapshot(sessionId: string | null): ActiveSnapshot {
   return {

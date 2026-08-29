@@ -27,15 +27,11 @@ import {
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../../shared/contracts";
+import { userTurnSummary } from "../../shared/user-turns";
 import type { PendingManagementIntent } from "../api";
-import {
-  type ActivityTool,
-  type ChatMessage,
-  contentItems,
-  messageKey,
-  messageText,
-} from "../events";
+import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 import {
   type ActivityMaterializationMode,
   store,
@@ -143,7 +139,10 @@ export const Transcript = memo(function Transcript({
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
   const [mobileTranscriptTool, setMobileTranscriptTool] =
     useState<MobileTranscriptTool>(null);
-  const projectionViewKey = `${viewId}\u0000${projectionIncarnation}`;
+  const projectionViewKey = transcriptProjectionKey(
+    viewId,
+    projectionIncarnation,
+  );
   const preserveActivityAnchorRef = useRef<
     (element: HTMLElement, alignment: "start" | "center" | "end") => void
   >(() => undefined);
@@ -177,20 +176,10 @@ export const Transcript = memo(function Transcript({
         message.__inspireMessageId ??
         messageKey(message) ??
         `loaded-user:${inferredOrdinal}`;
-      const attachmentCount = contentItems(message).filter(
-        (item) => item.type === "image",
-      ).length;
       byOrdinal.set(inferredOrdinal, {
         id,
         ordinal: inferredOrdinal,
-        snippet:
-          Array.from(
-            messageText(message).replace(/\s+/g, " ").trim().slice(0, 360),
-          )
-            .slice(0, 180)
-            .join("") ||
-          (attachmentCount > 0 ? "Image attachment" : "User message"),
-        attachmentCount,
+        ...userTurnSummary(message),
       });
     }
     return [...byOrdinal.values()];

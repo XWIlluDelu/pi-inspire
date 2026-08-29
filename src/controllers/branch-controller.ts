@@ -35,6 +35,11 @@ interface BranchViewTicket {
   selectionRequest: number;
 }
 
+interface EarlierBranchSelection {
+  durableLeafId: string;
+  effectiveLeafId: string;
+}
+
 interface BranchControllerHost {
   state(): BranchControllerState;
   patch(patch: BranchControllerPatch): void;
@@ -283,7 +288,9 @@ export class BranchController {
     }
   }
 
-  async returnToLatest(): Promise<boolean> {
+  private async resolveCurrentEarlierBranch(
+    changedMessage: string,
+  ): Promise<EarlierBranchSelection | null> {
     const state = this.host.state();
     const sessionId = state.sessionId;
     const durableLeafId = state.transcriptDurableLeafId;
@@ -294,7 +301,7 @@ export class BranchController {
       !effectiveLeafId ||
       durableLeafId === effectiveLeafId
     ) {
-      return false;
+      return null;
     }
     await this.loadTree();
     const current = this.host.state();
@@ -303,7 +310,7 @@ export class BranchController {
       current.transcriptDurableLeafId !== durableLeafId ||
       current.transcriptEffectiveLeafId !== effectiveLeafId
     ) {
-      return false;
+      return null;
     }
     const tree = current.branchTree;
     if (
@@ -311,50 +318,24 @@ export class BranchController {
       tree.durableLeafId !== durableLeafId ||
       tree.effectiveLeafId !== effectiveLeafId
     ) {
-      this.host.patch({
-        branchTreeError:
-          "Branch history changed — refresh the session before returning to latest",
-      });
-      return false;
+      this.host.patch({ branchTreeError: changedMessage });
+      return null;
     }
-    return this.navigate(durableLeafId, "switch");
+    return { durableLeafId, effectiveLeafId };
+  }
+
+  async returnToLatest(): Promise<boolean> {
+    const branch = await this.resolveCurrentEarlierBranch(
+      "Branch history changed — refresh the session before returning to latest",
+    );
+    return branch ? this.navigate(branch.durableLeafId, "switch") : false;
   }
 
   async forkCurrent(): Promise<boolean> {
-    const state = this.host.state();
-    const sessionId = state.sessionId;
-    const durableLeafId = state.transcriptDurableLeafId;
-    const effectiveLeafId = state.transcriptEffectiveLeafId;
-    if (
-      !sessionId ||
-      !durableLeafId ||
-      !effectiveLeafId ||
-      durableLeafId === effectiveLeafId
-    ) {
-      return false;
-    }
-    await this.loadTree();
-    const current = this.host.state();
-    if (
-      current.sessionId !== sessionId ||
-      current.transcriptDurableLeafId !== durableLeafId ||
-      current.transcriptEffectiveLeafId !== effectiveLeafId
-    ) {
-      return false;
-    }
-    const tree = current.branchTree;
-    if (
-      !tree ||
-      tree.durableLeafId !== durableLeafId ||
-      tree.effectiveLeafId !== effectiveLeafId
-    ) {
-      this.host.patch({
-        branchTreeError:
-          "Branch history changed — refresh the session before forking",
-      });
-      return false;
-    }
-    return this.fork(effectiveLeafId);
+    const branch = await this.resolveCurrentEarlierBranch(
+      "Branch history changed — refresh the session before forking",
+    );
+    return branch ? this.fork(branch.effectiveLeafId) : false;
   }
 
   private invalidateRequests(): void {

@@ -13,6 +13,7 @@ import {
   TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 
 interface ResourceControllerState {
   sessionId: string | null;
@@ -41,6 +42,22 @@ interface ResourceControllerPatch {
   resourcePreview?: ResourcePreview | null;
   resourceAvailability?: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths?: Record<string, string>;
+}
+
+function applyProbeResult(
+  result: ResourceProbeResult,
+  availability: Record<string, ResourceProbeResult>,
+  workspacePaths: Record<string, string>,
+): void {
+  if (result.availability === "available") {
+    delete availability[result.reference];
+    if (result.workspacePath)
+      workspacePaths[result.reference] = result.workspacePath;
+    else delete workspacePaths[result.reference];
+  } else {
+    availability[result.reference] = result;
+    delete workspacePaths[result.reference];
+  }
 }
 
 interface ResourceControllerHost {
@@ -131,15 +148,7 @@ export class ResourceController {
     const state = this.host.state();
     const resourceAvailability = { ...state.resourceAvailability };
     const resourceWorkspacePaths = { ...state.resourceWorkspacePaths };
-    if (result.availability === "available") {
-      delete resourceAvailability[result.reference];
-      if (result.workspacePath)
-        resourceWorkspacePaths[result.reference] = result.workspacePath;
-      else delete resourceWorkspacePaths[result.reference];
-    } else {
-      resourceAvailability[result.reference] = result;
-      delete resourceWorkspacePaths[result.reference];
-    }
+    applyProbeResult(result, resourceAvailability, resourceWorkspacePaths);
     this.host.patch({ resourceAvailability, resourceWorkspacePaths });
   }
 
@@ -265,24 +274,22 @@ export class ResourceController {
             )
               continue;
             received.add(result.reference);
-            if (result.availability === "available") {
-              delete resourceAvailability[result.reference];
-              if (result.workspacePath)
-                resourceWorkspacePaths[result.reference] = result.workspacePath;
-              else delete resourceWorkspacePaths[result.reference];
-            } else {
-              resourceAvailability[result.reference] = result;
-              delete resourceWorkspacePaths[result.reference];
-            }
+            applyProbeResult(
+              result,
+              resourceAvailability,
+              resourceWorkspacePaths,
+            );
           }
           for (const reference of batch) {
             if (!generationIsCurrent(reference)) continue;
             if (received.has(reference)) {
               this.resourceProbedReferences.add(reference);
             } else {
-              resourceAvailability[reference] =
-                unknownResourceAvailability(reference);
-              delete resourceWorkspacePaths[reference];
+              applyProbeResult(
+                unknownResourceAvailability(reference),
+                resourceAvailability,
+                resourceWorkspacePaths,
+              );
             }
           }
           this.host.patch({
@@ -302,11 +309,11 @@ export class ResourceController {
           };
           for (const reference of batch) {
             if (!generationIsCurrent(reference)) continue;
-            resourceAvailability[reference] = unknownResourceAvailability(
-              reference,
-              error,
+            applyProbeResult(
+              unknownResourceAvailability(reference, error),
+              resourceAvailability,
+              resourceWorkspacePaths,
             );
-            delete resourceWorkspacePaths[reference];
           }
           this.host.patch({
             resourceAvailability,
@@ -373,8 +380,10 @@ export class ResourceController {
         !this.ownsTransport(api, transportGeneration) ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId ||
-        `${current.transcriptViewId ?? ""}\u0000${current.transcriptIncarnation ?? ""}` !==
-          projectionKey
+        transcriptProjectionKey(
+          current.transcriptViewId,
+          current.transcriptIncarnation,
+        ) !== projectionKey
       );
     };
     const staleError = () =>
