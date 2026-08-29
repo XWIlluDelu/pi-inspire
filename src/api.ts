@@ -13,13 +13,15 @@ import type {
   HiddenClearResponse,
   HostDirListing,
   HostRootsResponse,
+  HostUpdateStatus,
   InspirePreferences,
+  InspireUpdateCheckResult,
   NewSessionDefaults,
   NewSessionOptions,
   PendingManagementAction,
   PendingManagementIntent,
   PendingQueues,
-  PiUpdateCheckResponse,
+  PiUpdateCheckResult,
   ProjectDirEntry,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
@@ -29,7 +31,6 @@ import type {
   SessionListResponse,
   TranscriptActivityPage,
   TranscriptPage,
-  UpdateCheckResponse,
   UploadedAttachment,
   UserTurnIndexPage,
   UserTurnTranscriptPage,
@@ -307,15 +308,17 @@ export function createApi(token: string | null = null) {
         request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
       ),
     update: (refresh = false) =>
-      request<UpdateCheckResponse>(
+      request<InspireUpdateCheckResult>(
         token,
         `/api/update${refresh ? "?refresh=1" : ""}`,
       ),
     piUpdate: (refresh = false) =>
-      request<PiUpdateCheckResponse>(
+      request<PiUpdateCheckResult>(
         token,
         `/api/pi-update${refresh ? "?refresh=1" : ""}`,
       ),
+    snoozeUpdate: (identity: string) =>
+      post<HostUpdateStatus>(token, "/api/update/snooze", { identity }),
     snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
     olderTranscript: (
       sessionId: string,
