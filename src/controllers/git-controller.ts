@@ -56,6 +56,15 @@ interface GitControllerHost {
   handleAuthFailure(): void;
 }
 
+interface GitChangeSelection {
+  api: Api;
+  sessionId: string;
+  selectionGeneration: number;
+  transportGeneration: number;
+  change: GitFileChange;
+  side: GitDiffSide;
+}
+
 /**
  * Owns Git request, cancellation, and polling lifecycles. AppStore remains the
  * single canonical state publisher: it supplies the visible snapshot and
@@ -121,13 +130,16 @@ export class GitController {
     return promise;
   }
 
-  async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+  private async resolveChange(
+    pathId: string,
+    requestedSide?: GitDiffSide,
+  ): Promise<GitChangeSelection | null> {
     let state = this.host.state();
     const api = this.host.api();
     const sessionId = state.sessionId;
     const selectionGeneration = state.selectionGeneration;
     const transportGeneration = this.host.transportGeneration();
-    if (!api || !sessionId) return;
+    if (!api || !sessionId) return null;
     let status = state.gitStatus;
     if (!status) {
       await this.refreshStatus();
@@ -139,19 +151,39 @@ export class GitController {
         state.sessionId !== sessionId ||
         state.selectionGeneration !== selectionGeneration
       )
-        return;
+        return null;
     }
-    if (!status || status.kind !== "repository") return;
+    if (!status || status.kind !== "repository") return null;
     const change = status.files.find(
       (candidate) => candidate.path.id === pathId,
     );
-    if (!change) return;
+    if (!change) return null;
     const side =
       requestedSide ??
       (change.unstaged || change.untracked || change.conflict
         ? "unstaged"
         : "staged");
-    if (!changeHasSide(change, side)) return;
+    return changeHasSide(change, side)
+      ? {
+          api,
+          sessionId,
+          selectionGeneration,
+          transportGeneration,
+          change,
+          side,
+        }
+      : null;
+  }
+
+  private async openResolvedDiff({
+    api,
+    sessionId,
+    selectionGeneration,
+    transportGeneration,
+    change,
+    side,
+  }: GitChangeSelection): Promise<void> {
+    const pathId = change.path.id;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
     this.cancelDiff();
     const request = new AbortController();
@@ -199,6 +231,11 @@ export class GitController {
     } finally {
       if (this.diffRequest === request) this.diffRequest = null;
     }
+  }
+
+  async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+    const selection = await this.resolveChange(pathId, requestedSide);
+    if (selection) await this.openResolvedDiff(selection);
   }
 
   setDiffSide(side: GitDiffSide): void {
@@ -277,36 +314,9 @@ export class GitController {
   }
 
   async openChange(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
-    let state = this.host.state();
-    const api = this.host.api();
-    const sessionId = state.sessionId;
-    const selectionGeneration = state.selectionGeneration;
-    const transportGeneration = this.host.transportGeneration();
-    if (!api || !sessionId) return;
-    let status = state.gitStatus;
-    if (!status) {
-      await this.refreshStatus();
-      state = this.host.state();
-      status = state.gitStatus;
-      if (
-        this.host.api() !== api ||
-        this.host.transportGeneration() !== transportGeneration ||
-        state.sessionId !== sessionId ||
-        state.selectionGeneration !== selectionGeneration
-      )
-        return;
-    }
-    if (!status || status.kind !== "repository") return;
-    const change = status.files.find(
-      (candidate) => candidate.path.id === pathId,
-    );
-    if (!change) return;
-    const side =
-      requestedSide ??
-      (change.unstaged || change.untracked || change.conflict
-        ? "unstaged"
-        : "staged");
-    if (!changeHasSide(change, side)) return;
+    const selection = await this.resolveChange(pathId, requestedSide);
+    if (!selection) return;
+    const { change, side } = selection;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
     const deleted =
       side === "staged"
@@ -314,7 +324,7 @@ export class GitController {
         : change.unstaged?.kind === "deleted";
     if (change.path.workspacePath && change.path.utf8Path && !deleted)
       void this.host.openResourceFromGit(change.path.workspacePath);
-    await this.openDiff(pathId, side);
+    await this.openResolvedDiff(selection);
   }
 
   /** A replacement API cannot inherit request ownership from its predecessor.

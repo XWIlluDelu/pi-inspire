@@ -26,10 +26,9 @@ function centeredTickWindowStart(
   return clampTickWindowStart(target - Math.floor(MAX_TICKS / 2), total);
 }
 
-function FlatChevronUp({ className }: { className?: string }) {
+function FlatChevron({ direction }: { direction: "up" | "down" }) {
   return (
     <svg
-      className={className}
       width="16"
       height="6"
       viewBox="0 0 16 6"
@@ -40,26 +39,13 @@ function FlatChevronUp({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M1.5 4.5L8 1.5L14.5 4.5" />
-    </svg>
-  );
-}
-
-function FlatChevronDown({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="6"
-      viewBox="0 0 16 6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M1.5 1.5L8 4.5L14.5 1.5" />
+      <path
+        d={
+          direction === "up"
+            ? "M1.5 4.5L8 1.5L14.5 4.5"
+            : "M1.5 1.5L8 4.5L14.5 1.5"
+        }
+      />
     </svg>
   );
 }
@@ -409,7 +395,7 @@ export function PromptMap({
           if (activeOrdinal !== null) void navigate(activeOrdinal - 1);
         }}
       >
-        <FlatChevronUp />
+        <FlatChevron direction="up" />
       </button>
 
       <div className="prompt-map__body">
@@ -586,7 +572,7 @@ export function PromptMap({
           if (activeOrdinal !== null) void navigate(activeOrdinal + 1);
         }}
       >
-        <FlatChevronDown />
+        <FlatChevron direction="down" />
       </button>
     </nav>
   );

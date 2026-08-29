@@ -52,20 +52,17 @@ function sourceSlice(
 interface BackslashMathScan {
   firstUnclosed: number;
   hasOpeningDisplayClose: boolean;
-  operations: number;
 }
 
 /** One forward scan. Odd backslash-run parity means the final slash is an
  * unescaped TeX delimiter; an active opener ignores different delimiters just
- * like the Markdown tokenizer. `operations` is a deterministic linear-work witness. */
-export function scanBackslashMath(raw: string): BackslashMathScan {
+ * like the Markdown tokenizer. */
+function scanBackslashMath(raw: string): BackslashMathScan {
   let slashRun = 0;
   let opener = -1;
   let close = "";
   let hasOpeningDisplayClose = false;
-  let operations = 0;
   for (let index = 0; index < raw.length; index += 1) {
-    operations += 1;
     const character = raw[index]!;
     if (character === "\\") {
       slashRun += 1;
@@ -84,7 +81,7 @@ export function scanBackslashMath(raw: string): BackslashMathScan {
       close = "";
     }
   }
-  return { firstUnclosed: opener, hasOpeningDisplayClose, operations };
+  return { firstUnclosed: opener, hasOpeningDisplayClose };
 }
 
 function firstUnclosedBackslashMath(raw: string): number {
@@ -246,8 +243,6 @@ const remarkMathSourceSafety: Plugin<[], Root> =
       visit(tree as unknown as { children: Array<Record<string, unknown>> });
     };
   };
-
-export { projectKatexSelection } from "./rich-text-copy";
 
 function escapeHtml(value: string): string {
   return value

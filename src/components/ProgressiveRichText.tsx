@@ -1,4 +1,5 @@
-import { Component, lazy, memo, type ReactNode, Suspense } from "react";
+import { lazy, memo, Suspense } from "react";
+import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import type { RichTextVariant } from "./RichText";
 
 const RichTextSurface = lazy(() =>
@@ -25,21 +26,6 @@ function PlainRichText({
   );
 }
 
-class RichTextLoadBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
-}
-
 /** Show exact safe text immediately, then upgrade to Markdown, KaTeX, and
  * syntax highlighting when their deferred chunk is available. */
 export const ProgressiveRichText = memo(function ProgressiveRichText(
@@ -47,10 +33,10 @@ export const ProgressiveRichText = memo(function ProgressiveRichText(
 ) {
   const fallback = <PlainRichText {...props} />;
   return (
-    <RichTextLoadBoundary fallback={fallback}>
+    <RenderErrorBoundary fallback={fallback}>
       <Suspense fallback={fallback}>
         <RichTextSurface {...props} />
       </Suspense>
-    </RichTextLoadBoundary>
+    </RenderErrorBoundary>
   );
 });

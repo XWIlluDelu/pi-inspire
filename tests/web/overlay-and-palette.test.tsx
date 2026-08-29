@@ -22,9 +22,11 @@ import {
 
 const sessions = [sessionSummary({ title: "Test session" })];
 let renameBodies: Record<string, unknown>[] = [];
+let renameGate: Promise<void> | null = null;
 
 beforeEach(async () => {
   renameBodies = [];
+  renameGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) {
@@ -41,7 +43,9 @@ beforeEach(async () => {
     if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
     if (url.startsWith("/api/sessions/rename")) {
       renameBodies.push(jsonBody(init));
-      return { body: { ok: true } };
+      return (renameGate ?? Promise.resolve()).then(() => ({
+        body: { ok: true },
+      }));
     }
     if (url.startsWith("/api/sessions")) {
       return {
@@ -150,5 +154,35 @@ describe("command palette rename", () => {
       ).toBeNull(),
     );
     expect(renameBodies).toEqual([]);
+  });
+
+  it("does not let an old rename completion close a reopened rename form", async () => {
+    let releaseRename!: () => void;
+    renameGate = new Promise<void>((resolve) => {
+      releaseRename = resolve;
+    });
+    render(<App />);
+    await openPalette();
+    const filter = screen.getByLabelText("Filter commands");
+    fireEvent.change(filter, { target: { value: "rename" } });
+    fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
+
+    const firstEditor = screen.getByLabelText("New session name");
+    fireEvent.change(firstEditor, { target: { value: "Old request" } });
+    fireEvent.keyDown(firstEditor, { key: "Enter" });
+    await waitFor(() => expect(renameBodies).toHaveLength(1));
+    fireEvent.keyDown(firstEditor, { key: "Escape" });
+    fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
+    expect(screen.getByLabelText("New session name")).toBeInTheDocument();
+
+    releaseRename();
+    await waitFor(() =>
+      expect(store.getState().sessionName).toBe("Old request"),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Command palette" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("New session name")).toBeInTheDocument();
+    renameGate = null;
   });
 });

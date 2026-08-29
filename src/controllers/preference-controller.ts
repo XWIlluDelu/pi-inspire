@@ -277,15 +277,21 @@ export class PreferenceController {
   }
 
   rememberModel(model: ModelIdentity): void {
+    const current = this.host.state().prefs.recentModelIds;
     const recentModelIds = [
       model,
-      ...this.host
-        .state()
-        .prefs.recentModelIds.filter(
-          (candidate) =>
-            modelIdentityKey(candidate) !== modelIdentityKey(model),
-        ),
+      ...current.filter(
+        (candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model),
+      ),
     ].slice(0, 8);
+    if (
+      recentModelIds.length === current.length &&
+      recentModelIds.every(
+        (candidate, index) =>
+          modelIdentityKey(candidate) === modelIdentityKey(current[index]!),
+      )
+    )
+      return;
     this.save({ recentModelIds });
   }
 

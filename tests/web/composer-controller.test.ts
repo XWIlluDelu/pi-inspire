@@ -4,14 +4,7 @@ import {
   ComposerController,
   type ComposerSlice,
 } from "../../src/controllers/composer-controller";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 function createHarness(sessionId = "session-a") {
   let activeSessionId: string | null = sessionId;
@@ -124,10 +117,27 @@ describe("ComposerController", () => {
     });
   });
 
-  it("reuses one delivery identity after an acceptance-unknown transport failure", async () => {
+  it.each([
+    [
+      "an acceptance-unknown transport failure",
+      () => new ApiTransportError("request"),
+    ],
+    ["an unmarked intermediary 5xx", () => new ApiError(502, "Bad gateway")],
+    [
+      "a marked relay failure",
+      () =>
+        new ApiError(
+          502,
+          "Public relay could not reach the Host",
+          undefined,
+          undefined,
+          "ssh-reverse",
+        ),
+    ],
+  ])("reuses one delivery identity after %s", async (_label, failure) => {
     const harness = createHarness();
     harness.prompt
-      .mockRejectedValueOnce(new ApiTransportError("request"))
+      .mockRejectedValueOnce(failure())
       .mockResolvedValueOnce({ accepted: true, historyEntry: null });
 
     await expect(harness.controller.send("send once")).resolves.toBe(false);
@@ -137,48 +147,6 @@ describe("ComposerController", () => {
     });
 
     expect(harness.prompt).toHaveBeenCalledTimes(2);
-    expect(harness.prompt.mock.calls[1]![0]).toEqual(
-      harness.prompt.mock.calls[0]![0],
-    );
-  });
-
-  it("reuses one delivery identity after an unmarked intermediary 5xx", async () => {
-    const harness = createHarness();
-    harness.prompt
-      .mockRejectedValueOnce(new ApiError(502, "Bad gateway"))
-      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
-
-    await expect(harness.controller.send("send once")).resolves.toBe(false);
-    await expect(harness.controller.send("send once")).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-
-    expect(harness.prompt.mock.calls[1]![0]).toEqual(
-      harness.prompt.mock.calls[0]![0],
-    );
-  });
-
-  it("reuses one delivery identity after a marked relay failure", async () => {
-    const harness = createHarness();
-    harness.prompt
-      .mockRejectedValueOnce(
-        new ApiError(
-          502,
-          "Public relay could not reach the Host",
-          undefined,
-          undefined,
-          "ssh-reverse",
-        ),
-      )
-      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
-
-    await expect(harness.controller.send("send once")).resolves.toBe(false);
-    await expect(harness.controller.send("send once")).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-
     expect(harness.prompt.mock.calls[1]![0]).toEqual(
       harness.prompt.mock.calls[0]![0],
     );

@@ -27,6 +27,7 @@ import {
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -53,7 +54,6 @@ export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
 export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
 const USER_TURN_INDEX_PAGE_SIZE = 100;
-const USER_TURN_SNIPPET_CHARS = 180;
 const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
 const MAX_SESSION_PATH_CHARS = 32_768;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
@@ -569,6 +569,19 @@ function boundedTranscriptItem(
   return { value: projected, serialized: JSON.stringify(projected) };
 }
 
+function oversizedTranscriptItem(): never {
+  throw Object.assign(
+    new Error("A projected transcript message exceeds the browser page budget"),
+    { status: 422 },
+  );
+}
+
+function withinTranscriptPageBudget<T>(page: T): T {
+  if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES)
+    throw new Error("Transcript page exceeded its declared byte bound");
+  return page;
+}
+
 export function boundedTranscriptProjection(value: unknown): {
   value: unknown;
   bytes: number;
@@ -599,41 +612,6 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
         String((part as Record<string, unknown>).text).length > 0,
     )
   );
-}
-
-function userTurnSnippet(value: unknown): {
-  snippet: string;
-  attachmentCount: number;
-} {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return { snippet: "User message", attachmentCount: 0 };
-  const record = value as Record<string, unknown>;
-  const text: string[] = [];
-  let attachmentCount = 0;
-  if (typeof record.content === "string") text.push(record.content);
-  else if (Array.isArray(record.content)) {
-    for (const part of record.content) {
-      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-      const item = part as Record<string, unknown>;
-      if (item.type === "text" && typeof item.text === "string")
-        text.push(item.text);
-      else if (item.type === "image") attachmentCount += 1;
-    }
-  }
-  const normalized = text.join(" ").replace(/\s+/g, " ").trim();
-  return {
-    snippet:
-      normalized.length > 0
-        ? Array.from(normalized.slice(0, USER_TURN_SNIPPET_CHARS * 2))
-            .slice(0, USER_TURN_SNIPPET_CHARS)
-            .join("")
-        : attachmentCount > 0
-          ? attachmentCount === 1
-            ? "Image attachment"
-            : `${attachmentCount} image attachments`
-          : "User message",
-    attachmentCount,
-  };
 }
 
 function projectedTimestamp(value: unknown): string | undefined {
@@ -1176,6 +1154,35 @@ export class SessionProjection
     };
   }
 
+  private recordHealthFailure(
+    error: unknown,
+  ): ProjectionReconcileResult | null {
+    const health = healthError(error);
+    if (
+      health.status === this.currentHealth.status &&
+      health.message === this.currentHealth.message
+    )
+      return null;
+    this.currentHealth = health;
+    return {
+      changed: false,
+      initialMaterialization: this.initialMaterializationPending,
+      kind: "none",
+      messageChange: "none",
+      previousRevision: this.revision,
+      revision: this.revision,
+      previousFingerprint: this.fingerprint,
+      fingerprint: this.fingerprint,
+      healthChanged: true,
+      sourceChanged: false,
+      previousSourceVersion: this.sourceVersion,
+      sourceVersion: this.sourceVersion,
+      ...this.resultObservation(),
+      previousUncommittedBytes: this.uncommittedBytes,
+      previousTailVerified: true,
+    };
+  }
+
   private startWatching(): void {
     if (this.closed || this.watcher || this.pollTimer) return;
     try {
@@ -1194,29 +1201,10 @@ export class SessionProjection
       );
       this.watcher.on("error", (error) => {
         if (this.closed) return;
-        const previous = this.currentHealth;
-        this.currentHealth = healthError(
+        const result = this.recordHealthFailure(
           new Error(`Session watch failed: ${error.message}`),
         );
-        if (JSON.stringify(previous) !== JSON.stringify(this.currentHealth)) {
-          this.emit("update", {
-            changed: false,
-            initialMaterialization: this.initialMaterializationPending,
-            kind: "none",
-            messageChange: "none",
-            previousRevision: this.revision,
-            revision: this.revision,
-            previousFingerprint: this.fingerprint,
-            fingerprint: this.fingerprint,
-            healthChanged: true,
-            sourceChanged: false,
-            previousSourceVersion: this.sourceVersion,
-            sourceVersion: this.sourceVersion,
-            ...this.resultObservation(),
-            previousUncommittedBytes: this.uncommittedBytes,
-            previousTailVerified: true,
-          } satisfies ProjectionReconcileResult);
-        }
+        if (result) this.emit("update", result);
       });
     } catch (error) {
       this.currentHealth = healthError(error);
@@ -1236,27 +1224,8 @@ export class SessionProjection
       })
       .catch((error) => {
         if (this.closed) return;
-        const previous = JSON.stringify(this.currentHealth);
-        this.currentHealth = healthError(error);
-        if (previous !== JSON.stringify(this.currentHealth)) {
-          this.emit("update", {
-            changed: false,
-            initialMaterialization: this.initialMaterializationPending,
-            kind: "none",
-            messageChange: "none",
-            previousRevision: this.revision,
-            revision: this.revision,
-            previousFingerprint: this.fingerprint,
-            fingerprint: this.fingerprint,
-            healthChanged: true,
-            sourceChanged: false,
-            previousSourceVersion: this.sourceVersion,
-            sourceVersion: this.sourceVersion,
-            ...this.resultObservation(),
-            previousUncommittedBytes: this.uncommittedBytes,
-            previousTailVerified: true,
-          } satisfies ProjectionReconcileResult);
-        }
+        const result = this.recordHealthFailure(error);
+        if (result) this.emit("update", result);
       });
   }
 
@@ -2080,7 +2049,7 @@ export class SessionProjection
         Number(ordinal) < 0
       )
         return [];
-      const summary = userTurnSnippet(value);
+      const summary = userTurnSummary(value);
       const timestamp = projectedTimestamp(value);
       return [
         {
@@ -2252,13 +2221,7 @@ export class SessionProjection
           JSON.stringify(shell(nextMessages, nextRanges, cursor + 1)),
         ) > TRANSCRIPT_PAGE_MAX_BYTES
       ) {
-        if (messages.length === 0)
-          throw Object.assign(
-            new Error(
-              "A projected transcript message exceeds the browser page budget",
-            ),
-            { status: 422 },
-          );
+        if (messages.length === 0) oversizedTranscriptItem();
         cursor = pendingStart ?? cursor;
         break;
       }
@@ -2292,10 +2255,9 @@ export class SessionProjection
         committedEnd = turnEnd;
       }
     }
-    const page = shell(messages, activityRanges, committedEnd);
-    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES)
-      throw new Error("Transcript page exceeded its declared byte bound");
-    return page;
+    return withinTranscriptPageBudget(
+      shell(messages, activityRanges, committedEnd),
+    );
   }
 
   private buildPage(
@@ -2361,19 +2323,8 @@ export class SessionProjection
       messagesBytes = candidateMessagesBytes;
       start = index;
     }
-    if (reversed.length === 0 && before > 0) {
-      throw Object.assign(
-        new Error(
-          "A projected transcript message exceeds the browser page budget",
-        ),
-        { status: 422 },
-      );
-    }
-    const page = shell(start, reversed.reverse());
-    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {
-      throw new Error("Transcript page exceeded its declared byte bound");
-    }
-    return page;
+    if (reversed.length === 0 && before > 0) oversizedTranscriptItem();
+    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
   }
 
   private buildVisiblePage(
@@ -2500,19 +2451,11 @@ export class SessionProjection
         else start = pendingActivityEnd;
       }
     }
-    if (reversed.length === 0 && start === before && before > 0) {
-      throw Object.assign(
-        new Error(
-          "A projected transcript message exceeds the browser page budget",
-        ),
-        { status: 422 },
-      );
-    }
-    const page = shell(start, reversed.reverse(), ranges.reverse());
-    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {
-      throw new Error("Transcript page exceeded its declared byte bound");
-    }
-    return page;
+    if (reversed.length === 0 && start === before && before > 0)
+      oversizedTranscriptItem();
+    return withinTranscriptPageBudget(
+      shell(start, reversed.reverse(), ranges.reverse()),
+    );
   }
 
   private buildActivityPage(
@@ -2562,19 +2505,8 @@ export class SessionProjection
       reversed.push(item.value);
       start = index;
     }
-    if (reversed.length === 0 && before > floor) {
-      throw Object.assign(
-        new Error(
-          "A projected transcript message exceeds the browser page budget",
-        ),
-        { status: 422 },
-      );
-    }
-    const page = shell(start, reversed.reverse());
-    if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES) {
-      throw new Error("Transcript page exceeded its declared byte bound");
-    }
-    return page;
+    if (reversed.length === 0 && before > floor) oversizedTranscriptItem();
+    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
   }
 
   async close(): Promise<void> {

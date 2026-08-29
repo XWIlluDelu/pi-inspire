@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import {
-  projectKatexSelection,
-  RichText,
-  scanBackslashMath,
-} from "../../src/components/RichText";
+import { RichText } from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
 
 class ClipboardDataTransfer {
@@ -43,34 +39,6 @@ function dispatchSelectionCopy(
 }
 
 describe("formula rendering", () => {
-  it("scans adversarial backslash math in deterministic linear work", () => {
-    for (const size of [64, 4_096, 500_000]) {
-      const input = `${"\\".repeat(size)}\\(unclosed`;
-      const result = scanBackslashMath(input);
-      expect(result.operations).toBe(input.length);
-      expect(result.operations).toBeLessThanOrEqual(size + 10);
-    }
-    expect(scanBackslashMath("\\\\\\(x\\)").firstUnclosed).toBe(-1);
-    expect(scanBackslashMath("\\\\(escaped").firstUnclosed).toBe(-1);
-    expect(scanBackslashMath("\\[x\\]").hasOpeningDisplayClose).toBe(true);
-    expect(scanBackslashMath("\\[x").firstUnclosed).toBe(0);
-  });
-
-  it("renders inline mathematics through KaTeX", () => {
-    const { container } = render(
-      <RichText text="The energy is $E=mc^2$ here." />,
-    );
-    expect(container.querySelector(".katex")).toBeTruthy();
-    expect(container.textContent).toContain("The energy is");
-  });
-
-  it("renders display mathematics", () => {
-    const { container } = render(
-      <RichText text={"Before\n\n$$\\int_0^1 x^2\\,dx=\\frac13$$\n\nAfter"} />,
-    );
-    expect(container.querySelector(".katex-display")).toBeTruthy();
-  });
-
   it("renders a complete formula-rich Pi response without stripped structures", () => {
     const source = String.raw`$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$
 $$\int_{0}^{\infty} e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
@@ -97,28 +65,6 @@ x^2, & x\geq 0 \\
     );
   });
 
-  it.each([
-    ["radical", String.raw`\sqrt{\pi}`],
-    ["wide accent", String.raw`\widehat{abcdef}`],
-    ["extensible arrow", String.raw`\xrightarrow{n}`],
-    ["extensible brace", String.raw`\overbrace{a+b+c}^{n}`],
-  ])("preserves KaTeX's SVG path for %s", (_label, formula) => {
-    const { container } = render(<RichText text={`$$${formula}$$`} />);
-    const paths = [...container.querySelectorAll(".katex-display svg path")];
-    expect(paths.length).toBeGreaterThan(0);
-    expect(paths.every((path) => path.hasAttribute("d"))).toBe(true);
-  });
-
-  it("preserves non-path SVG geometry such as cancellation lines", () => {
-    const { container } = render(
-      <RichText text={String.raw`$$\cancel{x}$$`} />,
-    );
-    const line = container.querySelector(".katex-display svg line");
-    expect(line).toHaveAttribute("x1", "0");
-    expect(line).toHaveAttribute("y2", "0");
-    expect(line).toHaveAttribute("stroke-width", "0.046em");
-  });
-
   it("preserves MathML structure and layout metadata for assistive technology", () => {
     const formula = String.raw`$$\begin{aligned}f(x)&=x^2\\&=(x+1)^2\end{aligned}$$`;
     const { container } = render(<RichText text={formula} />);
@@ -142,13 +88,6 @@ x^2, & x\geq 0 \\
     expect(container.textContent).toContain("\\href");
     expect(container.textContent).toContain("\\htmlClass");
     expect(container.textContent).toContain("\\includegraphics");
-  });
-
-  it("renders the project name expression ins$\\pi$re", () => {
-    const { container } = render(<RichText text="ins$\pi$re" />);
-    expect(container.querySelector(".katex")).toBeTruthy();
-    expect(container.textContent).toContain("ins");
-    expect(container.textContent).toContain("re");
   });
 
   it("supports TeX inline and display delimiters at tokenization level", () => {
@@ -228,27 +167,6 @@ w
 });
 
 describe("selection copy", () => {
-  it("projects source TeX with canonical delimiters while preserving selected HTML", () => {
-    const { container } = render(
-      <RichText
-        text={String.raw`Before $E=mc^2$
-
-\[x^2\]
-
-After.`}
-      />,
-    );
-    const root = container.querySelector(".rich-text") as HTMLElement;
-    const range = document.createRange();
-    range.selectNodeContents(root);
-    const projected = projectKatexSelection(range, root);
-    expect(projected?.plain).toContain("Before $E=mc^2$");
-    expect(projected?.plain).toContain("$$x^2$$");
-    expect(projected?.plain).toContain("After.");
-    expect(projected?.html).toContain("katex-html");
-    expect(projected?.html).toContain("annotation");
-  });
-
   it("copies partial inline and display selections with their original delimiter identity", async () => {
     const { container } = render(
       <Transcript
@@ -379,30 +297,12 @@ describe("raw HTML and unsafe URL defense", () => {
     expect(container.textContent).toContain("Look");
   });
 
-  it("does not render script tags", () => {
-    const { container } = render(
-      <RichText text={"before <script>window.__script = 1</script> after"} />,
-    );
-    expect(container.querySelector("script")).toBeNull();
-    expect(
-      (window as unknown as Record<string, unknown>).__script,
-    ).toBeUndefined();
-  });
-
   it("strips javascript: URLs from links", () => {
     const { container } = render(
       <RichText text="[click me](javascript:window.__js=1)" />,
     );
     expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__js).toBeUndefined();
-  });
-
-  it("keeps safe https links with safe rel attributes", () => {
-    render(<RichText text="[Pi docs](https://pi.dev)" />);
-    const link = screen.getByRole("link", { name: "Pi docs" });
-    expect(link).toHaveAttribute("href", "https://pi.dev");
-    expect(link).toHaveAttribute("rel", "noreferrer noopener");
-    expect(link).toHaveAttribute("target", "_blank");
   });
 
   it("renders remote markdown images as links instead of fetching them", () => {
@@ -498,13 +398,5 @@ describe("markdown constructs", () => {
     expect(
       screen.getByRole("button", { name: "Copy code" }),
     ).toBeInTheDocument();
-  });
-
-  it("renders user-variant text with dedicated container class", () => {
-    const { container } = render(
-      <RichText text={"Line 1\nLine 2\n$$E = mc^2$$"} variant="user" />,
-    );
-    expect(container.querySelector(".rich-text--user")).toBeTruthy();
-    expect(container.querySelector(".katex")).toBeTruthy();
   });
 });

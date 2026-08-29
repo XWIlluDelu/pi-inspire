@@ -17,7 +17,7 @@ function fragmentHtml(fragment: DocumentFragment): string {
 /** Build the clipboard projection used by the transcript's delegated copy
  * boundary. The supplied range is cloned, so neither selection nor Pi source
  * text is modified. */
-export function projectKatexSelection(
+function projectKatexSelection(
   range: Range,
   root: HTMLElement,
 ): { plain: string; html: string } | null {

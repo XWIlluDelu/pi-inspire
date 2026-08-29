@@ -37,7 +37,7 @@ export function parseCaretCompletion(
     }
   }
 
-  const lineStart = value.lastIndexOf("\n", Math.max(0, point - 1)) + 1;
+  const lineStart = point === 0 ? 0 : value.lastIndexOf("\n", point - 1) + 1;
   let trigger = -1;
   for (let index = lineStart; index < point; index += 1) {
     if (value[index] !== "@") continue;

@@ -248,7 +248,7 @@ function logicalEdgeFallback(
   edge: "first" | "last",
 ): boolean {
   return edge === "first"
-    ? value.lastIndexOf("\n", Math.max(0, caret - 1)) < 0
+    ? caret === 0 || value.lastIndexOf("\n", caret - 1) < 0
     : value.indexOf("\n", caret) < 0;
 }
 
@@ -258,7 +258,7 @@ function mountTextareaMirror(
   top: number,
 ): {
   mirror: HTMLDivElement;
-  text: ChildNode | null;
+  text: Text;
   computed: CSSStyleDeclaration;
 } {
   const computed = getComputedStyle(textarea);
@@ -272,9 +272,10 @@ function mountTextareaMirror(
   for (const property of CARET_LAYOUT_PROPERTIES) {
     mirror.style.setProperty(property, computed.getPropertyValue(property));
   }
-  mirror.textContent = textarea.value;
+  const text = document.createTextNode(textarea.value);
+  mirror.append(text);
   document.body.append(mirror);
-  return { mirror, text: mirror.firstChild, computed };
+  return { mirror, text, computed };
 }
 
 function collapsedCaretRect(text: Node, offset: number): DOMRect | null {
@@ -284,7 +285,7 @@ function collapsedCaretRect(text: Node, offset: number): DOMRect | null {
   return range.getClientRects()[0] ?? null;
 }
 
-export interface TextareaCaretLineBounds {
+interface TextareaCaretLineBounds {
   top: number;
   bottom: number;
 }
@@ -296,7 +297,7 @@ export function textareaCaretLineBounds(
 ): TextareaCaretLineBounds | null {
   const value = textarea.value;
   const bounds = textarea.getBoundingClientRect();
-  if (!value || !document.body || bounds.width <= 0) return null;
+  if (!value || bounds.width <= 0) return null;
 
   let mirror: HTMLDivElement | null = null;
   try {
@@ -304,7 +305,6 @@ export function textareaCaretLineBounds(
     mirror = mounted.mirror;
     mirror.scrollLeft = textarea.scrollLeft;
     mirror.scrollTop = textarea.scrollTop;
-    if (!mounted.text) return null;
     const offset = Math.max(0, Math.min(value.length, caret));
     const rect = collapsedCaretRect(mounted.text, offset);
     if (!rect) return null;
@@ -332,7 +332,7 @@ export function isTextareaCaretOnVisualEdge(
   const value = textarea.value;
   const caret = textarea.selectionStart;
   const fallback = logicalEdgeFallback(value, caret, edge);
-  if (!value || !document.body) return true;
+  if (!value) return true;
 
   const bounds = textarea.getBoundingClientRect();
   if (bounds.width <= 0) return fallback;
@@ -340,7 +340,6 @@ export function isTextareaCaretOnVisualEdge(
   try {
     const mounted = mountTextareaMirror(textarea, -100000, 0);
     mirror = mounted.mirror;
-    if (!mounted.text) return fallback;
     const currentTop = collapsedCaretRect(mounted.text, caret)?.top ?? null;
     const edgeTop =
       collapsedCaretRect(mounted.text, edge === "first" ? 0 : value.length)
