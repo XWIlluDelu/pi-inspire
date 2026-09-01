@@ -219,6 +219,20 @@ function catalog(records: SessionRecord[]): SessionCatalogLike {
 const attachments: AttachmentStore[] = [];
 const workspaceDirectories: string[] = [];
 
+function trackedAttachmentStore(): AttachmentStore {
+  const store = new AttachmentStore();
+  attachments.push(store);
+  return store;
+}
+
+function deferredSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function upload(name: string, type: string): Express.Multer.File {
   const buffer = Buffer.from("payload");
   return {
@@ -322,12 +336,8 @@ describe("browser-safe runtime projection", () => {
 
 describe("RuntimeController concurrent sessions", () => {
   it("returns the Pi-file preview before extensions finish and makes prompt await readiness", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -367,12 +377,8 @@ describe("RuntimeController concurrent sessions", () => {
     workspaceDirectories.push(workspace);
     const selected = join(workspace, "selected.txt");
     await writeFile(selected, "selected");
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", workspace)]),
@@ -418,12 +424,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("shields prompt attachments from a DELETE racing the gated delivery", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -465,12 +467,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects a prompt reusing an in-flight attachment without breaking the first lease", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -515,12 +513,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("settles the lease handback before a failed prompt's response", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let releaseResolve!: () => void;
-    const resolveGate = new Promise<void>((resolveGateNow) => {
-      releaseResolve = resolveGateNow;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: resolveGate, resolve: releaseResolve } = deferredSignal();
     // Hold the resolve open past its lease-taking, like a slow image read,
     // while the project-file branch fails fast.
     const innerResolve = store.resolveForPrompt.bind(store);
@@ -562,8 +556,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("restages attachments when Pi rejects the prompt so they stay withdrawable", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -592,8 +585,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("does not restage or duplicate attachments when prompt acceptance is unknown", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -642,8 +634,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("acknowledges an accepted prompt when its immediate projection refresh fails", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -697,8 +688,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("does not reject an accepted prompt when optional Composer-history hydration fails", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -744,8 +734,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("stops a worker when terminal-event projection reconciliation fails", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -788,8 +777,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("delivers addressed writes to their named session, not the current selection", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
@@ -830,12 +818,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps the newest selection when an earlier open completes late", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let releaseA!: () => void;
-    const gateA = new Promise<void>((resolveGate) => {
-      releaseA = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gateA, resolve: releaseA } = deferredSignal();
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       store,
@@ -856,8 +840,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("does not change selection when a ready session's pre-commit snapshot fails", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
@@ -894,8 +877,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("retries an in-flight snapshot when selection changes", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
@@ -910,14 +892,8 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
 
-    let releaseSnapshot!: () => void;
-    const gate = new Promise<void>(
-      (resolveGate) => (releaseSnapshot = resolveGate),
-    );
-    let snapshotStarted!: () => void;
-    const started = new Promise<void>(
-      (resolveStarted) => (snapshotStarted = resolveStarted),
-    );
+    const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
+    const { promise: started, resolve: snapshotStarted } = deferredSignal();
     const workerA = workers[0]!;
     const request = workerA.request.bind(workerA);
     workerA.request = async <T>(
@@ -942,8 +918,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("loads resource messages from the host projection without get_messages", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/project")]),
@@ -982,8 +957,7 @@ describe("RuntimeController concurrent sessions", () => {
     const projectFile = join(workspace, "source.ts");
     await mkdir(workspace);
     await writeFile(projectFile, "project");
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const uploaded = await store.add(upload("report.pdf", "application/pdf"));
     const leased = await store.resolveForPrompt([uploaded.id]);
     const attachmentFile = leased.files[0]!.path;
@@ -1087,8 +1061,7 @@ describe("RuntimeController concurrent sessions", () => {
     const forgedFile = join(root, "host-secret.txt");
     await mkdir(workspace);
     await writeFile(forgedFile, "not an uploaded attachment");
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const historicalText = addAttachmentContext(
       "open the report",
@@ -1145,8 +1118,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps an accepted prompt non-evictable until its lifecycle event arrives", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const ids = ["a", "b", "c", "d", "e", "f"];
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
@@ -1179,8 +1151,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps an extension-response worker protected until Pi acknowledges the ordered input", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const ids = ["a", "b", "c", "d", "e", "f"];
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
@@ -1201,14 +1172,8 @@ describe("RuntimeController concurrent sessions", () => {
       method: "confirm",
     });
 
-    let releaseAck!: () => void;
-    const ackGate = new Promise<void>(
-      (resolveGate) => (releaseAck = resolveGate),
-    );
-    let ackStarted!: () => void;
-    const started = new Promise<void>(
-      (resolveStarted) => (ackStarted = resolveStarted),
-    );
+    const { promise: ackGate, resolve: releaseAck } = deferredSignal();
+    const { promise: started, resolve: ackStarted } = deferredSignal();
     const request = workerA.request.bind(workerA);
     workerA.request = async <T>(
       command: Record<string, unknown>,
@@ -1240,8 +1205,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("routes a typed /compact to the RPC compact command instead of prompting", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -1279,12 +1243,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("single-flights concurrent opens of the same session", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let releasePreview!: () => void;
-    const previewGate = new Promise<void>((resolveGate) => {
-      releasePreview = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: previewGate, resolve: releasePreview } = deferredSignal();
     let previewCalls = 0;
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
@@ -1316,8 +1276,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps one independent worker per opened session and never stops one during view changes", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([
@@ -1354,8 +1313,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("bounds the idle worker cache without stopping busy, paused, or extension-blocked sessions", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const ids = ["a", "b", "c", "d", "e", "f", "g"];
     const workers: FakeRpc[] = [];
     const previewCalls = new Map<string, number>();
@@ -1442,8 +1400,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("bounds dormant slots and status projection across hundreds of opens and reopens evicted sessions", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const ids = Array.from({ length: 240 }, (_, index) => `session-${index}`);
     const workers: FakeRpc[] = [];
     const previewCalls = new Map<string, number>();
@@ -1483,8 +1440,7 @@ describe("RuntimeController concurrent sessions", () => {
   }, 30_000);
 
   it("reclaims processless failed projections while retaining lightweight status across hundreds of exits", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const ids = Array.from({ length: 220 }, (_, index) => `failed-${index}`);
     const workers: FakeRpc[] = [];
     const errors = vi
@@ -1547,8 +1503,7 @@ describe("RuntimeController concurrent sessions", () => {
   }, 30_000);
 
   it("reloads a reclaimed conflicted projection without starting a writer until abort clears policy", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
@@ -1610,8 +1565,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps a reconciliation conflict sticky across agent settlement", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -1661,8 +1615,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("derives background conflict indicators after selection changes", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       store,
@@ -1715,8 +1668,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("fails promptly and attributes a response-bearing startup UI request", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
     const runtime = new RuntimeController(
       catalog([]),
@@ -1752,8 +1704,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("allows fire-and-forget startup UI while rejecting no startup response", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
     const runtime = new RuntimeController(
       catalog([]),
@@ -1782,8 +1733,7 @@ describe("RuntimeController concurrent sessions", () => {
   it("rejects a new Pi worker that reports a path owned by another slot", async () => {
     const existing = record("a", "/tmp");
     existing.path = resolve("/sessions/a.jsonl");
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([existing]),
@@ -1813,8 +1763,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const runtime = new RuntimeController(
       catalog([]),
       store,
@@ -1837,8 +1786,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("starts a new Pi worker with the selected model and thinking level", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
     const runtime = new RuntimeController(
       catalog([]),
@@ -1897,8 +1845,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("publishes running and unseen completion state, then acknowledges it when viewed", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const events: Array<Record<string, unknown>> = [];
     const runtime = new RuntimeController(
@@ -1970,8 +1917,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps a read-only recovery snapshot and clears stale extension UI after worker exit", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2029,8 +1975,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("keeps public text-only pending projections for reconnect and clears them on settlement and worker replacement", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2105,8 +2050,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("revision-checks Pending management and fetches exact text only on demand", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2211,8 +2155,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("projects text widgets, bounds raw displays, and cancels unknown interactive methods", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2423,8 +2366,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("preserves concurrent dialogs, mirrors expiry, and clears every request at lifecycle boundaries", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const emitted: Array<Record<string, unknown>> = [];
     const runtime = new RuntimeController(
@@ -2530,8 +2472,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("treats a written extension response with a lost ordered fence as acceptance-unknown", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     let responseWritten = false;
     const runtime = new RuntimeController(
@@ -2586,8 +2527,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("retires the writer when extension-response stdin delivery is acceptance-unknown", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2623,8 +2563,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("restores a background extension dialog when its session is viewed", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
@@ -2680,13 +2619,9 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects an open whose catalog lookup outlives runtime close", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const base = catalog([record("a", "/project")]);
-    let releaseCatalog!: () => void;
-    const catalogGate = new Promise<void>((resolveCatalog) => {
-      releaseCatalog = resolveCatalog;
-    });
+    const { promise: catalogGate, resolve: releaseCatalog } = deferredSignal();
     let lookupStarted = false;
     let previewLoads = 0;
     const runtime = new RuntimeController(
@@ -2719,13 +2654,9 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("owns and drains a provisional new-session worker during concurrent close", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
-    let releaseStart!: () => void;
-    const startGate = new Promise<void>((resolveStart) => {
-      releaseStart = resolveStart;
-    });
+    const { promise: startGate, resolve: releaseStart } = deferredSignal();
     const runtime = new RuntimeController(
       catalog([]),
       store,
@@ -2754,13 +2685,10 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("atomically cleans a provisional identity-rebind race and startup failure", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
-    let releaseIdentity!: () => void;
-    const identityGate = new Promise<void>((resolveIdentity) => {
-      releaseIdentity = resolveIdentity;
-    });
+    const { promise: identityGate, resolve: releaseIdentity } =
+      deferredSignal();
     const runtime = new RuntimeController(
       catalog([]),
       store,
@@ -2799,8 +2727,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("unregisters and stops a provisional worker whose startup fails", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
       catalog([]),
@@ -2830,8 +2757,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rebinds an extension dialog raised before Pi reports the final session id", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const events: Array<Record<string, unknown>> = [];
     const runtime = new RuntimeController(
@@ -2889,8 +2815,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("deletes an unopened catalog session through the injected destructive boundary", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const source = catalog([record("a", "/tmp")]);
     source.refresh = vi.fn(source.refresh);
     source.invalidate = vi.fn();
@@ -2918,8 +2843,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("does not delete a catalog identity reserved by a provisional new session", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -2958,8 +2882,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("clears individually hidden sessions and every session in hidden folders after reserving all identities", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const source = catalog([
       record("a", "/loose"),
       record("b", "/folder"),
@@ -2996,8 +2919,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("preflights every Hidden file before moving the first one", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const validate = vi.fn(async (session: SessionRecord) => {
       if (session.id === "b")
@@ -3024,8 +2946,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects a Hidden clear if its reviewed session snapshot changed", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
       catalog([record("a", "/loose"), record("b", "/folder")]),
@@ -3048,8 +2969,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects a Hidden clear before moving any session when one is selected", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
       catalog([record("a", "/loose"), record("b", "/folder")]),
@@ -3073,8 +2993,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("rejects a Hidden clear before moving any session when Pending is paused", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -3114,8 +3033,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("refuses an ambiguous catalog identity before touching either file", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const first = record("a", "/tmp");
     const second = {
       ...record("a", "/other"),
@@ -3141,8 +3059,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("refuses to delete the selected session before touching its file", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -3164,8 +3081,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("makes the prior idle session deletable after New session deselects host ownership", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -3190,8 +3106,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("refuses to delete an unselected session while its agent is still running", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -3221,8 +3136,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("refuses to delete an unselected session while Pending is paused", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -3262,8 +3176,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("stops and retires an idle unselected worker before deleting its file", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "deleted" as const);
     const runtime = new RuntimeController(
@@ -3302,12 +3215,8 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("blocks new opens while a deletion outcome is in flight", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
     let entered = false;
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
@@ -3338,8 +3247,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("accepts the full image attachment limit without counting RPC image parts twice", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const uploaded = await store.addMany(
       Array.from({ length: 8 }, (_, index) =>
         upload(`shot-${index}.png`, "image/png"),
@@ -3371,8 +3279,7 @@ describe("RuntimeController concurrent sessions", () => {
   });
 
   it("reclaims consumed image uploads after a delivered prompt but keeps file uploads readable", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const image = await store.add(upload("shot.png", "image/png"));
     const file = await store.add(upload("notes.txt", "text/plain"));
     let worker!: FakeRpc;
@@ -3413,8 +3320,7 @@ describe("RuntimeController concurrent sessions", () => {
 
 describe("maintenance restart admission", () => {
   it("fences every new runtime command after an idle lease", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
+    const store = trackedAttachmentStore();
     const runtime = new RuntimeController(
       catalog([]),
       store,
@@ -3431,16 +3337,9 @@ describe("maintenance restart admission", () => {
   });
 
   it("does not grant a lease while an open request is still in flight", async () => {
-    const store = new AttachmentStore();
-    attachments.push(store);
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
-    const reachedPreview = new Promise<void>((resolveEntered) => {
-      entered = resolveEntered;
-    });
+    const store = trackedAttachmentStore();
+    const { promise: gate, resolve: release } = deferredSignal();
+    const { promise: reachedPreview, resolve: entered } = deferredSignal();
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
