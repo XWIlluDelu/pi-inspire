@@ -234,7 +234,7 @@ function composeDocumentTitle(
 ): string {
   const base =
     windowTitle ?? (sessionName ? `${sessionName} · INSΠRE` : "INSΠRE");
-  return attentionCount > 0 ? `● ${base}` : base;
+  return attentionCount > 0 ? `• ${base}` : base;
 }
 
 function TokenGate() {
