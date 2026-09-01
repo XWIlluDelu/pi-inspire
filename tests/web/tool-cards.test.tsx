@@ -127,6 +127,9 @@ describe("native Pi tool cards", () => {
     expect(
       container.querySelector(".tool-search-group .resource-path__visible"),
     ).toHaveTextContent("a.ts");
+    expect(
+      container.querySelector(".tool-search-group__line-plane"),
+    ).not.toBeNull();
     expect(screen.getByText("needle here")).toBeInTheDocument();
     expect(screen.getByText("5")).toHaveClass("tool-search-line__number");
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();

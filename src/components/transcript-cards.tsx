@@ -781,17 +781,19 @@ function ToolPresentationBlockView({
                     <span>{formatCount(group.matches.length, "line")}</span>
                   </header>
                   <div className="tool-search-group__lines">
-                    {group.matches.map((match, index) => (
-                      <div
-                        className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
-                        key={`${match.line}:${index}`}
-                      >
-                        <span className="tool-search-line__number">
-                          {match.line}
-                        </span>
-                        <code>{match.text || " "}</code>
-                      </div>
-                    ))}
+                    <div className="tool-search-group__line-plane">
+                      {group.matches.map((match, index) => (
+                        <div
+                          className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
+                          key={`${match.line}:${index}`}
+                        >
+                          <span className="tool-search-line__number">
+                            {match.line}
+                          </span>
+                          <code>{match.text || " "}</code>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </section>
               ))}

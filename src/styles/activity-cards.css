@@ -898,6 +898,12 @@
   overflow: auto;
 }
 
+/* Match tints share the longest result row's complete scrollable width. */
+.tool-search-group__line-plane {
+  width: max-content;
+  min-width: 100%;
+}
+
 .tool-search-line {
   display: grid;
   grid-template-columns: 4.5ch minmax(max-content, 1fr);
