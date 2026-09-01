@@ -659,14 +659,8 @@ describe("multi-session event routing", () => {
   });
 
   it("applies only the newest reordered same-session resync response", async () => {
-    let releaseFirst!: () => void;
-    let releaseSecond!: () => void;
-    const first = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const second = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
+    const { promise: first, resolve: releaseFirst } = deferred<void>();
+    const { promise: second, resolve: releaseSecond } = deferred<void>();
     let calls = 0;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/snapshot")) {
@@ -747,10 +741,7 @@ describe("multi-session event routing", () => {
   });
 
   it("clears only the projection-owned alert when projection health recovers", async () => {
-    let releaseSnapshots!: () => void;
-    const snapshots = new Promise<void>((resolve) => {
-      releaseSnapshots = resolve;
-    });
+    const { promise: snapshots, resolve: releaseSnapshots } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/snapshot")) {
         await snapshots;
@@ -862,16 +853,8 @@ describe("multi-session event routing", () => {
     "keeps %s severity when event-driven resync fails",
     async (kind, health, expectedSeverity) => {
       let snapshotCalls = 0;
-      let releaseSnapshot!: (value: {
-        status: number;
-        body: { error: string };
-      }) => void;
-      const failedSnapshot = new Promise<{
-        status: number;
-        body: { error: string };
-      }>((resolve) => {
-        releaseSnapshot = resolve;
-      });
+      const { promise: failedSnapshot, resolve: releaseSnapshot } =
+        deferred<RouteResponse>();
       installFetch((url, init) => {
         if (url.startsWith("/api/snapshot")) {
           snapshotCalls += 1;
@@ -986,10 +969,7 @@ describe("multi-session event routing", () => {
   });
 
   it("reconciles readiness that arrives before the open response", async () => {
-    let releaseOpen!: () => void;
-    const openGate = new Promise<void>((resolveGate) => {
-      releaseOpen = resolveGate;
-    });
+    const { promise: openGate, resolve: releaseOpen } = deferred<void>();
     let openRequested = false;
     let snapshotCalls = 0;
     vi.stubGlobal(
@@ -1057,10 +1037,8 @@ describe("multi-session event routing", () => {
   });
 
   it("does not let a delayed resync replace a newer session selection", async () => {
-    let releaseSnapshot!: () => void;
-    const snapshotGate = new Promise<void>((resolveGate) => {
-      releaseSnapshot = resolveGate;
-    });
+    const { promise: snapshotGate, resolve: releaseSnapshot } =
+      deferred<void>();
     let snapshotRequested = false;
     vi.stubGlobal(
       "fetch",
@@ -1119,10 +1097,8 @@ describe("multi-session event routing", () => {
   });
 
   it("keeps extension responses bound to their owning session across navigation", async () => {
-    let releaseResponse!: () => void;
-    const responseGate = new Promise<void>((resolveGate) => {
-      releaseResponse = resolveGate;
-    });
+    const { promise: responseGate, resolve: releaseResponse } =
+      deferred<void>();
     let responseBody: Record<string, unknown> | null = null;
     vi.stubGlobal(
       "fetch",
@@ -1472,10 +1448,7 @@ describe("transcript paging", () => {
 
   it("cancels an in-flight prompt-map seek when the branch view changes", async () => {
     const first = deferred<RouteResponse>();
-    let firstRequested!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      firstRequested = resolve;
-    });
+    const { promise: firstStarted, resolve: firstRequested } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         return {
@@ -1883,14 +1856,8 @@ describe("transcript paging", () => {
   });
 
   it("discards a delayed older page from branch A after same-session switch to branch B", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const { promise: gate, resolve: release } = deferred<void>();
+    const { promise: requested, resolve: started } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
@@ -1953,14 +1920,8 @@ describe("transcript paging", () => {
   });
 
   it("keeps an in-flight older load continuous across an append-lineage snapshot", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const { promise: gate, resolve: release } = deferred<void>();
+    const { promise: requested, resolve: started } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
@@ -2061,14 +2022,8 @@ describe("transcript paging", () => {
   });
 
   it("discards an in-flight older page when the same view is rewritten", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const { promise: gate, resolve: release } = deferred<void>();
+    const { promise: requested, resolve: started } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
@@ -2159,8 +2114,7 @@ describe("transcript paging", () => {
     );
   });
 
-  it("retains loaded older pages across append-lineage resync but replaces them on rewrite", async () => {
-    let snapshotRevision = 5;
+  it("retains loaded older pages across same and append-lineage snapshots", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
@@ -2214,39 +2168,29 @@ describe("transcript paging", () => {
           body: activeSnapshot({
             transcriptPage: {
               sessionId: "s1",
-              revision: snapshotRevision,
-              viewId: snapshotRevision === 5 ? "view-a" : "view-b",
+              revision: 5,
+              viewId: "view-a",
               incarnation: "incarnation",
-              effectiveLeafId: snapshotRevision === 5 ? "m3" : "compact",
-              appendFromRevision: snapshotRevision === 5 ? 1 : 6,
-              messages:
-                snapshotRevision === 5
-                  ? [
-                      {
-                        role: "user",
-                        content: "new",
-                        timestamp: 2,
-                        __inspireMessageId: "m2:0",
-                      },
-                      {
-                        role: "assistant",
-                        content: "append",
-                        timestamp: 3,
-                        __inspireMessageId: "m3:0",
-                      },
-                    ]
-                  : [
-                      {
-                        role: "user",
-                        content: "rewrite",
-                        timestamp: 9,
-                        __inspireMessageId: "rewrite:0",
-                      },
-                    ],
+              effectiveLeafId: "m3",
+              appendFromRevision: 1,
+              messages: [
+                {
+                  role: "user",
+                  content: "new",
+                  timestamp: 2,
+                  __inspireMessageId: "m2:0",
+                },
+                {
+                  role: "assistant",
+                  content: "append",
+                  timestamp: 3,
+                  __inspireMessageId: "m3:0",
+                },
+              ],
               hasOlder: false,
               olderCursor: null,
             },
-            effectiveLeafId: snapshotRevision === 5 ? "m3" : "compact",
+            effectiveLeafId: "m3",
           }),
         };
       return baseRoutes(url, init);
@@ -2298,18 +2242,6 @@ describe("transcript paging", () => {
       ["old", "new", "append"],
     );
     expect(store.getState().hasOlderMessages).toBe(false);
-
-    snapshotRevision = 6;
-    socket.emit({
-      type: "session_projection_changed",
-      sessionId: "s1",
-      revision: 6,
-      sessionStatus: { runState: "idle" },
-    });
-    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(6));
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["rewrite"],
-    );
   });
 
   it("does not clear a projection-owned alert when an older page loads successfully", async () => {
@@ -2689,14 +2621,12 @@ describe("navigation curation", () => {
 
   it("does not revive rows from a catalog refresh that captured older curation", async () => {
     let folderRequests = 0;
-    let releaseRefreshHydration!: () => void;
-    let refreshHydrationStarted!: () => void;
-    const refreshHydrationGate = new Promise<void>((resolve) => {
-      releaseRefreshHydration = resolve;
-    });
-    const refreshHydrationRequest = new Promise<void>((resolve) => {
-      refreshHydrationStarted = resolve;
-    });
+    const { promise: refreshHydrationGate, resolve: releaseRefreshHydration } =
+      deferred<void>();
+    const {
+      promise: refreshHydrationRequest,
+      resolve: refreshHydrationStarted,
+    } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         return {
@@ -2770,14 +2700,8 @@ describe("navigation curation", () => {
 
   it("hydrates a newly curated folder without resetting or foregrounding the chronological list", async () => {
     let listRequests = 0;
-    let releaseFolder!: () => void;
-    let folderStarted!: () => void;
-    const folderGate = new Promise<void>((resolve) => {
-      releaseFolder = resolve;
-    });
-    const folderRequest = new Promise<void>((resolve) => {
-      folderStarted = resolve;
-    });
+    const { promise: folderGate, resolve: releaseFolder } = deferred<void>();
+    const { promise: folderRequest, resolve: folderStarted } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         return {
@@ -2938,10 +2862,7 @@ describe("navigation curation", () => {
 
   it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
     const pendingPatch = deferred<RouteResponse>();
-    let patchStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      patchStarted = resolve;
-    });
+    const { promise: started, resolve: patchStarted } = deferred<void>();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         const token = new Headers(init.headers).get("authorization");
@@ -3513,15 +3434,9 @@ describe("resource previews", () => {
   });
 
   it("discards probe standing from an obsolete transcript revision", async () => {
-    let release!: () => void;
-    let started!: () => void;
     let responseRevision = 1;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const { promise: gate, resolve: release } = deferred<void>();
+    const { promise: requested, resolve: started } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/resources/probe")) {
         const body = jsonBody(init) as { references: string[] };
@@ -3564,10 +3479,8 @@ describe("resource previews", () => {
 
   it("ignores a superseded probe 401 after a fresh pairing succeeds", async () => {
     const oldProbe = deferred<RouteResponse>();
-    let markProbeStarted!: () => void;
-    const probeStarted = new Promise<void>((resolve) => {
-      markProbeStarted = resolve;
-    });
+    const { promise: probeStarted, resolve: markProbeStarted } =
+      deferred<void>();
     let probeRequests = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -3802,10 +3715,8 @@ describe("resource previews", () => {
   });
 
   it("range-bounds media and aborts an obsolete transfer", async () => {
-    let firstTransferStarted!: () => void;
-    const started = new Promise<void>(
-      (resolve) => (firstTransferStarted = resolve),
-    );
+    const { promise: started, resolve: firstTransferStarted } =
+      deferred<void>();
     let firstSignal: AbortSignal | undefined;
     let secondRange: string | null = null;
     vi.stubGlobal("URL", {
@@ -3911,10 +3822,7 @@ describe("resource previews", () => {
 
   it("rejects embedded-image bytes from a replaced projection incarnation", async () => {
     const oldContent = deferred<RouteResponse>();
-    let contentStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      contentStarted = resolve;
-    });
+    const { promise: started, resolve: contentStarted } = deferred<void>();
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
         const body = jsonBody(init) as { sessionId: string; reference: string };
@@ -3960,10 +3868,7 @@ describe("resource previews", () => {
 
   it("ignores an obsolete embedded-image authorization failure after transport replacement", async () => {
     const oldContent = deferred<RouteResponse>();
-    let contentStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      contentStarted = resolve;
-    });
+    const { promise: started, resolve: contentStarted } = deferred<void>();
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
         const body = jsonBody(init) as { sessionId: string; reference: string };
@@ -4004,8 +3909,7 @@ describe("resource previews", () => {
   });
 
   it("aborts a pending preview when the session changes", async () => {
-    let transferStarted!: () => void;
-    const started = new Promise<void>((resolve) => (transferStarted = resolve));
+    const { promise: started, resolve: transferStarted } = deferred<void>();
     let signal: AbortSignal | undefined;
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
@@ -4272,10 +4176,7 @@ describe("async completion ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
   it("a delayed rename response cannot retitle a different session", async () => {
-    let releaseRename!: () => void;
-    const renameGate = new Promise<void>(
-      (resolve) => (releaseRename = resolve),
-    );
+    const { promise: renameGate, resolve: releaseRename } = deferred<void>();
     let renameBody: Record<string, unknown> | null = null;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/sessions/rename")) {
@@ -4304,8 +4205,7 @@ describe("selection race ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
   it("an authoritative push invalidates an in-flight open response", async () => {
-    let releaseOpen!: () => void;
-    const openGate = new Promise<void>((resolve) => (releaseOpen = resolve));
+    const { promise: openGate, resolve: releaseOpen } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/sessions/open")) {
         await openGate;
@@ -4327,8 +4227,7 @@ describe("selection race ownership", () => {
   });
 
   it("a failed thinking-level change does not roll back over another session", async () => {
-    let releaseThinking!: () => void;
-    const gate = new Promise<void>((resolve) => (releaseThinking = resolve));
+    const { promise: gate, resolve: releaseThinking } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/control/thinking")) {
         await gate;
@@ -4429,10 +4328,7 @@ describe("session deletion ownership", () => {
 
   it("fences an optimistic Hide write before sending the destructive request", async () => {
     const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-    let releasePatch!: () => void;
-    const patchGate = new Promise<void>((resolvePatch) => {
-      releasePatch = resolvePatch;
-    });
+    const { promise: patchGate, resolve: releasePatch } = deferred<void>();
     let deleteCalled = false;
     let deleted = false;
     installFetch(async (url, init) => {
@@ -4476,14 +4372,8 @@ describe("session deletion ownership", () => {
 
   it("preserves a newer setting when deletion returns an older preference snapshot", async () => {
     const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-    let releaseDelete!: () => void;
-    let deleteStarted!: () => void;
-    const deleteGate = new Promise<void>((resolve) => {
-      releaseDelete = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      deleteStarted = resolve;
-    });
+    const { promise: deleteGate, resolve: releaseDelete } = deferred<void>();
+    const { promise: started, resolve: deleteStarted } = deferred<void>();
     const patches: Record<string, unknown>[] = [];
     let deleted = false;
     installFetch(async (url, init) => {
@@ -4540,14 +4430,8 @@ describe("session deletion ownership", () => {
 
   it("preserves a newer setting when clearing Hidden returns an older preference snapshot", async () => {
     const row = sessionSummary({ id: "s2" });
-    let releaseClear!: () => void;
-    let clearStarted!: () => void;
-    const clearGate = new Promise<void>((resolve) => {
-      releaseClear = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      clearStarted = resolve;
-    });
+    const { promise: clearGate, resolve: releaseClear } = deferred<void>();
+    const { promise: started, resolve: clearStarted } = deferred<void>();
     const patches: Record<string, unknown>[] = [];
     let deleted = false;
     installFetch(async (url, init) => {

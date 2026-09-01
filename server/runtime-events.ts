@@ -360,8 +360,8 @@ export class RuntimeEventController {
             slot.pendingQueues.revision,
           ),
         );
-        // Pi retains its legacy full-text arrays for RPC compatibility. The
-        // browser receives only the bounded Host projection.
+        // Public Pi emits full-text arrays on queue updates. The browser
+        // receives only the bounded Host projection.
         forwardedEvent = {
           type: "queue_update",
           pendingQueues: slot.pendingQueues,
@@ -442,8 +442,8 @@ export class RuntimeEventController {
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
-        // Legacy Pi exposes only a lossy text projection and historically
-        // leaves image-only rows stale until settlement. Managed Pi publishes
+        // Public text-only Pi exposes a lossy projection and may leave
+        // image-only rows stale until settlement. Structured Pending publishes
         // every authoritative drain and may intentionally remain paused.
         if (!slot.pendingQueues.managementAvailable) {
           slot.pendingQueues = emptyPendingQueues();
