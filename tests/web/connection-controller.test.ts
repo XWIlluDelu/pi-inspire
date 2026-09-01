@@ -407,6 +407,23 @@ describe("ConnectionController", () => {
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
   });
 
+  it.each([
+    ["authority", { type: "snapshot", snapshotDigest, data: snapshot.data }],
+    ["digest", { type: "snapshot", authorityId, data: snapshot.data }],
+  ])("rejects a first snapshot without its %s witness", (_field, event) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+
+    socket.emit(event);
+
+    expect(socket.closeCount).toBe(1);
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    expect(host.applyEvent).not.toHaveBeenCalled();
+  });
+
   it("rejects a malformed authoritative snapshot after synchronization", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
