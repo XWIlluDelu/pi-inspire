@@ -537,7 +537,7 @@ try {
     "utf8",
   );
   for (const identity of [
-    "@earendil-works/pi-tui@0.84.2",
+    "@earendil-works/pi-tui@0.84.4",
     "katex@",
     "react@",
     "rehype-katex@",

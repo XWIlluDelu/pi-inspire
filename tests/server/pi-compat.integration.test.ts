@@ -196,6 +196,11 @@ describe("installed Pi compatibility boundary", () => {
     expect(await readFile(sessionFile)).toEqual(before);
 
     const rpc = create();
+    const queueUpdates: Array<Record<string, unknown>> = [];
+    rpc.on("event", (event) => {
+      const record = event as Record<string, unknown>;
+      if (record.type === "queue_update") queueUpdates.push(record);
+    });
     await rpc.start();
     try {
       const state = await rpc.request<Record<string, unknown>>({
@@ -206,6 +211,33 @@ describe("installed Pi compatibility boundary", () => {
         sessionFile: resolve(sessionFile),
         isStreaming: false,
         isCompacting: false,
+        pendingMessageCount: 0,
+      });
+
+      // Public Pi's event boundary exposes text-only queue arrays and a count
+      // in get_state, but no structured IDs, revisions, or management RPC.
+      await rpc.request({ type: "steer", message: "queued steer" });
+      await rpc.request({ type: "follow_up", message: "queued follow-up" });
+      expect(queueUpdates.at(-1)).toMatchObject({
+        type: "queue_update",
+        steering: ["queued steer"],
+        followUp: ["queued follow-up"],
+      });
+      await expect(
+        rpc.request<Record<string, unknown>>({ type: "get_state" }),
+      ).resolves.toMatchObject({ pendingMessageCount: 2 });
+      await expect(
+        rpc.request<{ steering: string[]; followUp: string[] }>({
+          type: "clear_queue",
+        }),
+      ).resolves.toEqual({
+        steering: ["queued steer"],
+        followUp: ["queued follow-up"],
+      });
+      expect(queueUpdates.at(-1)).toMatchObject({
+        type: "queue_update",
+        steering: [],
+        followUp: [],
       });
 
       const all = await rpc.request<{

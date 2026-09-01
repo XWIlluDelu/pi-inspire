@@ -49,12 +49,16 @@
   "knip": {
     "entry": [
       "server/index.ts",
-      "deploy/systemd/*.mjs",
-      "scripts/*.mjs",
+      "deploy/systemd/control.mjs",
+      "deploy/systemd/idle-maintenance-restart.mjs",
+      "deploy/systemd/install.mjs",
+      "scripts/import-ibm-plex-sans-sc.mjs",
+      "scripts/start-browser-test-host.mjs",
       "public/service-worker.js",
       "docs/redesign/prototype/app.js",
       "tests/**/*.{test,spec}.{ts,tsx}",
-      "tests/benchmarks/*.ts"
+      "tests/benchmarks/evidence-gated-maintenance.ts",
+      "tests/benchmarks/verify-production-bundle.ts"
     ],
     "ignore": [
       "server/instance-state.d.mts",
@@ -99,8 +103,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.8",
-    "@earendil-works/pi-coding-agent": "0.84.2",
-    "@earendil-works/pi-tui": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@earendil-works/pi-tui": "0.84.4",
     "@playwright/test": "1.62.1",
     "@tanstack/react-virtual": "^3.14.7",
     "@testing-library/jest-dom": "^7.0.0",

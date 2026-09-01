@@ -22,6 +22,7 @@ import {
   type ProjectDisplayPreference,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
+  parsePendingQueues,
   projectionConflictSeverity,
   type ReadingWidthPreference,
   type SessionDeleteDisposition,
@@ -30,7 +31,6 @@ import {
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../shared/contracts";
-import { messageFallbackCorrelation } from "../shared/message-identity";
 import {
   type Api,
   ApiError,
@@ -45,8 +45,6 @@ import {
   type AppState,
   contextUsage,
   createInitialAppState,
-  emptyResourceInspectionState,
-  transcriptRevisionContains,
 } from "./app-state";
 import type { PiCommand } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
@@ -65,17 +63,13 @@ import { SessionManagementController } from "./controllers/session-management-co
 import { SessionSelectionController } from "./controllers/session-selection-controller";
 import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
+import { WorkspaceController } from "./controllers/workspace-controller";
+import { type Notice, parseExtensionDisplays } from "./events";
 import {
-  emptyWorkspaceBrowserState,
-  WorkspaceController,
-} from "./controllers/workspace-controller";
-import {
-  asMessage,
-  type ChatMessage,
-  messageKey,
-  type Notice,
-  parseExtensionDisplays,
-} from "./events";
+  deriveSnapshotTransition,
+  snapshotLifecyclePatch,
+  type SnapshotMode,
+} from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 
 export type {
@@ -459,24 +453,31 @@ export class AppStore {
     this.sessionManagement.invalidateForTransportReplacement();
   }
 
-  private handleAuthFailure(): void {
+  /** One transport replacement boundary invalidates every owner before a new
+   * API or event stream can publish state. */
+  private replaceTransport(): number {
     // Stop detaches its owned socket before closing it, so the close handler
-    // cannot schedule a retry with the rejected token.
+    // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
-    const transportGeneration = ++this.transportGeneration;
+    const generation = ++this.transportGeneration;
+    this.set({ transportGeneration: generation });
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
     this.invalidateTransportControllers();
     this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.clearLiveAttention();
+    return generation;
+  }
+
+  private handleAuthFailure(): void {
+    this.replaceTransport();
     this.authToken = null;
     this.hostAuthorityId = null;
     this.snapshotDigest = null;
     this.api = null;
     this.set({
       needsToken: true,
-      transportGeneration,
       error: null,
       connection: "offline",
       connectionProblem: null,
@@ -507,26 +508,19 @@ export class AppStore {
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
-    // Bootstrap defines a new transport generation immediately. Detach the
-    // preceding event stream now so it cannot mutate state while its successor
-    // is being authenticated and snapshotted.
-    this.connectionController.stop();
+    // Bootstrap owns a fresh transport generation before authenticating or
+    // publishing any replacement state.
+    const generation = this.replaceTransport();
     const api = createApi(token);
     let reconnectToken = token;
-    const generation = ++this.transportGeneration;
-    this.set({ transportGeneration: generation });
-    this.bootstrapRequest?.abort();
     const bootstrapRequest = new AbortController();
     this.bootstrapRequest = bootstrapRequest;
     const bootstrapTimeout = setTimeout(
       () => bootstrapRequest.abort(),
       BOOTSTRAP_TIMEOUT_MS,
     );
-    this.invalidateTransportControllers();
-    this.invalidateTransportRequests();
     this.authToken = token;
     this.api = api;
-    this.catalog.invalidate();
     const ownsBootstrap = (): boolean =>
       generation === this.transportGeneration && this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
@@ -636,52 +630,46 @@ export class AppStore {
 
   private applySnapshot(
     snapshot: ActiveSnapshot,
-    mode: "replace" | "preserve" = "preserve",
+    mode: SnapshotMode = "preserve",
   ): void {
+    const pendingQueues =
+      snapshot.pendingQueues === undefined
+        ? emptyPendingQueues()
+        : parsePendingQueues(snapshot.pendingQueues);
+    if (!pendingQueues) throw new Error("Invalid Pending queue snapshot");
     // Only a snapshot supplied with its matching wire digest can be confirmed
     // without retransmission. HTTP resyncs and local event reduction invalidate
     // that witness until the next event-stream snapshot.
     this.snapshotDigest = null;
     const active = snapshot.active;
-    const nextSessionId = active?.sessionId ?? null;
-    const cwd = active?.cwd ?? null;
-    const sessionChanged = nextSessionId !== this.state.sessionId;
-    const page = active?.transcriptPage;
-    const nextTranscriptRevision = page?.revision ?? 0;
-    const revisionChanged =
-      nextTranscriptRevision !== this.state.transcriptRevision;
-    const nextViewId = page?.viewId ?? null;
-    const nextDurableLeafId = active?.durableLeafId ?? null;
-    const nextEffectiveLeafId =
-      page?.effectiveLeafId ?? active?.effectiveLeafId ?? null;
-    const viewChanged = Boolean(
-      !sessionChanged &&
-        nextSessionId &&
-        (nextViewId !== this.state.transcriptViewId ||
-          (page?.incarnation ?? null) !== this.state.transcriptIncarnation),
-    );
-    const sameProjectionOwner = Boolean(
-      !sessionChanged &&
-        !viewChanged &&
-        page &&
-        nextViewId === this.state.transcriptViewId &&
-        (page.incarnation ?? null) === this.state.transcriptIncarnation,
-    );
-    const projectionLineageCompatible = Boolean(
-      sameProjectionOwner &&
-        page &&
-        transcriptRevisionContains(
-          page.revision,
-          page.appendFromRevision ?? page.revision,
-          this.state.transcriptRevision,
-        ),
-    );
-    const projectionReplaced =
-      sameProjectionOwner && revisionChanged && !projectionLineageCompatible;
-    const nextWorkspaceState = sessionChanged
-      ? this.workspace.changeOwner(cwd)
-      : null;
-    if (sessionChanged || viewChanged || projectionReplaced) {
+    const transition = deriveSnapshotTransition(this.state, snapshot, mode);
+    const {
+      page,
+      nextSessionId,
+      cwd,
+      nextTranscriptRevision,
+      nextViewId,
+      nextDurableLeafId,
+      nextEffectiveLeafId,
+      revisionChanged,
+      projectionLineageCompatible,
+      historyCompatible,
+      messages,
+    } = transition;
+    const sessionChanged = transition.kind === "session-changed";
+    const projectionOwnerChanged =
+      sessionChanged ||
+      transition.kind === "view-changed" ||
+      transition.kind === "projection-replaced";
+    // Session-owned workspace and Composer slices are obtained at the store
+    // boundary, then passed into the pure lifecycle reset matrix.
+    const sessionOwnerPatch = sessionChanged
+      ? {
+          ...this.workspace.changeOwner(cwd),
+          ...this.composer.slice(nextSessionId),
+        }
+      : {};
+    if (projectionOwnerChanged) {
       this.selectionGeneration += 1;
       if (sessionChanged) this.pendingActionRequest += 1;
       this.branches.invalidateForViewChange();
@@ -695,52 +683,6 @@ export class AppStore {
       // Cancel observations owned by the old transcript generation. Keep the
       // last known standing visible until Browse produces current observations.
       this.resources.cancelProbes();
-    }
-    const newestMessages = (page?.messages ?? []).map(asMessage);
-    const historyCompatible = Boolean(
-      mode === "preserve" &&
-        projectionLineageCompatible &&
-        page &&
-        ((page.revision === this.state.transcriptRevision &&
-          (this.state.hasOlderMessages !== page.hasOlder ||
-            this.state.olderMessagesCursor !== (page.olderCursor ?? null))) ||
-          page.revision > this.state.transcriptRevision),
-    );
-    let messages = newestMessages;
-    if (historyCompatible) {
-      const newestKeys = new Set(
-        newestMessages.map(
-          (message) => messageKey(message) ?? JSON.stringify(message),
-        ),
-      );
-      const persistedCorrelations = new Map<string, number>();
-      for (const message of newestMessages) {
-        const record = message as ChatMessage & {
-          __inspireMessageId?: unknown;
-        };
-        if (typeof record.__inspireMessageId !== "string") continue;
-        const key = messageFallbackCorrelation(message);
-        if (key)
-          persistedCorrelations.set(
-            key,
-            (persistedCorrelations.get(key) ?? 0) + 1,
-          );
-      }
-      messages = [
-        ...this.state.messages.filter((message) => {
-          const key = messageKey(message) ?? JSON.stringify(message);
-          if (newestKeys.has(key)) return false;
-          const record = message as ChatMessage & { __inspireLiveId?: unknown };
-          if (typeof record.__inspireLiveId !== "string") return true;
-          const correlation = messageFallbackCorrelation(message);
-          if (!correlation) return true;
-          const count = persistedCorrelations.get(correlation) ?? 0;
-          if (count === 0) return true;
-          persistedCorrelations.set(correlation, count - 1);
-          return false;
-        }),
-        ...newestMessages,
-      ];
     }
     this.runtimeEvents.replaceSettledMessages(messages);
     const projectionHealth = active?.projectionHealth ?? {
@@ -849,52 +791,18 @@ export class AppStore {
       // session is viewed.
       tools: {},
       retry: null,
-      queue: snapshot.pendingQueues ?? emptyPendingQueues(),
+      queue: pendingQueues,
       extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
         ? snapshot.pendingExtensionUiRequests
         : [],
       extensionUiRespondingId:
-        sessionChanged || viewChanged
+        transition.kind === "session-changed" ||
+        transition.kind === "view-changed"
           ? null
           : this.state.extensionUiRespondingId,
       extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
       statuses: extensionStatuses,
-      ...(sessionChanged
-        ? {
-            editorText: null,
-            pendingAction: null,
-            windowTitle: null,
-            contextMode: "files",
-            workspaceExplorerOpen: false,
-            ...(nextWorkspaceState ?? emptyWorkspaceBrowserState()),
-            branchTree: null,
-            branchTreeLoading: false,
-            branchTreeError: null,
-            branchActionId: null,
-            ...emptyResourceInspectionState(),
-            gitStatus: null,
-            gitStatusError: null,
-            gitStatusLoading: false,
-            gitStatusRefreshing: false,
-            selectedGitPathId: null,
-            selectedGitSide: null,
-            gitDiff: null,
-            // Composer work belongs to its session; the switch swaps in the
-            // destination's staged slice.
-            ...this.composer.slice(nextSessionId),
-          }
-        : viewChanged
-          ? {
-              branchTreeLoading: false,
-              branchTreeError: this.state.branchTree
-                ? "Branch history is stale — refresh to use branch actions"
-                : null,
-              branchActionId: null,
-              ...emptyResourceInspectionState(),
-            }
-          : projectionReplaced
-            ? emptyResourceInspectionState()
-            : {}),
+      ...snapshotLifecyclePatch(this.state, transition, sessionOwnerPatch),
     });
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
