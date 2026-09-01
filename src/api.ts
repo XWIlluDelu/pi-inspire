@@ -20,7 +20,6 @@ import type {
   NewSessionOptions,
   PendingManagementAction,
   PendingManagementIntent,
-  PendingQueues,
   PiUpdateCheckResult,
   ProjectDirEntry,
   PromptAcceptedResponse,
@@ -35,6 +34,7 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts";
+import { parsePendingQueues } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import { withTransportMeasure } from "./transport-performance";
 
@@ -428,11 +428,19 @@ export function createApi(token: string | null = null) {
       ),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
-    managePending: (sessionId: string, action: PendingManagementAction) =>
-      post<{ pendingQueues: PendingQueues }>(token, "/api/pending", {
-        sessionId,
-        ...action,
-      }),
+    managePending: async (
+      sessionId: string,
+      action: PendingManagementAction,
+    ) => {
+      const response = await post<{ pendingQueues?: unknown }>(
+        token,
+        "/api/pending",
+        { sessionId, ...action },
+      );
+      const pendingQueues = parsePendingQueues(response.pendingQueues);
+      if (!pendingQueues) throw new ApiTransportError("response");
+      return { pendingQueues };
+    },
     pendingMessageTexts: (sessionId: string, messageIds: string[]) =>
       post<{ messages: Array<{ id: string; text: string }> }>(
         token,

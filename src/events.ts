@@ -13,11 +13,11 @@ import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
-  type PendingMessageSummary,
   type PendingQueues,
   parseExtensionStatuses,
   parseExtensionUiRequest,
   parsePendingExtensionUiRequest,
+  parsePendingQueues,
   type RunState,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
@@ -135,71 +135,6 @@ interface RetryInfo {
   attempt: number;
   maxAttempts: number;
   message: string;
-}
-
-function pendingSummary(value: unknown): PendingMessageSummary | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.id !== "string" ||
-    record.id.length === 0 ||
-    record.id.length > 128 ||
-    typeof record.textPreview !== "string" ||
-    record.textPreview.length > 512 ||
-    typeof record.textLength !== "number" ||
-    !Number.isSafeInteger(record.textLength) ||
-    record.textLength < record.textPreview.length ||
-    typeof record.textTruncated !== "boolean" ||
-    record.textTruncated !== record.textLength > record.textPreview.length ||
-    typeof record.imageCount !== "number" ||
-    !Number.isInteger(record.imageCount) ||
-    record.imageCount < 0 ||
-    typeof record.nonTextContentCount !== "number" ||
-    !Number.isInteger(record.nonTextContentCount) ||
-    record.nonTextContentCount < record.imageCount
-  ) {
-    return null;
-  }
-  return {
-    id: record.id,
-    textPreview: record.textPreview,
-    textLength: record.textLength,
-    textTruncated: record.textTruncated === true,
-    imageCount: record.imageCount,
-    nonTextContentCount: record.nonTextContentCount,
-  };
-}
-
-function pendingQueues(value: unknown): PendingQueues | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (
-    !Number.isSafeInteger(record.revision) ||
-    (record.revision as number) < 0 ||
-    typeof record.paused !== "boolean" ||
-    typeof record.managementAvailable !== "boolean" ||
-    !Array.isArray(record.steering) ||
-    !Array.isArray(record.followUp) ||
-    record.steering.length + record.followUp.length > 1_000
-  ) {
-    return null;
-  }
-  const steering = record.steering.map(pendingSummary);
-  const followUp = record.followUp.map(pendingSummary);
-  if (
-    steering.some((item) => item === null) ||
-    followUp.some((item) => item === null) ||
-    new Set([...steering, ...followUp].map((item) => item?.id)).size !==
-      steering.length + followUp.length
-  )
-    return null;
-  return {
-    revision: record.revision as number,
-    paused: record.paused,
-    managementAvailable: record.managementAvailable,
-    steering: steering as PendingMessageSummary[],
-    followUp: followUp as PendingMessageSummary[],
-  };
 }
 
 export interface Notice {
@@ -460,7 +395,7 @@ export function reduceEvent(
           ? asMessage(event.message)
           : null;
       if (supplied && typeof supplied.role === "string") {
-        // Joining sockets and legacy Pi RPC supply complete partial messages.
+        // Joining sockets and cumulative Pi RPC frames supply complete partial messages.
         // Host revisions make an update that overlaps a newer snapshot a true
         // no-op rather than allowing a cumulative replacement to move backward.
         const suppliedKey = messageKey(supplied);
@@ -534,7 +469,7 @@ export function reduceEvent(
         if (!reconstructed) break;
       }
       if (!reconstructed) {
-        // Legacy/raw Pi frames also carry projection no-ops such as
+        // Cumulative/raw Pi frames also carry projection no-ops such as
         // toolcall_delta or an end marker whose complete text already matches.
         // Host-owned incremental batches never contain those; a failed batch
         // application therefore means this browser lost its stream base.
@@ -674,7 +609,7 @@ export function reduceEvent(
       break;
     }
     case "queue_update": {
-      const next = pendingQueues(event.pendingQueues);
+      const next = parsePendingQueues(event.pendingQueues);
       if (!next) break;
       slice.queue = next;
       changed = true;

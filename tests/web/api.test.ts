@@ -65,3 +65,33 @@ describe("prompt delivery transport", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("Pending response contract", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("rejects a malformed management envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            pendingQueues: {
+              managementAvailable: true,
+              paused: false,
+              revision: 1,
+              steering: [{ id: "missing-summary-fields" }],
+              followUp: [],
+            },
+          }),
+        ),
+      ),
+    );
+
+    await expect(
+      createApi().managePending("session-1", {
+        action: "pause",
+        expectedRevision: 0,
+      }),
+    ).rejects.toBeInstanceOf(ApiTransportError);
+  });
+});

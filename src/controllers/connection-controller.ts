@@ -126,23 +126,20 @@ function authoritativeSnapshot(
   event: WireEvent,
   expectedAuthority: string | null,
   expectedDigest: string | null,
-): { kind: "full" | "unchanged"; digest: string | null } | null {
-  if (event.type !== "snapshot") return null;
+): { kind: "full" | "unchanged"; digest: string } | null {
   if (
-    expectedAuthority &&
-    (typeof event.authorityId !== "string" ||
-      event.authorityId !== expectedAuthority)
-  )
+    event.type !== "snapshot" ||
+    !expectedAuthority ||
+    typeof event.authorityId !== "string" ||
+    event.authorityId !== expectedAuthority ||
+    typeof event.snapshotDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(event.snapshotDigest)
+  ) {
     return null;
-  const digest =
-    typeof event.snapshotDigest === "string" &&
-    /^[0-9a-f]{64}$/u.test(event.snapshotDigest)
-      ? event.snapshotDigest
-      : null;
+  }
+  const digest = event.snapshotDigest;
   if (event.unchanged === true) {
-    return digest && digest === expectedDigest
-      ? { kind: "unchanged", digest }
-      : null;
+    return digest === expectedDigest ? { kind: "unchanged", digest } : null;
   }
   const data = event.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -156,7 +153,6 @@ function authoritativeSnapshot(
     !Object.values(statuses).every(isSessionRuntimeStatus)
   )
     return null;
-  if (expectedAuthority && !digest) return null;
   return { kind: "full", digest };
 }
 
@@ -256,7 +252,7 @@ export class ConnectionController {
         }
         try {
           this.host.applyEvent(event);
-          if (snapshot.digest) this.host.recordSnapshotDigest(snapshot.digest);
+          this.host.recordSnapshotDigest(snapshot.digest);
         } catch {
           this.failSocket(socket, "bootstrap");
           return;
@@ -295,7 +291,7 @@ export class ConnectionController {
           return;
         }
         if (!this.applySocketEvent(socket, event)) return;
-        if (snapshot.digest) this.host.recordSnapshotDigest(snapshot.digest);
+        this.host.recordSnapshotDigest(snapshot.digest);
         return;
       }
       // Host-wide update status is carried on the authenticated stream but is

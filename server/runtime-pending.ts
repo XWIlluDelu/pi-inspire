@@ -3,56 +3,24 @@ import {
   MAX_PENDING_PREVIEW_CHARS,
   type PendingMessageSummary,
   type PendingQueues,
+  parsePendingMessageSummary,
 } from "../shared/contracts.js";
 
 export const MAX_PENDING_TEXT_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-function pendingMessageSummary(value: unknown): PendingMessageSummary | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.id !== "string" ||
-    record.id.length === 0 ||
-    record.id.length > 128 ||
-    typeof record.textPreview !== "string" ||
-    record.textPreview.length > MAX_PENDING_PREVIEW_CHARS ||
-    typeof record.textLength !== "number" ||
-    !Number.isSafeInteger(record.textLength) ||
-    record.textLength < record.textPreview.length ||
-    typeof record.textTruncated !== "boolean" ||
-    record.textTruncated !== record.textLength > record.textPreview.length ||
-    typeof record.imageCount !== "number" ||
-    !Number.isSafeInteger(record.imageCount) ||
-    record.imageCount < 0 ||
-    typeof record.nonTextContentCount !== "number" ||
-    !Number.isSafeInteger(record.nonTextContentCount) ||
-    record.nonTextContentCount < record.imageCount
-  ) {
-    return null;
-  }
-  return {
-    id: record.id,
-    textPreview: record.textPreview,
-    textLength: record.textLength,
-    textTruncated: record.textTruncated,
-    imageCount: record.imageCount,
-    nonTextContentCount: record.nonTextContentCount,
-  };
-}
-
 export function pendingQueuesFromRecord(
   value: unknown,
-  legacySteering: unknown,
-  legacyFollowUp: unknown,
+  steeringTexts: unknown,
+  followUpTexts: unknown,
   previousRevision: number,
 ): PendingQueues {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     const steering = Array.isArray(record.steering)
-      ? record.steering.map(pendingMessageSummary)
+      ? record.steering.map(parsePendingMessageSummary)
       : [];
     const followUp = Array.isArray(record.followUp)
-      ? record.followUp.map(pendingMessageSummary)
+      ? record.followUp.map(parsePendingMessageSummary)
       : [];
     if (
       typeof record.paused === "boolean" &&
@@ -75,7 +43,7 @@ export function pendingQueuesFromRecord(
     }
   }
 
-  const legacy = (
+  const projectTextQueue = (
     values: unknown,
     kind: "steer" | "followUp",
     limit: number,
@@ -86,7 +54,7 @@ export function pendingQueuesFromRecord(
       if (typeof text !== "string") continue;
       const index = summaries.length;
       summaries.push({
-        id: `legacy-${kind}-${index}`,
+        id: `text-${kind}-${index}`,
         textPreview: text.slice(0, MAX_PENDING_PREVIEW_CHARS),
         textLength: text.length,
         textTruncated: text.length > MAX_PENDING_PREVIEW_CHARS,
@@ -97,14 +65,18 @@ export function pendingQueuesFromRecord(
     }
     return summaries;
   };
-  const steering = legacy(legacySteering, "steer", MAX_PENDING_MESSAGES);
+  const steering = projectTextQueue(
+    steeringTexts,
+    "steer",
+    MAX_PENDING_MESSAGES,
+  );
   return {
     managementAvailable: false,
     paused: false,
     revision: previousRevision + 1,
     steering,
-    followUp: legacy(
-      legacyFollowUp,
+    followUp: projectTextQueue(
+      followUpTexts,
       "followUp",
       MAX_PENDING_MESSAGES - steering.length,
     ),

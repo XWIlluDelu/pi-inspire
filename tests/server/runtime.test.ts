@@ -2028,7 +2028,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("keeps legacy pending projections for reconnect and clears them on settlement and worker replacement", async () => {
+  it("keeps public text-only pending projections for reconnect and clears them on settlement and worker replacement", async () => {
     const store = new AttachmentStore();
     attachments.push(store);
     let worker!: FakeRpc;
@@ -2055,14 +2055,14 @@ describe("RuntimeController concurrent sessions", () => {
       paused: false,
       revision: 1,
       steering: [
-        pendingEntry("legacy-steer-0", "first"),
+        pendingEntry("text-steer-0", "first"),
         {
-          ...pendingEntry("legacy-steer-1", "x".repeat(512)),
+          ...pendingEntry("text-steer-1", "x".repeat(512)),
           textLength: 600,
           textTruncated: true,
         },
       ],
-      followUp: [pendingEntry("legacy-followUp-0", "later")],
+      followUp: [pendingEntry("text-followUp-0", "later")],
     });
 
     worker.emit("event", {

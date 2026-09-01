@@ -43,6 +43,7 @@ export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
 export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
 /** Pi's bounded process-lifetime Pending projection contract. */
 export const MAX_PENDING_MESSAGES = 1_000;
+const MAX_PENDING_MESSAGE_ID_CHARS = 128;
 export const MAX_PENDING_PREVIEW_CHARS = 512;
 export const MAX_COMPOSER_HISTORY_ENTRIES = 100;
 /** Keeps ordinary web-accepted prompts indivisible while bounding each history response. */
@@ -632,6 +633,75 @@ export interface PendingQueues {
   revision: number;
   steering: PendingMessageSummary[];
   followUp: PendingMessageSummary[];
+}
+
+export function parsePendingMessageSummary(
+  value: unknown,
+): PendingMessageSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    record.id.length === 0 ||
+    record.id.length > MAX_PENDING_MESSAGE_ID_CHARS ||
+    typeof record.textPreview !== "string" ||
+    record.textPreview.length > MAX_PENDING_PREVIEW_CHARS ||
+    typeof record.textLength !== "number" ||
+    !Number.isSafeInteger(record.textLength) ||
+    record.textLength < record.textPreview.length ||
+    typeof record.textTruncated !== "boolean" ||
+    record.textTruncated !== record.textLength > record.textPreview.length ||
+    typeof record.imageCount !== "number" ||
+    !Number.isSafeInteger(record.imageCount) ||
+    record.imageCount < 0 ||
+    typeof record.nonTextContentCount !== "number" ||
+    !Number.isSafeInteger(record.nonTextContentCount) ||
+    record.nonTextContentCount < record.imageCount
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    textPreview: record.textPreview,
+    textLength: record.textLength,
+    textTruncated: record.textTruncated,
+    imageCount: record.imageCount,
+    nonTextContentCount: record.nonTextContentCount,
+  };
+}
+
+export function parsePendingQueues(value: unknown): PendingQueues | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(record.revision) ||
+    (record.revision as number) < 0 ||
+    typeof record.paused !== "boolean" ||
+    typeof record.managementAvailable !== "boolean" ||
+    (!record.managementAvailable && record.paused) ||
+    !Array.isArray(record.steering) ||
+    !Array.isArray(record.followUp) ||
+    record.steering.length + record.followUp.length > MAX_PENDING_MESSAGES
+  ) {
+    return null;
+  }
+  const steering = record.steering.map(parsePendingMessageSummary);
+  const followUp = record.followUp.map(parsePendingMessageSummary);
+  if (
+    steering.some((item) => item === null) ||
+    followUp.some((item) => item === null) ||
+    new Set([...steering, ...followUp].map((item) => item?.id)).size !==
+      steering.length + followUp.length
+  ) {
+    return null;
+  }
+  return {
+    managementAvailable: record.managementAvailable,
+    paused: record.paused,
+    revision: record.revision as number,
+    steering: steering as PendingMessageSummary[],
+    followUp: followUp as PendingMessageSummary[],
+  };
 }
 
 export function emptyPendingQueues(): PendingQueues {
