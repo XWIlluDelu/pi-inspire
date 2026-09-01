@@ -103,6 +103,7 @@ describe("native Pi tool cards", () => {
     );
 
     expect(screen.getByText("Applied changes")).toBeInTheDocument();
+    expect(container.querySelector(".diff__lines")).not.toBeNull();
     expect(container.querySelectorAll(".diff__line--del")).toHaveLength(1);
     expect(container.querySelectorAll(".diff__line--add")).toHaveLength(1);
     expect(screen.queryByText("Requested replacement")).not.toBeInTheDocument();

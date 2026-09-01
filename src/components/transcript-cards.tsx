@@ -479,12 +479,14 @@ function statusIcon(status: ToolStatus) {
 function DiffView({ lines }: { lines: DiffLine[] }) {
   return (
     <pre className="card__mono diff">
-      {lines.map((line, index) => (
-        <span key={index} className={`diff__line diff__line--${line.type}`}>
-          {line.text}
-          {"\n"}
-        </span>
-      ))}
+      <code className="diff__lines">
+        {lines.map((line, index) => (
+          <span key={index} className={`diff__line diff__line--${line.type}`}>
+            {line.text}
+            {"\n"}
+          </span>
+        ))}
+      </code>
     </pre>
   );
 }

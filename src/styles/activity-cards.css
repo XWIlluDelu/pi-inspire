@@ -460,6 +460,10 @@
   overflow: hidden;
 }
 
+.diff__lines {
+  display: block;
+}
+
 .diff__line {
   display: block;
   padding: 0 var(--space-2);
@@ -789,6 +793,14 @@
   overflow: auto;
   white-space: pre;
   word-break: normal;
+}
+
+/* The pre owns scrolling; this inner content plane grows to the longest line
+   while remaining at least viewport-wide, so every row tint spans the same
+   complete horizontal range. */
+.tool-presentation .diff__lines {
+  width: max-content;
+  min-width: 100%;
 }
 
 .tool-list {
