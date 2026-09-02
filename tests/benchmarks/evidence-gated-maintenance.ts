@@ -1704,9 +1704,9 @@ async function browserIteration(
     );
     await waitFor(
       client,
-      `document.querySelector('[aria-label="Current activity"]')?.textContent.includes('read')`,
+      `document.querySelector('.card--tool .card__tool-name')?.textContent === 'read'`,
     );
-    assertions.push("active tool activity");
+    assertions.push("active tool card");
     const box = await client.evaluate<{ x: number; y: number }>(
       `(() => { const r = document.querySelector('[role="log"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
     );

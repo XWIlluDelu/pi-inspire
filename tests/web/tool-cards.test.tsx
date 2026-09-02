@@ -103,6 +103,7 @@ describe("native Pi tool cards", () => {
     );
 
     expect(screen.getByText("Applied changes")).toBeInTheDocument();
+    expect(container.querySelector(".diff__lines")).not.toBeNull();
     expect(container.querySelectorAll(".diff__line--del")).toHaveLength(1);
     expect(container.querySelectorAll(".diff__line--add")).toHaveLength(1);
     expect(screen.queryByText("Requested replacement")).not.toBeInTheDocument();
@@ -126,6 +127,9 @@ describe("native Pi tool cards", () => {
     expect(
       container.querySelector(".tool-search-group .resource-path__visible"),
     ).toHaveTextContent("a.ts");
+    expect(
+      container.querySelector(".tool-search-group__line-plane"),
+    ).not.toBeNull();
     expect(screen.getByText("needle here")).toBeInTheDocument();
     expect(screen.getByText("5")).toHaveClass("tool-search-line__number");
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
