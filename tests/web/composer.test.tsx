@@ -475,7 +475,53 @@ describe("composer keyboard submission", () => {
   });
 });
 
-describe("queued composer controls", () => {
+describe("composer-adjacent status and queued controls", () => {
+  it("keeps retry status without duplicating live or failed tools", () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+
+    render(<ActivityBar />);
+    act(() =>
+      socket.emit({
+        type: "tool_execution_start",
+        sessionId: "s1",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        args: { command: "pwd" },
+      }),
+    );
+    expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    act(() =>
+      socket.emit({
+        type: "tool_execution_end",
+        sessionId: "s1",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        result: "failed",
+        isError: true,
+      }),
+    );
+    expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+
+    act(() =>
+      socket.emit({
+        type: "auto_retry_start",
+        sessionId: "s1",
+        attempt: 2,
+        maxAttempts: 3,
+        errorMessage: "rate limited",
+      }),
+    );
+    expect(
+      screen.getByRole("status", { name: "Retry status" }),
+    ).toHaveTextContent("Retry 2/3 — rate limited");
+
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+  });
+
   it("shows a concise pending count outside the live region", () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;

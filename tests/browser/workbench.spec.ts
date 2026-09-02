@@ -273,6 +273,14 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   await expect(frame.locator("#status")).not.toHaveText("SCRIPT EXECUTED");
   expect(externalRequests).toEqual([]);
 
+  const workspaceIndex = resources.locator(".res__index");
+  const workspaceIndexHeight = () =>
+    workspaceIndex.evaluate(
+      (element) => element.getBoundingClientRect().height,
+    );
+  const stableIndexHeight = await workspaceIndexHeight();
+  expect(stableIndexHeight).toBeGreaterThan(200);
+
   await resources.getByRole("button", { name: "Changes", exact: true }).click();
   await expect(resources.locator(".res__index-title")).toHaveText(
     "mock/analysis",
@@ -289,6 +297,7 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   ).toBeVisible();
   await resources.getByRole("button", { name: "Next change" }).click();
   await expect(resources.locator(".source-diff__line--active")).toHaveCount(2);
+  expect(await workspaceIndexHeight()).toBeCloseTo(stableIndexHeight, 1);
   await resources.getByRole("button", { name: "Files", exact: true }).click();
   await expect(frame.locator("h1")).toHaveText(
     "Quiet systems, legible signals.",
@@ -343,10 +352,34 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   await expect(
     resources.getByRole("heading", { name: "Observation log · Station 07" }),
   ).toBeVisible();
+  const fileHeader = resources.locator(".file-detail-header");
+  const headerActionGeometry = () =>
+    fileHeader.evaluate((header) => {
+      const download = header.querySelector<HTMLElement>(".icon-button");
+      const view = header.querySelector<HTMLElement>(
+        ".file-detail-header__view",
+      );
+      if (!download || !view)
+        throw new Error("File header actions are missing");
+      return {
+        downloadLeft: download.getBoundingClientRect().left,
+        viewWidth: view.getBoundingClientRect().width,
+      };
+    });
+  const previewHeaderGeometry = await headerActionGeometry();
   await resources.getByRole("button", { name: "Source", exact: true }).click();
   await expect(
     resources.getByRole("region", { name: "File source" }),
   ).toContainText("Working reading");
+  const sourceHeaderGeometry = await headerActionGeometry();
+  expect(sourceHeaderGeometry.downloadLeft).toBeCloseTo(
+    previewHeaderGeometry.downloadLeft,
+    1,
+  );
+  expect(sourceHeaderGeometry.viewWidth).toBeCloseTo(
+    previewHeaderGeometry.viewWidth,
+    1,
+  );
 
   await resources.getByRole("button", { name: "Back to file browser" }).click();
   await search.fill("FilePreview.tsx");
@@ -355,6 +388,7 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
     .click();
   const source = resources.getByRole("region", { name: "File source" });
   await expect(source).toBeVisible();
+  expect(await workspaceIndexHeight()).toBeCloseTo(stableIndexHeight, 1);
   expect(
     await source.evaluate(
       (element) => element.scrollHeight > element.clientHeight,

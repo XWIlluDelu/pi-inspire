@@ -364,6 +364,47 @@ describe("response activity folds", () => {
     ).toHaveLength(0);
   });
 
+  it("points open controls inward and collapsed controls outward", () => {
+    const { container } = render(
+      transcript(
+        [
+          {
+            role: "assistant",
+            timestamp: 1,
+            content: [{ type: "thinking", thinking: "directional activity" }],
+          },
+        ],
+        "expanded",
+      ),
+    );
+    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
+    const expectDirection = (
+      edge: "upper" | "lower",
+      direction: "up" | "down",
+    ) => {
+      const rail = fold.querySelector(
+        `.activity-fold__rail--${edge}`,
+      ) as HTMLElement;
+      expect(rail.querySelector(".activity-fold__glyph")).toHaveClass(
+        `activity-fold__glyph--${direction}`,
+      );
+      expect(rail.querySelector(".activity-fold__handle")).toHaveClass(
+        `activity-fold__handle--${direction}`,
+      );
+    };
+
+    expectDirection("upper", "down");
+    expectDirection("lower", "up");
+
+    fireEvent.click(
+      within(fold).getByRole("button", {
+        name: "Collapse assistant activity from the upper boundary",
+      }),
+    );
+    expectDirection("upper", "up");
+    expectDirection("lower", "down");
+  });
+
   it("opens a collapsed lazy range through Compact before Expanded", async () => {
     const onMaterialize = vi.fn(async () => undefined);
     const messages = [

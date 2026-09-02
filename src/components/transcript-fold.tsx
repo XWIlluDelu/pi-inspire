@@ -274,11 +274,11 @@ export function ResponseActivityFold({
       presentation === "expanded" && !compactEquivalentToExpanded;
     const arrowDirection = open
       ? edge === "upper"
-        ? "up"
-        : "down"
-      : edge === "upper"
         ? "down"
-        : "up";
+        : "up"
+      : edge === "upper"
+        ? "up"
+        : "down";
     const action = expanding ? "Expand" : compacting ? "Compact" : "Collapse";
 
     return (
@@ -314,7 +314,10 @@ export function ResponseActivityFold({
             <span className="activity-fold__line" />
           )}
         </span>
-        <span className="activity-fold__handle" aria-hidden>
+        <span
+          className={`activity-fold__handle activity-fold__handle--${arrowDirection}`}
+          aria-hidden
+        >
           <svg
             className={`activity-fold__glyph activity-fold__glyph--${arrowDirection}`}
             viewBox="0 0 10 8"

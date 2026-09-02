@@ -479,12 +479,14 @@ function statusIcon(status: ToolStatus) {
 function DiffView({ lines }: { lines: DiffLine[] }) {
   return (
     <pre className="card__mono diff">
-      {lines.map((line, index) => (
-        <span key={index} className={`diff__line diff__line--${line.type}`}>
-          {line.text}
-          {"\n"}
-        </span>
-      ))}
+      <code className="diff__lines">
+        {lines.map((line, index) => (
+          <span key={index} className={`diff__line diff__line--${line.type}`}>
+            {line.text}
+            {"\n"}
+          </span>
+        ))}
+      </code>
     </pre>
   );
 }
@@ -779,17 +781,19 @@ function ToolPresentationBlockView({
                     <span>{formatCount(group.matches.length, "line")}</span>
                   </header>
                   <div className="tool-search-group__lines">
-                    {group.matches.map((match, index) => (
-                      <div
-                        className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
-                        key={`${match.line}:${index}`}
-                      >
-                        <span className="tool-search-line__number">
-                          {match.line}
-                        </span>
-                        <code>{match.text || " "}</code>
-                      </div>
-                    ))}
+                    <div className="tool-search-group__line-plane">
+                      {group.matches.map((match, index) => (
+                        <div
+                          className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
+                          key={`${match.line}:${index}`}
+                        >
+                          <span className="tool-search-line__number">
+                            {match.line}
+                          </span>
+                          <code>{match.text || " "}</code>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </section>
               ))}
