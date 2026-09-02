@@ -590,7 +590,12 @@ button.res__index-header--back:hover svg {
 }
 
 .file-detail-header__view {
+  display: inline-flex;
+  width: 64px;
   height: 24px;
+  flex: 0 0 64px;
+  align-items: center;
+  justify-content: center;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-xs);
@@ -706,9 +711,12 @@ button.res__index-header--back:hover svg {
   text-align: center;
 }
 
+.res__body--split {
+  display: grid;
+  grid-template-rows: min(var(--files-index-default-size), 42%) minmax(0, 1fr);
+}
+
 .res__index {
-  max-height: 42%;
-  flex: 0 1 var(--files-index-default-size);
   min-height: 0;
   display: flex;
   flex-direction: column;
