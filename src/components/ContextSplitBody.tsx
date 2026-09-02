@@ -13,7 +13,7 @@ export function ContextSplitBody({
   detail: ReactNode;
 }) {
   return (
-    <div className={`res__body res__body--${mode}`}>
+    <div className={`res__body res__body--${mode} res__body--split`}>
       <div className="res__index">
         {header}
         <div className="res__list" data-pane-scroll-active="true">

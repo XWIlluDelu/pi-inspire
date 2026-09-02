@@ -710,12 +710,42 @@
   height: 14px;
   padding: 0 8px;
   border: 0;
-  background: var(--bg-stage);
+  background: transparent;
   color: var(--muted);
   transition: transform var(--dur-micro) var(--ease-standard);
 }
 
+/* Mask the telemetry with a direction-matched trapezoid. Its 10:14 side
+   slope follows the rendered glyph's 3.2:4.5 edge, so the bar ends and
+   triangle read as one continuous control instead of a rectangular cutout. */
+.activity-fold__handle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bg-stage);
+}
+
+.activity-fold__handle--up::before {
+  clip-path: polygon(
+    calc(50% - 2px) 0,
+    calc(50% + 2px) 0,
+    100% 100%,
+    0 100%
+  );
+}
+
+.activity-fold__handle--down::before {
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    calc(50% + 2px) 100%,
+    calc(50% - 2px) 100%
+  );
+}
+
 .activity-fold__glyph {
+  position: relative;
+  z-index: 1;
   display: block;
   fill: currentColor;
   opacity: 0.6;
@@ -737,7 +767,6 @@ button.activity-fold__rail:focus-visible .activity-fold__segment {
 
 button.activity-fold__rail:hover .activity-fold__handle,
 button.activity-fold__rail:focus-visible .activity-fold__handle {
-  background: var(--bg-stage);
   transform: scale(1.15);
 }
 
