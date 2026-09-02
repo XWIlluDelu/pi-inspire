@@ -8,8 +8,8 @@
   gap: var(--space-2);
 }
 
-/* Only transient tool/retry text belongs to the live region. Queued input
-   stays concise here; its full host-projected text remains in the transcript. */
+/* Only automatic retry text belongs to the live region. Pending input stays
+   concise here; its full host-projected text remains in the transcript. */
 .activity__live {
   display: flex;
   flex-wrap: wrap;
