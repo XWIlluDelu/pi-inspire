@@ -22,6 +22,7 @@ for (const supportModule of [
   "npm-command.mjs",
   "platform-paths.mjs",
   "process-tree.mjs",
+  "static-asset-cache.mjs",
 ]) {
   await cp(
     resolve(root, "server", supportModule),
