@@ -139,4 +139,6 @@ Use an SSH authorization policy that confines the key to the assigned `127.0.0.1
 
 A direct local launch URL may use the host token once and immediately removes it from browser history. A request received through the trusted HTTPS proxy always removes `?token=` without pairing, so a new remote browser must use the Pair form. The host then sends an origin-scoped `HttpOnly; SameSite=Strict; Secure` cookie, and WebSocket access uses that paired cookie rather than a query token.
 
+Project terminals use a dedicated `/terminal` WebSocket over this same HTTPS proxy and SSH tunnel; no additional listener is exposed. Their PTYs remain in the local terminal daemon when the tunnel disconnects and the browser resumes them after transport recovery. Pairing also grants the browser authority to take control of a real shell running as the local Host user, so a paired browser profile must be trusted as fully as that operating-system account.
+
 The token remains a shared personal credential. Rotate it if it is exposed, and do not place it in server configuration, shell history, URLs, or logs.

@@ -1,6 +1,6 @@
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, SquareTerminal } from "lucide-react";
 import type { Root } from "mdast";
 import { decodeString } from "micromark-util-decode-string";
 import { memo, type ReactNode } from "react";
@@ -14,6 +14,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math-extended";
 import type { Plugin } from "unified";
 import { isLocalResourceReference } from "../../shared/resource-references";
+import { store } from "../store";
+import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
@@ -262,19 +264,34 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
     <div className="code-block">
       <div className="code-block__bar">
         <span className="code-block__lang">{language}</span>
-        <button
-          type="button"
-          className="code-block__copy"
-          onClick={() => void copy(code)}
-          aria-label={copied ? "Copied" : "Copy code"}
-          title={copied ? "Copied" : "Copy code"}
-        >
-          {copied ? (
-            <Check size={13} aria-hidden />
-          ) : (
-            <Copy size={13} aria-hidden />
-          )}
-        </button>
+        <div className="code-block__actions">
+          <button
+            type="button"
+            className="code-block__terminal"
+            onClick={() => {
+              queueTerminalInsertion(code, store.getState().cwd);
+              store.setContextMode("terminal");
+              store.setResourcesOpen(true);
+            }}
+            aria-label="Insert code in terminal"
+            title="Insert in terminal for review"
+          >
+            <SquareTerminal size={13} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="code-block__copy"
+            onClick={() => void copy(code)}
+            aria-label={copied ? "Copied" : "Copy code"}
+            title={copied ? "Copied" : "Copy code"}
+          >
+            {copied ? (
+              <Check size={13} aria-hidden />
+            ) : (
+              <Copy size={13} aria-hidden />
+            )}
+          </button>
+        </div>
       </div>
       <pre className="code-block__pre" tabIndex={0}>
         {/* highlight.js escapes its input; the generated markup contains only span tags */}

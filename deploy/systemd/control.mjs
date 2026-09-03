@@ -1,11 +1,25 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOST_SERVICE_NAME = "inspire-host.service";
+const TERMINAL_SERVICE_NAME = "inspire-terminal.service";
 const IDLE_MAINTENANCE_TIMER_NAME =
   "inspire-idle-maintenance-restart.timer";
+
+function transientTerminalServiceName(root) {
+  const key = createHash("sha256")
+    .update(resolve(root))
+    .update("\0")
+    .update("127.0.0.1")
+    .update("\0")
+    .update("4587")
+    .digest("hex")
+    .slice(0, 12);
+  return `inspire-terminal-${key}.service`;
+}
 
 function configHome(environment = process.env) {
   return environment.XDG_CONFIG_HOME || join(environment.HOME || homedir(), ".config");
@@ -13,6 +27,10 @@ function configHome(environment = process.env) {
 
 export function hostServicePath(environment = process.env) {
   return join(configHome(environment), "systemd", "user", HOST_SERVICE_NAME);
+}
+
+export function terminalServicePath(environment = process.env) {
+  return join(configHome(environment), "systemd", "user", TERMINAL_SERVICE_NAME);
 }
 
 function runSystemctl(arguments_, environment = process.env) {
@@ -71,6 +89,21 @@ function expectedReadyHook(value, launcher) {
   );
 }
 
+function expectedTerminalStart(value, launcher, root) {
+  const escapedLauncher = escapeRegExp(launcher);
+  const escapedRoot = escapeRegExp(root);
+  const boundary = "(?:\\s|;|\\})";
+  return (
+    new RegExp(`(?:^|\\s)path=${escapedLauncher}${boundary}`, "u").test(
+      value,
+    ) &&
+    new RegExp(
+      `(?:^|\\s)argv\\[\\]=${escapedLauncher}\\s+terminal-daemon\\s+--root\\s+${escapedRoot}\\s+--host\\s+127\\.0\\.0\\.1\\s+--port\\s+4587${boundary}`,
+      "u",
+    ).test(value)
+  );
+}
+
 function commandDetail(result) {
   return `${result.stderr}${result.stdout}`.trim();
 }
@@ -94,6 +127,7 @@ export async function inspectHostService(
       "--property=WorkingDirectory",
       "--property=ExecStart",
       "--property=ExecStartPost",
+      "--property=Wants",
       "--property=UnitFileState",
       "--property=ActiveState",
       "--property=SubState",
@@ -115,7 +149,37 @@ export async function inspectHostService(
   ) {
     return { kind: "foreign", fragmentPath: value.FragmentPath || undefined };
   }
-  if (!expectedReadyHook(value.ExecStartPost ?? "", launcher)) {
+  if (
+    !expectedReadyHook(value.ExecStartPost ?? "", launcher) ||
+    !(value.Wants ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME)
+  ) {
+    return { kind: "outdated" };
+  }
+
+  const terminalResult = await run(
+    [
+      "--user",
+      "show",
+      TERMINAL_SERVICE_NAME,
+      "--property=LoadState",
+      "--property=FragmentPath",
+      "--property=WorkingDirectory",
+      "--property=ExecStart",
+    ],
+    environment,
+  );
+  if (terminalResult.code !== 0) {
+    if (/not[ -]found|not loaded/iu.test(commandDetail(terminalResult)))
+      return { kind: "outdated" };
+    return { kind: "unavailable", detail: commandDetail(terminalResult) };
+  }
+  const terminal = properties(terminalResult.stdout);
+  if (
+    terminal.LoadState !== "loaded" ||
+    terminal.FragmentPath !== terminalServicePath(environment) ||
+    terminal.WorkingDirectory !== expectedRoot ||
+    !expectedTerminalStart(terminal.ExecStart ?? "", launcher, expectedRoot)
+  ) {
     return { kind: "outdated" };
   }
   return {
@@ -139,21 +203,38 @@ async function manageHostService(root, action, options) {
   if (service.kind !== "managed") return service;
 
   const commands = {
-    start: [["start", HOST_SERVICE_NAME]],
-    stop: [["stop", HOST_SERVICE_NAME]],
+    start: [
+      ["start", TERMINAL_SERVICE_NAME],
+      ["start", HOST_SERVICE_NAME],
+    ],
+    stop: [
+      ["stop", HOST_SERVICE_NAME],
+      ["stop", TERMINAL_SERVICE_NAME],
+    ],
     restart: [["restart", HOST_SERVICE_NAME]],
     enable: [
+      ["enable", "--now", TERMINAL_SERVICE_NAME],
       ["enable", "--now", HOST_SERVICE_NAME],
       ["enable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
     ],
     disable: [
       ["disable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
       ["disable", "--now", HOST_SERVICE_NAME],
+      ["disable", "--now", TERMINAL_SERVICE_NAME],
     ],
   };
   const commandsForAction = commands[action];
   if (!commandsForAction)
     throw new Error(`Unsupported host-service action: ${action}`);
+
+  // Hosts started before the persistent unit was installed may have launched
+  // an installation-scoped transient daemon. Explicit service lifecycle
+  // commands retire it so the named unit can own the same private IPC socket.
+  if (["start", "stop", "enable", "disable"].includes(action))
+    await (options?.run ?? runSystemctl)(
+      ["--user", "stop", transientTerminalServiceName(root)],
+      options?.environment,
+    );
 
   for (const arguments_ of commandsForAction) {
     const result = await (options?.run ?? runSystemctl)(

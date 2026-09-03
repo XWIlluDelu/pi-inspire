@@ -52,26 +52,30 @@ async function main() {
       .replaceAll("@ROOT@", systemdEscape(root))
       .replaceAll("@NODE_BIN@", systemdEscape(dirname(process.execPath)))
       .replaceAll("@LAUNCHER@", systemdEscape(join(root, "inspire")));
-  const [hostTemplate, maintenanceTemplate, timerTemplate] = await Promise.all([
-    readFile(join(templateDirectory, "inspire-host.service.in"), "utf8"),
-    readFile(
-      join(templateDirectory, "inspire-idle-maintenance-restart.service.in"),
-      "utf8",
-    ),
-    readFile(
-      join(templateDirectory, "inspire-idle-maintenance-restart.timer.in"),
-      "utf8",
-    ),
-  ]);
+  const [hostTemplate, terminalTemplate, maintenanceTemplate, timerTemplate] =
+    await Promise.all([
+      readFile(join(templateDirectory, "inspire-host.service.in"), "utf8"),
+      readFile(join(templateDirectory, "inspire-terminal.service.in"), "utf8"),
+      readFile(
+        join(templateDirectory, "inspire-idle-maintenance-restart.service.in"),
+        "utf8",
+      ),
+      readFile(
+        join(templateDirectory, "inspire-idle-maintenance-restart.timer.in"),
+        "utf8",
+      ),
+    ]);
   const configHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
   const unitDirectory = join(configHome, "systemd", "user");
   const paths = {
     host: join(unitDirectory, "inspire-host.service"),
+    terminal: join(unitDirectory, "inspire-terminal.service"),
     maintenance: join(unitDirectory, "inspire-idle-maintenance-restart.service"),
     timer: join(unitDirectory, "inspire-idle-maintenance-restart.timer"),
   };
   await Promise.all([
     writeUnit(paths.host, replace(hostTemplate)),
+    writeUnit(paths.terminal, replace(terminalTemplate)),
     writeUnit(paths.maintenance, replace(maintenanceTemplate)),
     writeUnit(paths.timer, replace(timerTemplate)),
   ]);
@@ -80,7 +84,7 @@ async function main() {
     throw new Error(
       `Installed user units, but systemd could not reload (${reloaded.stderr.trim()})`,
     );
-  console.log(`Installed ${paths.host}.`);
+  console.log(`Installed ${paths.host} and ${paths.terminal}.`);
   console.log(`Installed ${paths.maintenance} and ${paths.timer}.`);
   console.log(
     "Enable the host and its daily idle maintenance timer with: ./inspire service enable-host",
