@@ -253,7 +253,9 @@ function TokenGate() {
           <p className="token-gate__hint">
             The host is running, but this browser has not been paired yet. Open
             the URL printed by <code>./inspire</code>, or paste its access token
-            once below. The pairing is remembered on this device.
+            once below. The pairing is remembered on this device. Pair only a
+            device you trust: it can control Pi, project files, and terminals
+            with your user account&apos;s permissions.
           </p>
         </div>
         <form
@@ -696,6 +698,13 @@ const ConversationStage = memo(function ConversationStage() {
   );
 });
 
+function focusedTerminalLaunchRequested(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(
+    params.get("terminal")?.trim() && params.get("terminalFocus") === "1",
+  );
+}
+
 export function App() {
   const state = useAppState(
     (source) => ({
@@ -705,6 +714,7 @@ export function App() {
       connectionProblem: source.connectionProblem,
       extensionOverlayOpen: source.extensionUiRequests.length > 0,
       resourcesOpen: source.resourcesOpen,
+      contextMode: source.contextMode,
       prefs: source.prefs,
       windowTitle: source.windowTitle,
       sessionName: source.sessionName,
@@ -826,6 +836,12 @@ export function App() {
     setSettingsCategory("updates");
     setSettingsOpen(true);
   }, [extensionOverlayOpen, settingsOpen]);
+
+  useLayoutEffect(() => {
+    if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
+    if (state.contextMode !== "terminal") store.setContextMode("terminal");
+    if (!state.resourcesOpen) store.setResourcesOpen(true);
+  }, [state.bootstrapped, state.contextMode, state.resourcesOpen]);
 
   useEffect(() => {
     // theme-init.js owns the pre-bootstrap frame. Once the host has supplied

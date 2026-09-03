@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,9 +43,16 @@ import {
 } from "./pi-runtime.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
+import { requestError } from "./request-error.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
+import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
+import {
+  type TerminalService,
+  UnavailableTerminalService,
+} from "./terminal-service.js";
+import { TerminalSessionManager } from "./terminal-session-manager.js";
 import {
   defaultToolPresentationConfigPath,
   ToolPresentationConfigStore,
@@ -182,6 +188,25 @@ const toolPresentations = new ToolPresentationConfigStore(
 );
 const resources = new ResourceStore();
 const git = mock ? new MockGitInspection() : new GitInspectionService();
+let terminal: TerminalService;
+if (
+  process.env.INSPIRE_TERMINAL_IN_PROCESS === "1" ||
+  process.env.NODE_ENV === "test"
+) {
+  terminal = new TerminalSessionManager();
+} else {
+  terminal = await launchTerminalDaemon({ root, host, port }).catch((error) => {
+    const message =
+      error instanceof Error ? error.message : "Terminal service unavailable";
+    diagnostics.record("warning", "terminal_daemon_unavailable", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    console.error(`Terminal service unavailable: ${message}`);
+    return new UnavailableTerminalService(
+      "The terminal service is unavailable. Restart the INSΠRE Host to retry.",
+    );
+  });
+}
 const modelRuntime = mock
   ? null
   : await ModelRuntime.create().catch((error) => {
@@ -242,6 +267,7 @@ const application = createInspireServer({
   toolPresentations,
   resources,
   git,
+  terminal,
   mock,
   version: packageJson.version,
   piVersion: piInstallation.version,

@@ -49,6 +49,7 @@
   "knip": {
     "entry": [
       "server/index.ts",
+      "server/terminal-daemon-entry.ts",
       "deploy/systemd/control.mjs",
       "deploy/systemd/idle-maintenance-restart.mjs",
       "deploy/systemd/install.mjs",
@@ -95,6 +96,9 @@
     "test:portable": "node --test tests/portable/*.test.mjs"
   },
   "dependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "ws": "^8.21.3",
@@ -119,6 +123,11 @@
     "@types/supertest": "^7.2.1",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
     "axe-core": "^4.12.1",
     "concurrently": "^9.2.4",
     "highlight.js": "^11.11.1",

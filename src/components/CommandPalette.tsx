@@ -4,13 +4,17 @@ import {
   ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
   isAbortableRunState,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
   type PalettePreference,
   type ThemePreference,
+  TOOL_VISIBILITY_PREFERENCES,
+  VISIBILITY_PREFERENCES,
 } from "../../shared/contracts";
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
+import {
+  queueTerminalAction,
+  type TerminalUiAction,
+} from "../terminal-actions";
 import { useModalFocus } from "../use-modal-focus";
 import { sessionHeading } from "./AppTopbar";
 import { relativeTime } from "./transcript-rows";
@@ -34,6 +38,12 @@ const PALETTE_LABELS: Record<PalettePreference, string> = {
   amber: "Amber",
   teal: "Jade",
 };
+
+function runTerminalAction(action: TerminalUiAction): void {
+  store.setResourcesOpen(true);
+  store.setContextMode("terminal");
+  queueTerminalAction(action);
+}
 
 function matches(item: PaletteItem, words: string[]): boolean {
   const haystack =
@@ -166,6 +176,67 @@ export const CommandPalette = memo(function CommandPalette({
             store.setResourcesOpen(true);
             store.setContextMode("branches");
           },
+        },
+        {
+          id: "terminal",
+          group: "Workspace",
+          title: "Open Terminal",
+          hint: "shell",
+          run: () => {
+            store.setResourcesOpen(true);
+            store.setContextMode("terminal");
+          },
+        },
+        {
+          id: "terminal-new",
+          group: "Terminal",
+          title: "New terminal",
+          hint: "Ctrl+Shift+`",
+          run: () => runTerminalAction("new"),
+        },
+        {
+          id: "terminal-next",
+          group: "Terminal",
+          title: "Next terminal",
+          hint: "Ctrl+PageDown",
+          run: () => runTerminalAction("next"),
+        },
+        {
+          id: "terminal-previous",
+          group: "Terminal",
+          title: "Previous terminal",
+          hint: "Ctrl+PageUp",
+          run: () => runTerminalAction("previous"),
+        },
+        {
+          id: "terminal-control",
+          group: "Terminal",
+          title: "Take control of terminal",
+          run: () => runTerminalAction("take-control"),
+        },
+        {
+          id: "terminal-restart",
+          group: "Terminal",
+          title: "Restart terminal",
+          run: () => runTerminalAction("restart"),
+        },
+        {
+          id: "terminal-close",
+          group: "Terminal",
+          title: "Close terminal",
+          run: () => runTerminalAction("close"),
+        },
+        {
+          id: "terminal-focus",
+          group: "Terminal",
+          title: "Focus terminal",
+          run: () => runTerminalAction("focus"),
+        },
+        {
+          id: "terminal-settings",
+          group: "Terminal",
+          title: "Terminal settings",
+          run: () => runTerminalAction("settings"),
         },
       );
       if (hasEarlierBranch) {

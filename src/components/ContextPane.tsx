@@ -1,16 +1,40 @@
 import { RefreshCw, X } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
 import { resourceRows as toResourceRows } from "../resources";
+import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
 import { FilesPane } from "./FilesPane";
+
+function terminalSelectionBlock(text: string): string {
+  const content = text.replace(/\s+$/u, "");
+  const longestFence = Math.max(
+    0,
+    ...[...content.matchAll(/`+/gu)].map((match) => match[0].length),
+  );
+  const fence = "`".repeat(Math.max(3, longestFence + 1));
+  return `${fence}text\n${content}\n${fence}`;
+}
+
+const TerminalPane = lazy(() =>
+  import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
+);
 
 export const ContextPane = memo(function ContextPane({
   isModal = false,
@@ -33,6 +57,7 @@ export const ContextPane = memo(function ContextPane({
     "idle" | "loading" | "error"
   >("idle");
   const [resourceError, setResourceError] = useState<string | null>(null);
+  const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const recentRows = useMemo(
     () =>
@@ -140,6 +165,28 @@ export const ContextPane = memo(function ContextPane({
     return () => store.setGitSurfaceVisible("resources-pane", false);
   }, [state.contextMode, state.resourcesOpen]);
 
+  const handleTerminalOpenFile = useCallback((reference: string) => {
+    store.setContextMode("files");
+    void store.openResource(reference, "files");
+  }, []);
+
+  const handleTerminalSelection = useCallback((text: string) => {
+    const sessionId = store.getState().sessionId;
+    if (!sessionId) return;
+    const current = sessionDraft(sessionId);
+    const next = `${current}${current ? "\n\n" : ""}${terminalSelectionBlock(text)}`;
+    setSessionDraft(sessionId, next);
+    store.replaceComposerText(next);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(".composer__input")?.focus(),
+    );
+  }, []);
+
+  const handleTerminalCommandComplete = useCallback(
+    () => void store.refreshGitInspection(),
+    [],
+  );
+
   const handleRefresh = () => {
     if (state.contextMode === "files") {
       store.cancelResourceProbes();
@@ -162,6 +209,10 @@ export const ContextPane = memo(function ContextPane({
       void store.refreshGitInspection();
       return;
     }
+    if (state.contextMode === "terminal") {
+      setTerminalReloadKey((value) => value + 1);
+      return;
+    }
     void store.loadBranchTree();
   };
   const refreshing =
@@ -173,25 +224,31 @@ export const ContextPane = memo(function ContextPane({
         state.workspaceSearchLoading
       : state.contextMode === "changes"
         ? state.gitStatusLoading || state.gitStatusRefreshing
-        : state.branchTreeLoading;
+        : state.contextMode === "branches"
+          ? state.branchTreeLoading
+          : false;
   const contents = (
     <>
       <div className="ctx__header">
         <div className="ctx__modes" role="group" aria-label="Context mode">
-          {(["files", "changes", "branches"] as const).map((mode) => (
-            <button
-              type="button"
-              key={mode}
-              aria-pressed={state.contextMode === mode}
-              onClick={() => store.setContextMode(mode)}
-            >
-              {mode === "files"
-                ? "Files"
-                : mode === "changes"
-                  ? "Changes"
-                  : "History"}
-            </button>
-          ))}
+          {(["files", "changes", "branches", "terminal"] as const).map(
+            (mode) => (
+              <button
+                type="button"
+                key={mode}
+                aria-pressed={state.contextMode === mode}
+                onClick={() => store.setContextMode(mode)}
+              >
+                {mode === "files"
+                  ? "Files"
+                  : mode === "changes"
+                    ? "Changes"
+                    : mode === "branches"
+                      ? "History"
+                      : "Terminal"}
+              </button>
+            ),
+          )}
         </div>
         <div className="ctx__header-actions">
           <button
@@ -231,10 +288,26 @@ export const ContextPane = memo(function ContextPane({
         />
       ) : state.contextMode === "changes" ? (
         <ChangesPane state={state} />
-      ) : (
+      ) : state.contextMode === "branches" ? (
         <div className="res__body res__body--branches">
           <BranchTree />
         </div>
+      ) : (
+        <Suspense
+          fallback={
+            <div className="terminal-empty terminal-empty--loading">
+              Loading terminal…
+            </div>
+          }
+        >
+          <TerminalPane
+            cwd={state.cwd}
+            reloadKey={terminalReloadKey}
+            onOpenFile={handleTerminalOpenFile}
+            onSendToComposer={handleTerminalSelection}
+            onCommandComplete={handleTerminalCommandComplete}
+          />
+        </Suspense>
       )}
     </>
   );

@@ -4,7 +4,7 @@ import type {
   GitFileChange,
   GitStatusResponse,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 
 const GIT_DETAIL_REFRESH_INTERVAL_MS = 4_000;
 const GIT_TOPBAR_REFRESH_INTERVAL_MS = 20_000;
@@ -25,7 +25,7 @@ export interface GitControllerState {
   sessionId: string | null;
   selectionGeneration: number;
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches";
+  contextMode: "files" | "changes" | "branches" | "terminal";
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusLoading: boolean;
@@ -37,7 +37,7 @@ export interface GitControllerState {
 
 export interface GitControllerPatch {
   resourcesOpen?: boolean;
-  contextMode?: "files" | "changes" | "branches";
+  contextMode?: "files" | "changes" | "branches" | "terminal";
   gitStatus?: GitStatusResponse | null;
   gitStatusError?: string | null;
   gitStatusLoading?: boolean;

@@ -21,7 +21,7 @@ interface ResourceControllerState {
   transcriptIncarnation: string | null;
   transcriptRevision: number;
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches";
+  contextMode: "files" | "changes" | "branches" | "terminal";
   fileBrowserView: "browse" | "preview";
   selectedResourceReference: string | null;
   selectedResourceWorkspacePath: string | null;
@@ -35,7 +35,7 @@ interface ResourceControllerState {
  * its fields or request implementation. */
 interface ResourceControllerPatch {
   resourcesOpen?: boolean;
-  contextMode?: "files" | "changes" | "branches";
+  contextMode?: "files" | "changes" | "branches" | "terminal";
   fileBrowserView?: "browse" | "preview";
   selectedResourceReference?: string | null;
   selectedResourceWorkspacePath?: string | null;

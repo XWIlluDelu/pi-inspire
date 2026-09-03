@@ -1,0 +1,19 @@
+[Unit]
+Description=INSΠRE persistent terminal service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+WorkingDirectory=@ROOT@
+Environment=NODE_ENV=production
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@LAUNCHER@ terminal-daemon --root @ROOT@ --host 127.0.0.1 --port 4587
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=5min
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

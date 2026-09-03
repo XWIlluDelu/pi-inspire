@@ -405,9 +405,17 @@ describe("local host API", () => {
   it("requires the launch token and rejects foreign origins", async () => {
     await request(application.server).get("/api/bootstrap").expect(401);
     await api().set("Origin", "https://example.invalid").expect(403);
+    await api()
+      .set("Origin", `https://${new URL(baseUrl).host}`)
+      .expect(403);
     await request(application.server)
       .post("/api/auth/pair")
       .set("Origin", "https://example.invalid")
+      .send({ token })
+      .expect(403);
+    await request(application.server)
+      .post("/api/auth/pair")
+      .set("Origin", `https://${new URL(baseUrl).host}`)
       .send({ token })
       .expect(403);
     const health = await request(application.server)
@@ -700,6 +708,13 @@ describe("local host API", () => {
       expect(String(forwardedLaunch.headers["set-cookie"])).not.toContain(
         "inspire_access_",
       );
+
+      await request(relay.server)
+        .post("/api/auth/pair")
+        .set("Origin", forwardedOrigin.replace("https:", "http:"))
+        .set("X-Forwarded-Proto", "https")
+        .send({ token })
+        .expect(403);
 
       const paired = await request(relay.server)
         .post("/api/auth/pair")

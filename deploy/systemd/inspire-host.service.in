@@ -1,7 +1,7 @@
 [Unit]
 Description=INSΠRE local host
-After=network-online.target
-Wants=network-online.target
+After=network-online.target inspire-terminal.service
+Wants=network-online.target inspire-terminal.service
 
 [Service]
 Type=simple
