@@ -20,6 +20,126 @@ async function openMockSession(
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
 }
 
+test("project terminals survive browser detach and keep multiple tabs", async ({
+  context,
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.evaluate(() => {
+    window.localStorage.setItem(
+      "inspire:terminal-ui-settings:v1",
+      JSON.stringify({ screenReaderMode: true }),
+    );
+  });
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+
+  const emptyTerminal = page.locator(".terminal-empty");
+  await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
+  const readTerminals = async () => {
+    const response = await page.request.get(
+      `/api/terminals?cwd=${encodeURIComponent(process.cwd())}`,
+    );
+    expect(response.ok()).toBe(true);
+    return response.json() as Promise<{
+      terminals: Array<{ id: string; nextOutputOffset: number }>;
+    }>;
+  };
+  const terminalInput = page.locator(".xterm-helper-textarea");
+  await expect(terminalInput).toBeVisible();
+  const firstCatalog = await readTerminals();
+  const firstTerminal = firstCatalog.terminals[0]!;
+  await terminalInput.pressSequentially("printf 'INSPIRE_TERMINAL_E2E\\n'");
+  await terminalInput.press("Enter");
+  await expect
+    .poll(async () => (await readTerminals()).terminals[0]!.nextOutputOffset)
+    .toBeGreaterThan(firstTerminal.nextOutputOffset);
+  const visibleTerminalOutput = page.locator(
+    ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
+  );
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin,
+  });
+  await page.evaluate(async () => {
+    await navigator.clipboard.writeText("printf '终端✓\\n'");
+  });
+  await page.getByRole("button", { name: "Paste into terminal" }).click();
+  await terminalInput.press("Enter");
+  await expect(visibleTerminalOutput).toContainText("终端✓");
+  await terminalInput.pressSequentially(
+    "printf '\\033[?1049hINSPIRE_ALT_SCREEN'",
+  );
+  await terminalInput.press("Enter");
+  await expect(visibleTerminalOutput).toContainText("INSPIRE_ALT_SCREEN");
+
+  await page.getByRole("button", { name: "New terminal" }).click();
+  await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
+  const terminalIds = (await readTerminals()).terminals.map(({ id }) => id);
+  const terminalAccessibility = await new AxeBuilder({ page })
+    .include(".terminal-pane")
+    .analyze();
+  expect(terminalAccessibility.violations).toEqual([]);
+
+  await page.reload();
+  await expect(page.getByRole("main")).toBeVisible();
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
+  expect((await readTerminals()).terminals.map(({ id }) => id)).toEqual(
+    terminalIds,
+  );
+
+  await page.locator(`#terminal-tab-${terminalIds[0]}`).click();
+  await expect(page.getByText("Controlling", { exact: true })).toBeVisible();
+  const restoredInput = page.locator(
+    ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
+  );
+  await expect(
+    page.locator(
+      ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
+    ),
+  ).toContainText("INSPIRE_ALT_SCREEN");
+  await restoredInput.pressSequentially("printf '\\033[?1049l'");
+  await restoredInput.press("Enter");
+
+  const focusedPage = await context.newPage();
+  const focusedUrl = new URL(page.url());
+  focusedUrl.searchParams.set("terminal", terminalIds[0]!);
+  focusedUrl.searchParams.set("terminalFocus", "1");
+  await focusedPage.goto(focusedUrl.href);
+  await expect(focusedPage.locator(".terminal-pane--focused")).toBeVisible();
+  await expect(
+    focusedPage.getByText("View only", { exact: true }),
+  ).toBeVisible();
+  await focusedPage.keyboard.press("Control+k");
+  await focusedPage
+    .getByPlaceholder("Type a command or search…")
+    .fill("take control");
+  await focusedPage
+    .getByRole("option", { name: /Take control of terminal/ })
+    .click();
+  await expect(
+    focusedPage.getByText("Controlling", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("View only", { exact: true })).toBeVisible();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await expect(focusedPage.locator(".terminal-pane--focused")).toBeVisible();
+  await expect(
+    focusedPage.locator(`#terminal-tab-${terminalIds[0]}`),
+  ).toHaveAttribute("aria-pressed", "true");
+  await focusedPage.close();
+
+  for (const terminalId of terminalIds) {
+    const response = await page.request.delete(
+      `/api/terminals/${encodeURIComponent(terminalId)}?force=1`,
+    );
+    expect(response.ok()).toBe(true);
+  }
+  await expect.poll(async () => (await readTerminals()).terminals).toEqual([]);
+});
+
 test("mock workbench pairs, clears its URL token, and opens context surfaces", async ({
   page,
 }) => {

@@ -1,5 +1,6 @@
 import {
   type BranchTreeResponse,
+  defaultPreferences,
   type GitDiffSide,
   type GitStatusResponse,
   type InspirePreferences,
@@ -13,7 +14,6 @@ import {
   type TranscriptActivityRange,
   type UpdateCheckResponse,
   type UserTurnAnchor,
-  defaultPreferences,
 } from "../shared/contracts";
 import type { PendingManagementAction } from "./api";
 import type { PiCommand } from "./composer-completion";
@@ -27,7 +27,7 @@ import {
   emptyWorkspaceBrowserState,
   type WorkspaceBrowserState,
 } from "./controllers/workspace-controller";
-import { emptyEventSlice, type EventSlice } from "./events";
+import { type EventSlice, emptyEventSlice } from "./events";
 import type { ResourcePreview } from "./resource-preview";
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
@@ -187,7 +187,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   pendingAction: PendingManagementAction["action"] | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches";
+  contextMode: "files" | "changes" | "branches" | "terminal";
   /** Full browsing or the shared workspace/detail split. */
   fileBrowserView: "browse" | "preview";
   /** The compact nav disclosure is store-owned so drawer remounts and

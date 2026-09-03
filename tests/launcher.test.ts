@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(root, "inspire.mjs");
@@ -19,6 +20,7 @@ const unixLauncher = join(root, "inspire");
 const linuxIt = process.platform === "linux" ? it : it.skip;
 const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
+const terminalEnvironments: NodeJS.ProcessEnv[] = [];
 let activeEnvironment: NodeJS.ProcessEnv | null = null;
 
 async function freePort(): Promise<number> {
@@ -80,18 +82,27 @@ case "\${2:-}" in
     active="$(< "$FAKE_SYSTEMD_STATE")"
     unit_file_state="$(< "$FAKE_SYSTEMD_UNIT_FILE_STATE")"
     substate="dead"
-    exec_start_post="{ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire wait-ready ; }"
     [[ "$active" == "active" ]] && substate="running"
-    [[ "\${FAKE_SYSTEMD_OUTDATED:-0}" == "1" ]] && exec_start_post=""
-    printf '%s\\n' \\
-      'LoadState=loaded' \\
-      "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-host.service" \\
-      "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
-      "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
-      "ExecStartPost=$exec_start_post" \
-      "UnitFileState=$unit_file_state" \\
-      "ActiveState=$active" \\
-      "SubState=$substate"
+    if [[ "\${3:-}" == "inspire-terminal.service" ]]; then
+      printf '%s\\n' \\
+        'LoadState=loaded' \\
+        "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-terminal.service" \\
+        "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
+        "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire terminal-daemon --root $FAKE_SYSTEMD_ROOT --host 127.0.0.1 --port 4587 ; }"
+    else
+      exec_start_post="{ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire wait-ready ; }"
+      [[ "\${FAKE_SYSTEMD_OUTDATED:-0}" == "1" ]] && exec_start_post=""
+      printf '%s\\n' \\
+        'LoadState=loaded' \\
+        "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-host.service" \\
+        "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
+        "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
+        "ExecStartPost=$exec_start_post" \
+        'Wants=inspire-terminal.service network-online.target' \\
+        "UnitFileState=$unit_file_state" \\
+        "ActiveState=$active" \\
+        "SubState=$substate"
+    fi
     ;;
   start|restart)
     printf 'active\\n' > "$FAKE_SYSTEMD_STATE"
@@ -176,6 +187,20 @@ afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
+  for (const environment of terminalEnvironments.splice(0)) {
+    try {
+      const address = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS!;
+      const token = (
+        await readFile(environment.INSPIRE_TERMINAL_TOKEN_PATH!, "utf8")
+      ).trim();
+      await new TerminalDaemonClient(address, token).requestProtocolReplacement(
+        0,
+      );
+    } catch {
+      // A launch that failed before starting its terminal daemon needs no stop.
+    }
+  }
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -218,6 +243,8 @@ describe("production launcher", () => {
       expect(log).toContain("--user stop inspire-host.service");
       expect(log).toContain("--user enable --now inspire-host.service");
       expect(log).toContain("--user disable --now inspire-host.service");
+      expect(log).toContain("--user enable --now inspire-terminal.service");
+      expect(log).toContain("--user disable --now inspire-terminal.service");
       expect(log).toContain(
         "--user enable --now inspire-idle-maintenance-restart.timer",
       );
@@ -245,7 +272,22 @@ describe("production launcher", () => {
       "utf8",
     );
     expect(unit).toContain(`ExecStartPost=${unixLauncher} wait-ready`);
+    expect(unit).toContain(
+      "Wants=network-online.target inspire-terminal.service",
+    );
     expect(unit).toContain("TimeoutStartSec=5min");
+    const terminalUnit = await readFile(
+      join(
+        environment.XDG_CONFIG_HOME!,
+        "systemd",
+        "user",
+        "inspire-terminal.service",
+      ),
+      "utf8",
+    );
+    expect(terminalUnit).toContain(
+      `ExecStart=${unixLauncher} terminal-daemon --root ${root}`,
+    );
   });
 
   it("stops the readiness wait when the service process exits", async () => {
@@ -318,6 +360,13 @@ describe("production launcher", () => {
     const statePath = join(directory, "instance.json");
     const port = await freePort();
     const env = launcherEnv(statePath, port, join(directory, "home"));
+    env.INSPIRE_TERMINAL_DAEMON_ADDRESS =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\inspire-terminal-launcher-${port}`
+        : join(directory, "terminal.sock");
+    env.INSPIRE_TERMINAL_TOKEN_PATH = join(directory, "terminal-token");
+    env.INSPIRE_TERMINAL_STATE_PATH = join(directory, "terminals.json");
+    terminalEnvironments.push(env);
     expect(runLauncher(["stop"], env)).toContain(
       "No managed INSΠRE instance is running.",
     );
@@ -352,6 +401,20 @@ describe("production launcher", () => {
     expect(Buffer.concat(output).toString()).toContain(
       "No managed INSΠRE instance is running.",
     );
+    const origin = `http://127.0.0.1:${port}`;
+    const terminalHeaders = {
+      Authorization: `Bearer ${firstState.token}`,
+      "Content-Type": "application/json",
+    };
+    const createdTerminalResponse = await fetch(`${origin}/api/terminals`, {
+      method: "POST",
+      headers: terminalHeaders,
+      body: JSON.stringify({ cwd: directory, cols: 80, rows: 24 }),
+    });
+    expect(createdTerminalResponse.ok).toBe(true);
+    const createdTerminal = (await createdTerminalResponse.json()) as {
+      id: string;
+    };
 
     const stopOutput = runLauncher(["stop"], env);
     expect(stopOutput).toContain("Stopped INSΠRE process");
@@ -382,6 +445,22 @@ describe("production launcher", () => {
       token: string;
     };
     expect(secondState.token).toBe(firstState.token);
+    const restoredCatalogResponse = await fetch(
+      `${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`,
+      { headers: terminalHeaders },
+    );
+    expect(restoredCatalogResponse.ok).toBe(true);
+    const restoredCatalog = (await restoredCatalogResponse.json()) as {
+      terminals: Array<{ id: string; status: string }>;
+    };
+    expect(restoredCatalog.terminals).toContainEqual(
+      expect.objectContaining({ id: createdTerminal.id, status: "running" }),
+    );
+    const closeTerminalResponse = await fetch(
+      `${origin}/api/terminals/${encodeURIComponent(createdTerminal.id)}?force=1`,
+      { method: "DELETE", headers: terminalHeaders },
+    );
+    expect(closeTerminalResponse.ok).toBe(true);
     expect(runLauncher(["stop"], env)).toContain("Stopped INSΠRE process");
     const restartedExit =
       restarted.exitCode ??

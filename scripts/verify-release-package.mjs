@@ -690,6 +690,10 @@ try {
     PI_CODING_AGENT_DIR: agentDirectory,
     PI_OFFLINE: "1",
     INSPIRE_PI_COMMAND: externalPiCommand,
+    // Keep the release smoke self-contained: ordinary detached daemons are
+    // intentionally not stopped with their Host, while this temporary install
+    // must leave no process behind.
+    INSPIRE_TERMINAL_IN_PROCESS: "1",
   };
   host = spawn(process.execPath, [bin, "mock"], {
     cwd: temporary,
@@ -703,8 +707,35 @@ try {
   host.stderr?.on("data", (chunk) => {
     hostOutput = `${hostOutput}${String(chunk)}`.slice(-8_192);
   });
-  await waitForHealth(`http://127.0.0.1:${port}/api/health`, token, true);
+  const mockOrigin = `http://127.0.0.1:${port}`;
+  await waitForHealth(`${mockOrigin}/api/health`, token, true);
   await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  const terminalResponse = await fetch(`${mockOrigin}/api/terminals`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ cwd: temporary, cols: 80, rows: 24 }),
+  });
+  if (!terminalResponse.ok)
+    throw new Error(
+      `Packaged PTY startup failed with ${terminalResponse.status}: ${await terminalResponse.text()}`,
+    );
+  const packagedTerminal = await terminalResponse.json();
+  if (typeof packagedTerminal.id !== "string")
+    throw new Error("Packaged PTY startup returned no terminal identity");
+  const closeTerminalResponse = await fetch(
+    `${mockOrigin}/api/terminals/${encodeURIComponent(packagedTerminal.id)}?force=1`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!closeTerminalResponse.ok)
+    throw new Error(
+      `Packaged PTY cleanup failed with ${closeTerminalResponse.status}`,
+    );
   await execFile(process.execPath, [bin, "status"], {
     cwd: temporary,
     env: environment,
@@ -814,6 +845,7 @@ try {
       installMode: "production dependencies only; Pi not bundled",
       portableCliEntry: "npm shim and JS entry resolved",
       mockHealth: "ok",
+      terminalPty: "ok",
       realPiStartup: "ok",
       sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",

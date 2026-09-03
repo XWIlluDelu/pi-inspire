@@ -14,6 +14,7 @@ A cross-platform local workbench for [Pi Coding Agent](https://github.com/earend
 - **Session navigation that respects running work.** Find, open, continue, rename, and switch sessions; pin or hide both sessions and project folders; restore hidden work from one reversible group. Multiple sessions run concurrently under independent Pi runtimes, and navigating away never stops background work — the navigation distinguishes running, unseen success, and unseen error. On narrow screens the same navigation becomes an off-canvas drawer instead of compressing the conversation.
 - **A complete composer.** Text, searchable project-file references, pasted or dropped images, and ordinary file attachments, plus steering messages and follow-ups while a run is active. Model and thinking-level pickers use your existing Pi configuration.
 - **Adaptive activity cards.** Thinking and tool activity render as distinguishable, inspectable cards with file links and status. The default Adaptive mode keeps current work visible, compacts settled activity, and collapses completed groups at the next response boundary; activity-group density also offers fixed Expanded, Compact, and Collapsed choices independently of reasoning and tool-card detail.
+- **Persistent project terminals.** Each project has ordered shell tabs backed by real PTYs. Browser refreshes, closed panels, Host restarts, and reverse-tunnel interruptions detach without ending the processes; multiple paired browsers can watch while one explicitly controlled view owns input and terminal size.
 - **Session-bound file previews.** Files referenced by Pi messages or tool activity open beside the conversation as defensive previews — images, HTML, PDF, and text/code — without granting the browser arbitrary filesystem access.
 - **A workbench, not a chat page.** Collapsible navigation, a contextual resources panel, a command palette with keyboard accelerators, and a coherent light-and-dark design system (IBM Plex Sans SC for interface, reading, and the INSΠRE wordmark; Flux Mono SC for code and CJK-aligned data).
 
@@ -47,7 +48,7 @@ A cross-platform local workbench for [Pi Coding Agent](https://github.com/earend
 
 ## Run locally
 
-Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so the terminal and web workbench use one runtime installation and the same `~/.pi/agent/` state.
+Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so Pi and the web workbench use one runtime installation and the same `~/.pi/agent/` state.
 
 Inspire supports the latest Pi release; the exact version pinned in `devDependencies` (currently 0.84.4) is the deterministic witness for that boundary. Older Pi versions may still work but are neither tested nor supported, and Inspire does not carry compatibility branches for them. Startup verifies that the resolved CLI and SDK belong to one external Pi package. Missing runtime capabilities are recorded as `runtime_capability_unavailable` in the private diagnostics log, and unsupported response-bearing extension UI fails explicitly instead of leaving the extension waiting.
 
@@ -76,6 +77,7 @@ The launcher never kills an arbitrary process merely because it owns the configu
 | Local Host, session runtime, launcher lifecycle | Supported | Supported | Supported |
 | Web UI in Chromium | CI tested | CI tested | CI tested |
 | Native desktop Trash for session deletion | Freedesktop Trash | `~/.Trash` | Recycle Bin |
+| Project PTY terminal | Supported | Supported | Supported |
 | Persistent systemd user service | Supported | Not applicable | Not applicable |
 | Reverse-SSH systemd connection module | Supported | Not applicable | Not applicable |
 
@@ -88,7 +90,7 @@ The optional persistent service uses Linux systemd. Core lifecycle commands rema
 ./inspire service enable-host
 ```
 
-After that, the same launcher commands delegate to the matching `inspire-host.service`; no `systemctl` syntax is needed. The service is verified against the current checkout before delegation, and a checkout without that service continues to use direct-launcher mode.
+Installation writes separate `inspire-host.service` and `inspire-terminal.service` units plus the idle-maintenance timer. After enabling them, the same launcher commands delegate to the matching Host service; ordinary Host restart leaves terminal PTYs running, while explicit stop or disable shuts down both services. No `systemctl` syntax is needed. The services are verified against the current checkout before delegation, and a checkout without them continues to use direct-launcher mode.
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
@@ -109,7 +111,7 @@ inspire connection ssh-reverse init
 inspire connection ssh-reverse start
 ```
 
-See [the SSH reverse connection guide](docs/ssh-reverse.md) for local configuration, automatic recovery, and a minimal server-side HTTPS proxy example. The module is personal shared-token access, not multi-user collaboration or device-level authorization.
+See [the SSH reverse connection guide](docs/ssh-reverse.md) for local configuration, automatic recovery, and a minimal server-side HTTPS proxy example. The terminal WebSocket traverses the same HTTPS proxy and reverse tunnel; no second port or tunnel is needed. The module is personal shared-token access, not multi-user collaboration or device-level authorization.
 
 ## Release package
 
@@ -157,7 +159,7 @@ npm run build
 
 ## Privacy
 
-The default deployment is local-only. A deliberately configured personal relay keeps the loopback host as the privileged boundary: provider credentials and unrestricted filesystem access stay in the trusted host process and are never sent to browser storage or the relay's application layer.
+The default deployment is local-only. A deliberately configured personal relay keeps provider credentials, session state, and processes on the connected Host rather than on the relay. Pairing a browser grants full control of that Inspire installation; because project terminals are real PTYs, every paired browser can explicitly take control of a shell running with the Host user's operating-system privileges. Pair only trusted browser profiles, use HTTPS for remote access, and treat every paired browser profile as trusted as the Host user's account.
 
 ## License
 

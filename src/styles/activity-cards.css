@@ -1125,7 +1125,14 @@
   color: var(--faint);
 }
 
-.code-block__copy {
+.code-block__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.code-block__copy,
+.code-block__terminal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1140,7 +1147,8 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-.code-block__copy:hover {
+.code-block__copy:hover,
+.code-block__terminal:hover {
   color: var(--ink);
   background: var(--bg-inset);
 }
