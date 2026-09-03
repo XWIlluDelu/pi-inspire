@@ -36,6 +36,17 @@ import type {
 } from "../shared/contracts";
 import { parsePendingQueues } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
+import type {
+  TerminalAttachTicketResponse,
+  TerminalCatalogResponse,
+  TerminalCreateRequest,
+  TerminalDescriptor,
+  TerminalRemoveResponse,
+  TerminalRenameRequest,
+  TerminalReorderRequest,
+  TerminalServiceSettings,
+  TerminalServiceSettingsPatch,
+} from "../shared/terminal-contracts";
 import { withTransportMeasure } from "./transport-performance";
 
 export type { PendingManagementAction, PendingManagementIntent };
@@ -174,6 +185,22 @@ async function request<T>(
   });
   await ensureOk(response);
   return responseJson<T>(response);
+}
+
+async function requestEmpty(
+  token: string | null,
+  path: string,
+  init: RequestInit = {},
+): Promise<void> {
+  const response = await applicationFetch(path, {
+    ...init,
+    credentials: "same-origin",
+    headers: {
+      ...authorizationHeader(token),
+      ...init.headers,
+    },
+  });
+  await ensureOk(response);
 }
 
 interface ResourceContentOptions {
@@ -422,6 +449,48 @@ export function createApi(token: string | null = null) {
       post<HiddenClearResponse>(token, "/api/sessions/clear-hidden", {
         sessionIds,
       }),
+    terminals: (cwd?: string) =>
+      request<TerminalCatalogResponse>(
+        token,
+        cwd
+          ? `/api/terminals?cwd=${encodeURIComponent(cwd)}`
+          : "/api/terminals",
+      ),
+    createTerminal: (body: TerminalCreateRequest) =>
+      post<TerminalDescriptor>(token, "/api/terminals", body),
+    renameTerminal: (id: string, body: TerminalRenameRequest) =>
+      request<TerminalDescriptor>(
+        token,
+        `/api/terminals/${encodeURIComponent(id)}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    reorderTerminals: (body: TerminalReorderRequest) =>
+      post<TerminalCatalogResponse>(token, "/api/terminals/reorder", body),
+    restartTerminal: (id: string) =>
+      post<TerminalDescriptor>(
+        token,
+        `/api/terminals/${encodeURIComponent(id)}/restart`,
+      ),
+    removeTerminal: (id: string, force = false) =>
+      request<TerminalRemoveResponse>(
+        token,
+        `/api/terminals/${encodeURIComponent(id)}${force ? "?force=1" : ""}`,
+        { method: "DELETE" },
+      ),
+    terminalAttachTicket: (id: string) =>
+      post<TerminalAttachTicketResponse>(
+        token,
+        `/api/terminals/${encodeURIComponent(id)}/attach-ticket`,
+      ),
+    terminalSettings: () =>
+      request<TerminalServiceSettings>(token, "/api/terminal-settings"),
+    updateTerminalSettings: (body: TerminalServiceSettingsPatch) =>
+      request<TerminalServiceSettings>(token, "/api/terminal-settings", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    clearTerminalHistory: () =>
+      requestEmpty(token, "/api/terminal-history", { method: "DELETE" }),
     prompt: (body: PromptDeliveryRequest) =>
       withTransportMeasure("prompt-confirmation", () =>
         deliverPrompt(token, body),
@@ -578,6 +647,11 @@ export async function pairHost(token: string): Promise<void> {
     body: JSON.stringify({ token }),
   });
   await ensureOk(response);
+}
+
+export function terminalUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/terminal`;
 }
 
 export function eventsUrl(

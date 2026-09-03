@@ -67,8 +67,8 @@ import { WorkspaceController } from "./controllers/workspace-controller";
 import { type Notice, parseExtensionDisplays } from "./events";
 import {
   deriveSnapshotTransition,
-  snapshotLifecyclePatch,
   type SnapshotMode,
+  snapshotLifecyclePatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 
@@ -1344,7 +1344,9 @@ export class AppStore {
     });
   };
 
-  setContextMode = (contextMode: "files" | "changes" | "branches"): void => {
+  setContextMode = (
+    contextMode: "files" | "changes" | "branches" | "terminal",
+  ): void => {
     this.set({ contextMode });
     if (contextMode === "changes") {
       const { selectedGitPathId, selectedGitSide, gitDiff } = this.state;

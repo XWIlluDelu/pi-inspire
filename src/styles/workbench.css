@@ -113,10 +113,10 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__modes {
-  width: 236px;
-  flex: 0 0 236px;
+  width: min(286px, calc(100% - 38px));
+  flex: 0 1 286px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   padding: 2px;
   gap: 2px;
@@ -142,7 +142,7 @@ body.pane-resizing--vertical .nav {
   border-radius: var(--radius-xs);
   padding: 0 var(--space-1);
   background: transparent;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 94%, var(--ink));
   font: var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
   cursor: pointer;

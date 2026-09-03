@@ -29,6 +29,13 @@ const root = dirname(scriptPath);
 process.chdir(root);
 const sourceRuntime = join(root, "server", "index.ts");
 const releaseRuntime = join(root, "build", "server", "index.js");
+const sourceTerminalRuntime = join(root, "server", "terminal-daemon-entry.ts");
+const releaseTerminalRuntime = join(
+  root,
+  "build",
+  "server",
+  "terminal-daemon-entry.js",
+);
 const connectionDispatcher = join(root, "connections", "dispatch.mjs");
 const hostServiceInstaller = join(root, "deploy", "systemd", "install.mjs");
 const hostServiceController = join(root, "deploy", "systemd", "control.mjs");
@@ -178,6 +185,7 @@ async function ensureBuild() {
     for (const path of [
       join(root, "dist", "index.html"),
       releaseRuntime,
+      releaseTerminalRuntime,
       join(root, "build", "server", "instance-state.mjs"),
       join(root, "build", "server", "file-lock.mjs"),
       join(root, "build", "server", "npm-command.mjs"),
@@ -373,6 +381,17 @@ async function requireFreePort(context) {
   throw new Error(
     `Port ${context.host}:${context.port} is in use, but no healthy managed INSΠRE state was found. Refusing to stop an unknown process. Inspect it with:\n  ${portInspectionHint(context.port)}`,
   );
+}
+
+function terminalRuntimeCommand() {
+  if (distribution) return [process.execPath, [releaseTerminalRuntime]];
+  return [
+    process.execPath,
+    [
+      join(root, "node_modules", "tsx", "dist", "cli.mjs"),
+      sourceTerminalRuntime,
+    ],
+  ];
 }
 
 function runtimeCommand() {
@@ -777,6 +796,11 @@ async function main() {
       await ensureDependencies();
       await build();
       return 0;
+    case "terminal-daemon": {
+      await ensureDependencies();
+      const [command, terminalArgs] = terminalRuntimeCommand();
+      return runInherited(command, [...terminalArgs, ...args]);
+    }
     case "connection":
       return runNodeEntry(connectionDispatcher, args);
     case "--ssh-reverse":
