@@ -47,6 +47,11 @@ import { requestError } from "./request-error.js";
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeLike } from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
+import {
+  currentStaticAssetPaths,
+  defaultStaticAssetCacheDirectory,
+  prepareStaticAssetCache,
+} from "./static-asset-cache.mjs";
 import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
 import {
   type TerminalService,
@@ -257,6 +262,28 @@ const updateCoordinator = new UpdateCoordinator({
   statePath: mock ? undefined : defaultUpdateStatePath(root, host, port),
   diagnostics,
 });
+const distDir = join(root, "dist");
+let staticAssetCacheDirs: string[] = [];
+if (!mock) {
+  const cacheDirectory = defaultStaticAssetCacheDirectory(root);
+  try {
+    const cache = await prepareStaticAssetCache(
+      join(distDir, "assets"),
+      cacheDirectory,
+      { assetPaths: await currentStaticAssetPaths(distDir) },
+    );
+    staticAssetCacheDirs = cache.generationDirectories;
+    if (cache.pruneFailures > 0)
+      console.warn(
+        `Deferred cleanup of ${cache.pruneFailures} cached asset generation(s).`,
+      );
+  } catch (error) {
+    console.error(
+      "Unable to preserve prior static assets:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
 
 const application = createInspireServer({
   token,
@@ -275,7 +302,8 @@ const application = createInspireServer({
   updateCoordinator,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
-  distDir: join(root, "dist"),
+  distDir,
+  staticAssetCacheDirs,
   shutdown: () => shutdown("authenticated host shutdown"),
 });
 
