@@ -505,6 +505,8 @@ interface AppDependencies {
   /** Read-only Pi startup resolution for a canonical prospective workspace. */
   newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
+  /** Complete prior asset generations retained for already-open clients. */
+  staticAssetCacheDirs?: readonly string[];
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
   terminal?: TerminalService;
@@ -1532,17 +1534,35 @@ export function createInspireServer(deps: AppDependencies): {
         `${clean.pathname}${clean.search}${clean.hash}` || "/",
       );
     });
-    // Content-hashed bundles under /assets are safe to cache forever. Every
-    // other dist file is unhashed — theme-init.js, index.html — so it must
-    // revalidate, or a rebuild is served stale for up to a year.
+    // Content-hashed bundles under /assets are safe to cache forever. Serve
+    // the active build first, then bounded prior generations so a connected
+    // old page can still perform its first lazy import after a Host rebuild.
+    const immutableAssets = {
+      immutable: true,
+      maxAge: "1y",
+      fallthrough: true,
+    } as const;
     app.use(
       "/assets",
-      express.static(join(distDir, "assets"), {
-        immutable: true,
-        maxAge: "1y",
-        fallthrough: true,
-      }),
+      express.static(join(distDir, "assets"), immutableAssets),
     );
+    for (const cacheDirectory of deps.staticAssetCacheDirs ?? [])
+      app.use(
+        "/assets",
+        express.static(resolve(cacheDirectory), immutableAssets),
+      );
+    // A missing module is an asset error, never a client-side route. Returning
+    // index.html here both hides the cause and lets a Service Worker cache HTML
+    // under a JavaScript URL.
+    app.use("/assets", (_request, response) => {
+      response
+        .set("Cache-Control", "no-store")
+        .status(404)
+        .type("text/plain")
+        .send("Static asset not found");
+    });
+    // Every other dist file is unhashed — theme-init.js, index.html — so it
+    // must revalidate, or a rebuild is served stale for up to a year.
     app.use(
       express.static(distDir, { index: false, fallthrough: true, maxAge: 0 }),
     );
