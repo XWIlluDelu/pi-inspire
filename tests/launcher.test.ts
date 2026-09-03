@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { defaultStaticAssetCacheDirectory } from "../server/static-asset-cache.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -359,7 +360,8 @@ describe("production launcher", () => {
     temporaryDirectories.push(directory);
     const statePath = join(directory, "instance.json");
     const port = await freePort();
-    const env = launcherEnv(statePath, port, join(directory, "home"));
+    const home = join(directory, "home");
+    const env = launcherEnv(statePath, port, home);
     env.INSPIRE_TERMINAL_DAEMON_ADDRESS =
       process.platform === "win32"
         ? `\\\\.\\pipe\\inspire-terminal-launcher-${port}`
@@ -373,6 +375,14 @@ describe("production launcher", () => {
     // CI builds the browser before its parallel unit suite. Remove only this
     // source-checkout stamp so this serial lifecycle test still proves that a
     // stale build is rebuilt once, without competing with all Vitest workers.
+    // A synthetic old chunk also proves the supported build path preserves
+    // the outgoing generation before Vite empties dist/assets.
+    const legacyAsset = "ContextPane-launcher-old.js";
+    await mkdir(join(root, "dist", "assets"), { recursive: true });
+    await rm(join(root, "dist", ".inspire-current-assets.json"), {
+      force: true,
+    });
+    await writeFile(join(root, "dist", "assets", legacyAsset), "old chunk\n");
     await rm(join(root, ".inspire-build"), { force: true });
     const output: Buffer[] = [];
     const child = spawn(process.execPath, [launcher, "restart"], {
@@ -401,7 +411,35 @@ describe("production launcher", () => {
     expect(Buffer.concat(output).toString()).toContain(
       "No managed INSΠRE instance is running.",
     );
+    const cacheDirectory = defaultStaticAssetCacheDirectory(root, {
+      environment: env,
+      home,
+    });
+    const generations = JSON.parse(
+      await readFile(join(cacheDirectory, "generations.json"), "utf8"),
+    ) as { generations: { id: string }[] };
+    const cachedCopies = await Promise.all(
+      generations.generations.map((generation) =>
+        readFile(
+          join(cacheDirectory, "generations", generation.id, legacyAsset),
+          "utf8",
+        ).catch(() => null),
+      ),
+    );
+    expect(cachedCopies).toContain("old chunk\n");
+    const publishedLegacyAsset = join(root, "dist", "assets", legacyAsset);
+    await expect(readFile(publishedLegacyAsset, "utf8")).resolves.toBe(
+      "old chunk\n",
+    );
+    // Removing the handoff copy proves the running Host can still fall back to
+    // its complete archived generation.
+    await rm(publishedLegacyAsset);
     const origin = `http://127.0.0.1:${port}`;
+    const retainedAssetResponse = await fetch(
+      `${origin}/assets/${legacyAsset}`,
+    );
+    expect(retainedAssetResponse.status).toBe(200);
+    expect(await retainedAssetResponse.text()).toBe("old chunk\n");
     const terminalHeaders = {
       Authorization: `Bearer ${firstState.token}`,
       "Content-Type": "application/json",

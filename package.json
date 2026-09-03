@@ -65,16 +65,17 @@
       "server/instance-state.d.mts",
       "server/file-lock.d.mts",
       "server/platform-paths.d.mts",
-      "server/process-tree.d.mts"
+      "server/process-tree.d.mts",
+      "server/static-asset-cache.d.mts"
     ]
   },
   "scripts": {
     "dev": "concurrently -k -n host,web -c cyan,magenta \"npm:dev:host\" \"npm:dev:web\"",
     "dev:host": "node scripts/start-dev-host.mjs",
     "dev:web": "vite",
-    "build:web": "vite build && node scripts/write-build-stamp.mjs",
+    "build:web": "node scripts/build-web.mjs",
     "build": "npm run typecheck && npm run build:web",
-    "release:build": "npm run build && node scripts/build-release.mjs",
+    "release:build": "npm run typecheck && npm run build:web -- --clean && node scripts/build-release.mjs",
     "release:verify": "node scripts/verify-release-package.mjs",
     "prepack": "npm run release:build",
     "start": "node inspire.mjs",

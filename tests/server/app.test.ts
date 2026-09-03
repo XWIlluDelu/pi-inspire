@@ -598,12 +598,23 @@ describe("local host API", () => {
     }
   });
 
-  it("caches hashed assets immutably but revalidates unhashed dist files", async () => {
+  it("serves current and retained hashed assets without using the SPA fallback", async () => {
     const dist = await mkdtemp(join(tmpdir(), "inspire-dist-"));
+    const retainedAssets = await mkdtemp(
+      join(tmpdir(), "inspire-retained-assets-"),
+    );
     await mkdir(join(dist, "assets"));
     await writeFile(
       join(dist, "assets", "index-abc123.js"),
       "console.log(1)\n",
+    );
+    await writeFile(
+      join(retainedAssets, "index-abc123.js"),
+      "console.log('stale duplicate')\n",
+    );
+    await writeFile(
+      join(retainedAssets, "ContextPane-old123.js"),
+      "export const ContextPane = {}\n",
     );
     await writeFile(join(dist, "theme-init.js"), "/* theme */\n");
     await writeFile(
@@ -622,6 +633,7 @@ describe("local host API", () => {
       version: "0.1.0-test",
       piVersion: "0.80.10",
       distDir: dist,
+      staticAssetCacheDirs: [retainedAssets],
     });
     await new Promise<void>((resolve) =>
       served.server.listen(0, "127.0.0.1", resolve),
@@ -632,6 +644,19 @@ describe("local host API", () => {
         .expect(200);
       expect(hashed.headers["cache-control"]).toContain("immutable");
       expect(hashed.headers["cache-control"]).toContain("max-age=31536000");
+      expect(hashed.text).toBe("console.log(1)\n");
+      const retained = await request(served.server)
+        .get("/assets/ContextPane-old123.js")
+        .expect(200);
+      expect(retained.text).toBe("export const ContextPane = {}\n");
+      expect(retained.headers["cache-control"]).toContain("immutable");
+      const missingAsset = await request(served.server)
+        .get("/assets/ContextPane-missing.js")
+        .expect(404);
+      expect(missingAsset.headers["content-type"]).toMatch(/^text\/plain/u);
+      expect(missingAsset.headers["cache-control"]).toBe("no-store");
+      expect(missingAsset.text).toBe("Static asset not found");
+      expect(missingAsset.text).not.toContain("<title>INSΠRE</title>");
       // Unhashed root script must revalidate, never inherit the 1y policy.
       const theme = await request(served.server)
         .get("/theme-init.js")
@@ -657,6 +682,7 @@ describe("local host API", () => {
     } finally {
       await served.close();
       await rm(dist, { recursive: true, force: true });
+      await rm(retainedAssets, { recursive: true, force: true });
     }
   });
 
