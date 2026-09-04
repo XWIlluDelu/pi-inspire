@@ -21,6 +21,7 @@ import { ApiError, pairHost } from "./api";
 import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
+import { CommandActivity } from "./components/CommandActivity";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import { CopyAction } from "./components/CopyAction";
@@ -666,6 +667,7 @@ const ConversationStage = memo(function ConversationStage() {
   );
   const composer = (
     <div className="composer-dock">
+      <CommandActivity />
       <ActivityBar />
       <ExtensionDisplayDock
         displays={state.extensionDisplays}
@@ -724,6 +726,7 @@ export function App() {
       error: source.error,
       errorSeverity: source.errorSeverity,
       projectionConflict: source.projectionConflict,
+      nativeCommandUiRequest: source.nativeCommandUiRequest,
     }),
     shallowEqual,
   );
@@ -836,6 +839,32 @@ export function App() {
     setSettingsCategory("updates");
     setSettingsOpen(true);
   }, [extensionOverlayOpen, settingsOpen]);
+
+  useEffect(() => {
+    const request = state.nativeCommandUiRequest;
+    if (!request) return;
+    if (request.sessionId !== store.getState().sessionId) {
+      store.consumeNativeCommandUiRequest(request.id);
+      return;
+    }
+    if (request.action === "model" || request.action === "thinking") return;
+    if (extensionOverlayOpen) return;
+    if (request.action === "settings") {
+      setPaletteOpen(false);
+      setSettingsCategory("behavior");
+      setSettingsOpen(true);
+    } else if (request.action === "updates") {
+      setPaletteOpen(false);
+      setSettingsCategory("updates");
+      setSettingsOpen(true);
+    } else if (request.action === "sessions") {
+      setSettingsOpen(false);
+      setPaletteOpen(true);
+    } else if (request.action === "new") {
+      newSession();
+    }
+    store.consumeNativeCommandUiRequest(request.id);
+  }, [extensionOverlayOpen, newSession, state.nativeCommandUiRequest]);
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;

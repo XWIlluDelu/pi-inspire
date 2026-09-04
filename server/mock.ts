@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -16,9 +15,12 @@ import type {
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
+  HostNativeCommandRequest,
+  HostNativeCommandResponse,
   ModelOption,
   NewSessionOptions,
   PendingQueues,
+  PiMessageDeliveryMode,
   PromptRequest,
   SessionDeleteResponse,
   SessionListResponse,
@@ -32,6 +34,7 @@ import { emptyPendingQueues } from "../shared/contracts.js";
 import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
 import type { GitInspectionLike } from "./git-inspection.js";
+import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import type { PendingManagementRequest, RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
@@ -619,6 +622,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
             percent: 9.64,
           },
         },
+        runtimeSettings: {
+          autoCompactionEnabled: true,
+          autoRetryEnabled: true,
+          steeringMode: "all",
+          followUpMode: "one-at-a-time",
+        },
         availableModels: structuredClone(MOCK_AVAILABLE_MODELS),
         commands: [
           {
@@ -1024,6 +1033,84 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
     this.requireSession(sessionId).thinkingLevel = level;
+  }
+  async setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings)
+      session.runtimeSettings.autoCompactionEnabled = enabled;
+  }
+  async setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings)
+      session.runtimeSettings.autoRetryEnabled = enabled;
+  }
+  async setSteeringMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings) session.runtimeSettings.steeringMode = mode;
+  }
+  async setFollowUpMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings) session.runtimeSettings.followUpMode = mode;
+  }
+  async nativeCommand(
+    request: HostNativeCommandRequest,
+  ): Promise<HostNativeCommandResponse> {
+    this.requireSession(request.sessionId);
+    if (request.command === "compact") {
+      const result = (await this.compact(request.sessionId)) as {
+        tokensBefore: number;
+        estimatedTokensAfter: number;
+      };
+      return {
+        command: "compact",
+        outcome: "completed",
+        message: `Context compacted from ${result.tokensBefore.toLocaleString()} to about ${result.estimatedTokensAfter.toLocaleString()} tokens.`,
+        details: [
+          {
+            label: "Before",
+            value: `${result.tokensBefore.toLocaleString()} tokens`,
+          },
+          {
+            label: "After (estimate)",
+            value: `${result.estimatedTokensAfter.toLocaleString()} tokens`,
+          },
+        ],
+      };
+    }
+    if (request.command === "export") {
+      if (request.argument?.toLocaleLowerCase().endsWith(".jsonl")) {
+        throw requestError(
+          "JSONL export is not available in the browser yet. Use /export in Pi's terminal for a branch-only JSONL file.",
+          409,
+        );
+      }
+      return {
+        command: "export",
+        outcome: "completed",
+        message: "Session exported to HTML.",
+        details: [
+          {
+            label: "File",
+            value: request.argument || `/mock/${request.sessionId}.html`,
+          },
+        ],
+      };
+    }
+    if (request.argument) {
+      throw requestError("/reload does not accept arguments", 400);
+    }
+    return {
+      command: "reload",
+      outcome: "completed",
+      message:
+        "Pi extensions, skills, prompts, context files, and themes were reloaded.",
+    };
   }
   async extensionUiResponse(): Promise<void> {}
   async snapshot(): Promise<ActiveSnapshot> {

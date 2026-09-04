@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import {
   emptyPendingQueues,
   type ProjectionConflict,
@@ -6,6 +5,7 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
 import { PreviewProjection } from "./preview-projection.js";
+import { requestError } from "./request-error.js";
 import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import type { ProjectionReconcileResult } from "./session-projection.js";
@@ -59,7 +59,8 @@ export class RuntimeWorkerLifecycle {
     private readonly startupAttestor: RuntimeStartupAttestor,
   ) {}
 
-  async stop(slot: RuntimeSlot): Promise<void> {
+  async stop(slot: RuntimeSlot, cancelledCommand?: string): Promise<void> {
+    slot.autoRetryEnabled = null;
     const rpc = slot.process;
     if (!rpc) {
       if (slot.stopping) await slot.stopping;
@@ -113,7 +114,7 @@ export class RuntimeWorkerLifecycle {
       extensionStatuses: {},
     });
     const stopping = rpc
-      .stop()
+      .stop(cancelledCommand)
       .catch((error) => this.host.logRuntimeError(slot.id, error));
     slot.stopping = stopping;
     try {
@@ -207,6 +208,7 @@ export class RuntimeWorkerLifecycle {
     slot.extensionStatuses = {};
     slot.availableModels = null;
     slot.commands = null;
+    slot.autoRetryEnabled = null;
     try {
       this.host.attachProcess(slot, rpc);
       await this.startupAttestor.requireUnchangedPreStartBaseline(

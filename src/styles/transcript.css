@@ -726,21 +726,11 @@
 }
 
 .activity-fold__handle--up::before {
-  clip-path: polygon(
-    calc(50% - 2px) 0,
-    calc(50% + 2px) 0,
-    100% 100%,
-    0 100%
-  );
+  clip-path: polygon(calc(50% - 2px) 0, calc(50% + 2px) 0, 100% 100%, 0 100%);
 }
 
 .activity-fold__handle--down::before {
-  clip-path: polygon(
-    0 0,
-    100% 0,
-    calc(50% + 2px) 100%,
-    calc(50% - 2px) 100%
-  );
+  clip-path: polygon(0 0, 100% 0, calc(50% + 2px) 100%, calc(50% - 2px) 100%);
 }
 
 .activity-fold__glyph {
@@ -936,6 +926,83 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .turn--user {
   align-items: flex-start;
   padding-top: var(--space-2);
+}
+
+.turn--checkpoint {
+  padding: var(--space-2) 0;
+}
+
+.context-checkpoint {
+  border-block: 1px solid var(--hairline);
+  color: var(--muted);
+}
+
+.context-checkpoint > summary {
+  min-height: 36px;
+  padding: 7px var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-xs);
+  user-select: none;
+}
+
+.context-checkpoint > summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-checkpoint > summary:hover,
+.context-checkpoint > summary:focus-visible {
+  background: color-mix(in srgb, var(--bg-inset) 64%, transparent);
+  color: var(--ink);
+}
+
+.context-checkpoint > summary > svg {
+  flex: 0 0 auto;
+  color: var(--info);
+}
+
+.context-checkpoint__title {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.context-checkpoint__metric,
+.context-checkpoint__time {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.context-checkpoint__time {
+  margin-left: auto;
+}
+
+.context-checkpoint__chevron {
+  flex: 0 0 auto;
+  transition: transform var(--dur-micro) var(--ease-standard);
+}
+
+.context-checkpoint[open] .context-checkpoint__chevron {
+  transform: rotate(90deg);
+}
+
+.context-checkpoint__body {
+  padding: var(--space-2) var(--space-3) var(--space-3) 34px;
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-inset) 52%, transparent);
+}
+
+.context-checkpoint__body > p {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.context-checkpoint__body .turn__actions {
+  opacity: 1;
 }
 
 /* One attribution line above the answer carries who, model, and time; the

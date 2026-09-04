@@ -407,6 +407,7 @@ export const Welcome = memo(function Welcome({
           value={draft}
           onChange={setDraft}
           commands={commandScopeMatches ? (inheritance?.commands ?? []) : []}
+          includeNativeCommands={false}
           completionDisabled={starting}
           completionScope={`new-session:${effectiveDirectory}`}
           searchProjectFiles={

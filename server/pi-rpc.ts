@@ -1,11 +1,11 @@
-import { requestError } from "./request-error.js";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { TextDecoder } from "node:util";
 import { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 import type { DiagnosticLevel } from "./diagnostics.js";
 import { piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
+import { requestError } from "./request-error.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
@@ -34,6 +34,16 @@ export class PiRpcOutcomeUnknownError extends Error {
   ) {
     super(message);
     this.name = "PiRpcOutcomeUnknownError";
+  }
+}
+
+export class PiRpcCancelledError extends Error {
+  readonly code = "PI_RPC_CANCELLED";
+  stopped: Promise<void> | null = null;
+
+  constructor(readonly command: string) {
+    super(`Pi command ${command} was cancelled`);
+    this.name = "PiRpcCancelledError";
   }
 }
 
@@ -573,7 +583,7 @@ export class PiRpcProcess extends EventEmitter {
     return stopped;
   }
 
-  async stop(): Promise<void> {
+  async stop(cancelledCommand?: string): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     const child = this.child;
     if (!child) return;
@@ -617,7 +627,11 @@ export class PiRpcProcess extends EventEmitter {
     this.stopPromise = stopped;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      if (pending.written && pending.mayMutate) {
+      if (cancelledCommand && pending.command === cancelledCommand) {
+        const error = new PiRpcCancelledError(pending.command);
+        error.stopped = stopped;
+        pending.reject(error);
+      } else if (pending.written && pending.mayMutate) {
         const error = new PiRpcOutcomeUnknownError(
           pending.command,
           `Pi command ${pending.command} outcome is unknown because the child was stopped before its response`,

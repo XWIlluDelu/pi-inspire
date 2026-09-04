@@ -12,6 +12,8 @@ import type {
   GitStatusResponse,
   HiddenClearResponse,
   HostDirListing,
+  HostNativeCommandRequest,
+  HostNativeCommandResponse,
   HostRootsResponse,
   HostUpdateStatus,
   InspirePreferences,
@@ -20,6 +22,7 @@ import type {
   NewSessionOptions,
   PendingManagementAction,
   PendingManagementIntent,
+  PiMessageDeliveryMode,
   PiUpdateCheckResult,
   ProjectDirEntry,
   PromptAcceptedResponse,
@@ -495,6 +498,12 @@ export function createApi(token: string | null = null) {
       withTransportMeasure("prompt-confirmation", () =>
         deliverPrompt(token, body),
       ),
+    nativeCommand: (body: HostNativeCommandRequest) =>
+      post<HostNativeCommandResponse>(
+        token,
+        "/api/control/native-command",
+        body,
+      ),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
     managePending: async (
@@ -526,6 +535,26 @@ export function createApi(token: string | null = null) {
       post<{ ok: boolean }>(token, "/api/control/thinking", {
         sessionId,
         level,
+      }),
+    setAutoCompaction: (sessionId: string, enabled: boolean) =>
+      post<{ ok: boolean }>(token, "/api/control/auto-compaction", {
+        sessionId,
+        enabled,
+      }),
+    setAutoRetry: (sessionId: string, enabled: boolean) =>
+      post<{ ok: boolean }>(token, "/api/control/auto-retry", {
+        sessionId,
+        enabled,
+      }),
+    setSteeringMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
+      post<{ ok: boolean }>(token, "/api/control/steering-mode", {
+        sessionId,
+        mode,
+      }),
+    setFollowUpMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
+      post<{ ok: boolean }>(token, "/api/control/follow-up-mode", {
+        sessionId,
+        mode,
       }),
     uploadAttachments: (files: File[]) => uploadFiles(token, files),
     deleteAttachment: (id: string) =>

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
+import { parseCommandInvocation, parseNativeCommand } from "../shared/commands";
 import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
@@ -13,12 +14,16 @@ import {
   type GitStatusResponse,
   type HiddenClearResponse,
   type HostDirListing,
+  type HostNativeCommandResponse,
   type HostRootsResponse,
+  isBusyRunState,
   type LaunchPreference,
   type ModelOption,
   type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
+  type PiMessageDeliveryMode,
+  type PiRuntimeSettings,
   type ProjectDisplayPreference,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
@@ -46,7 +51,7 @@ import {
   contextUsage,
   createInitialAppState,
 } from "./app-state";
-import type { PiCommand } from "./composer-completion";
+import { type PiCommand, resolveCommandInventory } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import { BranchController } from "./controllers/branch-controller";
 import { ComposerController } from "./controllers/composer-controller";
@@ -64,7 +69,13 @@ import { SessionSelectionController } from "./controllers/session-selection-cont
 import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
-import { type Notice, parseExtensionDisplays } from "./events";
+import {
+  type ChatMessage,
+  messageText,
+  type Notice,
+  parseExtensionDisplays,
+} from "./events";
+import { supportedThinkingLevels } from "./model-options";
 import {
   deriveSnapshotTransition,
   type SnapshotMode,
@@ -79,11 +90,88 @@ export type {
 
 const NOTICE_TTL_MS = 8_000;
 const BOOTSTRAP_TIMEOUT_MS = 15_000;
+const MAX_COMMAND_ACTIVITIES = 4;
+const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
+  accepted: true,
+  historyEntry: null,
+};
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formattedInteger(value: unknown): string | null {
+  const number = finiteNumber(value);
+  return number === null
+    ? null
+    : new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
+        number,
+      );
+}
+
+function nativeCommandTitle(command: string): string {
+  return `/${command}`;
+}
+
+function boundedCommandActivities(
+  activities: AppState["commandActivities"][string],
+): AppState["commandActivities"][string] {
+  const bounded = [...activities];
+  while (bounded.length > MAX_COMMAND_ACTIVITIES) {
+    const settled = bounded.findIndex(
+      (activity) => activity.status !== "running",
+    );
+    bounded.splice(settled < 0 ? 0 : settled, 1);
+  }
+  return bounded;
+}
+
+function terminalCommandGuidance(command: string): string {
+  switch (command) {
+    case "login":
+    case "logout":
+      return "Provider credentials stay in Pi's trusted terminal flow so secrets and browser redirects are never projected through the chat UI.";
+    case "share":
+      return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
+    case "trust":
+      return "INSΠRE forwards Pi's project-trust prompt when resources first load. Use Pi in the terminal to change a saved trust decision manually.";
+    case "import":
+      return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
+    case "clone":
+      return "Cloning the current branch is not yet safe across INSΠRE's persistent worker boundary. Run /clone inside Pi in the project terminal.";
+    case "scoped-models":
+      return "INSΠRE's model picker searches every available model. Pi's Ctrl+P model-cycle scope is terminal-specific and remains configurable there.";
+    default:
+      return "This command currently requires Pi's trusted terminal interface.";
+  }
+}
+
+function lastAssistantText(messages: readonly ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (
+      message.role !== "assistant" ||
+      (typeof message.__inspireLiveId === "string" &&
+        message.__inspireSettled !== true)
+    )
+      continue;
+    const text = messageText(message).trim();
+    if (text) return text;
+  }
+  return null;
+}
 
 export class AppStore {
   private state: AppState = createInitialAppState();
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  private readonly hostCommandRuns = new Map<string, number>();
   /** Both Files surfaces consume this one tree/search projection. */
   private readonly workspace = new WorkspaceController({
     state: () => this.state,
@@ -398,11 +486,15 @@ export class AppStore {
     sessionIds: ReadonlySet<string>,
   ): AppState["sessionStatuses"] {
     const sessionStatuses = { ...this.state.sessionStatuses };
+    const commandActivities = { ...this.state.commandActivities };
     for (const sessionId of sessionIds) {
       this.catalog.remove(sessionId);
       delete sessionStatuses[sessionId];
+      delete commandActivities[sessionId];
+      this.hostCommandRuns.delete(sessionId);
       this.composer.discard(sessionId);
     }
+    this.set({ commandActivities });
     this.runtimeEvents.forgetAttention(sessionIds);
     return sessionStatuses;
   }
@@ -425,7 +517,29 @@ export class AppStore {
     this.resyncRequest += 1;
     this.transcriptData.invalidate();
     this.pendingActionRequest += 1;
+    this.hostCommandRuns.clear();
+    const commandActivities = Object.fromEntries(
+      Object.entries(this.state.commandActivities).map(
+        ([sessionId, activities]) => [
+          sessionId,
+          activities.map((activity) =>
+            activity.status === "running" &&
+            (activity.command === "compact" ||
+              activity.command === "export" ||
+              activity.command === "reload")
+              ? {
+                  ...activity,
+                  status: "warning" as const,
+                  message:
+                    "The Host connection changed before this command result could be confirmed.",
+                }
+              : activity,
+          ),
+        ],
+      ),
+    );
     this.set({
+      commandActivities,
       loadingOlderMessages: false,
       transcriptActivityRanges: this.state.transcriptActivityRanges.map(
         (range) =>
@@ -707,6 +821,9 @@ export class AppStore {
     this.set({
       sessionId: active?.sessionId ?? null,
       sessionName: active?.sessionName ?? "",
+      sessionFile: active?.sessionFile ?? null,
+      sessionStats: active?.stats ?? null,
+      runtimeSettings: active?.runtimeSettings ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
       thinkingLevel:
@@ -946,12 +1063,670 @@ export class AppStore {
   ): Promise<HiddenClearResponse | null> =>
     this.sessionManagement.clearHiddenSessions(sessionIds);
 
-  // --- Prompting ---
+  // --- Prompting & native commands ---
+
+  private presentCommandActivity(
+    sessionId: string,
+    input: string,
+    command: string,
+    status: AppState["commandActivities"][string][number]["status"],
+    message: string,
+    options: Pick<
+      AppState["commandActivities"][string][number],
+      "details" | "action"
+    > = {},
+  ): number {
+    const id = this.state.nextNativeCommandId;
+    const existing = this.state.commandActivities[sessionId] ?? [];
+    this.set({
+      nextNativeCommandId: id + 1,
+      commandActivities: {
+        ...this.state.commandActivities,
+        [sessionId]: boundedCommandActivities([
+          ...existing,
+          {
+            id,
+            sessionId,
+            input,
+            command,
+            status,
+            title: nativeCommandTitle(command),
+            message,
+            ...options,
+          },
+        ]),
+      },
+    });
+    return id;
+  }
+
+  private updateCommandActivity(
+    sessionId: string,
+    id: number,
+    patch: Partial<AppState["commandActivities"][string][number]>,
+  ): void {
+    const activities = this.state.commandActivities[sessionId];
+    if (!activities?.some((activity) => activity.id === id)) return;
+    this.set({
+      commandActivities: {
+        ...this.state.commandActivities,
+        [sessionId]: boundedCommandActivities(
+          activities.map((activity) =>
+            activity.id === id ? { ...activity, ...patch } : activity,
+          ),
+        ),
+      },
+    });
+  }
+
+  dismissCommandActivity = (sessionId: string, id: number): void => {
+    const activities = this.state.commandActivities[sessionId];
+    if (!activities) return;
+    const next = activities.filter((activity) => activity.id !== id);
+    const commandActivities = { ...this.state.commandActivities };
+    if (next.length > 0) commandActivities[sessionId] = next;
+    else delete commandActivities[sessionId];
+    this.set({ commandActivities });
+  };
+
+  private requestNativeCommandUi(
+    sessionId: string,
+    action: NonNullable<AppState["nativeCommandUiRequest"]>["action"],
+    query?: string,
+  ): void {
+    const id = this.state.nextNativeCommandId;
+    this.set({
+      nextNativeCommandId: id + 1,
+      nativeCommandUiRequest: {
+        id,
+        sessionId,
+        action,
+        ...(query ? { query } : {}),
+      },
+    });
+  }
+
+  consumeNativeCommandUiRequest = (id: number): void => {
+    if (this.state.nativeCommandUiRequest?.id === id)
+      this.set({ nativeCommandUiRequest: null });
+  };
+
+  runCommandActivityAction = async (
+    sessionId: string,
+    id: number,
+  ): Promise<void> => {
+    const activity = this.state.commandActivities[sessionId]?.find(
+      (candidate) => candidate.id === id,
+    );
+    if (!activity?.action) return;
+    if (activity.action.kind === "open-terminal") {
+      if (activity.action.value) {
+        try {
+          await navigator.clipboard.writeText(activity.action.value);
+          this.notify("info", "Command copied — paste it after starting Pi");
+        } catch {
+          this.notify("warning", "Clipboard access was unavailable");
+        }
+      }
+      this.set({ resourcesOpen: true, contextMode: "terminal" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(activity.action.value);
+      this.notify("info", "Copied to clipboard");
+    } catch {
+      this.notify("warning", "Clipboard access was unavailable");
+    }
+  };
+
+  private launchHostNativeCommand(
+    sessionId: string,
+    input: string,
+    command: "compact" | "export" | "reload",
+    argument: string,
+  ): PromptAcceptedResponse | false {
+    const api = this.api;
+    if (!api) return false;
+    if (this.hostCommandRuns.has(sessionId)) {
+      this.notify("warning", "Wait for the active command to finish");
+      return false;
+    }
+    const messages = {
+      compact:
+        "Compacting context… Keep writing; sending resumes when it finishes. Press Esc to cancel.",
+      export: "Exporting the current session to HTML…",
+      reload: "Reloading Pi resources…",
+    } as const;
+    const id = this.presentCommandActivity(
+      sessionId,
+      input,
+      command,
+      "running",
+      messages[command],
+    );
+    this.hostCommandRuns.set(sessionId, id);
+    const transportGeneration = this.transportGeneration;
+    void api
+      .nativeCommand({
+        sessionId,
+        command,
+        ...(argument ? { argument } : {}),
+      })
+      .then((result: HostNativeCommandResponse) => {
+        if (
+          this.api !== api ||
+          this.transportGeneration !== transportGeneration
+        ) {
+          this.updateCommandActivity(sessionId, id, {
+            status: "warning",
+            message:
+              "The Host connection changed before this command result could be confirmed.",
+          });
+          return;
+        }
+        this.updateCommandActivity(sessionId, id, {
+          status: result.outcome === "cancelled" ? "cancelled" : "success",
+          message: result.message,
+          details: result.details,
+          ...(command === "export" && result.details?.[0]?.value
+            ? {
+                action: {
+                  kind: "copy" as const,
+                  label: "Copy path",
+                  value: result.details[0].value,
+                },
+              }
+            : {}),
+        });
+        if (this.state.sessionId === sessionId)
+          void this.resync(sessionId, this.selectionGeneration);
+      })
+      .catch((error: unknown) => {
+        if (
+          this.api !== api ||
+          this.transportGeneration !== transportGeneration
+        ) {
+          this.updateCommandActivity(sessionId, id, {
+            status: "warning",
+            message:
+              "The Host connection changed before this command result could be confirmed.",
+          });
+          return;
+        }
+        if (error instanceof ApiError && error.status === 401) {
+          this.updateCommandActivity(sessionId, id, {
+            status: "error",
+            message:
+              "Host authentication expired before the command completed.",
+          });
+          this.handleAuthFailure();
+          return;
+        }
+        if (
+          error instanceof ApiTransportError ||
+          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN")
+        ) {
+          this.updateCommandActivity(sessionId, id, {
+            status: "warning",
+            message:
+              "INSΠRE could not confirm this command's outcome. Reconnect and inspect the session before running it again.",
+          });
+          return;
+        }
+        this.updateCommandActivity(sessionId, id, {
+          status: "error",
+          message:
+            error instanceof Error ? error.message : `/${command} failed`,
+        });
+      })
+      .finally(() => {
+        if (this.hostCommandRuns.get(sessionId) === id)
+          this.hostCommandRuns.delete(sessionId);
+      });
+    return ACCEPTED_NATIVE_COMMAND;
+  }
+
+  private sessionCommandDetails(): Array<{ label: string; value: string }> {
+    const stats = recordOf(this.state.sessionStats);
+    const tokens = recordOf(stats?.tokens);
+    const context = recordOf(stats?.contextUsage);
+    const model = this.state.model;
+    const details: Array<{ label: string; value: string }> = [];
+    if (this.state.sessionName)
+      details.push({ label: "Name", value: this.state.sessionName });
+    details.push({ label: "Project", value: this.state.cwd ?? "Unknown" });
+    if (this.state.sessionFile)
+      details.push({ label: "File", value: this.state.sessionFile });
+    if (model)
+      details.push({ label: "Model", value: `${model.provider}/${model.id}` });
+    const totalMessages = formattedInteger(stats?.totalMessages);
+    if (totalMessages)
+      details.push({ label: "Messages", value: totalMessages });
+    const tokenTotal = formattedInteger(tokens?.total);
+    if (tokenTotal) details.push({ label: "Total tokens", value: tokenTotal });
+    const cost = finiteNumber(stats?.cost);
+    if (cost !== null)
+      details.push({
+        label: "Cost",
+        value: new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 4,
+        }).format(cost),
+      });
+    const used = formattedInteger(context?.tokens);
+    const window = formattedInteger(context?.contextWindow);
+    const percent = finiteNumber(context?.percent);
+    if (used && window)
+      details.push({
+        label: "Context",
+        value: `${used} / ${window}${percent === null ? "" : ` (${Math.round(percent)}%)`}`,
+      });
+    return details;
+  }
+
+  isNativeCommand = (input: string): boolean => {
+    const native = parseNativeCommand(input);
+    if (!native) return false;
+    const owner = resolveCommandInventory(this.state.commands).find(
+      (command) => command.name === native.name,
+    );
+    return native.name === "compact" || owner?.source === "builtin";
+  };
+
+  private executeNativeCommand(
+    input: string,
+    command: NonNullable<ReturnType<typeof parseNativeCommand>>,
+  ): PromptAcceptedResponse | false {
+    const sessionId = this.state.sessionId;
+    if (!sessionId || !command) return false;
+    if (
+      this.state.attachments.length > 0 ||
+      this.state.projectFiles.length > 0
+    ) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "error",
+        "Commands cannot include attachments or project-file references. Remove them and try again.",
+      );
+      return false;
+    }
+    if (!command.descriptor.argumentHint && command.argument) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "error",
+        `/${command.name} does not accept arguments.`,
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    if (
+      command.name === "export" &&
+      command.argument.toLocaleLowerCase().endsWith(".jsonl")
+    ) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "warning",
+        "Branch-only JSONL export is available in Pi's terminal flow. Browser export currently produces the complete HTML transcript.",
+        {
+          details: [{ label: "Run in Pi", value: input }],
+          action: {
+            kind: "open-terminal",
+            label: "Open terminal & copy command",
+            value: input,
+          },
+        },
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    if (
+      (command.descriptor.execution === "host" ||
+        command.name === "model" ||
+        command.name === "thinking") &&
+      isBusyRunState(this.state.runState)
+    ) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "warning",
+        `Wait for the current Pi operation to finish before running /${command.name}.`,
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    if (command.descriptor.execution === "host") {
+      return this.launchHostNativeCommand(
+        sessionId,
+        input,
+        command.name as "compact" | "export" | "reload",
+        command.argument,
+      );
+    }
+
+    if (command.descriptor.execution === "terminal") {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "warning",
+        terminalCommandGuidance(command.name),
+        {
+          details: [{ label: "Run in Pi", value: input }],
+          action: {
+            kind: "open-terminal",
+            label: "Open terminal & copy command",
+            value: input,
+          },
+        },
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    if (command.name === "settings") {
+      this.requestNativeCommandUi(sessionId, "settings");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "changelog") {
+      this.requestNativeCommandUi(sessionId, "updates");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "tree" || command.name === "fork") {
+      this.set({ resourcesOpen: true, contextMode: "branches" });
+      void this.loadBranchTree();
+      if (command.name === "fork")
+        this.notify(
+          "info",
+          "Choose a user message in History, then select Fork",
+        );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "new") {
+      this.requestNativeCommandUi(sessionId, "new");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "resume") {
+      this.requestNativeCommandUi(sessionId, "sessions");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "model") {
+      if (this.state.availableModels.length === 0) {
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          "warning",
+          "Pi did not report any available models for this session.",
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      if (!command.argument) {
+        this.requestNativeCommandUi(sessionId, "model");
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const needle = command.argument.toLocaleLowerCase();
+      const matches = this.state.availableModels.filter((model) =>
+        [`${model.provider}/${model.id}`, model.id, model.name ?? ""].some(
+          (candidate) => candidate.toLocaleLowerCase() === needle,
+        ),
+      );
+      if (matches.length !== 1) {
+        this.requestNativeCommandUi(sessionId, "model", command.argument);
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          matches.length > 1 ? "warning" : "info",
+          matches.length > 1
+            ? "That model name is ambiguous. The model picker shows the matches."
+            : "No exact model matched. The model picker is open with your search.",
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const model = matches[0]!;
+      const id = this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "running",
+        `Switching to ${model.provider}/${model.id}…`,
+      );
+      void this.setModel(model.provider, model.id).then((changed) =>
+        this.updateCommandActivity(sessionId, id, {
+          status: changed ? "success" : "error",
+          message: changed
+            ? `Active model is now ${model.provider}/${model.id}.`
+            : "The model change was not accepted.",
+        }),
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "thinking") {
+      if (this.state.model?.reasoning === false) {
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          "warning",
+          "The active model does not support thinking levels.",
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      if (!command.argument) {
+        this.requestNativeCommandUi(sessionId, "thinking");
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const level = command.argument.toLocaleLowerCase();
+      const activeModel =
+        this.state.availableModels.find(
+          (model) =>
+            model.provider === this.state.model?.provider &&
+            model.id === this.state.model.id,
+        ) ?? this.state.model;
+      const levels = supportedThinkingLevels(activeModel);
+      if (!levels.some((candidate) => candidate === level)) {
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          "error",
+          `Unknown thinking level “${command.argument}”. Use ${levels.join(", ")}.`,
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const id = this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "running",
+        `Setting thinking level to ${level}…`,
+      );
+      void this.setThinkingLevel(level).then((changed) =>
+        this.updateCommandActivity(sessionId, id, {
+          status: changed ? "success" : "error",
+          message: changed
+            ? `Thinking level is now ${level}.`
+            : "The thinking-level change was not accepted.",
+        }),
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "name") {
+      if (!command.argument) {
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          "info",
+          this.state.sessionName
+            ? `This session is named “${this.state.sessionName}”.`
+            : "This session does not have a name yet.",
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const id = this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "running",
+        "Renaming session…",
+      );
+      void this.renameSession(sessionId, command.argument).then((changed) =>
+        this.updateCommandActivity(sessionId, id, {
+          status: changed ? "success" : "error",
+          message: changed
+            ? `Session renamed to “${command.argument.slice(0, 160)}”.`
+            : "The session rename was not accepted.",
+        }),
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "copy") {
+      const text = lastAssistantText(this.state.messages);
+      if (!text) {
+        this.presentCommandActivity(
+          sessionId,
+          input,
+          command.name,
+          "warning",
+          "There is no assistant response to copy in this branch.",
+        );
+        return ACCEPTED_NATIVE_COMMAND;
+      }
+      const id = this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "running",
+        "Copying the last assistant response…",
+      );
+      void Promise.resolve()
+        .then(() => navigator.clipboard.writeText(text))
+        .then(
+          () =>
+            this.updateCommandActivity(sessionId, id, {
+              status: "success",
+              message: "Copied the last assistant response to the clipboard.",
+            }),
+          () =>
+            this.updateCommandActivity(sessionId, id, {
+              status: "error",
+              message: "Clipboard access was unavailable.",
+            }),
+        );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "session") {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "info",
+        "Current Pi session",
+        { details: this.sessionCommandDetails() },
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "hotkeys") {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "info",
+        "INSΠRE uses browser-native shortcuts for the Pi workspace.",
+        {
+          details: [
+            { label: "Command palette", value: "Ctrl/⌘ K" },
+            { label: "Navigation", value: "Ctrl/⌘ B" },
+            { label: "Files / History / Terminal", value: "Ctrl/⌘ ." },
+            { label: "Stop active work", value: "Esc" },
+            {
+              label: "Send / newline",
+              value:
+                this.state.prefs.desktopSendKey === "mod-enter"
+                  ? "Ctrl/⌘ Enter / Enter"
+                  : "Enter / Shift+Enter",
+            },
+          ],
+        },
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "quit") {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "info",
+        "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    this.presentCommandActivity(
+      sessionId,
+      input,
+      command.name,
+      "error",
+      `/${command.name} is not available in this browser build.`,
+    );
+    return ACCEPTED_NATIVE_COMMAND;
+  }
 
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
   ): Promise<PromptAcceptedResponse | false> => {
+    const native = parseNativeCommand(message);
+    if (native && this.isNativeCommand(message))
+      return this.executeNativeCommand(message, native);
+
+    const invocation = parseCommandInvocation(message);
+    if (invocation) {
+      const dynamic = resolveCommandInventory(this.state.commands).find(
+        (command) => command.name === invocation.name,
+      );
+      if (!dynamic) {
+        const sessionId = this.state.sessionId;
+        if (sessionId)
+          this.presentCommandActivity(
+            sessionId,
+            message,
+            invocation.name,
+            "error",
+            `Unknown command /${invocation.name}. Type / to see available commands.`,
+          );
+        return false;
+      }
+      // Pi's extension dispatcher splits on a literal space. Normalize pasted
+      // tabs/newlines at the command boundary so a command the browser owns
+      // cannot fall through into an ordinary model prompt inside Pi.
+      return this.composer.send(
+        invocation.argument
+          ? `/${invocation.name} ${invocation.argument}`
+          : `/${invocation.name}`,
+        behavior,
+      );
+    } else if (message.trim().startsWith("!")) {
+      const sessionId = this.state.sessionId;
+      if (sessionId)
+        this.presentCommandActivity(
+          sessionId,
+          message,
+          "bash",
+          "warning",
+          "Pi's ! shell mode is not projected into chat yet. Run the command in the persistent project terminal instead.",
+          { action: { kind: "open-terminal", label: "Open project terminal" } },
+        );
+      return false;
+    }
     return this.composer.send(message, behavior);
   };
 
@@ -960,6 +1735,14 @@ export class AppStore {
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return;
+    const compacting = this.state.commandActivities[sessionId]?.find(
+      (activity) =>
+        activity.command === "compact" && activity.status === "running",
+    );
+    if (compacting)
+      this.updateCommandActivity(sessionId, compacting.id, {
+        message: "Cancelling compaction and restarting the Pi worker…",
+      });
     try {
       await api.abort(sessionId);
     } catch (error) {
@@ -967,8 +1750,15 @@ export class AppStore {
         return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-      else
-        this.fail(error instanceof Error ? error.message : "Failed to abort");
+      else {
+        const message =
+          error instanceof Error ? error.message : "Failed to abort";
+        if (compacting)
+          this.updateCommandActivity(sessionId, compacting.id, {
+            message: `Cancellation was not confirmed: ${message}`,
+          });
+        this.fail(message);
+      }
     }
   };
 
@@ -1068,22 +1858,23 @@ export class AppStore {
     }
   };
 
-  setModel = async (provider: string, modelId: string): Promise<void> => {
+  setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return;
+    if (!api || !sessionId) return false;
     try {
       await api.setModel(sessionId, provider, modelId);
-      if (!ownsTransport()) return;
+      if (!ownsTransport()) return false;
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
       this.preferences.rememberModel({ provider, id: modelId });
       await this.resync(sessionId, this.selectionGeneration);
+      return true;
     } catch (error) {
-      if (!ownsTransport()) return;
+      if (!ownsTransport()) return false;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else
@@ -1091,26 +1882,28 @@ export class AppStore {
           "warning",
           error instanceof Error ? error.message : "Failed to set model",
         );
+      return false;
     }
   };
 
-  setThinkingLevel = async (level: string): Promise<void> => {
+  setThinkingLevel = async (level: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return;
+    if (!api || !sessionId) return false;
     const previous = this.state.thinkingLevel;
     const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevel: level });
     try {
       await api.setThinkingLevel(sessionId, level);
+      return ownsTransport();
     } catch (error) {
-      if (!ownsTransport()) return;
+      if (!ownsTransport()) return false;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
-        return;
+        return false;
       }
       // An older failure cannot undo a newer click. If the latest request was
       // refused, restore its immediate predecessor and reconcile in case that
@@ -1128,8 +1921,83 @@ export class AppStore {
             : "Failed to set thinking level",
         );
       }
+      return false;
     }
   };
+
+  setAutoCompaction = async (enabled: boolean): Promise<boolean> =>
+    this.setPiRuntimeSetting(
+      { autoCompactionEnabled: enabled },
+      (api, sessionId) => api.setAutoCompaction(sessionId, enabled),
+    );
+
+  setAutoRetry = async (enabled: boolean): Promise<boolean> =>
+    this.setPiRuntimeSetting({ autoRetryEnabled: enabled }, (api, sessionId) =>
+      api.setAutoRetry(sessionId, enabled),
+    );
+
+  setSteeringMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
+    this.setPiRuntimeSetting({ steeringMode: mode }, (api, sessionId) =>
+      api.setSteeringMode(sessionId, mode),
+    );
+
+  setFollowUpMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
+    this.setPiRuntimeSetting({ followUpMode: mode }, (api, sessionId) =>
+      api.setFollowUpMode(sessionId, mode),
+    );
+
+  private async setPiRuntimeSetting(
+    patch: Partial<PiRuntimeSettings>,
+    apply: (api: Api, sessionId: string) => Promise<unknown>,
+  ): Promise<boolean> {
+    const sessionId = this.state.sessionId;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId) return false;
+    const previous = this.state.runtimeSettings;
+    this.set({
+      runtimeSettings: {
+        autoCompactionEnabled: null,
+        autoRetryEnabled: null,
+        steeringMode: null,
+        followUpMode: null,
+        ...previous,
+        ...patch,
+      },
+    });
+    try {
+      await apply(api, sessionId);
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      await this.resync(sessionId, this.selectionGeneration);
+      return true;
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      if (this.state.sessionId === sessionId && this.state.runtimeSettings) {
+        const rolledBack = { ...this.state.runtimeSettings };
+        for (const key of Object.keys(patch) as Array<
+          keyof PiRuntimeSettings
+        >) {
+          if (rolledBack[key] === patch[key]) {
+            (rolledBack as Record<string, unknown>)[key] =
+              previous?.[key] ?? null;
+          }
+        }
+        this.set({ runtimeSettings: rolledBack });
+      }
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to update Pi runtime settings",
+        );
+      return false;
+    }
+  }
 
   // --- Composer attachments & project files ---
 

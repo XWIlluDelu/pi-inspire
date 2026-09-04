@@ -9,6 +9,7 @@ import {
   TOOL_VISIBILITY_PREFERENCES,
   VISIBILITY_PREFERENCES,
 } from "../../shared/contracts";
+import { resolveCommandInventory } from "../composer-completion";
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import {
@@ -354,7 +355,7 @@ export const CommandPalette = memo(function CommandPalette({
     }));
 
     const commands: PaletteItem[] = state.sessionId
-      ? state.commands.map((command) => ({
+      ? resolveCommandInventory(state.commands).map((command) => ({
           id: `cmd-${command.name}`,
           group: "Pi commands",
           title: `/${command.name}`,

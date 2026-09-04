@@ -17,6 +17,7 @@ import {
   addAttachmentContext,
 } from "../../server/attachments.js";
 import {
+  PiRpcCancelledError,
   type PiRpcOptions,
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
@@ -68,7 +69,7 @@ class FakeRpc extends EventEmitter {
     if (this.startGate) await this.startGate;
   }
 
-  async stop(): Promise<void> {
+  async stop(_cancelledCommand?: string): Promise<void> {
     this.stops += 1;
   }
 
@@ -1204,6 +1205,98 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("preserves Pi resource-command precedence for built-in name collisions", async () => {
+    const store = trackedAttachmentStore();
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.responseOverrides.set("get_commands", {
+          commands: [
+            {
+              name: "model",
+              description: "Extension-owned model command",
+              source: "extension",
+            },
+          ],
+        });
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(worker.starts).toBe(1));
+    await runtime.snapshot();
+    expect(
+      worker.commands.some((command) => command.type === "get_commands"),
+    ).toBe(true);
+    await runtime.prompt({ sessionId: "a", message: "/model custom" });
+    expect(
+      worker.commands.find(
+        (command) =>
+          command.type === "prompt" && command.message === "/model custom",
+      ),
+    ).toBeDefined();
+    await runtime.close();
+  });
+
+  it("exports HTML and reloads a fresh Pi resource inventory", async () => {
+    const store = trackedAttachmentStore();
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        const generation = workers.length + 1;
+        worker.responseOverrides.set("export_html", {
+          path: `/tmp/session-${generation}.html`,
+        });
+        worker.responseOverrides.set("get_commands", {
+          commands: [
+            {
+              name: `generation-${generation}`,
+              description: "Resource generation",
+              source: "extension",
+            },
+          ],
+        });
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(workers[0]?.starts).toBe(1));
+    expect((await runtime.snapshot()).active?.commands).toEqual([
+      expect.objectContaining({ name: "generation-1" }),
+    ]);
+    await expect(
+      runtime.nativeCommand({
+        sessionId: "a",
+        command: "export",
+        argument: "/tmp/export.html",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "completed",
+      details: [{ label: "File", value: "/tmp/session-1.html" }],
+    });
+
+    await expect(
+      runtime.nativeCommand({ sessionId: "a", command: "reload" }),
+    ).resolves.toMatchObject({ command: "reload", outcome: "completed" });
+    expect(workers[0]?.stops).toBe(1);
+    expect(workers[1]?.starts).toBe(1);
+    expect((await runtime.snapshot()).active?.commands).toEqual([
+      expect.objectContaining({ name: "generation-2" }),
+    ]);
+    await runtime.close();
+  });
+
   it("routes a typed /compact to the RPC compact command instead of prompting", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
@@ -1231,14 +1324,122 @@ describe("RuntimeController concurrent sessions", () => {
       false,
     );
 
-    // Only the exact command is intercepted; similar text still prompts.
+    const result = await runtime.nativeCommand({
+      sessionId: "a",
+      command: "compact",
+      argument: "keep decisions",
+    });
+    expect(result).toMatchObject({
+      command: "compact",
+      outcome: "completed",
+      message: expect.stringContaining("Context compacted"),
+    });
+    expect(
+      worker.commands.filter((command) => command.type === "compact").at(-1),
+    ).toMatchObject({ customInstructions: "keep decisions" });
+
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "/model" }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "/UNKNOWN" }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "!pwd" }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      runtime.prompt({
+        sessionId: "a",
+        message: "/compaction strategies?",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    // Slash syntax elsewhere in conversational text remains ordinary input.
     await runtime.prompt({
       sessionId: "a",
-      message: "/compaction strategies?",
+      message: "Discuss /compaction strategies?",
     });
     expect(worker.commands.some((command) => command.type === "prompt")).toBe(
       true,
     );
+    await runtime.setAutoCompaction("a", false);
+    await runtime.setAutoRetry("a", true);
+    await runtime.setSteeringMode("a", "one-at-a-time");
+    await runtime.setFollowUpMode("a", "all");
+    expect(worker.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "set_auto_compaction",
+          enabled: false,
+        }),
+        expect.objectContaining({ type: "set_auto_retry", enabled: true }),
+        expect.objectContaining({
+          type: "set_steering_mode",
+          mode: "one-at-a-time",
+        }),
+        expect.objectContaining({ type: "set_follow_up_mode", mode: "all" }),
+      ]),
+    );
+
+    worker.emit("event", { type: "agent_start" });
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    await expect(
+      runtime.nativeCommand({ sessionId: "a", command: "export" }),
+    ).rejects.toMatchObject({ status: 409 });
+    await runtime.close();
+  });
+
+  it("cancels standalone compaction by replacing its Pi worker", async () => {
+    const store = trackedAttachmentStore();
+    let beginCompact!: () => void;
+    const compactStarted = new Promise<void>((resolveStarted) => {
+      beginCompact = resolveStarted;
+    });
+    let cancelCompact!: (error: Error) => void;
+
+    class HangingCompactRpc extends FakeRpc {
+      override async stop(cancelledCommand?: string): Promise<void> {
+        await super.stop(cancelledCommand);
+        if (cancelledCommand === "compact")
+          cancelCompact(new PiRpcCancelledError("compact"));
+      }
+
+      override async request<T>(command: Record<string, unknown>): Promise<T> {
+        if (command.type !== "compact") return super.request<T>(command);
+        this.commands.push(command);
+        beginCompact();
+        return new Promise<T>((_resolve, reject) => {
+          cancelCompact = reject;
+        });
+      }
+    }
+
+    let worker!: HangingCompactRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new HangingCompactRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+
+    const compacting = runtime.nativeCommand({
+      sessionId: "a",
+      command: "compact",
+    });
+    await compactStarted;
+    expect((await runtime.snapshot()).runState).toBe("compacting");
+    await runtime.abort("a");
+
+    await expect(compacting).resolves.toMatchObject({
+      command: "compact",
+      outcome: "cancelled",
+    });
+    expect(worker.stops).toBe(1);
+    expect((await runtime.snapshot()).runState).toBe("aborted");
     await runtime.close();
   });
 

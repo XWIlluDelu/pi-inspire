@@ -77,6 +77,10 @@ export interface ChatMessage {
   customType?: string;
   display?: boolean;
   details?: unknown;
+  /** Pi-authored context checkpoint messages. */
+  summary?: string;
+  tokensBefore?: number;
+  fromId?: string;
 }
 
 export function asMessage(value: unknown): ChatMessage {

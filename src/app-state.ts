@@ -5,6 +5,7 @@ import {
   type GitStatusResponse,
   type InspirePreferences,
   type ModelOption,
+  type PiRuntimeSettings,
   type PiUpdateCheckResponse,
   type ProjectionConflict,
   type ProjectionHealth,
@@ -37,6 +38,35 @@ export interface ContextUsage {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
+}
+
+export type NativeCommandActivityStatus =
+  | "running"
+  | "success"
+  | "info"
+  | "warning"
+  | "error"
+  | "cancelled";
+
+export interface NativeCommandActivity {
+  id: number;
+  sessionId: string;
+  input: string;
+  command: string;
+  status: NativeCommandActivityStatus;
+  title: string;
+  message: string;
+  details?: Array<{ label: string; value: string }>;
+  action?:
+    | { kind: "open-terminal"; label: string; value?: string }
+    | { kind: "copy"; label: string; value: string };
+}
+
+export interface NativeCommandUiRequest {
+  id: number;
+  sessionId: string;
+  action: "model" | "thinking" | "settings" | "updates" | "sessions" | "new";
+  query?: string;
 }
 
 export interface TranscriptActivityRangeState extends TranscriptActivityRange {
@@ -104,12 +134,19 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   prefs: InspirePreferences;
   sessionId: string | null;
   sessionName: string;
+  sessionFile: string | null;
+  sessionStats: unknown;
+  runtimeSettings: PiRuntimeSettings | null;
   cwd: string | null;
   model: ModelOption | null;
   thinkingLevel: string;
   availableModels: ModelOption[];
   commands: PiCommand[];
   contextUsage: ContextUsage | null;
+  /** Ephemeral command lifecycle receipts are partitioned by session. */
+  commandActivities: Record<string, NativeCommandActivity[]>;
+  nativeCommandUiRequest: NativeCommandUiRequest | null;
+  nextNativeCommandId: number;
   transcriptRevision: number;
   /** Earliest revision still sharing this projection's unchanged prefix. */
   transcriptAppendFromRevision: number;
@@ -260,12 +297,18 @@ export function createInitialAppState(): AppState {
     prefs: defaultPreferences,
     sessionId: null,
     sessionName: "",
+    sessionFile: null,
+    sessionStats: null,
+    runtimeSettings: null,
     cwd: null,
     model: null,
     thinkingLevel: "medium",
     availableModels: [],
     commands: [],
     contextUsage: null,
+    commandActivities: {},
+    nativeCommandUiRequest: null,
+    nextNativeCommandId: 1,
     transcriptRevision: 0,
     transcriptAppendFromRevision: 0,
     transcriptIncarnation: null,

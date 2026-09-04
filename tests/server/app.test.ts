@@ -855,6 +855,64 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
+  it("executes typed Pi native commands and runtime settings behind authentication", async () => {
+    await request(application.server)
+      .post("/api/sessions/open")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "mock-active" })
+      .expect(200);
+
+    await request(application.server)
+      .post("/api/control/native-command")
+      .send({ sessionId: "mock-active", command: "compact" })
+      .expect(401);
+    const compacted = await request(application.server)
+      .post("/api/control/native-command")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId: "mock-active",
+        command: "compact",
+        argument: "preserve decisions",
+      })
+      .expect(200);
+    expect(compacted.headers["cache-control"]).toContain("no-store");
+    expect(compacted.body).toMatchObject({
+      command: "compact",
+      outcome: "completed",
+    });
+
+    await request(application.server)
+      .post("/api/control/auto-compaction")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", enabled: false })
+      .expect(200, { ok: true });
+    await request(application.server)
+      .post("/api/control/steering-mode")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", mode: "one-at-a-time" })
+      .expect(200, { ok: true });
+    await request(application.server)
+      .post("/api/control/follow-up-mode")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", mode: "all" })
+      .expect(200, { ok: true });
+    const snapshot = await request(application.server)
+      .get("/api/snapshot")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(snapshot.body.active.runtimeSettings).toMatchObject({
+      autoCompactionEnabled: false,
+      steeringMode: "one-at-a-time",
+      followUpMode: "all",
+    });
+
+    await request(application.server)
+      .post("/api/control/native-command")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", command: "unknown" })
+      .expect(400);
+  });
+
   it("clears host selection when the browser opens New session", async () => {
     await request(application.server)
       .post("/api/sessions/open")

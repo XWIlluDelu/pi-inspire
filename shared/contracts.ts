@@ -1000,6 +1000,15 @@ export interface ProjectionConflict {
   incidentId: string;
 }
 
+export type PiMessageDeliveryMode = "all" | "one-at-a-time";
+
+export interface PiRuntimeSettings {
+  autoCompactionEnabled: boolean | null;
+  autoRetryEnabled: boolean | null;
+  steeringMode: PiMessageDeliveryMode | null;
+  followUpMode: PiMessageDeliveryMode | null;
+}
+
 export interface ActiveSnapshot {
   active: null | {
     sessionId: string;
@@ -1023,6 +1032,8 @@ export interface ActiveSnapshot {
     effectiveLeafId?: string | null;
     navigationLeased?: boolean;
     stats?: unknown;
+    /** Settings that affect the live Pi session rather than INSΠRE chrome. */
+    runtimeSettings?: PiRuntimeSettings;
     availableModels: unknown[];
     commands: unknown[];
   };
@@ -1148,6 +1159,27 @@ export interface PromptRequest {
   historyArtifacts?: ComposerHistoryArtifactsRequest;
   projectFiles?: string[];
   behavior?: "steer" | "followUp";
+}
+
+export type HostNativeCommandName = "compact" | "export" | "reload";
+
+export interface HostNativeCommandRequest {
+  /** Native commands are session-owned just like prompts. */
+  sessionId: string;
+  command: HostNativeCommandName;
+  argument?: string;
+}
+
+export interface HostNativeCommandDetail {
+  label: string;
+  value: string;
+}
+
+export interface HostNativeCommandResponse {
+  command: HostNativeCommandName;
+  outcome: "completed" | "cancelled";
+  message: string;
+  details?: HostNativeCommandDetail[];
 }
 
 export interface PromptDeliveryRequest extends PromptRequest {

@@ -4,9 +4,33 @@ import {
   rankCommands,
   rankProjectFiles,
   replaceCompletionToken,
+  resolveCommandInventory,
 } from "../../src/composer-completion";
 
 describe("composer caret completion", () => {
+  it("keeps session-bound built-ins off the new-session command surface", () => {
+    const runtime = [
+      { name: "compact", source: "extension", description: "collision" },
+      { name: "skill:docs", source: "skill", description: "Docs" },
+    ];
+    expect(resolveCommandInventory(runtime, false)).toEqual([
+      expect.objectContaining({ name: "compact", source: "builtin" }),
+      runtime[1],
+    ]);
+    expect(resolveCommandInventory(runtime, false)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "settings" })]),
+    );
+    expect(resolveCommandInventory(runtime)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "compact",
+          source: "builtin",
+        }),
+        runtime[1],
+      ]),
+    );
+  });
+
   it("recognizes only the active boundary-prefixed @ token and permits spaces", () => {
     const draft = "keep @notes/field report final";
     expect(parseCaretCompletion(draft, draft.length)).toEqual({

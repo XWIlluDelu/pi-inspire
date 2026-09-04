@@ -5,6 +5,156 @@
   background: transparent;
 }
 
+.command-activity {
+  width: 100%;
+  max-width: var(--composer-max);
+  max-height: min(34dvh, 320px);
+  margin: 0 auto var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.command-activity__item {
+  --command-tone: var(--info);
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  gap: var(--space-2);
+  padding: 9px 8px 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--command-tone) 24%, var(--hairline));
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--bg-surface) 92%, var(--command-tone) 8%);
+  box-shadow: var(--shadow-1);
+}
+
+.command-activity__item--running {
+  --command-tone: var(--accent);
+}
+
+.command-activity__item--success {
+  --command-tone: var(--success);
+}
+
+.command-activity__item--warning {
+  --command-tone: var(--warning);
+}
+
+.command-activity__item--cancelled {
+  --command-tone: var(--muted);
+}
+
+.command-activity__item--error {
+  --command-tone: var(--error);
+}
+
+.command-activity__icon {
+  padding-top: 2px;
+  color: var(--command-tone);
+}
+
+.command-activity__body {
+  min-width: 0;
+}
+
+.command-activity__heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.command-activity__heading code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.command-activity__state {
+  color: var(--command-tone);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.command-activity__body > p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.command-activity__details {
+  margin: var(--space-2) 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 4px var(--space-3);
+}
+
+.command-activity__details > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.command-activity__details dt {
+  color: var(--faint);
+}
+
+.command-activity__details dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-activity__action {
+  min-height: 28px;
+  margin-top: var(--space-2);
+  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-control);
+  background: var(--bg-control);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.command-activity__action:hover,
+.command-activity__action:focus-visible {
+  border-color: var(--command-tone);
+}
+
+.command-activity__dismiss {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--faint);
+}
+
+.command-activity__dismiss:hover,
+.command-activity__dismiss:focus-visible {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
 .extension-dock {
   width: 100%;
   max-width: var(--composer-max);

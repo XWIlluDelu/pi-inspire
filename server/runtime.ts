@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath } from "node:fs/promises";
@@ -12,7 +11,11 @@ import {
   type BranchBridgeResult,
   encodeBranchBridgeJson,
 } from "../shared/branch-bridge-protocol.js";
-import { parseCompactCommand } from "../shared/commands.js";
+import {
+  parseCommandInvocation,
+  parseCompactCommand,
+  parseNativeCommand,
+} from "../shared/commands.js";
 import {
   type ActiveSnapshot,
   type BranchForkRequest,
@@ -24,12 +27,15 @@ import {
   type ComposerHistoryPage,
   emptyPendingQueues,
   type HiddenClearResponse,
+  type HostNativeCommandRequest,
+  type HostNativeCommandResponse,
   isBusyRunState,
   MAX_PROJECT_FILES,
   MAX_SESSION_ID_CHARS,
   type NewSessionOptions,
   type PendingManagementAction,
   type PendingQueues,
+  type PiMessageDeliveryMode,
   type ProjectionConflict,
   type PromptRequest,
   type SessionDeleteResponse,
@@ -46,29 +52,31 @@ import {
   resolveProjectFiles,
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
+import { resolveProjectDirectory } from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
+  PiRpcCancelledError,
   type PiRpcOptions,
   PiRpcOutcomeUnknownError,
   PiRpcProcess,
 } from "./pi-rpc.js";
-import { resolveProjectDirectory } from "./paths.js";
 import { PreviewProjection } from "./preview-projection.js";
+import { requestError } from "./request-error.js";
+import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import {
   assertPromptArtifactBudget,
   resolveComposerHistoryArtifacts,
   revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
-import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import { RuntimeEventController } from "./runtime-events.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
+import { RuntimePendingController } from "./runtime-pending-controller.js";
 import {
   compactionMatcher,
   deferredExpectation,
   knownExpectation,
 } from "./runtime-persistence.js";
 import { RuntimePersistenceOwnershipController } from "./runtime-persistence-ownership.js";
-import { RuntimePendingController } from "./runtime-pending-controller.js";
 import { RuntimeProcessRegistry } from "./runtime-process-registry.js";
 import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import { RuntimeReadController } from "./runtime-reads.js";
@@ -81,23 +89,24 @@ import {
   validateSessionFile,
 } from "./session-delete.js";
 import {
-  type ActiveSessionSnapshot,
-  loadSessionPreview,
-  sessionProjectionSnapshot,
-} from "./session-preview.js";
-import {
   discardStagedSessionFork,
   publishStagedSessionFork,
   type StageSessionFork,
   stageSessionFork,
 } from "./session-fork.js";
+import {
+  type ActiveSessionSnapshot,
+  loadSessionPreview,
+  sessionProjectionSnapshot,
+} from "./session-preview.js";
 
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
 
+import { getAgentDir, SettingsManager } from "./pi-runtime.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
+import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
 import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
-import { runtimeToken as bridgeToken } from "./runtime-token.js";
 
 export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
 
@@ -130,7 +139,20 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
 const MAX_PROMPT_CHARS = 500_000;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
+
 export { PI_STARTUP_RESPONSE_UI_ERROR } from "./runtime-events.js";
+
+function finiteMetric(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
+    value,
+  );
+}
 
 export function safeProjection(value: unknown): unknown {
   return projectSafeValue(value, {
@@ -138,6 +160,31 @@ export function safeProjection(value: unknown): unknown {
     stringChars: 250_000,
     arrayItems: 10_000,
   });
+}
+
+function assertNativeCommandIdle(slot: RuntimeSlot, commandName: string): void {
+  if (!isBusyRunState(slot.runState)) return;
+  throw requestError(
+    `Wait for the current Pi operation to finish before running /${commandName}`,
+    409,
+  );
+}
+
+function runtimeResourceOwnsCommand(
+  slot: RuntimeSlot,
+  commandName: string,
+): boolean {
+  if (commandName === "compact") return false;
+  return Boolean(
+    slot.commands?.some((command) => {
+      if (!command || typeof command !== "object") return false;
+      const name = (command as { name?: unknown }).name;
+      return (
+        typeof name === "string" &&
+        name.replace(/^\/+/, "").toLocaleLowerCase() === commandName
+      );
+    }),
+  );
 }
 
 function assertPublicPrompt(slot: RuntimeSlot, entered: string): void {
@@ -213,6 +260,19 @@ export interface RuntimeLike {
     modelId: string,
   ): Promise<unknown>;
   setThinkingLevel(sessionId: string, level: string): Promise<void>;
+  setAutoCompaction(sessionId: string, enabled: boolean): Promise<void>;
+  setAutoRetry(sessionId: string, enabled: boolean): Promise<void>;
+  setSteeringMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void>;
+  setFollowUpMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void>;
+  nativeCommand(
+    request: HostNativeCommandRequest,
+  ): Promise<HostNativeCommandResponse>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(): Promise<ActiveSnapshot>;
   transcriptPage(
@@ -876,8 +936,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private stopWriter(slot: RuntimeSlot): Promise<void> {
-    return this.workerLifecycle.stop(slot);
+  private stopWriter(
+    slot: RuntimeSlot,
+    cancelledCommand?: string,
+  ): Promise<void> {
+    return this.workerLifecycle.stop(slot, cancelledCommand);
   }
 
   private ensureFreshWriterInsideGate(
@@ -902,7 +965,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       `Pi ${error.command} outcome is unknown; the worker was stopped and disk state reconciled`,
     );
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
-    throw requestError(conflict.message, 504, { outcomeUnknown: true });
+    throw requestError(conflict.message, 504, {
+      code: "PI_RPC_OUTCOME_UNKNOWN",
+      outcomeUnknown: true,
+    });
   }
 
   private async reconcileAcceptedPersistence(
@@ -1828,7 +1894,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     request: PromptRequest,
   ): Promise<ComposerHistoryEntry | null> {
     const slot = this.requireSlot(request.sessionId);
-    assertPublicPrompt(slot, request.message.trim());
+    const entered = request.message.trim();
+    assertPublicPrompt(slot, entered);
+    const invocation = parseCommandInvocation(entered);
+    const native = parseNativeCommand(entered);
+    if (
+      invocation &&
+      !runtimeResourceOwnsCommand(slot, invocation.name) &&
+      (!native ||
+        native.name !== "compact" ||
+        request.attachmentIds?.length ||
+        request.historyArtifacts ||
+        request.projectFiles?.length)
+    ) {
+      throw requestError(
+        request.attachmentIds?.length ||
+          request.historyArtifacts ||
+          request.projectFiles?.length
+          ? "Pi commands cannot include attachments or project-file references"
+          : native
+            ? `/${native.name} must be executed through INSΠRE's native command surface`
+            : `Unknown Pi command /${invocation.name}; type / to inspect the current command inventory`,
+        409,
+      );
+    }
+    if (entered.startsWith("!")) {
+      throw requestError(
+        "Pi shell commands must be run in INSΠRE's persistent project terminal",
+        409,
+      );
+    }
     // Lease uploads and begin the first project-file authorization before the
     // persistence FIFO. A worker startup already occupying that FIFO must not
     // leave staged files withdrawable or postpone selection until delivery.
@@ -1865,9 +1960,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       return await this.mutateSlot(slot, async () => {
         enteredGate = true;
-        const message = request.message.trim();
-        // A bare typed /compact runs the compaction control. With attachments
-        // or file references present, the text remains an ordinary prompt.
+        const message = entered;
+        // Keep the legacy typed /compact boundary for older clients. Current
+        // browser clients use the typed native-command route above.
         const compact = parseCompactCommand(message);
         if (
           compact &&
@@ -2669,6 +2764,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!rpc || !slot.ready) {
         throw requestError("There is no live Pi runtime to abort", 409);
       }
+      if (
+        slot.runState === "compacting" &&
+        slot.compactionReturnState === "idle"
+      ) {
+        // Pi has no abort_compaction RPC. Stop only the worker that owns the
+        // standalone compact request; the JSONL projection remains the durable
+        // authority and the next operation starts a fresh worker.
+        for (const expectation of slot.persistenceExpectations)
+          expectation.settle((entry) => entry.type === "compaction");
+        slot.runState = "aborted";
+        await this.stopWriter(slot, "compact");
+        slot.runState = slot.conflict ? "conflict" : "aborted";
+        this.extensionUi.clear(slot, "aborted");
+        return;
+      }
       await rpc.request({ type: "abort" });
       this.extensionUi.clear(slot, "aborted");
     });
@@ -2688,12 +2798,115 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.pending.messageTexts(sessionId, messageIds);
   }
 
+  async nativeCommand(
+    request: HostNativeCommandRequest,
+  ): Promise<HostNativeCommandResponse> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(request.sessionId);
+      const argument = request.argument?.trim() || undefined;
+      if (request.command === "compact") {
+        const result = await this.mutateSlot(slot, () =>
+          this.compactSlot(slot, argument),
+        );
+        const record =
+          result && typeof result === "object"
+            ? (result as Record<string, unknown>)
+            : {};
+        if (record.aborted === true) {
+          return {
+            command: "compact",
+            outcome: "cancelled",
+            message: "Context compaction was cancelled.",
+          };
+        }
+        const before = finiteMetric(record.tokensBefore);
+        const after = finiteMetric(record.estimatedTokensAfter);
+        const details = [
+          ...(before === null
+            ? []
+            : [
+                {
+                  label: "Before",
+                  value: `${formatTokenCount(before)} tokens`,
+                },
+              ]),
+          ...(after === null
+            ? []
+            : [
+                {
+                  label: "After (estimate)",
+                  value: `${formatTokenCount(after)} tokens`,
+                },
+              ]),
+        ];
+        return {
+          command: "compact",
+          outcome: "completed",
+          message:
+            before !== null && after !== null
+              ? `Context compacted from ${formatTokenCount(before)} to about ${formatTokenCount(after)} tokens.`
+              : "Context compacted. The summary is now part of this session.",
+          ...(details.length > 0 ? { details } : {}),
+        };
+      }
+
+      if (request.command === "export") {
+        if (argument?.toLocaleLowerCase().endsWith(".jsonl")) {
+          throw requestError(
+            "JSONL export is not available in the browser yet. Use /export in Pi's terminal for a branch-only JSONL file.",
+            409,
+          );
+        }
+        const result = await this.mutateSlot(slot, async () => {
+          assertNativeCommandIdle(slot, "export");
+          const ready = await this.ensureFreshWriterInsideGate(slot);
+          return ready.process.request<{ path?: unknown }>(
+            {
+              type: "export_html",
+              ...(argument ? { outputPath: argument } : {}),
+            },
+            180_000,
+          );
+        });
+        if (!result || typeof result.path !== "string" || !result.path) {
+          throw new Error("Pi did not report the exported file path");
+        }
+        return {
+          command: "export",
+          outcome: "completed",
+          message: "Session exported to HTML.",
+          details: [{ label: "File", value: result.path }],
+        };
+      }
+
+      if (argument) {
+        throw requestError("/reload does not accept arguments", 400);
+      }
+      await this.mutateSlot(slot, async () => {
+        assertNativeCommandIdle(slot, "reload");
+        await this.stopWriter(slot);
+        slot.runState = "idle";
+        slot.availableModels = null;
+        slot.commands = null;
+        await this.ensureFreshWriterInsideGate(slot);
+      });
+      return {
+        command: "reload",
+        outcome: "completed",
+        message:
+          "Pi extensions, skills, prompts, context files, and themes were reloaded.",
+      };
+    });
+  }
+
   private async compactSlot(
     slot: RuntimeSlot,
     customInstructions?: string,
   ): Promise<unknown> {
+    assertNativeCommandIdle(slot, "compact");
     const ready = await this.ensureFreshWriterInsideGate(slot);
     const previousRunState = slot.runState;
+    const previousLeafId = slot.projection?.leafId ?? null;
     // This is a user-started standalone compaction. Automatic compaction
     // captures and restores the surrounding agent state from its events.
     slot.compactionReturnState = "idle";
@@ -2718,6 +2931,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
       );
     } catch (error) {
+      if (error instanceof PiRpcCancelledError && error.command === "compact") {
+        if (error.stopped) await error.stopped;
+        await this.reconcileSlot(slot, true).catch(() => undefined);
+        const leafId = slot.projection?.leafId ?? null;
+        const racedCompletion =
+          leafId !== null &&
+          leafId !== previousLeafId &&
+          slot.projection?.entry(leafId)?.type === "compaction";
+        slot.runState = slot.conflict
+          ? "conflict"
+          : racedCompletion
+            ? "idle"
+            : "aborted";
+        slot.compactionReturnState = null;
+        this.emitSlotEvent(slot, {
+          type: "compaction_end",
+          reason: "manual",
+          ...(racedCompletion ? { result: {} } : { aborted: true }),
+        });
+        return racedCompletion ? {} : { aborted: true };
+      }
       if (slot.runState === "compacting") slot.runState = previousRunState;
       slot.compactionReturnState = null;
       throw error;
@@ -2832,6 +3066,57 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  async setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
+    return this.setRuntimeBoolean(sessionId, "set_auto_compaction", enabled);
+  }
+
+  async setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
+    return this.setRuntimeBoolean(sessionId, "set_auto_retry", enabled);
+  }
+
+  async setSteeringMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    return this.setRuntimeDeliveryMode(sessionId, "set_steering_mode", mode);
+  }
+
+  async setFollowUpMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    return this.setRuntimeDeliveryMode(sessionId, "set_follow_up_mode", mode);
+  }
+
+  private async setRuntimeBoolean(
+    sessionId: string,
+    command: "set_auto_compaction" | "set_auto_retry",
+    enabled: boolean,
+  ): Promise<void> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      await this.mutateSlot(slot, async () => {
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        await ready.process.request({ type: command, enabled });
+        if (command === "set_auto_retry") slot.autoRetryEnabled = enabled;
+      });
+    });
+  }
+
+  private async setRuntimeDeliveryMode(
+    sessionId: string,
+    command: "set_steering_mode" | "set_follow_up_mode",
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      await this.mutateSlot(slot, async () => {
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        await ready.process.request({ type: command, mode });
+      });
+    });
+  }
+
   extensionUiResponse(response: Record<string, unknown>): Promise<void> {
     return this.extensionUi.respond(response);
   }
@@ -2898,6 +3183,32 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           effectiveLeafId,
           navigationLeased: Boolean(slot.navigationLease),
           stats,
+          runtimeSettings: {
+            autoCompactionEnabled:
+              typeof state.autoCompactionEnabled === "boolean"
+                ? state.autoCompactionEnabled
+                : null,
+            // Pi's RPC setter is public, but get_state does not currently expose
+            // this SettingsManager-backed value. Read it through the same public
+            // SDK authority once per worker lifetime, then retain confirmed RPC changes.
+            autoRetryEnabled:
+              typeof state.autoRetryEnabled === "boolean"
+                ? state.autoRetryEnabled
+                : (slot.autoRetryEnabled ??= SettingsManager.create(
+                    slot.cwd,
+                    getAgentDir(),
+                  ).getRetryEnabled()),
+            steeringMode:
+              state.steeringMode === "all" ||
+              state.steeringMode === "one-at-a-time"
+                ? state.steeringMode
+                : null,
+            followUpMode:
+              state.followUpMode === "all" ||
+              state.followUpMode === "one-at-a-time"
+                ? state.followUpMode
+                : null,
+          },
           availableModels: models,
           commands,
         },

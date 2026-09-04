@@ -157,6 +157,28 @@ const promptSchema = z
   })
   .strict();
 const abortSchema = z.object({ sessionId: sessionIdField });
+const nativeCommandSchema = z
+  .object({
+    sessionId: sessionIdField,
+    command: z.enum(["compact", "export", "reload"]),
+    argument: z
+      .string()
+      .max(64 * 1024)
+      .optional(),
+  })
+  .strict();
+const runtimeBooleanSchema = z
+  .object({
+    sessionId: sessionIdField,
+    enabled: z.boolean(),
+  })
+  .strict();
+const runtimeDeliveryModeSchema = z
+  .object({
+    sessionId: sessionIdField,
+    mode: z.enum(["all", "one-at-a-time"]),
+  })
+  .strict();
 const pendingManagementSchema = z.discriminatedUnion("action", [
   z
     .object({
@@ -1228,6 +1250,12 @@ export function createInspireServer(deps: AppDependencies): {
     }
     response.status(202).json(await operation.promise!);
   });
+  app.post("/api/control/native-command", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(
+      await deps.runtime.nativeCommand(nativeCommandSchema.parse(request.body)),
+    );
+  });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
     await deps.runtime.abort(sessionId);
@@ -1263,6 +1291,26 @@ export function createInspireServer(deps: AppDependencies): {
   app.post("/api/control/thinking", async (request, response) => {
     const { sessionId, level } = thinkingSchema.parse(request.body);
     await deps.runtime.setThinkingLevel(sessionId, level);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/auto-compaction", async (request, response) => {
+    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
+    await deps.runtime.setAutoCompaction(sessionId, enabled);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/auto-retry", async (request, response) => {
+    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
+    await deps.runtime.setAutoRetry(sessionId, enabled);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/steering-mode", async (request, response) => {
+    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
+    await deps.runtime.setSteeringMode(sessionId, mode);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/follow-up-mode", async (request, response) => {
+    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
+    await deps.runtime.setFollowUpMode(sessionId, mode);
     response.json({ ok: true });
   });
   app.post("/api/extension-ui", async (request, response) => {

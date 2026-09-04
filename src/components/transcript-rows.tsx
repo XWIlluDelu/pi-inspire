@@ -1,4 +1,6 @@
 import {
+  Archive,
+  ChevronRight,
   GitFork,
   Image,
   Loader2,
@@ -525,6 +527,66 @@ export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
           visibility={visibility}
         />
       </ActivityItemBoundary>
+    </div>
+  );
+});
+
+export const ContextCheckpointRow = memo(function ContextCheckpointRow({
+  message,
+}: {
+  message: ChatMessage;
+}) {
+  const compacted = message.role === "compactionSummary";
+  const summary = typeof message.summary === "string" ? message.summary : "";
+  const tokens =
+    typeof message.tokensBefore === "number" &&
+    Number.isFinite(message.tokensBefore)
+      ? `${Math.round(message.tokensBefore).toLocaleString()} tokens before`
+      : null;
+  const timestamp = clockTime(message.timestamp);
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="turn turn--checkpoint">
+      <details
+        className="context-checkpoint"
+        onToggle={(event) => {
+          if (event.target === event.currentTarget)
+            setOpen(event.currentTarget.open);
+        }}
+      >
+        <summary>
+          <Archive size={14} aria-hidden />
+          <span className="context-checkpoint__title">
+            {compacted ? "Context compacted" : "Branch context"}
+          </span>
+          {tokens ? (
+            <span className="context-checkpoint__metric">{tokens}</span>
+          ) : null}
+          {timestamp ? (
+            <time className="context-checkpoint__time">{timestamp}</time>
+          ) : null}
+          <ChevronRight
+            className="context-checkpoint__chevron"
+            size={13}
+            aria-hidden
+          />
+        </summary>
+        {open ? (
+          <div className="context-checkpoint__body">
+            {summary ? (
+              <RichText text={summary} />
+            ) : (
+              <p>No summary was recorded.</p>
+            )}
+            {summary ? (
+              <MessageActions
+                text={summary}
+                copyLabel={compacted ? "Compaction summary" : "Branch summary"}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </details>
     </div>
   );
 });
