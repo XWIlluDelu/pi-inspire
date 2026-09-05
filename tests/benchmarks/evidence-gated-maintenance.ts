@@ -80,8 +80,7 @@ const BACKGROUND_SETTLEMENTS = 4;
 const PERSISTED_TARGET_BYTES = 11 * 1024 * 1024;
 function benchmarkPendingQueues(active: boolean): PendingQueues {
   return {
-    managementAvailable: false,
-    paused: false,
+    totalCount: active ? 2 : 0,
     revision: active ? 1 : 0,
     steering: active
       ? [
@@ -90,8 +89,6 @@ function benchmarkPendingQueues(active: boolean): PendingQueues {
             textPreview: "keep the visible projection bounded",
             textLength: 35,
             textTruncated: false,
-            imageCount: 0,
-            nonTextContentCount: 0,
           },
         ]
       : [],
@@ -102,8 +99,6 @@ function benchmarkPendingQueues(active: boolean): PendingQueues {
             textPreview: "verify navigation chrome",
             textLength: 24,
             textTruncated: false,
-            imageCount: 0,
-            nonTextContentCount: 0,
           },
         ]
       : [],

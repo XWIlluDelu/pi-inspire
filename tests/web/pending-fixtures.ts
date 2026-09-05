@@ -14,8 +14,6 @@ export function pendingMessage(
     textPreview: text,
     textLength: text.length,
     textTruncated: false,
-    imageCount: 0,
-    nonTextContentCount: 0,
     ...overrides,
   };
 }
@@ -26,8 +24,7 @@ export function pendingQueues(
   overrides: Partial<PendingQueues> = {},
 ): PendingQueues {
   return {
-    managementAvailable: false,
-    paused: false,
+    totalCount: steering.length + followUp.length,
     revision: 0,
     steering: steering.map((text) => pendingMessage(text)),
     followUp: followUp.map((text) => pendingMessage(text)),

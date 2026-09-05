@@ -595,6 +595,38 @@ describe("composer-adjacent status and queued controls", () => {
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
+
+  it("keeps drafts local and removes steer controls during compaction", () => {
+    clearLeftovers();
+    const before = promptBodies.length;
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const compacting = activeSnapshot();
+    compacting.runState = "compacting";
+    compacting.sessionStatuses = {
+      s1: { runState: "compacting", indicator: "running" },
+    };
+    act(() => socket.emit({ type: "snapshot", data: compacting }));
+
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message");
+    expect(textarea).toHaveAttribute(
+      "placeholder",
+      "Keep writing — send when compaction finishes…",
+    );
+    expect(
+      screen.queryByRole("group", { name: "Message delivery" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel context compaction" }),
+    ).toBeInTheDocument();
+
+    typeDraft("send after the checkpoint");
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea).toHaveValue("send after the checkpoint");
+    expect(promptBodies).toHaveLength(before);
+
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+  });
 });
 
 describe("composer meta row", () => {
@@ -610,14 +642,33 @@ describe("composer meta row", () => {
     expect(meter.getAttribute("title")).toContain("/compact");
   });
 
+  it("opens the thinking picker with keyboard focus for /thinking", async () => {
+    clearLeftovers();
+    render(<Composer />);
+
+    await act(async () => {
+      await store.sendPrompt("/thinking");
+    });
+
+    expect(
+      await screen.findByRole("listbox", { name: "Thinking level" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveFocus();
+  });
+
   it("offers bare lowercase thinking levels", () => {
     clearLeftovers();
     render(<Composer />);
     fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
     const listbox = screen.getByRole("listbox", { name: "Thinking level" });
     expect(
-      within(listbox).getByRole("option", { name: "xhigh" }),
+      within(listbox).getByRole("option", { name: "high" }),
     ).toBeInTheDocument();
+    expect(
+      within(listbox).queryByRole("option", { name: "xhigh" }),
+    ).not.toBeInTheDocument();
     expect(
       within(listbox).queryByRole("option", { name: /thinking:/ }),
     ).not.toBeInTheDocument();
@@ -689,12 +740,12 @@ describe("caret completion", () => {
     expect(commandComposite).toHaveAttribute("aria-expanded", "true");
     expect(commandComposite).toHaveAttribute("aria-owns", commandList.id);
     expect(textarea).toHaveAttribute("aria-activedescendant", commandOption.id);
-    expect(commandList).toHaveTextContent("Inspire");
+    expect(commandList).toHaveTextContent("Pi");
     fireEvent.keyDown(textarea, { key: "Tab" });
     expect(textarea).toHaveValue("/compact ");
 
-    typeDraft("/com existing arguments");
-    textarea.setSelectionRange(3, 3);
+    typeDraft("/comp existing arguments");
+    textarea.setSelectionRange(5, 5);
     fireEvent.select(textarea);
     await screen.findByRole("option", { name: /\/compact/ });
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -778,6 +829,11 @@ describe("caret completion", () => {
               description: "Prompt compact collision",
               source: "prompt",
             },
+            {
+              name: "settings",
+              description: "Extension settings collision",
+              source: "extension",
+            },
           ],
         }),
       });
@@ -815,6 +871,11 @@ describe("caret completion", () => {
     expect(
       within(list).queryByText(/compact collision/),
     ).not.toBeInTheDocument();
+    expect(
+      within(list).getByRole("option", {
+        name: /\/settings.*Extension settings collision/,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("defers completion until IME composition commits", async () => {

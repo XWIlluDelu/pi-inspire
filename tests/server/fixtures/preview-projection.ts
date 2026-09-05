@@ -1,4 +1,4 @@
-import { requestError } from "./request-error.js";
+import { requestError } from "../../../server/request-error.js";
 import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type {
@@ -8,24 +8,23 @@ import type {
   TranscriptPage,
   UserTurnIndexPage,
   UserTurnTranscriptPage,
-} from "../shared/contracts.js";
-import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
+} from "../../../shared/contracts.js";
+import { sequentialUserTurnAnchors } from "../../../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
-} from "./composer-history.js";
-import type { ActiveSessionSnapshot } from "./session-preview.js";
+} from "../../../server/composer-history.js";
+import type { ActiveSessionSnapshot } from "../../../server/session-preview.js";
 import {
   boundedTranscriptValue,
   type InitialMaterializationAttestation,
   type ProjectionReconcileResult,
   type SessionProjectionView,
-} from "./session-projection.js";
+} from "../../../server/session-projection.js";
 
 /**
- * Read-only catalog preview adapter. It satisfies the projection surface used
- * by RuntimeController without pretending a catalog snapshot has a live Pi
- * writer, durable branch tree, or reconciled persistence authority.
+ * Snapshot-only projection for runtime scheduling and UI fixtures. Persistence
+ * tests must use SessionProjection over real temporary JSONL instead.
  */
 export class PreviewProjection
   extends EventEmitter

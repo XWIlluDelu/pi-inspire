@@ -23,6 +23,8 @@ export function Dropdown({
   display,
   className = "",
   title,
+  openRequest,
+  onOpenRequestHandled,
 }: {
   label: string;
   value: string;
@@ -35,12 +37,15 @@ export function Dropdown({
   display?: string;
   className?: string;
   title?: string;
+  openRequest?: number;
+  onOpenRequestHandled?: (id: number) => void;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const handledOpenRequest = useRef<number | null>(null);
 
   const selectedIndex = options.findIndex((option) => option.value === value);
   const shown =
@@ -56,6 +61,26 @@ export function Dropdown({
     setOpen(false);
     if (option.value !== value) onChange(option.value);
   };
+
+  useEffect(() => {
+    if (openRequest === undefined || handledOpenRequest.current === openRequest)
+      return;
+    handledOpenRequest.current = openRequest;
+    if (!disabled && options.length > 0) {
+      setActive(Math.max(0, selectedIndex));
+      setOpen(true);
+      rootRef.current
+        ?.querySelector<HTMLButtonElement>(".dropdown__trigger")
+        ?.focus({ preventScroll: true });
+    }
+    onOpenRequestHandled?.(openRequest);
+  }, [
+    disabled,
+    onOpenRequestHandled,
+    openRequest,
+    options.length,
+    selectedIndex,
+  ]);
 
   useEffect(() => {
     if (!open) return;

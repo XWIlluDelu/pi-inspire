@@ -66,32 +66,21 @@ describe("prompt delivery transport", () => {
   });
 });
 
-describe("Pending response contract", () => {
+describe("Pending clear contract", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("rejects a malformed management envelope", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          Response.json({
-            pendingQueues: {
-              managementAvailable: true,
-              paused: false,
-              revision: 1,
-              steering: [{ id: "missing-summary-fields" }],
-              followUp: [],
-            },
-          }),
-        ),
-      ),
-    );
-
-    await expect(
-      createApi().managePending("session-1", {
-        action: "pause",
-        expectedRevision: 0,
+  it("sends only the session identity to the explicit clear endpoint", async () => {
+    const fetch = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(createApi().clearPending("session-1")).resolves.toEqual({
+      ok: true,
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/pending/clear",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ sessionId: "session-1" }),
       }),
-    ).rejects.toBeInstanceOf(ApiTransportError);
+    );
   });
 });

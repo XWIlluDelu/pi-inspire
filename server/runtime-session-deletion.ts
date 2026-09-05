@@ -88,9 +88,7 @@ export class RuntimeSessionDeletionController {
     return (
       isBusyRunState(slot.runState) ||
       slot.pendingExtensionUiRequests.size > 0 ||
-      slot.pendingQueues.paused ||
-      slot.pendingQueues.steering.length > 0 ||
-      slot.pendingQueues.followUp.length > 0 ||
+      slot.pendingQueues.totalCount > 0 ||
       slot.persistenceExpectations.length > 0 ||
       Boolean(slot.pendingPartialPersistence) ||
       Boolean(slot.pendingBranchBridge) ||

@@ -1,11 +1,10 @@
-import { requestError } from "./request-error.js";
 import {
   emptyPendingQueues,
   type ProjectionConflict,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
-import { PreviewProjection } from "./preview-projection.js";
+import { requestError } from "./request-error.js";
 import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import type { ProjectionReconcileResult } from "./session-projection.js";
@@ -59,7 +58,8 @@ export class RuntimeWorkerLifecycle {
     private readonly startupAttestor: RuntimeStartupAttestor,
   ) {}
 
-  async stop(slot: RuntimeSlot): Promise<void> {
+  async stop(slot: RuntimeSlot, cancelledCommand?: string): Promise<void> {
+    slot.autoRetryEnabled = null;
     const rpc = slot.process;
     if (!rpc) {
       if (slot.stopping) await slot.stopping;
@@ -113,7 +113,7 @@ export class RuntimeWorkerLifecycle {
       extensionStatuses: {},
     });
     const stopping = rpc
-      .stop()
+      .stop(cancelledCommand)
       .catch((error) => this.host.logRuntimeError(slot.id, error));
     slot.stopping = stopping;
     try {
@@ -127,8 +127,7 @@ export class RuntimeWorkerLifecycle {
   async ensureFreshWriter(
     slot: RuntimeSlot,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    if (!(slot.projection instanceof PreviewProjection))
-      await this.host.reconcile(slot, true);
+    await this.host.reconcile(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
       throw requestError(
         slot.projection?.health.message ?? "Session projection is unavailable",
@@ -207,6 +206,7 @@ export class RuntimeWorkerLifecycle {
     slot.extensionStatuses = {};
     slot.availableModels = null;
     slot.commands = null;
+    slot.autoRetryEnabled = null;
     try {
       this.host.attachProcess(slot, rpc);
       await this.startupAttestor.requireUnchangedPreStartBaseline(
@@ -216,15 +216,6 @@ export class RuntimeWorkerLifecycle {
       slot.startupPhase = "starting";
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
-      try {
-        await rpc.request({
-          type: "set_pending_event_mode",
-          mode: "managed",
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!/unknown command/i.test(message)) throw error;
-      }
       await this.startupAttestor.attest(slot, rpc, baseline);
       slot.ready = true;
       slot.startupPhase = "complete";

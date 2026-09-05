@@ -431,17 +431,14 @@ describe("message reconciliation", () => {
     ]);
   });
 
-  it("requests an authoritative resync on settle while preserving managed paused input", () => {
+  it("requests an authoritative resync on settle and clears transient queued input", () => {
     const slice = emptyEventSlice();
     slice.activeAssistantMessageKey = "live:active-assistant";
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
     slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
     slice.queue = pendingQueues(["steer"], ["later one", "later two"], {
-      managementAvailable: true,
-      paused: true,
       revision: 4,
     });
-    const pending = slice.queue;
     const { slice: next, resync } = reduce(slice, new Set(), {
       type: "agent_settled",
     });
@@ -450,17 +447,18 @@ describe("message reconciliation", () => {
     expect(next.activeAssistantMessageKey).toBeNull();
     expect(next.tools).toEqual({});
     expect(next.retry).toBeNull();
-    expect(next.queue).toEqual(pending);
+    expect(next.queue.totalCount).toBe(0);
+    expect(next.queue.steering).toEqual([]);
   });
 
-  it("clears the lossy legacy queue projection on settlement", () => {
+  it("clears the lossy public queue projection on settlement", () => {
     const slice = emptyEventSlice();
     slice.queue = pendingQueues(["legacy"], []);
     const { slice: next } = reduce(slice, new Set(), {
       type: "agent_settled",
     });
     expect(next.queue.steering).toEqual([]);
-    expect(next.queue.managementAvailable).toBe(false);
+    expect(next.queue.totalCount).toBe(0);
   });
 });
 
@@ -543,7 +541,6 @@ describe("transient tool/retry/queue activity", () => {
 
   it("preserves queued steering and follow-up input in separate source order", () => {
     const pending = pendingQueues(["a"], ["b", "c"], {
-      managementAvailable: true,
       revision: 3,
     });
     const { slice } = reduce(emptyEventSlice(), new Set(), {
@@ -782,8 +779,7 @@ describe("truthful change reporting", () => {
     const second = emptyEventSlice();
     first.queue.steering.push(pendingMessage("one"));
     expect(second.queue).toEqual({
-      managementAvailable: false,
-      paused: false,
+      totalCount: 0,
       revision: 0,
       steering: [],
       followUp: [],

@@ -237,7 +237,7 @@ test("activity folds move through the manual density ladder", async ({
   );
 });
 
-test("paused Pending remains a lightweight editable queue across settlement", async ({
+test("Pending stays read-only until an explicit Clear all confirmation", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -255,42 +255,24 @@ test("paused Pending remains a lightweight editable queue across settlement", as
   await composer.getByRole("button", { name: "Send as steer" }).click();
   const pending = page.getByRole("region", { name: "Pending input" });
   await expect(pending).toContainText("first pending instruction");
-  await pending.getByRole("button", { name: "Pause Pending input" }).click();
-
-  const paused = page.getByRole("region", { name: "Pending input paused" });
-  await expect(paused).toBeVisible();
+  await expect(
+    pending.getByRole("button", { name: /pause|resume|delete|move/i }),
+  ).toHaveCount(0);
   await composer.getByRole("button", { name: "Queue" }).click();
   await input.fill("second pending instruction");
   await composer
     .getByRole("button", { name: "Queue after current task" })
     .click();
-  await expect(paused).toContainText("second pending instruction");
-
-  await expect(
-    composer.getByRole("button", { name: "Abort running task" }),
-  ).toHaveCount(0, { timeout: 10_000 });
-  await expect(paused).toContainText("first pending instruction");
-  await paused
-    .getByRole("button", { name: "Move Steer item 1 to Queue" })
+  await expect(pending).toContainText("second pending instruction");
+  await pending
+    .getByRole("button", { name: "Clear all Pending input" })
     .click();
-  await expect(
-    paused.getByRole("region", { name: "Pending queue" }),
-  ).toContainText("first pending instruction");
-  await paused.getByRole("button", { name: "Delete Queue item 1" }).click();
-  await expect(paused).not.toContainText("second pending instruction");
-
-  await paused.getByRole("button", { name: "Clear all Pending input" }).click();
-  await paused.getByRole("button", { name: "Clear all" }).click();
-  await expect(paused).toContainText("Pending paused");
-  await expect(paused.getByRole("listitem")).toHaveCount(0);
-
-  await input.fill("queued while idle and paused");
-  await composer.getByRole("button", { name: "Send message" }).click();
-  await expect(paused).toContainText("queued while idle and paused");
-  await paused.getByRole("button", { name: "Resume Pending input" }).click();
-  await expect(
-    page.getByRole("region", { name: "Pending input paused" }),
-  ).toHaveCount(0);
+  await expect(pending).toContainText(
+    "whatever remains queued when Pi handles this request",
+  );
+  await expect(pending.getByRole("listitem")).toHaveCount(2);
+  await pending.getByRole("button", { name: "Clear all" }).click();
+  await expect(pending).toHaveCount(0);
 });
 
 test("new-session completion opens below its caret line inside the viewport", async ({
