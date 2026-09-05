@@ -140,6 +140,159 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
   await expect.poll(async () => (await readTerminals()).terminals).toEqual([]);
 });
 
+test("terminal menus share alignment, mutual exclusion, and nested Escape ownership", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const created = await page.request.post("/api/terminals", {
+    data: { cwd: process.cwd() },
+  });
+  expect(created.ok()).toBe(true);
+  const terminal = (await created.json()) as { id: string };
+  try {
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (!(await page.locator(".ctx").count()))
+        await page
+          .getByRole("button", { name: "Toggle resources panel" })
+          .click();
+      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await expect(
+        page.locator(".xterm-helper-textarea").first(),
+      ).toBeVisible();
+
+      const centers = await page
+        .locator(
+          ".terminal-tabs__new > .icon-button, .terminal-tabs-shell .terminal-menu > summary, .terminal-tabs__focus",
+        )
+        .evaluateAll((controls) =>
+          controls.map((control) => {
+            const icon = control.querySelector("svg")!.getBoundingClientRect();
+            return icon.top + icon.height / 2;
+          }),
+        );
+      expect(centers.length).toBeGreaterThanOrEqual(4);
+      expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
+        0.5,
+      );
+      await page.locator(".terminal-tabs-shell").screenshot({
+        path: `output/playwright/terminal-toolbar-${width}.png`,
+      });
+
+      const actions = page.getByLabel("Terminal actions", { exact: true });
+      const projects = page.getByLabel("Terminals in all projects", {
+        exact: true,
+      });
+      const history = page.getByLabel("Terminal command history", {
+        exact: true,
+      });
+      const openMenus = page.locator(".terminal-pane details[open]");
+      for (const trigger of [actions, projects, history, actions]) {
+        await trigger.focus();
+        await trigger.press("Enter");
+        await expect(openMenus).toHaveCount(1);
+        await expect(trigger.locator("..")).toHaveAttribute("open", "");
+      }
+      await page.getByRole("button", { name: "Rename", exact: true }).focus();
+      await page.keyboard.press("Escape");
+      await expect(openMenus).toHaveCount(0);
+      await expect(actions).toBeFocused();
+      await expect(page.locator(".ctx")).toBeVisible();
+
+      await history.focus();
+      await history.press("Enter");
+      await expect(openMenus).toHaveCount(1);
+      await history.press("Escape");
+      await expect(openMenus).toHaveCount(0);
+      await expect(history).toBeFocused();
+      await expect(page.locator(".ctx")).toBeVisible();
+
+      for (const shortcut of ["Control+Shift+Escape", "Meta+Shift+Escape"]) {
+        await page
+          .getByRole("button", { name: "Focus terminal", exact: true })
+          .click();
+        await expect(page.locator(".terminal-pane--focused")).toBeVisible();
+        await page.locator(".xterm-helper-textarea").first().focus();
+        await page.keyboard.press(shortcut);
+        await expect(page.locator(".terminal-pane--focused")).toHaveCount(0);
+        await expect(page.locator(".ctx")).toBeVisible();
+      }
+      if (width === 390) {
+        await history.press("Escape");
+        await expect(page.locator(".ctx")).toHaveCount(0);
+      }
+    }
+  } finally {
+    await page.request.delete(
+      `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
+    );
+  }
+});
+
+test("completion titles wrap within their column without hiding long filenames", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await input.fill("@TerminalSettingsDialog");
+    const option = page.getByRole("option", {
+      name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+      exact: true,
+    });
+    await expect(option).toBeVisible();
+    await expect(option.locator(".completion__title")).toHaveText(
+      "TerminalSettingsDialog.tsx",
+    );
+    await expect
+      .poll(async () =>
+        option.evaluate((element) => {
+          const title = element.querySelector(".completion__title")!;
+          const hint = element
+            .querySelector(".completion__hint")!
+            .getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(title);
+          return [...range.getClientRects()].every(
+            (rect) =>
+              rect.right <= hint.left &&
+              rect.left >= title.getBoundingClientRect().left,
+          );
+        }),
+      )
+      .toBe(true);
+  }
+});
+
+test("model labels and badges retain text contrast across both palettes and themes", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(page.locator(".model-picker__badge--active")).toBeVisible();
+  for (const palette of ["amber", "teal"]) {
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        ({ palette, theme }) => {
+          document.documentElement.dataset.palette = palette;
+          document.documentElement.dataset.theme = theme;
+        },
+        { palette, theme },
+      );
+      const result = await new AxeBuilder({ page })
+        .include(".model-picker__menu")
+        .withRules(["color-contrast"])
+        .analyze();
+      expect(result.violations, `${palette}/${theme}`).toEqual([]);
+    }
+  }
+});
+
 test("mock workbench pairs, clears its URL token, and opens context surfaces", async ({
   page,
 }) => {

@@ -14,7 +14,7 @@ interface ModalEntry {
   dialog: HTMLElement;
   restore: HTMLElement | null;
   /** Return false only when a host-level recovery key must take precedence. */
-  onEscape?: () => boolean | void;
+  onEscape?: (event: KeyboardEvent) => boolean | void;
 }
 
 const modalStack: ModalEntry[] = [];
@@ -40,7 +40,7 @@ function focusableElements(dialog: HTMLElement): HTMLElement[] {
 export function useModalFocus<T extends HTMLElement>(
   active = true,
   owner: unknown = active,
-  onEscape?: () => boolean | void,
+  onEscape?: (event: KeyboardEvent) => boolean | void,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const onEscapeRef = useRef(onEscape);
@@ -55,7 +55,7 @@ export function useModalFocus<T extends HTMLElement>(
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null,
-      onEscape: () => onEscapeRef.current?.(),
+      onEscape: (event) => onEscapeRef.current?.(event),
     };
     modalStack.push(entry);
 
@@ -72,10 +72,10 @@ export function useModalFocus<T extends HTMLElement>(
     const trapKeys = (event: KeyboardEvent) => {
       if (modalStack.at(-1) !== entry) return;
       if (event.key === "Escape") {
-        // A projection conflict is recoverable with the host-level Escape
-        // action even while an extension request is visible. All other
-        // modal owners consume Escape here, before shell shortcuts can see it.
-        if (entry.onEscape?.() === false) return;
+        // Explicit recovery (projection conflict or terminal focus exit) may
+        // pass to its registered owner. All other modal owners consume Escape
+        // here, before shell shortcuts can see it.
+        if (entry.onEscape?.(event) === false) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         return;
