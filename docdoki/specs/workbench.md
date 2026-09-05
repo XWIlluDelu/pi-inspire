@@ -10,6 +10,8 @@ covers:
   - shared/contracts.ts
   - server/app.ts
   - server/index.ts
+  - server/preferences.ts
+  - server/file-lock.mjs
   - server/static-asset-cache.d.mts
   - server/static-asset-cache.mjs
   - server/update-checker.ts
@@ -70,6 +72,8 @@ covers:
   - scripts/web-build-output.mjs
   - scripts/write-build-stamp.mjs
   - tests/server/app.test.ts
+  - tests/server/preferences.test.ts
+  - tests/portable/file-lock.test.mjs
   - tests/server/host-dirs.test.ts
   - tests/server/static-asset-cache.test.ts
   - tests/server/update-checker.test.ts
@@ -122,6 +126,10 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
 - Users can change the shared card default and can override an individual card without changing that saved preference.
 - The composer and host share one busy-state authority for `running`, `retrying`, `compacting`, and `queued`. Busy work presents steer, follow-up, and abort controls, including while input is queued; a prompt result may update only its sending session’s composer partition and may touch the visible global error only while that session remains visible. A session switch restores its draft and closes session-owned transient surfaces — project-file picker, drop state, model/thinking popovers, and completions — before the new owner paints.
 - Visible controls make core operations discoverable while keyboard shortcuts and a command interface accelerate the same operations instead of replacing them. The command palette groups existing Files, Changes, History, Terminal, terminal creation/control, and return-to-latest-branch actions alongside navigation, lifecycle, and preference controls; it does not create a second queue-inspection surface for immutable Pi-owned queued input. Its command filter and session rename value are independent: entering rename pre-fills the current presentation title, Escape returns to the original filter, and an unedited Enter never promotes a fallback title into Pi metadata. Renames are latest-request-wins per session, and an older completion cannot close a subsequently reopened rename editor. These action entries invoke existing store facades directly; a registry is warranted only when distinct visible, keyboard, and palette surfaces begin to duplicate one operation's capability or eligibility logic.
+
+## Implementation evidence
+
+[[portable-file-lock-races]] records the cross-Host locking boundary used by preference patches, launcher lifecycle, and web-build publication.
 
 ## Non-goals
 
