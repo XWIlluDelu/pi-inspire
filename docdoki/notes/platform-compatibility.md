@@ -1,5 +1,16 @@
 # Platform compatibility
 
+## Portable file-lock phase races
+
+`server/file-lock.mjs` keeps Linux's established kernel-flock protocol. macOS and Windows instead publish process-birth-bound participants in a Lamport bakery: `choosing-<token>.json` is atomically renamed to `ticket-<number>-<token>.json` before entry to the critical section.
+
+A directory listing and inspection of its entries are not one atomic observation. If a listed choosing file disappears before `lstat` or `readFile`, the owner may still be live under its ticket filename. Treating that `ENOENT` as departure admits two races:
+
+1. **Ticket selection:** an entrant misses an existing ticket, picks the same number, and can sort ahead of an owner already inside its critical section.
+2. **Entry check:** a scan misses a lower-priority-numbered ticket during its choosing-to-ticket rename and admits a second owner.
+
+Both ticket selection and entry checking must re-enumerate after a missing choosing entry. Rescans stay within the caller's acquisition deadline. A missing numbered ticket can still mean release, since numbered participants are never renamed to another phase and tokens are not reused. Ownership verification and stale-owner cleanup remain process-birth/token/inode bound.
+
 ## Terminal CI portability
 
 ### Match the supported runtime
