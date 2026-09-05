@@ -531,7 +531,7 @@ export function reduceEvent(
       slice.tools = {};
       slice.retry = null;
       slice.extensionUiRequests = [];
-      if (!slice.queue.managementAvailable) slice.queue = emptyPendingQueues();
+      slice.queue = emptyPendingQueues();
       changed = true;
       resync = true;
       break;

@@ -21,11 +21,9 @@ import {
 } from "../shared/message-identity.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
-import {
-  newestPendingQueues,
-  pendingQueuesFromRecord,
-} from "./runtime-pending.js";
+import { pendingQueuesFromTexts } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
+import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -58,6 +56,7 @@ interface RuntimeEventControllerHost {
     slot: RuntimeSlot,
     message: unknown,
     phase: "start" | "update" | "end",
+    delta?: ReducedAssistantDelta,
   ): unknown;
   addPendingExtensionUi(
     slot: RuntimeSlot,
@@ -279,6 +278,9 @@ export class RuntimeEventController {
             ? message
             : { ...messageRecord, [STREAM_REVISION_FIELD]: streamRevision },
           phase,
+          record.type === "message_update" && !suppliedCompleteMessage
+            ? { previous: previousMessage, event: record.assistantMessageEvent }
+            : undefined,
         );
         if (
           record.type === "message_start" &&
@@ -351,14 +353,10 @@ export class RuntimeEventController {
         break;
       }
       case "queue_update":
-        slot.pendingQueues = newestPendingQueues(
-          slot.pendingQueues,
-          pendingQueuesFromRecord(
-            record.pending,
-            record.steering,
-            record.followUp,
-            slot.pendingQueues.revision,
-          ),
+        slot.pendingQueues = pendingQueuesFromTexts(
+          record.steering,
+          record.followUp,
+          slot.pendingQueues.revision,
         );
         // Public Pi emits full-text arrays on queue updates. The browser
         // receives only the bounded Host projection.
@@ -442,12 +440,8 @@ export class RuntimeEventController {
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
-        // Public text-only Pi exposes a lossy projection and may leave
-        // image-only rows stale until settlement. Structured Pending publishes
-        // every authoritative drain and may intentionally remain paused.
-        if (!slot.pendingQueues.managementAvailable) {
-          slot.pendingQueues = emptyPendingQueues();
-        }
+        // Public Pi's text projection can leave image-only rows stale until settlement.
+        slot.pendingQueues = emptyPendingQueues();
         this.host.invalidateCatalog();
         this.host.scheduleIdleWorkerEviction();
         break;

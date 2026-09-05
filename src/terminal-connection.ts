@@ -36,6 +36,10 @@ const OWNER_KEY_PREFIX = "inspire:terminal-owner:";
 const MAX_PENDING_INPUT_BYTES = 1024 * 1024;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 const INITIAL_RECONNECT_DELAY_MS = 400;
+const CONNECT_TIMEOUT_MS = 10_000;
+const REPLAY_TIMEOUT_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const INACTIVITY_TIMEOUT_MS = 30_000;
 
 function sessionValue(key: string): string | null {
   try {
@@ -79,6 +83,11 @@ export class TerminalConnection {
   private generation = 0;
   private reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
   private reconnectTimer: number | null = null;
+  private deadlineTimer: number | null = null;
+  private heartbeatTimer: number | null = null;
+  private ticketRequest: AbortController | null = null;
+  private lastReceivedAt = 0;
+  private snapshotInProgress = false;
   private resume: TerminalResumeState = {};
   private descriptor: TerminalDescriptor | null = null;
   private replayComplete = false;
@@ -101,19 +110,21 @@ export class TerminalConnection {
     if (!this.stopped) return;
     this.stopped = false;
     this.callbacks.status("connecting");
+    document.addEventListener("visibilitychange", this.checkLiveness);
+    window.addEventListener("pageshow", this.checkLiveness);
+    window.addEventListener("online", this.checkLiveness);
     void this.connect(++this.generation);
   }
 
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.generation += 1;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
-    const socket = this.socket;
-    this.socket = null;
-    if (socket && socket.readyState < WebSocket.CLOSING)
-      socket.close(1000, "Terminal view detached");
+    document.removeEventListener("visibilitychange", this.checkLiveness);
+    window.removeEventListener("pageshow", this.checkLiveness);
+    window.removeEventListener("online", this.checkLiveness);
+    this.retireConnection();
     this.callbacks.status("offline");
   }
 
@@ -158,15 +169,21 @@ export class TerminalConnection {
 
   forceSnapshot(): void {
     this.resume = {};
-    const socket = this.socket;
-    if (socket?.readyState === WebSocket.OPEN)
-      socket.close(1012, "Terminal state needs resynchronization");
+    this.reconnect();
   }
 
   private async connect(generation: number): Promise<void> {
     try {
-      const { ticket } = await this.api.terminalAttachTicket(this.terminalId);
+      const request = new AbortController();
+      this.ticketRequest = request;
+      this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal ticket request timed out");
+      const { ticket } = await this.api.terminalAttachTicket(
+        this.terminalId,
+        request.signal,
+      );
       if (this.stopped || generation !== this.generation) return;
+      this.ticketRequest = null;
+      this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal connection timed out");
       const socket = new WebSocket(terminalUrl());
       socket.binaryType = "arraybuffer";
       this.socket = socket;
@@ -175,6 +192,7 @@ export class TerminalConnection {
           socket.close(1000, "Stale terminal connection");
           return;
         }
+        this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal attachment timed out");
         const dimensions = this.callbacks.dimensions();
         const request: TerminalAttachRequest = {
           type: "attach",
@@ -188,6 +206,7 @@ export class TerminalConnection {
       });
       socket.addEventListener("message", (event) => {
         if (this.stopped || generation !== this.generation) return;
+        this.lastReceivedAt = Date.now();
         try {
           if (event.data instanceof ArrayBuffer) {
             this.receiveData(decodeTerminalServerDataFrame(event.data));
@@ -209,16 +228,12 @@ export class TerminalConnection {
             error instanceof Error ? error.message : "Terminal data is invalid",
           );
           this.resume = {};
-          socket.close(1002, "Invalid terminal protocol");
+          this.reconnect();
         }
       });
       socket.addEventListener("close", () => {
-        if (this.socket === socket) this.socket = null;
-        this.writable = false;
-        this.replayComplete = false;
         if (this.stopped || generation !== this.generation) return;
-        this.callbacks.status("reconnecting");
-        this.scheduleReconnect();
+        this.reconnect();
       });
       socket.addEventListener("error", () => {
         // The close event owns retry and user-visible status.
@@ -228,8 +243,7 @@ export class TerminalConnection {
       this.callbacks.error(
         error instanceof Error ? error.message : "Terminal connection failed",
       );
-      this.callbacks.status("reconnecting");
-      this.scheduleReconnect();
+      this.reconnect();
     }
   }
 
@@ -279,7 +293,8 @@ export class TerminalConnection {
       this.descriptor = message.terminal;
       this.writable = message.writable;
       this.replayComplete = false;
-      if (message.replay === "snapshot") this.resume = {};
+      this.snapshotInProgress = message.replay === "snapshot";
+      if (this.snapshotInProgress) this.resume = {};
       else {
         this.resume.outputEpoch = message.terminal.outputEpoch;
         this.resume.resizeRevision = message.terminal.resizeRevision;
@@ -289,8 +304,7 @@ export class TerminalConnection {
         message.ownerToken,
         message.nextInputSequence,
       );
-      this.callbacks.status("connected");
-      this.reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+      this.armDeadline(REPLAY_TIMEOUT_MS, "Terminal replay timed out");
     } else if (message.type === "replay_complete") {
       if (
         this.resume.nextOutputOffset === undefined ||
@@ -300,6 +314,16 @@ export class TerminalConnection {
         throw new Error("Terminal replay did not reach the live edge");
       }
       this.replayComplete = true;
+      this.snapshotInProgress = false;
+      if (this.deadlineTimer !== null) window.clearTimeout(this.deadlineTimer);
+      this.deadlineTimer = null;
+      this.reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+      this.callbacks.status("connected");
+      if (this.heartbeatTimer === null)
+        this.heartbeatTimer = window.setInterval(() => {
+          this.checkLiveness();
+          this.sendControl({ type: "ping" });
+        }, HEARTBEAT_INTERVAL_MS);
       this.resendPendingInput();
     } else if (message.type === "input_ack") {
       this.acknowledgeInput(message.sequence);
@@ -378,6 +402,51 @@ export class TerminalConnection {
 
   private isSocketOpen(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  private readonly checkLiveness = (): void => {
+    if (
+      !this.stopped &&
+      this.replayComplete &&
+      Date.now() - this.lastReceivedAt >= INACTIVITY_TIMEOUT_MS
+    ) {
+      this.callbacks.error("Terminal connection stopped responding");
+      this.reconnect();
+    }
+  };
+
+  private armDeadline(milliseconds: number, message: string): void {
+    if (this.deadlineTimer !== null) window.clearTimeout(this.deadlineTimer);
+    this.deadlineTimer = window.setTimeout(() => {
+      this.callbacks.error(message);
+      this.reconnect();
+    }, milliseconds);
+  }
+
+  private retireConnection(): void {
+    // Invalidate callbacks before closing: close may be delayed or synchronous.
+    this.generation += 1;
+    if (this.deadlineTimer !== null) window.clearTimeout(this.deadlineTimer);
+    if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
+    this.deadlineTimer = null;
+    this.heartbeatTimer = null;
+    this.ticketRequest?.abort();
+    this.ticketRequest = null;
+    if (this.snapshotInProgress) this.resume = {};
+    this.snapshotInProgress = false;
+    this.writable = false;
+    this.replayComplete = false;
+    const socket = this.socket;
+    this.socket = null;
+    if (socket && socket.readyState < WebSocket.CLOSING)
+      socket.close(1000, "Terminal transport retired");
+  }
+
+  private reconnect(): void {
+    if (this.stopped) return;
+    this.retireConnection();
+    this.callbacks.status("reconnecting");
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {

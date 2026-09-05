@@ -41,7 +41,7 @@ export const MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
   Math.ceil(MAX_PROMPT_IMAGE_BYTES / 3) * 4 + MAX_ATTACHMENTS * 4;
 export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
-/** Pi's bounded process-lifetime Pending projection contract. */
+/** Bounded text-only projection of public Pi queue_update events. */
 export const MAX_PENDING_MESSAGES = 1_000;
 const MAX_PENDING_MESSAGE_ID_CHARS = 128;
 export const MAX_PENDING_PREVIEW_CHARS = 512;
@@ -172,6 +172,16 @@ export function projectionConflictSeverity(
 export interface SessionRuntimeStatus {
   runState: RunState;
   indicator?: SessionIndicator;
+  /** A worker-owned extension dialog is waiting for a response. */
+  needsInput?: boolean;
+}
+
+/** Socket-local transcript interest. Changing it establishes a fresh snapshot
+ * boundary without changing Host selection or another browser's interest. */
+export interface SessionDetailInterest {
+  type: "detail_interest";
+  sessionId: string | null;
+  revision: number;
 }
 
 export function isSessionRuntimeStatus(
@@ -181,7 +191,8 @@ export function isSessionRuntimeStatus(
   const status = value as Record<string, unknown>;
   return (
     isRunState(status.runState) &&
-    (status.indicator === undefined || isSessionIndicator(status.indicator))
+    (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
+    (status.needsInput === undefined || typeof status.needsInput === "boolean")
   );
 }
 
@@ -604,33 +615,12 @@ export interface PendingMessageSummary {
   textPreview: string;
   textLength: number;
   textTruncated: boolean;
-  imageCount: number;
-  nonTextContentCount: number;
 }
 
-export type PendingManagementAction =
-  | { action: "pause"; expectedRevision: number }
-  | { action: "resume"; expectedRevision: number }
-  | { action: "delete"; expectedRevision: number; messageId: string }
-  | { action: "clear"; expectedRevision: number }
-  | {
-      action: "convert";
-      expectedRevision: number;
-      messageId: string;
-      target: "steer" | "followUp";
-    };
-
-export type PendingManagementIntent =
-  PendingManagementAction extends infer Action
-    ? Action extends PendingManagementAction
-      ? Omit<Action, "expectedRevision">
-      : never
-    : never;
-
 export interface PendingQueues {
-  managementAvailable: boolean;
-  paused: boolean;
+  /** Host observation sequence, not a Pi revision or mutation precondition. */
   revision: number;
+  totalCount: number;
   steering: PendingMessageSummary[];
   followUp: PendingMessageSummary[];
 }
@@ -650,13 +640,7 @@ export function parsePendingMessageSummary(
     !Number.isSafeInteger(record.textLength) ||
     record.textLength < record.textPreview.length ||
     typeof record.textTruncated !== "boolean" ||
-    record.textTruncated !== record.textLength > record.textPreview.length ||
-    typeof record.imageCount !== "number" ||
-    !Number.isSafeInteger(record.imageCount) ||
-    record.imageCount < 0 ||
-    typeof record.nonTextContentCount !== "number" ||
-    !Number.isSafeInteger(record.nonTextContentCount) ||
-    record.nonTextContentCount < record.imageCount
+    record.textTruncated !== record.textLength > record.textPreview.length
   ) {
     return null;
   }
@@ -665,8 +649,6 @@ export function parsePendingMessageSummary(
     textPreview: record.textPreview,
     textLength: record.textLength,
     textTruncated: record.textTruncated,
-    imageCount: record.imageCount,
-    nonTextContentCount: record.nonTextContentCount,
   };
 }
 
@@ -676,12 +658,12 @@ export function parsePendingQueues(value: unknown): PendingQueues | null {
   if (
     !Number.isSafeInteger(record.revision) ||
     (record.revision as number) < 0 ||
-    typeof record.paused !== "boolean" ||
-    typeof record.managementAvailable !== "boolean" ||
-    (!record.managementAvailable && record.paused) ||
+    !Number.isSafeInteger(record.totalCount) ||
     !Array.isArray(record.steering) ||
     !Array.isArray(record.followUp) ||
-    record.steering.length + record.followUp.length > MAX_PENDING_MESSAGES
+    record.steering.length + record.followUp.length > MAX_PENDING_MESSAGES ||
+    (record.totalCount as number) <
+      record.steering.length + record.followUp.length
   ) {
     return null;
   }
@@ -696,8 +678,7 @@ export function parsePendingQueues(value: unknown): PendingQueues | null {
     return null;
   }
   return {
-    managementAvailable: record.managementAvailable,
-    paused: record.paused,
+    totalCount: record.totalCount as number,
     revision: record.revision as number,
     steering: steering as PendingMessageSummary[],
     followUp: followUp as PendingMessageSummary[],
@@ -706,8 +687,7 @@ export function parsePendingQueues(value: unknown): PendingQueues | null {
 
 export function emptyPendingQueues(): PendingQueues {
   return {
-    managementAvailable: false,
-    paused: false,
+    totalCount: 0,
     revision: 0,
     steering: [],
     followUp: [],

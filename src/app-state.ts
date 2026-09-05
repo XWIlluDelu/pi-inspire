@@ -16,7 +16,6 @@ import {
   type UpdateCheckResponse,
   type UserTurnAnchor,
 } from "../shared/contracts";
-import type { PendingManagementAction } from "./api";
 import type { PiCommand } from "./composer-completion";
 import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
@@ -221,7 +220,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * host resolving those same files into the outgoing message. */
   sending: boolean;
   /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: PendingManagementAction["action"] | null;
+  pendingAction: "clear" | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";

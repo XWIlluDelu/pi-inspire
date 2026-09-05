@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentStore,
   addAttachmentContext,
@@ -33,6 +33,8 @@ import type {
   SessionRecord,
 } from "../../server/session-catalog.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
+import { PreviewProjection } from "./fixtures/preview-projection.js";
+import { SessionProjection } from "../../server/session-projection.js";
 import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
@@ -57,7 +59,10 @@ class FakeRpc extends EventEmitter {
   constructor(readonly options: PiRpcOptions) {
     super();
     const marker = options.args?.indexOf("--session") ?? -1;
-    this.sessionPath = marker >= 0 ? resolve(options.args![marker + 1]!) : null;
+    this.sessionPath =
+      marker >= 0
+        ? resolve(options.args![marker + 1]!)
+        : join(fixtureWorkspace, "new-id.jsonl");
     this.sessionId = this.sessionPath
       ? basename(this.sessionPath, ".jsonl")
       : "new-id";
@@ -132,35 +137,23 @@ function pendingEntry(id: string, text: string) {
     textPreview: text,
     textLength: text.length,
     textTruncated: false,
-    imageCount: 0,
-    nonTextContentCount: 0,
-  };
-}
-
-function pendingState(
-  steering: string[] = [],
-  followUp: string[] = [],
-  options: { paused?: boolean; revision?: number } = {},
-) {
-  return {
-    paused: options.paused ?? false,
-    revision: options.revision ?? 0,
-    steering: steering.map((text, index) =>
-      pendingEntry(`steer-${index + 1}`, text),
-    ),
-    followUp: followUp.map((text, index) =>
-      pendingEntry(`follow-${index + 1}`, text),
-    ),
   };
 }
 
 const TEST_CWD = realpathSync(tmpdir());
-const HIDDEN_FOLDER_CWD = resolve("/folder");
+let fixtureWorkspace: string;
+let HIDDEN_FOLDER_CWD: string;
+
+function fixtureCwd(cwd: string): string {
+  return /^\/(project|folder|loose|ordinary|hidden|other)(\/|$)/u.test(cwd)
+    ? join(fixtureWorkspace, cwd.slice(1))
+    : cwd;
+}
 
 function record(id: string, cwd: string): SessionRecord {
   return {
     id,
-    cwd: cwd === "/tmp" ? TEST_CWD : resolve(cwd),
+    cwd: cwd === "/tmp" ? TEST_CWD : resolve(fixtureCwd(cwd)),
     path: resolve("/sessions", `${id}.jsonl`),
     source: null,
     created: new Date("2026-07-22T00:00:00Z"),
@@ -171,7 +164,49 @@ function record(id: string, cwd: string): SessionRecord {
   };
 }
 
-async function preview(session: SessionRecord): Promise<ActiveSessionSnapshot> {
+async function persistedRecord(id: string): Promise<SessionRecord> {
+  const session = record(id, fixtureWorkspace);
+  session.path = join(fixtureWorkspace, `${id}.jsonl`);
+  await writeFile(
+    session.path,
+    `${[
+      {
+        type: "session",
+        version: 3,
+        id,
+        cwd: session.cwd,
+        timestamp: session.created.toISOString(),
+      },
+      {
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: session.created.toISOString(),
+        message: { role: "user", content: `persisted:${id}`, timestamp: 1 },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n")}\n`,
+  );
+  return session;
+}
+
+async function waitForReady(runtime: RuntimeController, sessionId = "a") {
+  const slots = (
+    runtime as unknown as {
+      slots: Map<string, { ready: boolean }>;
+    }
+  ).slots;
+  await vi.waitFor(() => expect(slots.get(sessionId)?.ready).toBe(true));
+}
+
+async function preview(session: SessionRecord): Promise<PreviewProjection> {
+  return new PreviewProjection(session.id, await previewSnapshot(session));
+}
+
+async function previewSnapshot(
+  session: SessionRecord,
+): Promise<ActiveSessionSnapshot> {
   return {
     sessionId: session.id,
     sessionFile: session.path,
@@ -244,6 +279,27 @@ function upload(name: string, type: string): Express.Multer.File {
   } as Express.Multer.File;
 }
 
+beforeEach(async () => {
+  fixtureWorkspace = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-runtime-fixture-")),
+  );
+  workspaceDirectories.push(fixtureWorkspace);
+  await Promise.all(
+    [
+      "project/one",
+      "project/two",
+      "folder",
+      "loose",
+      "ordinary",
+      "hidden",
+      "other",
+    ].map((directory) =>
+      mkdir(join(fixtureWorkspace, directory), { recursive: true }),
+    ),
+  );
+  HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
+});
+
 afterEach(async () => {
   await Promise.all(attachments.splice(0).map((store) => store.close()));
   await Promise.all(
@@ -254,6 +310,115 @@ afterEach(async () => {
 });
 
 describe("browser-safe runtime projection", () => {
+  it("requires a real workspace even with an injected projection factory", async () => {
+    const session = record("a", join(fixtureWorkspace, "missing"));
+    const openProjection = vi.fn(preview);
+    const createProcess = vi.fn(
+      (options: PiRpcOptions) =>
+        new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      createProcess,
+      openProjection,
+    );
+    try {
+      await expect(runtime.openSession("a")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(openProjection).not.toHaveBeenCalled();
+      expect(createProcess).not.toHaveBeenCalled();
+      expect(runtime.activeSessionId).toBeNull();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("uses an explicitly wrapped real projection without changing persistence semantics", async () => {
+    const session = await persistedRecord("a");
+    const openProjection = vi.fn((record: SessionRecord) =>
+      SessionProjection.open(record),
+    );
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      openProjection,
+    );
+    try {
+      const snapshot = await runtime.openSession("a");
+      await waitForReady(runtime);
+      expect(openProjection).toHaveBeenCalledExactlyOnceWith(session);
+      expect(snapshot.active?.transcriptPage.messages).toEqual([
+        expect.objectContaining({ role: "user", content: "persisted:a" }),
+      ]);
+      expect(snapshot.active?.durableLeafId).toBe("u1");
+      await rm(session.path);
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "must not write" }),
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("reconciles an injected scheduling projection before admitting a writer command", async () => {
+    const session = record("a", "/tmp");
+    const projection = await preview(session);
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      async () => projection,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      const reconcile = vi
+        .spyOn(projection, "reconcile")
+        .mockRejectedValueOnce(new Error("pre-write reconciliation failed"));
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "must not write" }),
+      ).rejects.toThrow("pre-write reconciliation failed");
+      expect(reconcile).toHaveBeenCalledWith(true);
+      expect(worker.commands.some((command) => command.type === "prompt")).toBe(
+        false,
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("rejects a new worker without a session path regardless of projection injection", async () => {
+    let worker!: FakeRpc;
+    const openProjection = vi.fn(preview);
+    const runtime = new RuntimeController(
+      catalog([]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.sessionPath = null;
+        return worker as unknown as PiRpcProcess;
+      },
+      openProjection,
+    );
+    try {
+      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
+        "Pi did not report a session file",
+      );
+      expect(openProjection).not.toHaveBeenCalled();
+      expect(worker.stops).toBe(1);
+      expect(runtime.activeSessionId).toBeNull();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it.runIf(process.platform !== "win32")(
     "freezes one physical workspace root before starting slot-owned operations",
     async () => {
@@ -569,6 +734,7 @@ describe("RuntimeController concurrent sessions", () => {
       preview,
     );
     await runtime.openSession("a");
+    await waitForReady(runtime);
     worker.failPrompts = true;
 
     const doc = await store.add(upload("notes.txt", "text/plain"));
@@ -589,7 +755,7 @@ describe("RuntimeController concurrent sessions", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
+      catalog([await persistedRecord("a")]),
       store,
       (options) => {
         worker = new FakeRpc(options);
@@ -603,7 +769,6 @@ describe("RuntimeController concurrent sessions", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
     );
     await runtime.openSession("a");
     const doc = await store.add(upload("notes.txt", "text/plain"));
@@ -638,15 +803,15 @@ describe("RuntimeController concurrent sessions", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
+      catalog([await persistedRecord("a")]),
       store,
       (options) => {
         worker = new FakeRpc(options);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
     );
     await runtime.openSession("a");
+    await waitForReady(runtime);
     const slots = (
       runtime as unknown as {
         slots: Map<
@@ -692,15 +857,15 @@ describe("RuntimeController concurrent sessions", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
+      catalog([await persistedRecord("a")]),
       store,
       (options) => {
         worker = new FakeRpc(options);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
     );
     await runtime.openSession("a");
+    await waitForReady(runtime);
     const slot = (
       runtime as unknown as {
         slots: Map<
@@ -738,13 +903,12 @@ describe("RuntimeController concurrent sessions", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
+      catalog([await persistedRecord("a")]),
       store,
       (options) => {
         worker = new FakeRpc(options);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
     );
     await runtime.openSession("a");
     await runtime.prompt({ sessionId: "a", message: "accepted" });
@@ -877,12 +1041,65 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("retries an in-flight snapshot when selection changes", async () => {
-    const store = trackedAttachmentStore();
+  it.each([undefined, "a"])(
+    "keeps snapshot interest %s independent of concurrent Host selection",
+    async (interest) => {
+      const store = trackedAttachmentStore();
+      const workers: FakeRpc[] = [];
+      const runtime = new RuntimeController(
+        catalog([record("a", "/project"), record("b", "/project")]),
+        store,
+        (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      const restored = await runtime.snapshot("a");
+      expect(restored.active?.sessionId).toBe("a");
+      expect(runtime.activeSessionId).toBeNull();
+      expect(workers).toHaveLength(0);
+      await runtime.openSession("a");
+      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+
+      const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
+      const { promise: started, resolve: snapshotStarted } = deferredSignal();
+      const workerA = workers[0]!;
+      const request = workerA.request.bind(workerA);
+      workerA.request = async <T>(
+        command: Record<string, unknown>,
+      ): Promise<T> => {
+        if (command.type === "get_state") {
+          snapshotStarted();
+          await gate;
+        }
+        return request<T>(command);
+      };
+
+      const snapshotting = runtime.snapshot(interest);
+      await started;
+      await runtime.openSession("b");
+      releaseSnapshot();
+
+      const snapshot = await snapshotting;
+      expect(snapshot.active?.sessionId).toBe(interest ?? "b");
+      const globalOnly = await runtime.snapshot(null);
+      expect(globalOnly.active).toBeNull();
+      expect(Object.keys(globalOnly.sessionStatuses).sort()).toEqual([
+        "a",
+        "b",
+      ]);
+      expect(runtime.activeSessionId).toBe("b");
+      await runtime.close();
+    },
+  );
+
+  it("publishes and restores needs-input status for an independently observed worker", async () => {
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
-      store,
+      trackedAttachmentStore(),
       (options) => {
         const worker = new FakeRpc(options);
         workers.push(worker);
@@ -890,32 +1107,37 @@ describe("RuntimeController concurrent sessions", () => {
       },
       preview,
     );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-
-    const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
-    const { promise: started, resolve: snapshotStarted } = deferredSignal();
-    const workerA = workers[0]!;
-    const request = workerA.request.bind(workerA);
-    workerA.request = async <T>(
-      command: Record<string, unknown>,
-    ): Promise<T> => {
-      if (command.type === "get_state") {
-        snapshotStarted();
-        await gate;
-      }
-      return request<T>(command);
-    };
-
-    const snapshotting = runtime.snapshot();
-    await started;
-    await runtime.openSession("b");
-    releaseSnapshot();
-
-    const snapshot = await snapshotting;
-    expect(snapshot.active?.sessionId).toBe("b");
-    expect(runtime.activeSessionId).toBe("b");
-    await runtime.close();
+    try {
+      await runtime.openSession("a");
+      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+      await runtime.openSession("b");
+      const events: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => events.push(event));
+      workers[0]!.emit("event", {
+        type: "extension_ui_request",
+        id: "needs-answer",
+        method: "confirm",
+        title: "Proceed?",
+      });
+      expect(events.at(-1)?.sessionStatus).toMatchObject({
+        needsInput: true,
+        indicator: "attention",
+      });
+      const snapshot = await runtime.snapshot("a");
+      expect(snapshot.sessionStatuses.a?.needsInput).toBe(true);
+      expect(snapshot.pendingExtensionUiRequests?.[0]?.id).toBe("needs-answer");
+      await runtime.extensionUiResponse({
+        sessionId: "a",
+        id: "needs-answer",
+        confirmed: true,
+      });
+      expect(
+        (await runtime.snapshot("a")).sessionStatuses.a?.needsInput,
+      ).toBeUndefined();
+      expect(runtime.activeSessionId).toBe("b");
+    } finally {
+      await runtime.close();
+    }
   });
 
   it("loads resource messages from the host projection without get_messages", async () => {
@@ -978,8 +1200,8 @@ describe("RuntimeController concurrent sessions", () => {
         return worker as unknown as PiRpcProcess;
       },
       async (session) => {
-        const value = await preview(session);
-        return {
+        const value = await previewSnapshot(session);
+        return new PreviewProjection(session.id, {
           ...value,
           transcriptPage: {
             ...value.transcriptPage,
@@ -994,7 +1216,7 @@ describe("RuntimeController concurrent sessions", () => {
               },
             ],
           },
-        };
+        });
       },
     );
     await runtime.openSession("a");
@@ -1077,14 +1299,14 @@ describe("RuntimeController concurrent sessions", () => {
         return worker as unknown as PiRpcProcess;
       },
       async (session) => {
-        const value = await preview(session);
-        return {
+        const value = await previewSnapshot(session);
+        return new PreviewProjection(session.id, {
           ...value,
           transcriptPage: {
             ...value.transcriptPage,
             messages: [{ role: "user", content: historicalText, timestamp: 1 }],
           },
-        };
+        });
       },
     );
     await runtime.openSession("a");
@@ -1497,11 +1719,12 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.openSession("a");
     await runtime.openSession("b");
     await runtime.openSession("c");
+    await waitForReady(runtime, "c");
     expect(workers).toHaveLength(3);
     expect(workers.map((worker) => worker.options.cwd)).toEqual([
-      resolve("/project/one"),
-      resolve("/project/one"),
-      resolve("/project/two"),
+      fixtureCwd("/project/one"),
+      fixtureCwd("/project/one"),
+      fixtureCwd("/project/two"),
     ]);
     expect(workers.every((worker) => worker.stops === 0)).toBe(true);
 
@@ -1513,7 +1736,7 @@ describe("RuntimeController concurrent sessions", () => {
     expect(workers.every((worker) => worker.stops === 1)).toBe(true);
   });
 
-  it("bounds the idle worker cache without stopping busy, paused, or extension-blocked sessions", async () => {
+  it("bounds the idle worker cache without stopping busy, queued, or extension-blocked sessions", async () => {
     const store = trackedAttachmentStore();
     const ids = ["a", "b", "c", "d", "e", "f", "g"];
     const workers: FakeRpc[] = [];
@@ -1533,19 +1756,21 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await runtime.openSession("a");
+    await waitForReady(runtime, "a");
     workers[0]!.emit("event", { type: "agent_start" });
     await runtime.openSession("b");
+    await waitForReady(runtime, "b");
     workers[1]!.emit("event", {
       type: "extension_ui_request",
       id: "question-b",
       method: "confirm",
     });
     await runtime.openSession("c");
+    await waitForReady(runtime, "c");
     workers[2]!.emit("event", {
       type: "queue_update",
       steering: ["parked"],
       followUp: [],
-      pending: pendingState(["parked"], [], { paused: true, revision: 2 }),
     });
     for (const id of ids.slice(3)) await runtime.openSession(id);
 
@@ -1556,7 +1781,7 @@ describe("RuntimeController concurrent sessions", () => {
     );
     expect(workers[0]!.stops).toBe(0); // busy
     expect(workers[1]!.stops).toBe(0); // awaiting extension input
-    expect(workers[2]!.stops).toBe(0); // paused Pending owns worker memory
+    expect(workers[2]!.stops).toBe(0); // queued input owns worker memory
 
     workers[0]!.emit("event", { type: "agent_settled" });
     await runtime.extensionUiResponse({
@@ -1575,7 +1800,6 @@ describe("RuntimeController concurrent sessions", () => {
       type: "queue_update",
       steering: [],
       followUp: [],
-      pending: pendingState([], [], { revision: 3 }),
     });
     await vi.waitFor(() =>
       expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
@@ -1996,7 +2220,7 @@ describe("RuntimeController concurrent sessions", () => {
         worker = new FakeRpc(options);
         // Match Pi's normal new-session behavior: it reserves a JSONL pathname
         // before the first prompt, but has not written a thinking-level entry.
-        worker.sessionPath = join(TEST_CWD, "new-id.jsonl");
+        worker.sessionPath = join(fixtureWorkspace, "new-id.jsonl");
         const request = worker.request.bind(worker);
         worker.request = async <T>(
           command: Record<string, unknown>,
@@ -2078,7 +2302,9 @@ describe("RuntimeController concurrent sessions", () => {
         indicator: "completed",
       });
     });
-    expect(events.at(-1)).toMatchObject({
+    expect(
+      events.findLast((event) => event.type === "agent_settled"),
+    ).toMatchObject({
       type: "agent_settled",
       sessionId: "a",
       sessionStatus: { indicator: "completed" },
@@ -2197,8 +2423,7 @@ describe("RuntimeController concurrent sessions", () => {
       followUp: ["later"],
     });
     expect((await runtime.snapshot()).pendingQueues).toEqual({
-      managementAvailable: false,
-      paused: false,
+      totalCount: 3,
       revision: 1,
       steering: [
         pendingEntry("text-steer-0", "first"),
@@ -2217,7 +2442,7 @@ describe("RuntimeController concurrent sessions", () => {
       followUp: ["bounded-out"],
     });
     expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-      managementAvailable: false,
+      totalCount: 1_002,
       revision: 2,
       steering: { length: 1_000 },
       followUp: [],
@@ -2226,8 +2451,7 @@ describe("RuntimeController concurrent sessions", () => {
     worker.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () =>
       expect((await runtime.snapshot()).pendingQueues).toEqual({
-        managementAvailable: false,
-        paused: false,
+        totalCount: 0,
         revision: 0,
         steering: [],
         followUp: [],
@@ -2241,8 +2465,7 @@ describe("RuntimeController concurrent sessions", () => {
     });
     worker.emit("exit", new Error("replacement required"));
     expect((await runtime.snapshot()).pendingQueues).toEqual({
-      managementAvailable: false,
-      paused: false,
+      totalCount: 0,
       revision: 0,
       steering: [],
       followUp: [],
@@ -2250,7 +2473,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("revision-checks Pending management and fetches exact text only on demand", async () => {
+  it("clears the public Pi queue at its current boundary without rewriting newer projections", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
@@ -2269,89 +2492,44 @@ describe("RuntimeController concurrent sessions", () => {
       forwarded.push(event as Record<string, unknown>),
     );
 
-    const active = pendingState(["first"], ["later"], { revision: 4 });
     worker.emit("event", {
       type: "queue_update",
       steering: ["first"],
       followUp: ["later"],
-      pending: active,
     });
     expect(forwarded.at(-1)).toMatchObject({
       type: "queue_update",
-      pendingQueues: { managementAvailable: true, revision: 4 },
+      pendingQueues: { totalCount: 2, revision: 1 },
     });
     expect(forwarded.at(-1)).not.toHaveProperty("steering");
     expect(forwarded.at(-1)).not.toHaveProperty("followUp");
-    expect(forwarded.at(-1)).not.toHaveProperty("pending");
-    const paused = pendingState(["first"], ["later"], {
-      paused: true,
-      revision: 5,
+    worker.responseOverrides.set("clear_queue", () => {
+      // Pi consumed 'first' before the operation, cleared 'later', then
+      // another producer queued new work before the HTTP receipt arrived.
+      worker.emit("event", {
+        type: "queue_update",
+        steering: [],
+        followUp: [],
+      });
+      worker.emit("event", {
+        type: "queue_update",
+        steering: ["new"],
+        followUp: [],
+      });
+      return { steering: [], followUp: ["later"] };
     });
-    worker.responseOverrides.set("pause_pending", paused);
-
-    await expect(
-      runtime.managePending("a", { action: "pause", expectedRevision: 3 }),
-    ).rejects.toMatchObject({ status: 409 });
-    const result = await runtime.managePending("a", {
-      action: "pause",
-      expectedRevision: 4,
+    await expect(runtime.clearPending("a")).resolves.toBeUndefined();
+    expect(
+      worker.commands.filter((command) => command.type === "clear_queue"),
+    ).toEqual([{ type: "clear_queue" }]);
+    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
+      totalCount: 1,
+      steering: [{ textPreview: "new" }],
+      followUp: [],
     });
-    expect(result).toEqual({ managementAvailable: true, ...paused });
-    expect(worker.commands.at(-1)).toEqual({
-      type: "pause_pending",
-      expectedRevision: 4,
-    });
-
-    worker.emit("event", {
-      type: "queue_update",
-      pending: pendingState(["stale"], [], { revision: 4 }),
-    });
-    expect((await runtime.snapshot()).pendingQueues).toEqual({
-      managementAvailable: true,
-      ...paused,
-    });
-
-    worker.responseOverrides.set(
-      "get_pending_message_texts",
-      (command: Record<string, unknown>) => ({
-        messages: (command.messageIds as string[]).map((id) => ({
-          id,
-          text: id === "steer-1" ? "first" : "later",
-        })),
-      }),
+    expect(worker.commands.some((command) => command.type === "abort")).toBe(
+      false,
     );
-    await expect(
-      runtime.pendingMessageTexts("a", ["steer-1", "follow-1"]),
-    ).resolves.toEqual([
-      { id: "steer-1", text: "first" },
-      { id: "follow-1", text: "later" },
-    ]);
-    expect(worker.commands.slice(-2)).toEqual([
-      {
-        type: "get_pending_message_texts",
-        messageIds: ["steer-1"],
-        expectedRevision: 5,
-      },
-      {
-        type: "get_pending_message_texts",
-        messageIds: ["follow-1"],
-        expectedRevision: 5,
-      },
-    ]);
-
-    const largeText = "x".repeat(3 * 1024 * 1024);
-    worker.responseOverrides.set(
-      "get_pending_message_texts",
-      (command: Record<string, unknown>) => ({
-        messages: (command.messageIds as string[]).map((id) => ({
-          id,
-          text: largeText,
-        })),
-      }),
-    );
-    await expect(
-      runtime.pendingMessageTexts("a", ["steer-1", "follow-1"]),
-    ).rejects.toMatchObject({ status: 413 });
     await runtime.close();
   });
 
@@ -3193,7 +3371,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("rejects a Hidden clear before moving any session when Pending is paused", async () => {
+  it("rejects a Hidden clear before moving any session with queued input", async () => {
     const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "trashed" as const);
@@ -3212,17 +3390,14 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await runtime.openSession("a");
+    await waitForReady(runtime);
     const worker = workers.get("a")!;
-    await vi.waitFor(() => expect(worker.starts).toBe(1));
     worker.emit("event", {
       type: "queue_update",
-      steering: [],
+      steering: ["waiting"],
       followUp: [],
-      pending: pendingState([], [], { paused: true, revision: 1 }),
     });
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).pendingQueues?.paused).toBe(true),
-    );
+    expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
     await runtime.openSession("ordinary");
 
     await expect(
@@ -3336,7 +3511,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("refuses to delete an unselected session while Pending is paused", async () => {
+  it("refuses to delete an unselected session with queued input", async () => {
     const store = trackedAttachmentStore();
     const workers = new Map<string, FakeRpc>();
     const remove = vi.fn(async () => "trashed" as const);
@@ -3355,17 +3530,14 @@ describe("RuntimeController concurrent sessions", () => {
     );
 
     await runtime.openSession("a");
+    await waitForReady(runtime);
     const worker = workers.get("a")!;
-    await vi.waitFor(() => expect(worker.starts).toBe(1));
     worker.emit("event", {
       type: "queue_update",
-      steering: [],
+      steering: ["waiting"],
       followUp: [],
-      pending: pendingState([], [], { paused: true, revision: 1 }),
     });
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).pendingQueues?.paused).toBe(true),
-    );
+    expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
     await runtime.openSession("b");
 
     await expect(runtime.deleteSession("a")).rejects.toMatchObject({

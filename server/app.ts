@@ -14,11 +14,11 @@ import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js
 import {
   type BootstrapResponse,
   type GitDiffSide,
+  isSessionRuntimeStatus,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_CURATED_SESSION_RESULTS,
-  MAX_PENDING_MESSAGES,
   MAX_PROJECT_FILES,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_CHARS,
@@ -179,59 +179,7 @@ const runtimeDeliveryModeSchema = z
     mode: z.enum(["all", "one-at-a-time"]),
   })
   .strict();
-const pendingManagementSchema = z.discriminatedUnion("action", [
-  z
-    .object({
-      sessionId: sessionIdField,
-      action: z.literal("pause"),
-      expectedRevision: z.number().int().nonnegative(),
-    })
-    .strict(),
-  z
-    .object({
-      sessionId: sessionIdField,
-      action: z.literal("resume"),
-      expectedRevision: z.number().int().nonnegative(),
-    })
-    .strict(),
-  z
-    .object({
-      sessionId: sessionIdField,
-      action: z.literal("delete"),
-      expectedRevision: z.number().int().nonnegative(),
-      messageId: z.string().min(1).max(200),
-    })
-    .strict(),
-  z
-    .object({
-      sessionId: sessionIdField,
-      action: z.literal("clear"),
-      expectedRevision: z.number().int().nonnegative(),
-    })
-    .strict(),
-  z
-    .object({
-      sessionId: sessionIdField,
-      action: z.literal("convert"),
-      expectedRevision: z.number().int().nonnegative(),
-      messageId: z.string().min(1).max(200),
-      target: z.enum(["steer", "followUp"]),
-    })
-    .strict(),
-]);
-const pendingMessageTextsSchema = z
-  .object({
-    sessionId: sessionIdField,
-    messageIds: z
-      .array(z.string().min(1).max(128))
-      .min(1)
-      .max(MAX_PENDING_MESSAGES),
-  })
-  .strict()
-  .refine(
-    ({ messageIds }) => new Set(messageIds).size === messageIds.length,
-    "messageIds must be unique",
-  );
+const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
 const renameSchema = z.object({
   sessionId: sessionIdField,
   name: z.string().max(160),
@@ -345,6 +293,12 @@ const transcriptPageSchema = z.object({
   sessionId: sessionIdField,
   cursor: z.string().min(1).max(2_048),
 });
+const assistantTextSchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(512),
+  })
+  .strict();
 const transcriptOlderPageSchema = transcriptPageSchema.extend({
   deferActivity: z.literal("1").optional(),
 });
@@ -994,7 +948,14 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
 
-  app.get("/api/bootstrap", async (_request, response) => {
+  const requestedDetail = (value: unknown): string | null | undefined =>
+    value === undefined
+      ? undefined
+      : value === ""
+        ? null
+        : sessionIdField.parse(value);
+
+  app.get("/api/bootstrap", async (request, response) => {
     const startedAt = performance.now();
     const [
       preferenceState,
@@ -1011,7 +972,7 @@ export function createInspireServer(deps: AppDependencies): {
           }),
       deps.availableModels ? deps.availableModels() : Promise.resolve([]),
       updateCoordinator.status(),
-      deps.runtime.snapshot(),
+      deps.runtime.snapshot(requestedDetail(request.query.detail)),
     ]);
     const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
@@ -1261,22 +1222,10 @@ export function createInspireServer(deps: AppDependencies): {
     await deps.runtime.abort(sessionId);
     response.json({ ok: true });
   });
-  app.post("/api/pending", async (request, response) => {
-    const { sessionId, ...management } = pendingManagementSchema.parse(
-      request.body,
-    );
-    response.json({
-      pendingQueues: await deps.runtime.managePending(sessionId, management),
-    });
-  });
-  app.post("/api/pending/text", async (request, response) => {
-    const { sessionId, messageIds } = pendingMessageTextsSchema.parse(
-      request.body,
-    );
-    response.setHeader("Cache-Control", "no-store");
-    response.json({
-      messages: await deps.runtime.pendingMessageTexts(sessionId, messageIds),
-    });
+  app.post("/api/pending/clear", async (request, response) => {
+    const { sessionId } = clearPendingSchema.parse(request.body);
+    await deps.runtime.clearPending(sessionId);
+    response.json({ ok: true });
   });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);
@@ -1499,8 +1448,10 @@ export function createInspireServer(deps: AppDependencies): {
   app.patch("/api/preferences", async (request, response) => {
     response.json(await deps.preferences.patch(request.body));
   });
-  app.get("/api/snapshot", async (_request, response) =>
-    response.json(await deps.runtime.snapshot()),
+  app.get("/api/snapshot", async (request, response) =>
+    response.json(
+      await deps.runtime.snapshot(requestedDetail(request.query.detail)),
+    ),
   );
   app.get("/api/transcript/older", async (request, response) => {
     const { sessionId, cursor, deferActivity } =
@@ -1526,6 +1477,10 @@ export function createInspireServer(deps: AppDependencies): {
       request.query,
     );
     response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
+  });
+  app.get("/api/transcript/assistant-text", async (request, response) => {
+    const { sessionId, viewId } = assistantTextSchema.parse(request.query);
+    response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
   });
   app.get("/api/composer/history", async (request, response) => {
     const { sessionId, start } = composerHistorySchema.parse(request.query);
@@ -1647,6 +1602,18 @@ export function createInspireServer(deps: AppDependencies): {
   const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
   const responsiveSockets = new Map<WebSocket, boolean>();
   const requestedSnapshotDigests = new WeakMap<WebSocket, string | null>();
+  const detailInterests = new WeakMap<
+    WebSocket,
+    { sessionId: string | null; revision: number }
+  >();
+  const backgroundStatuses = new WeakMap<WebSocket, Map<string, string>>();
+  const wantsDetail = (socket: WebSocket, sessionId: string): boolean =>
+    detailInterests.get(socket)?.sessionId === sessionId;
+  interface EventDestinations {
+    joining: boolean;
+    established: boolean;
+    sessionId?: string;
+  }
   interface PendingStreamBatch {
     key: string;
     events: unknown[];
@@ -1752,9 +1719,14 @@ export function createInspireServer(deps: AppDependencies): {
   const broadcastEncoded = (
     message: string,
     messageBytes: number,
-    destinations: { joining: boolean; established: boolean },
+    destinations: EventDestinations,
   ): void => {
     for (const socket of sockets) {
+      if (
+        destinations.sessionId &&
+        !wantsDetail(socket, destinations.sessionId)
+      )
+        continue;
       const queue = joining.get(socket);
       if (queue) {
         if (!destinations.joining) continue;
@@ -1782,9 +1754,14 @@ export function createInspireServer(deps: AppDependencies): {
   };
   const closeProjectionDestinations = (
     reason: string,
-    destinations: { joining: boolean; established: boolean },
+    destinations: EventDestinations,
   ): void => {
     for (const socket of sockets) {
+      if (
+        destinations.sessionId &&
+        !wantsDetail(socket, destinations.sessionId)
+      )
+        continue;
       const isJoining = joining.has(socket);
       if (
         (isJoining && destinations.joining) ||
@@ -1805,25 +1782,27 @@ export function createInspireServer(deps: AppDependencies): {
     delete batch.streamDelta;
     batch.type = "message_update_batch";
     batch.assistantMessageEvents = pending.events;
+    const destinations = {
+      joining: false,
+      established: true,
+      sessionId: String(batch.sessionId),
+    };
     const encoded = serializeRuntimeEvent(batch);
     if (!encoded) {
-      closeProjectionDestinations("Runtime event was not serializable", {
-        joining: false,
-        established: true,
-      });
+      closeProjectionDestinations(
+        "Runtime event was not serializable",
+        destinations,
+      );
       return;
     }
     if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-      closeProjectionDestinations("Runtime event exceeded projection budget", {
-        joining: false,
-        established: true,
-      });
+      closeProjectionDestinations(
+        "Runtime event exceeded projection budget",
+        destinations,
+      );
       return;
     }
-    broadcastEncoded(encoded.message, encoded.bytes, {
-      joining: false,
-      established: true,
-    });
+    broadcastEncoded(encoded.message, encoded.bytes, destinations);
   };
   const scheduleStreamBatch = (): void => {
     if (streamBatchTimer) return;
@@ -1833,11 +1812,100 @@ export function createInspireServer(deps: AppDependencies): {
     );
     streamBatchTimer.unref();
   };
+  // Preserve global operation ownership and outcomes, never their bodies.
+  const globalLifecycle = new Set([
+    "agent_start",
+    "auto_retry_start",
+    "compaction_start",
+    "compaction_end",
+    "agent_settled",
+    "runtime_error",
+    "runtime_ready",
+  ]);
+  const compactStatus = (
+    record: Record<string, unknown>,
+    sessionId: string,
+  ): string | null => {
+    const sourceStatus = record.sessionStatus;
+    const status = isSessionRuntimeStatus(sourceStatus)
+      ? {
+          runState: sourceStatus.runState,
+          ...(sourceStatus.indicator
+            ? { indicator: sourceStatus.indicator }
+            : {}),
+          ...(sourceStatus.needsInput !== undefined
+            ? { needsInput: sourceStatus.needsInput }
+            : {}),
+        }
+      : undefined;
+    const lifecycle = globalLifecycle.has(String(record.type));
+    if (!status && !lifecycle) return null;
+    return JSON.stringify({
+      type: lifecycle ? record.type : "session_status",
+      sessionId,
+      ...(status ? { sessionStatus: status } : {}),
+      ...(record.type === "compaction_start"
+        ? { reason: record.reason === "manual" ? "manual" : "auto" }
+        : {}),
+      ...(record.type === "compaction_end"
+        ? {
+            result: record.result == null ? null : {},
+            aborted: record.aborted === true,
+            ...(typeof record.errorMessage === "string" &&
+            record.errorMessage.trim()
+              ? { errorMessage: "Compaction failed" }
+              : {}),
+          }
+        : {}),
+    });
+  };
+  const publishBackgroundStatus = (
+    record: Record<string, unknown>,
+    sessionId: string,
+  ): void => {
+    const compact = compactStatus(record, sessionId);
+    if (!compact) return;
+    const lifecycle = globalLifecycle.has(String(record.type));
+    const statusKey = isSessionRuntimeStatus(record.sessionStatus)
+      ? JSON.stringify(record.sessionStatus)
+      : undefined;
+    for (const socket of sockets) {
+      if (wantsDetail(socket, sessionId)) continue;
+      const statuses =
+        backgroundStatuses.get(socket) ?? new Map<string, string>();
+      backgroundStatuses.set(socket, statuses);
+      if (
+        !lifecycle &&
+        (statusKey === undefined || statuses.get(sessionId) === statusKey)
+      )
+        continue;
+      if (statusKey !== undefined) statuses.set(sessionId, statusKey);
+      const queue = joining.get(socket);
+      if (queue) {
+        const bytes = Buffer.byteLength(compact);
+        if (queue.bytes + bytes > MAX_JOINING_EVENT_BYTES)
+          closeLaggingSocket(socket, "Snapshot backlog exceeded");
+        else {
+          queue.messages.push(compact);
+          queue.bytes += bytes;
+        }
+      } else sendBounded(socket, compact);
+    }
+  };
   const publishRuntimeEvent = (event: unknown): void => {
     const record =
       event && typeof event === "object" && !Array.isArray(event)
         ? (event as Record<string, unknown>)
         : null;
+    const sessionId =
+      typeof record?.sessionId === "string" ? record.sessionId : undefined;
+    const destinations = { joining: true, established: true, sessionId };
+    if (sessionId && record) {
+      publishBackgroundStatus(record, sessionId);
+      // Do not even serialize a session body nobody subscribed to.
+      if (![...sockets].some((socket) => wantsDetail(socket, sessionId)))
+        return;
+    }
     const streamDelta =
       record?.type === "message_update" &&
       record.streamDelta === true &&
@@ -1849,10 +1917,10 @@ export function createInspireServer(deps: AppDependencies): {
       if (!encoded) {
         // A transport projection failure must not throw back through the
         // runtime operation that emitted it. Re-bootstrap every client.
-        closeProjectionDestinations("Runtime event was not serializable", {
-          joining: true,
-          established: true,
-        });
+        closeProjectionDestinations(
+          "Runtime event was not serializable",
+          destinations,
+        );
         return;
       }
       if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
@@ -1860,18 +1928,12 @@ export function createInspireServer(deps: AppDependencies): {
         // one exceptional object into every browser socket.
         closeProjectionDestinations(
           "Runtime event exceeded projection budget",
-          {
-            joining: true,
-            established: true,
-          },
+          destinations,
         );
         return;
       }
       flushStreamBatch();
-      broadcastEncoded(encoded.message, encoded.bytes, {
-        joining: true,
-        established: true,
-      });
+      broadcastEncoded(encoded.message, encoded.bytes, destinations);
       return;
     }
 
@@ -1881,12 +1943,17 @@ export function createInspireServer(deps: AppDependencies): {
     // cumulative-message stringify entirely when every socket is established;
     // otherwise that hidden O(response length × fragments) cost survives even
     // after wire deltas have removed the redundant network bytes.
-    if (joining.size > 0) {
+    if (
+      [...joining.keys()].some((socket) =>
+        wantsDetail(socket, String(sessionId)),
+      )
+    ) {
       const complete = serializeRuntimeEvent(event);
       if (!complete) {
         closeProjectionDestinations("Runtime event was not serializable", {
           joining: true,
           established: false,
+          sessionId,
         });
       } else if (complete.bytes > MAX_RUNTIME_EVENT_BYTES) {
         closeProjectionDestinations(
@@ -1894,17 +1961,22 @@ export function createInspireServer(deps: AppDependencies): {
           {
             joining: true,
             established: false,
+            sessionId,
           },
         );
       } else {
         broadcastEncoded(complete.message, complete.bytes, {
           joining: true,
           established: false,
+          sessionId,
         });
       }
     }
     const hasEstablishedSocket = [...sockets].some(
-      (socket) => !joining.has(socket) && socket.readyState === WebSocket.OPEN,
+      (socket) =>
+        !joining.has(socket) &&
+        socket.readyState === WebSocket.OPEN &&
+        wantsDetail(socket, String(sessionId)),
     );
     if (!hasEstablishedSocket) return;
 
@@ -1916,6 +1988,7 @@ export function createInspireServer(deps: AppDependencies): {
       closeProjectionDestinations("Runtime event was not serializable", {
         joining: false,
         established: true,
+        sessionId,
       });
       return;
     }
@@ -1995,7 +2068,17 @@ export function createInspireServer(deps: AppDependencies): {
       return;
     }
     if (url.pathname === "/events" && eventsAuthenticated && originIsAllowed) {
+      const detail = url.searchParams.get("detail");
+      if (
+        detail !== null &&
+        detail !== "" &&
+        !sessionIdField.safeParse(detail).success
+      ) {
+        socket.destroy();
+        return;
+      }
       websocket.handleUpgrade(request, socket, head, (client) => {
+        detailInterests.set(client, { sessionId: detail || null, revision: 0 });
         const requestedDigest = url.searchParams.get("snapshot");
         requestedSnapshotDigests.set(
           client,
@@ -2150,7 +2233,6 @@ export function createInspireServer(deps: AppDependencies): {
     // its first delta arrived. Flush before admitting a new snapshot reader.
     flushStreamBatch();
     sockets.add(socket);
-    joining.set(socket, { messages: [], bytes: 0 });
     responsiveSockets.set(socket, true);
     socket.on("pong", () => responsiveSockets.set(socket, true));
     socket.on("error", () => {
@@ -2158,46 +2240,102 @@ export function createInspireServer(deps: AppDependencies): {
       socket.terminate();
     });
     socket.on("close", () => forgetSocket(socket));
-    void Promise.all([
-      deps.runtime.snapshot(),
-      updateCoordinator.status(),
-    ]).then(
-      ([snapshot, updateStatus]) => {
-        const queued = joining.get(socket);
-        // Pending batches exclude this joining socket, which already queued
-        // their complete projections. Flush before it becomes established.
+    const synchronize = (): void => {
+      flushStreamBatch();
+      const previous = joining.get(socket);
+      const queue = {
+        messages: previous?.messages ?? [],
+        bytes: previous?.bytes ?? 0,
+      };
+      joining.set(socket, queue);
+      const interest = detailInterests.get(socket);
+      void Promise.all([
+        deps.runtime.snapshot(interest?.sessionId),
+        updateCoordinator.status(),
+      ]).then(
+        ([snapshot, updateStatus]) => {
+          const queued = joining.get(socket);
+          if (queued !== queue) return;
+          // Pending batches exclude this joining socket, which already queued
+          // their complete projections. Flush before it becomes established.
+          flushStreamBatch();
+          joining.delete(socket);
+          if (!queued || socket.readyState !== WebSocket.OPEN) return;
+          let message: string;
+          try {
+            const encodedSnapshot = JSON.stringify(snapshot);
+            const snapshotDigest = createHash("sha256")
+              .update(encodedSnapshot)
+              .digest("hex");
+            const unchanged =
+              requestedSnapshotDigests.get(socket) === snapshotDigest;
+            message = JSON.stringify({
+              type: "snapshot",
+              authorityId,
+              snapshotDigest,
+              updateStatus,
+              ...(interest
+                ? {
+                    detailSessionId: interest.sessionId,
+                    detailRevision: interest.revision,
+                  }
+                : {}),
+              ...(unchanged ? { unchanged: true } : { data: snapshot }),
+            });
+          } catch {
+            socket.close(1011, "Session state was not serializable");
+            return;
+          }
+          if (!sendBounded(socket, message)) return;
+          for (const message of queued.messages) {
+            // A superseded read may have queued detail for the previous owner.
+            // Retain its global lifecycle evidence, never replay its body.
+            const record = JSON.parse(message) as Record<string, unknown>;
+            const id =
+              typeof record.sessionId === "string" ? record.sessionId : null;
+            const projected =
+              id && !wantsDetail(socket, id)
+                ? compactStatus(record, id)
+                : message;
+            if (projected && !sendBounded(socket, projected)) break;
+          }
+        },
+        () => {
+          if (joining.get(socket) !== queue) return;
+          joining.delete(socket);
+          socket.close(1011, "Unable to load session state");
+        },
+      );
+    };
+    socket.on("message", (data, binary) => {
+      try {
+        if (
+          binary ||
+          Buffer.byteLength(data.toString()) > MAX_SESSION_ID_CHARS * 6 + 256
+        )
+          throw new Error("Invalid interest");
+        const interest = z
+          .object({
+            type: z.literal("detail_interest"),
+            sessionId: sessionIdField.nullable(),
+            revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+          })
+          .strict()
+          .parse(JSON.parse(data.toString()));
+        if (interest.revision <= (detailInterests.get(socket)?.revision ?? 0))
+          throw new Error("Stale interest");
+        // Flush under the OLD audience, then begin the NEW snapshot queue
+        // synchronously, before any asynchronous runtime read can yield.
         flushStreamBatch();
-        joining.delete(socket);
-        if (!queued || socket.readyState !== WebSocket.OPEN) return;
-        let message: string;
-        try {
-          const encodedSnapshot = JSON.stringify(snapshot);
-          const snapshotDigest = createHash("sha256")
-            .update(encodedSnapshot)
-            .digest("hex");
-          const unchanged =
-            requestedSnapshotDigests.get(socket) === snapshotDigest;
-          message = JSON.stringify({
-            type: "snapshot",
-            authorityId,
-            snapshotDigest,
-            updateStatus,
-            ...(unchanged ? { unchanged: true } : { data: snapshot }),
-          });
-        } catch {
-          socket.close(1011, "Session state was not serializable");
-          return;
-        }
-        if (!sendBounded(socket, message)) return;
-        for (const message of queued.messages) {
-          if (!sendBounded(socket, message)) break;
-        }
-      },
-      () => {
-        joining.delete(socket);
-        socket.close(1011, "Unable to load session state");
-      },
-    );
+        detailInterests.set(socket, interest);
+        backgroundStatuses.delete(socket);
+        requestedSnapshotDigests.set(socket, null);
+        synchronize();
+      } catch {
+        socket.close(1008, "Invalid detail interest");
+      }
+    });
+    synchronize();
   });
 
   return {

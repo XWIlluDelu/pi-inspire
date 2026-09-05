@@ -41,8 +41,6 @@ import {
   ApiError,
   ApiTransportError,
   createApi,
-  type PendingManagementAction,
-  type PendingManagementIntent,
   type ProjectFileResult,
 } from "./api";
 import {
@@ -69,12 +67,7 @@ import { SessionSelectionController } from "./controllers/session-selection-cont
 import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
-import {
-  type ChatMessage,
-  messageText,
-  type Notice,
-  parseExtensionDisplays,
-} from "./events";
+import { type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
 import {
   deriveSnapshotTransition,
@@ -150,21 +143,6 @@ function terminalCommandGuidance(command: string): string {
     default:
       return "This command currently requires Pi's trusted terminal interface.";
   }
-}
-
-function lastAssistantText(messages: readonly ChatMessage[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (
-      message.role !== "assistant" ||
-      (typeof message.__inspireLiveId === "string" &&
-        message.__inspireSettled !== true)
-    )
-      continue;
-    const text = messageText(message).trim();
-    if (text) return text;
-  }
-  return null;
 }
 
 export class AppStore {
@@ -399,6 +377,7 @@ export class AppStore {
       bootstrapped: this.state.bootstrapped,
       authorityId: this.hostAuthorityId,
       snapshotDigest: this.snapshotDigest,
+      sessionId: this.state.sessionId,
     }),
     patch: (patch) => this.set(patch),
     applyEvent: (event) => {
@@ -445,6 +424,10 @@ export class AppStore {
   private resyncRequest = 0;
   private pendingActionRequest = 0;
   private thinkingLevelRequest = 0;
+  private runtimeSettingRequest = 0;
+  private readonly runtimeSettingOwners: Partial<
+    Record<keyof PiRuntimeSettings, number>
+  > = {};
   private readyWhileOpening = new Map<string, number>();
   private transportGeneration = 0;
   private bootstrapRequest: AbortController | null = null;
@@ -456,7 +439,10 @@ export class AppStore {
   getState = (): AppState => this.state;
 
   private set(partial: Partial<AppState>): void {
+    const previousSessionId = this.state.sessionId;
     this.state = { ...this.state, ...partial };
+    if (this.state.sessionId !== previousSessionId)
+      this.connectionController.updateDetailInterest();
     for (const listener of this.listeners) listener();
   }
 
@@ -639,7 +625,10 @@ export class AppStore {
       generation === this.transportGeneration && this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
     try {
-      const boot = await api.bootstrap(bootstrapRequest.signal);
+      const boot = await api.bootstrap(
+        bootstrapRequest.signal,
+        this.state.bootstrapped ? this.state.sessionId : undefined,
+      );
       if (!ownsBootstrap()) return;
       if (
         typeof boot.authorityId !== "string" ||
@@ -942,7 +931,7 @@ export class AppStore {
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
     try {
-      const snapshot = await api.snapshot();
+      const snapshot = await api.snapshot(expectedSessionId);
       const snapshotSessionId = snapshot.active?.sessionId ?? null;
       const page = snapshot.active?.transcriptPage;
       if (
@@ -1589,8 +1578,11 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "copy") {
-      const text = lastAssistantText(this.state.messages);
-      if (!text) {
+      const api = this.api;
+      const viewId = this.state.transcriptViewId;
+      const selectionGeneration = this.selectionGeneration;
+      const transportGeneration = this.transportGeneration;
+      if (!api || !viewId) {
         this.presentCommandActivity(
           sessionId,
           input,
@@ -1607,20 +1599,53 @@ export class AppStore {
         "running",
         "Copying the last assistant response…",
       );
-      void Promise.resolve()
-        .then(() => navigator.clipboard.writeText(text))
-        .then(
-          () =>
+      void api
+        .lastAssistantText(sessionId, viewId)
+        .then(async ({ text }) => {
+          if (
+            this.api !== api ||
+            this.transportGeneration !== transportGeneration ||
+            this.selectionGeneration !== selectionGeneration ||
+            this.state.sessionId !== sessionId ||
+            this.state.transcriptViewId !== viewId
+          )
+            throw new Error(
+              "Copy cancelled because the session or branch changed.",
+            );
+          if (text === null) {
             this.updateCommandActivity(sessionId, id, {
-              status: "success",
-              message: "Copied the last assistant response to the clipboard.",
-            }),
-          () =>
-            this.updateCommandActivity(sessionId, id, {
-              status: "error",
-              message: "Clipboard access was unavailable.",
-            }),
-        );
+              status: "warning",
+              message: "There is no assistant response to copy in this branch.",
+            });
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch {
+            throw new Error("Clipboard access was unavailable.");
+          }
+          this.updateCommandActivity(sessionId, id, {
+            status: "success",
+            message:
+              "Copied the complete last assistant response to the clipboard.",
+          });
+        })
+        .catch((error: unknown) => {
+          if (
+            this.api === api &&
+            this.transportGeneration === transportGeneration &&
+            error instanceof ApiError &&
+            error.status === 401
+          )
+            this.handleAuthFailure();
+          this.updateCommandActivity(sessionId, id, {
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to read the complete response.",
+          });
+        });
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "session") {
@@ -1762,39 +1787,23 @@ export class AppStore {
     }
   };
 
-  managePending = async (action: PendingManagementIntent): Promise<boolean> => {
+  clearPending = async (): Promise<boolean> => {
     const sessionId = this.state.sessionId;
-    const pending = this.state.queue;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
-    if (
-      !api ||
-      !sessionId ||
-      this.state.pendingAction ||
-      !pending.managementAvailable
-    ) {
+    if (!api || !sessionId || this.state.pendingAction) {
       return false;
     }
     const request = ++this.pendingActionRequest;
-    const projectionIncarnation = this.state.transcriptIncarnation;
-    const expectedRevision = pending.revision;
-    this.set({ pendingAction: action.action });
+    this.set({ pendingAction: "clear" });
     try {
-      const response = await api.managePending(sessionId, {
-        ...action,
-        expectedRevision,
-      } as PendingManagementAction);
+      await api.clearPending(sessionId);
       if (!ownsTransport() || request !== this.pendingActionRequest)
         return false;
-      if (
-        this.state.sessionId === sessionId &&
-        this.state.transcriptIncarnation === projectionIncarnation &&
-        response.pendingQueues.revision >= this.state.queue.revision
-      ) {
-        this.set({ queue: response.pendingQueues });
-      }
+      // Only queue events/snapshots update the display: new work may already
+      // have arrived after Pi cleared its queue.
       return true;
     } catch (error) {
       if (!ownsTransport() || request !== this.pendingActionRequest)
@@ -1811,50 +1820,6 @@ export class AppStore {
     } finally {
       if (ownsTransport() && request === this.pendingActionRequest)
         this.set({ pendingAction: null });
-    }
-  };
-
-  pendingMessageTexts = async (
-    messageIds: readonly string[],
-  ): Promise<string[] | null> => {
-    const sessionId = this.state.sessionId;
-    const projectionIncarnation = this.state.transcriptIncarnation;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId || messageIds.length === 0) return null;
-    try {
-      const response = await api.pendingMessageTexts(sessionId, [
-        ...messageIds,
-      ]);
-      if (
-        !ownsTransport() ||
-        this.state.sessionId !== sessionId ||
-        this.state.transcriptIncarnation !== projectionIncarnation
-      ) {
-        throw new Error("The active Pending list changed before it was copied");
-      }
-      if (
-        response.messages.length !== messageIds.length ||
-        response.messages.some(
-          (message, index) => message.id !== messageIds[index],
-        )
-      ) {
-        throw new Error("The Host returned the wrong Pending messages");
-      }
-      return response.messages.map((message) => message.text);
-    } catch (error) {
-      if (!ownsTransport()) return null;
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      else
-        this.fail(
-          error instanceof Error
-            ? error.message
-            : "Failed to copy the Pending messages",
-        );
-      return null;
     }
   };
 
@@ -1955,6 +1920,13 @@ export class AppStore {
     const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return false;
     const previous = this.state.runtimeSettings;
+    const selectionGeneration = this.selectionGeneration;
+    const request = ++this.runtimeSettingRequest;
+    const keys = Object.keys(patch) as Array<keyof PiRuntimeSettings>;
+    for (const key of keys) this.runtimeSettingOwners[key] = request;
+    const ownsSelection = () =>
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === selectionGeneration;
     this.set({
       runtimeSettings: {
         autoCompactionEnabled: null,
@@ -1969,32 +1941,40 @@ export class AppStore {
       await apply(api, sessionId);
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return false;
-      await this.resync(sessionId, this.selectionGeneration);
+      if (
+        ownsSelection() &&
+        keys.some((key) => this.runtimeSettingOwners[key] === request)
+      )
+        await this.resync(sessionId, selectionGeneration);
       return true;
     } catch (error) {
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return false;
-      if (this.state.sessionId === sessionId && this.state.runtimeSettings) {
-        const rolledBack = { ...this.state.runtimeSettings };
-        for (const key of Object.keys(patch) as Array<
-          keyof PiRuntimeSettings
-        >) {
-          if (rolledBack[key] === patch[key]) {
+      if (error instanceof ApiError && error.status === 401) {
+        this.handleAuthFailure();
+        return false;
+      }
+      const ownedKeys = keys.filter(
+        (key) => this.runtimeSettingOwners[key] === request,
+      );
+      if (ownsSelection() && ownedKeys.length > 0) {
+        if (this.state.runtimeSettings) {
+          const rolledBack = { ...this.state.runtimeSettings };
+          for (const key of ownedKeys)
             (rolledBack as Record<string, unknown>)[key] =
               previous?.[key] ?? null;
-          }
+          this.set({ runtimeSettings: rolledBack });
         }
-        this.set({ runtimeSettings: rolledBack });
-      }
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      else
+        // The predecessor may itself have been optimistic. Only the owning
+        // request can roll back; Pi's current state settles the final value.
+        void this.resync(sessionId, selectionGeneration);
         this.notify(
           "warning",
           error instanceof Error
             ? error.message
             : "Failed to update Pi runtime settings",
         );
+      }
       return false;
     }
   }

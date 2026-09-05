@@ -27,7 +27,17 @@ import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
-import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
+import {
+  type ActiveSnapshot,
+  type SessionRuntimeStatus,
+  MAX_ATTACHMENT_FILE_BYTES,
+} from "../../shared/contracts.js";
+
+type DetailFrame = Record<string, unknown> & {
+  data?: ActiveSnapshot;
+  snapshotDigest?: string;
+  sessionStatus?: SessionRuntimeStatus;
+};
 
 const token = "test-local-token";
 const mockWorkspace = resolve("/home/demo/research");
@@ -855,6 +865,36 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
+  it("exposes only authenticated current-boundary Pending clear, not individual management", async () => {
+    const clear = vi
+      .spyOn(runtime, "clearPending")
+      .mockResolvedValue(undefined);
+    await request(application.server)
+      .post("/api/pending/clear")
+      .send({ sessionId: "mock-active" })
+      .expect(401);
+    expect(clear).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/pending/clear")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", expectedRevision: 1 })
+      .expect(400);
+    expect(clear).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/pending/clear")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active" })
+      .expect(200, { ok: true });
+    expect(clear).toHaveBeenCalledExactlyOnceWith("mock-active");
+    for (const path of ["/api/pending", "/api/pending/text"]) {
+      await request(application.server)
+        .post(path)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ sessionId: "mock-active" })
+        .expect(404);
+    }
+  });
+
   it("executes typed Pi native commands and runtime settings behind authentication", async () => {
     await request(application.server)
       .post("/api/sessions/open")
@@ -1059,6 +1099,26 @@ describe("local host API", () => {
         ]),
       );
     expect(composerHistory).toHaveBeenCalledWith("mock-active", 0);
+  });
+
+  it("serves complete assistant text only through an authenticated session/branch read", async () => {
+    const text = `${"x".repeat(70_000)}THE_END_42`;
+    const copy = vi
+      .spyOn(runtime, "lastAssistantText")
+      .mockResolvedValue({ text });
+    const path =
+      "/api/transcript/assistant-text?sessionId=mock-active&viewId=branch-1";
+    await request(application.server).get(path).expect(401);
+    await request(application.server)
+      .get(path)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((result) => expect(result.body.text).toBe(text));
+    expect(copy).toHaveBeenCalledWith("mock-active", "branch-1");
+    await request(application.server)
+      .get("/api/transcript/assistant-text?sessionId=mock-active")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
   });
 
   it("serves authenticated, bounded, session-addressed branch operations", async () => {
@@ -1451,6 +1511,213 @@ describe("local host API", () => {
       });
   });
 
+  it("isolates two socket detail interests while retaining global outcomes and needs-input", async () => {
+    await runtime.openSession("mock-active");
+    await runtime.openSession("mock-older");
+    const connect = async (id: string, digest?: string) => {
+      const frames: DetailFrame[] = [];
+      const socket = new WebSocket(
+        `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
+      );
+      socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
+      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
+      return { socket, frames };
+    };
+    const a = await connect("mock-active");
+    const b = await connect("mock-older");
+    try {
+      expect(a.frames[0]?.data?.active?.sessionId).toBe("mock-active");
+      expect(b.frames[0]?.data?.active?.sessionId).toBe("mock-older");
+      const resumed = await connect("mock-active", a.frames[0]?.snapshotDigest);
+      expect(resumed.frames[0]).toMatchObject({
+        unchanged: true,
+        detailSessionId: "mock-active",
+        detailRevision: 0,
+      });
+      resumed.socket.close();
+      const changed = await connect("mock-active", "0".repeat(64));
+      expect(changed.frames[0]?.unchanged).toBeUndefined();
+      expect(changed.frames[0]?.data?.active?.sessionId).toBe("mock-active");
+      changed.socket.close();
+      a.frames.length = 0;
+      b.frames.length = 0;
+      // No connection owns this body: even an unserializable detail must not
+      // disconnect unrelated viewers or enter the encoded-event path.
+      runtime.emit("event", {
+        type: "message_update",
+        sessionId: "unobserved",
+        message: 1n,
+        sessionStatus: { runState: "running" },
+      });
+      for (const sessionId of ["mock-active", "mock-older"]) {
+        runtime.emit("event", {
+          type: "agent_start",
+          sessionId,
+          sessionStatus: { runState: "running" },
+        });
+        for (let index = 0; index < 10; index++)
+          runtime.emit("event", {
+            type: "message_update",
+            sessionId,
+            streamDelta: true,
+            streamMessageKey: `${sessionId}-assistant`,
+            streamTextLength: index + 1,
+            assistantMessageEvent: {
+              type: "text_delta",
+              contentIndex: 0,
+              delta: "x",
+            },
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "x".repeat(index + 1) }],
+            },
+            sessionStatus: { runState: "running" },
+          });
+        runtime.emit("event", {
+          type: "extension_ui_request",
+          sessionId,
+          title: "private dialog body",
+          sessionStatus: { runState: "running", needsInput: true },
+        });
+        runtime.emit("event", {
+          type: "agent_settled",
+          sessionId,
+          messages: ["private settled body"],
+          sessionStatus: { runState: "idle", indicator: "completed" },
+        });
+        runtime.emit("event", {
+          type: "runtime_error",
+          sessionId,
+          message: "private error detail",
+          sessionStatus: { runState: "failed", indicator: "failed" },
+        });
+      }
+      await vi.waitFor(() =>
+        expect(
+          a.frames.filter((frame) => frame.type === "runtime_error"),
+        ).toHaveLength(2),
+      );
+      await vi.waitFor(() =>
+        expect(
+          b.frames.filter((frame) => frame.type === "runtime_error"),
+        ).toHaveLength(2),
+      );
+      for (const [viewer, selected, background] of [
+        [a, "mock-active", "mock-older"],
+        [b, "mock-older", "mock-active"],
+      ] as const) {
+        expect(
+          viewer.frames
+            .filter((frame) => frame.type === "message_update_batch")
+            .map((frame) => frame.sessionId),
+        ).toEqual([selected]);
+        const global = viewer.frames.filter(
+          (frame) => frame.sessionId === background,
+        );
+        expect(global.map((frame) => frame.type)).toEqual([
+          "agent_start",
+          "session_status",
+          "agent_settled",
+          "runtime_error",
+        ]);
+        expect(global[1]?.sessionStatus?.needsInput).toBe(true);
+        expect(JSON.stringify(global)).not.toContain("private");
+        expect(JSON.stringify(global)).not.toContain("assistantMessageEvents");
+      }
+    } finally {
+      a.socket.close();
+      b.socket.close();
+    }
+  });
+
+  it("fences changed interest snapshots and queues global and new-owner changes across the read", async () => {
+    await runtime.openSession("mock-active");
+    await runtime.openSession("mock-older");
+    const originalSnapshot = runtime.snapshot.bind(runtime);
+    let release!: () => void;
+    let releaseNew!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const newGate = new Promise<void>((resolve) => {
+      releaseNew = resolve;
+    });
+    const snapshotSpy = vi
+      .spyOn(runtime, "snapshot")
+      .mockImplementation(async (sessionId) => {
+        const snapshot = await originalSnapshot(sessionId);
+        await (sessionId === "mock-active" ? gate : newGate);
+        return snapshot;
+      });
+    const frames: DetailFrame[] = [];
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+    );
+    socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    try {
+      await new Promise<void>((resolve) => socket.once("open", resolve));
+      runtime.emit("event", {
+        type: "agent_start",
+        sessionId: "mock-active",
+        sessionStatus: { runState: "running" },
+      });
+      socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "mock-older",
+          revision: 1,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(snapshotSpy).toHaveBeenCalledWith("mock-older"),
+      );
+      runtime.emit("event", {
+        type: "message_update",
+        sessionId: "mock-older",
+        streamDelta: true,
+        streamMessageKey: "new-assistant",
+        streamTextLength: 9,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "new-owner",
+        },
+        message: { role: "assistant", content: "new-owner" },
+      });
+      expect(frames).toHaveLength(0);
+      releaseNew();
+      await vi.waitFor(() => expect(frames[0]?.detailRevision).toBe(1));
+      release();
+      runtime.emit("event", {
+        type: "agent_settled",
+        sessionId: "mock-active",
+        messages: ["old-owner-body"],
+        sessionStatus: { runState: "idle" },
+      });
+      await vi.waitFor(() =>
+        expect(frames.some((frame) => frame.type === "agent_settled")).toBe(
+          true,
+        ),
+      );
+      expect(frames.filter((frame) => frame.type === "snapshot")).toHaveLength(
+        1,
+      );
+      expect(frames[0]?.data?.active?.sessionId).toBe("mock-older");
+      expect(frames.map((frame) => frame.type)).toEqual([
+        "snapshot",
+        "agent_start",
+        "message_update",
+        "agent_settled",
+      ]);
+      expect(JSON.stringify(frames)).not.toContain("old-owner-body");
+      expect(snapshotSpy).toHaveBeenCalledWith("mock-older");
+    } finally {
+      release();
+      releaseNew();
+      socket.close();
+    }
+  });
+
   it("delivers the snapshot before any live event on a new socket", async () => {
     let releaseSnapshot!: () => void;
     const gate = new Promise<void>((resolveGate) => {
@@ -1483,7 +1750,7 @@ describe("local host API", () => {
     );
     const address = gatedApp.server.address() as AddressInfo;
     const socket = new WebSocket(
-      `ws://127.0.0.1:${address.port}/events?token=${token}`,
+      `ws://127.0.0.1:${address.port}/events?token=${token}&detail=mock-active`,
     );
     const frames: Array<Record<string, unknown>> = [];
     socket.on("message", (data) =>
@@ -1547,6 +1814,8 @@ describe("local host API", () => {
         authorityId: application.authorityId,
         snapshotDigest: bootstrap.body.snapshotDigest,
         updateStatus: bootstrap.body.updateStatus,
+        detailSessionId: null,
+        detailRevision: 0,
         unchanged: true,
       });
     } finally {
@@ -1555,8 +1824,9 @@ describe("local host API", () => {
   });
 
   it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
+    await runtime.openSession("mock-active");
     const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
     );
     try {
       await new Promise<void>((resolve, reject) => {
@@ -2346,7 +2616,7 @@ describe("local host API", () => {
 
     const events: Array<Record<string, unknown>> = [];
     const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
     );
     await new Promise<void>((resolve, reject) => {
       socket.once("open", resolve);

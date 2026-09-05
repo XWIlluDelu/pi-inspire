@@ -4,7 +4,6 @@ import {
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
-import { PreviewProjection } from "./preview-projection.js";
 import { requestError } from "./request-error.js";
 import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
@@ -128,8 +127,7 @@ export class RuntimeWorkerLifecycle {
   async ensureFreshWriter(
     slot: RuntimeSlot,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    if (!(slot.projection instanceof PreviewProjection))
-      await this.host.reconcile(slot, true);
+    await this.host.reconcile(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
       throw requestError(
         slot.projection?.health.message ?? "Session projection is unavailable",
@@ -218,15 +216,6 @@ export class RuntimeWorkerLifecycle {
       slot.startupPhase = "starting";
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
-      try {
-        await rpc.request({
-          type: "set_pending_event_mode",
-          mode: "managed",
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!/unknown command/i.test(message)) throw error;
-      }
       await this.startupAttestor.attest(slot, rpc, baseline);
       slot.ready = true;
       slot.startupPhase = "complete";

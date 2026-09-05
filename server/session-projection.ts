@@ -59,6 +59,7 @@ const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
 const MAX_SESSION_PATH_CHARS = 32_768;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
 export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
+export const TRANSCRIPT_ITEM_MAX_BYTES = 256 * 1024;
 
 const WATCH_DEBOUNCE_MS = 75;
 const RECONCILE_INTERVAL_MS = 750;
@@ -537,7 +538,7 @@ function boundedTranscriptItem(
   ]) {
     const projected = decorate(projectSafeValue(browserValue, limits));
     const serialized = JSON.stringify(projected) ?? "null";
-    if (Buffer.byteLength(serialized) <= 256 * 1024)
+    if (Buffer.byteLength(serialized) <= TRANSCRIPT_ITEM_MAX_BYTES)
       return { value: projected, serialized };
   }
   const record =

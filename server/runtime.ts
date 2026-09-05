@@ -33,8 +33,6 @@ import {
   MAX_PROJECT_FILES,
   MAX_SESSION_ID_CHARS,
   type NewSessionOptions,
-  type PendingManagementAction,
-  type PendingQueues,
   type PiMessageDeliveryMode,
   type ProjectionConflict,
   type PromptRequest,
@@ -60,7 +58,6 @@ import {
   PiRpcOutcomeUnknownError,
   PiRpcProcess,
 } from "./pi-rpc.js";
-import { PreviewProjection } from "./preview-projection.js";
 import { requestError } from "./request-error.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import {
@@ -96,7 +93,6 @@ import {
 } from "./session-fork.js";
 import {
   type ActiveSessionSnapshot,
-  loadSessionPreview,
   sessionProjectionSnapshot,
 } from "./session-preview.js";
 
@@ -219,8 +215,6 @@ export type MaintenanceRestartDecision =
   | { kind: "ready"; expiresAt: number }
   | { kind: "busy"; reason: MaintenanceRestartBusyReason };
 
-export type PendingManagementRequest = PendingManagementAction;
-
 export interface RuntimeLike {
   /** Id of the currently visible session; session-bound routes compare
    * against this so stale handles cannot outlive a selection change. */
@@ -245,14 +239,7 @@ export interface RuntimeLike {
   ): Promise<HiddenClearResponse>;
   prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null>;
   abort(sessionId: string): Promise<void>;
-  managePending(
-    sessionId: string,
-    request: PendingManagementRequest,
-  ): Promise<PendingQueues>;
-  pendingMessageTexts(
-    sessionId: string,
-    messageIds: readonly string[],
-  ): Promise<Array<{ id: string; text: string }>>;
+  clearPending(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
   setModel(
     sessionId: string,
@@ -274,7 +261,11 @@ export interface RuntimeLike {
     request: HostNativeCommandRequest,
   ): Promise<HostNativeCommandResponse>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
-  snapshot(): Promise<ActiveSnapshot>;
+  snapshot(sessionId?: string | null): Promise<ActiveSnapshot>;
+  lastAssistantText(
+    sessionId: string,
+    viewId: string,
+  ): Promise<{ text: string | null }>;
   transcriptPage(
     sessionId: string,
     cursor: string,
@@ -364,9 +355,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     private readonly createProcess: (options: PiRpcOptions) => PiRpcProcess = (
       options,
     ) => new PiRpcProcess(options),
-    private readonly loadPreview: (
+    private readonly openSessionProjection: (
       session: SessionRecord,
-    ) => Promise<ActiveSessionSnapshot> = loadSessionPreview,
+    ) => Promise<SessionProjectionView> = SessionProjection.open,
     private readonly branchBridgeTimeoutMs = BRANCH_BRIDGE_TIMEOUT_MS,
     private readonly openForkProjection: (
       session: SessionRecord,
@@ -442,8 +433,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.persistenceOwnership.recordPersistenceEvent(slot, event),
       activeAssistantOverlayMessage: (slot) =>
         this.persistenceOwnership.activeAssistantOverlayMessage(slot),
-      updateOverlay: (slot, message, phase) =>
-        this.persistenceOwnership.updateOverlay(slot, message, phase),
+      updateOverlay: (slot, message, phase, delta) =>
+        this.persistenceOwnership.updateOverlay(slot, message, phase, delta),
       addPendingExtensionUi: (slot, event, rpc) =>
         this.extensionUi.add(slot, event, rpc),
       clearPendingExtensionUi: (slot, reason) =>
@@ -476,7 +467,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
       requireSlot: (sessionId) => this.requireSlot(sessionId),
       mutateSlot: (slot, operation) => this.mutateSlot(slot, operation),
-      useSlot: (slot, operation) => this.useSlot(slot, operation),
       ensureWriter: async (slot) =>
         (await this.ensureFreshWriterInsideGate(slot)).process,
       failUnknown: (slot, error) => this.failUnknownRpcOutcome(slot, error),
@@ -612,9 +602,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         isBusyRunState(slot.runState) ||
         slot.runState === "conflict" ||
         slot.pendingExtensionUiRequests.size > 0 ||
-        slot.pendingQueues.paused ||
-        slot.pendingQueues.steering.length > 0 ||
-        slot.pendingQueues.followUp.length > 0,
+        slot.pendingQueues.totalCount > 0,
     );
   }
 
@@ -1107,7 +1095,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     } else {
       indicator = slot.attention ?? undefined;
     }
-    return { runState: slot.runState, ...(indicator ? { indicator } : {}) };
+    const needsInput = this.extensionUi.pendingRequests(slot).length > 0;
+    if (needsInput) indicator = "attention";
+    return {
+      runState: slot.runState,
+      ...(indicator ? { indicator } : {}),
+      ...(needsInput ? { needsInput: true } : {}),
+    };
   }
 
   private sessionStatuses(
@@ -1334,18 +1328,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private async resolveWorkspaceRoot(cwd: string): Promise<string> {
-    const resolved = resolve(cwd);
-    try {
-      return await realpath(resolved);
-    } catch (error) {
-      // A custom preview source may intentionally model a virtual workspace.
-      if (
-        this.loadPreview !== loadSessionPreview &&
-        (error as NodeJS.ErrnoException).code === "ENOENT"
-      )
-        return resolved;
-      throw error;
-    }
+    return realpath(resolve(cwd));
   }
 
   private async openProjection(
@@ -1355,15 +1338,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     projection: SessionProjectionView;
     preview: ActiveSessionSnapshot;
   }> {
-    if (this.loadPreview !== loadSessionPreview) {
-      const preview = await this.loadPreview(session);
-      const canonicalPreview = { ...preview, cwd: workspaceRoot };
-      return {
-        projection: new PreviewProjection(session.id, canonicalPreview),
-        preview: canonicalPreview,
-      };
-    }
-    const projection = await SessionProjection.open(session);
+    const projection = await this.openSessionProjection(session);
     return {
       projection,
       preview: sessionProjectionSnapshot(session, projection, workspaceRoot),
@@ -1752,28 +1727,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           await pendingProjection.close();
           throw error;
         }
-      } else if (this.loadPreview !== loadSessionPreview) {
-        const empty: ActiveSessionSnapshot = {
-          sessionId,
-          sessionName: name,
-          cwd,
-          model: state.model ?? null,
-          thinkingLevel: String(state.thinkingLevel ?? "off"),
-          isStreaming: false,
-          isCompacting: false,
-          transcriptPage: {
-            sessionId,
-            revision: 1,
-            viewId: slot.viewId,
-            messages: [],
-            hasOlder: false,
-            olderCursor: null,
-          },
-          projectionHealth: { status: "ok" },
-          availableModels: [],
-          commands: [],
-        };
-        projection = new PreviewProjection(sessionId, empty);
       } else {
         throw new Error("Pi did not report a session file");
       }
@@ -2064,11 +2017,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             throw new Error("Message or attachment is required");
           const previousRunState = slot.runState;
           // Pi acknowledges ordinary prompt acceptance before agent_start can
-          // cross the event channel. A paused Pending list is different: the
-          // accepted content stays parked in memory and does not own a run.
-          slot.runState = slot.pendingQueues.paused
-            ? previousRunState
-            : "queued";
+          // cross the event channel.
+          slot.runState = "queued";
           try {
             await this.requestPersistence(readySlot, readySlot.process, {
               type: "prompt",
@@ -2231,9 +2181,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (
       slot.runState !== "idle" ||
       slot.pendingExtensionUiRequests.size > 0 ||
-      slot.pendingQueues.paused ||
-      slot.pendingQueues.steering.length > 0 ||
-      slot.pendingQueues.followUp.length > 0
+      slot.pendingQueues.totalCount > 0
     ) {
       throw requestError(
         "Branch navigation requires an idle session with no pending dialog or queue",
@@ -2784,18 +2732,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  managePending(
-    sessionId: string,
-    request: PendingManagementRequest,
-  ): Promise<PendingQueues> {
-    return this.pending.manage(sessionId, request);
-  }
-
-  pendingMessageTexts(
-    sessionId: string,
-    messageIds: readonly string[],
-  ): Promise<Array<{ id: string; text: string }>> {
-    return this.pending.messageTexts(sessionId, messageIds);
+  clearPending(sessionId: string): Promise<void> {
+    return this.pending.clear(sessionId);
   }
 
   async nativeCommand(
@@ -3230,8 +3168,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  snapshot(): Promise<ActiveSnapshot> {
-    return this.reads.snapshot();
+  async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
+    if (sessionId) {
+      this.assertNotClosing();
+      const slot = this.slots.get(sessionId);
+      // A reconnect after Host restart (or idle projection reclamation) can
+      // restore its own read-only view without selecting it for other clients
+      // or starting a worker merely to satisfy a subscription.
+      if (!slot || (!slot.projection && !slot.process)) {
+        const session = await this.catalog.get(sessionId);
+        if (!session) throw requestError("Session not found", 404);
+        await this.prepareSlot(session);
+      }
+    }
+    return this.reads.snapshot(sessionId);
   }
 
   transcriptPage(
@@ -3262,6 +3212,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     cursor?: string,
   ): Promise<UserTurnTranscriptPage> {
     return this.reads.transcriptUserTurn(sessionId, targetMessageId, cursor);
+  }
+
+  lastAssistantText(
+    sessionId: string,
+    viewId: string,
+  ): Promise<{ text: string | null }> {
+    return this.reads.lastAssistantText(sessionId, viewId);
   }
 
   composerHistory(sessionId: string, start = 0): Promise<ComposerHistoryPage> {

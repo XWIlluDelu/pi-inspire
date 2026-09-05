@@ -20,8 +20,6 @@ import type {
   InspireUpdateCheckResult,
   NewSessionDefaults,
   NewSessionOptions,
-  PendingManagementAction,
-  PendingManagementIntent,
   PiMessageDeliveryMode,
   PiUpdateCheckResult,
   ProjectDirEntry,
@@ -37,7 +35,6 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts";
-import { parsePendingQueues } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import type {
   TerminalAttachTicketResponse,
@@ -51,8 +48,6 @@ import type {
   TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts";
 import { withTransportMeasure } from "./transport-performance";
-
-export type { PendingManagementAction, PendingManagementIntent };
 
 export interface ProjectFileResult {
   path: string;
@@ -333,9 +328,13 @@ export function createApi(token: string | null = null) {
     retireBearer: () => {
       token = null;
     },
-    bootstrap: (signal?: AbortSignal) =>
+    bootstrap: (signal?: AbortSignal, sessionId?: string | null) =>
       withTransportMeasure("bootstrap-confirmation", () =>
-        request<BootstrapResponse>(token, "/api/bootstrap", { signal }),
+        request<BootstrapResponse>(
+          token,
+          `/api/bootstrap${detailQuery(sessionId)}`,
+          { signal },
+        ),
       ),
     update: (refresh = false) =>
       request<InspireUpdateCheckResult>(
@@ -349,7 +348,8 @@ export function createApi(token: string | null = null) {
       ),
     snoozeUpdate: (identity: string) =>
       post<HostUpdateStatus>(token, "/api/update/snooze", { identity }),
-    snapshot: () => request<ActiveSnapshot>(token, "/api/snapshot"),
+    snapshot: (sessionId?: string | null) =>
+      request<ActiveSnapshot>(token, `/api/snapshot${detailQuery(sessionId)}`),
     olderTranscript: (
       sessionId: string,
       cursor: string,
@@ -390,6 +390,11 @@ export function createApi(token: string | null = null) {
         token,
         `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { signal },
+      ),
+    lastAssistantText: (sessionId: string, viewId: string) =>
+      request<{ text: string | null }>(
+        token,
+        `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
       ),
     composerHistory: (sessionId: string, start = 0) =>
       request<ComposerHistoryPage>(
@@ -480,10 +485,12 @@ export function createApi(token: string | null = null) {
         `/api/terminals/${encodeURIComponent(id)}${force ? "?force=1" : ""}`,
         { method: "DELETE" },
       ),
-    terminalAttachTicket: (id: string) =>
+    terminalAttachTicket: (id: string, signal?: AbortSignal) =>
       post<TerminalAttachTicketResponse>(
         token,
         `/api/terminals/${encodeURIComponent(id)}/attach-ticket`,
+        undefined,
+        { signal },
       ),
     terminalSettings: () =>
       request<TerminalServiceSettings>(token, "/api/terminal-settings"),
@@ -506,25 +513,8 @@ export function createApi(token: string | null = null) {
       ),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
-    managePending: async (
-      sessionId: string,
-      action: PendingManagementAction,
-    ) => {
-      const response = await post<{ pendingQueues?: unknown }>(
-        token,
-        "/api/pending",
-        { sessionId, ...action },
-      );
-      const pendingQueues = parsePendingQueues(response.pendingQueues);
-      if (!pendingQueues) throw new ApiTransportError("response");
-      return { pendingQueues };
-    },
-    pendingMessageTexts: (sessionId: string, messageIds: string[]) =>
-      post<{ messages: Array<{ id: string; text: string }> }>(
-        token,
-        "/api/pending/text",
-        { sessionId, messageIds },
-      ),
+    clearPending: (sessionId: string) =>
+      post<{ ok: boolean }>(token, "/api/pending/clear", { sessionId }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
       post<unknown>(token, "/api/control/model", {
         sessionId,
@@ -683,14 +673,22 @@ export function terminalUrl(): string {
   return `${protocol}//${window.location.host}/terminal`;
 }
 
+function detailQuery(sessionId: string | null | undefined): string {
+  return sessionId === undefined
+    ? ""
+    : `?detail=${encodeURIComponent(sessionId ?? "")}`;
+}
+
 export function eventsUrl(
   token: string | null = null,
   snapshotDigest: string | null = null,
+  sessionId?: string | null,
 ): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const query = new URLSearchParams();
   if (token) query.set("token", token);
   if (snapshotDigest) query.set("snapshot", snapshotDigest);
+  if (sessionId !== undefined) query.set("detail", sessionId ?? "");
   const suffix = query.size > 0 ? `?${query}` : "";
   return `${protocol}//${window.location.host}/events${suffix}`;
 }

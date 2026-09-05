@@ -79,7 +79,6 @@ const READ_ONLY_RPC_COMMANDS = new Set([
   "get_commands",
   "get_entries",
   "get_messages",
-  "get_pending_message_texts",
   "get_session_stats",
   "get_state",
 ]);

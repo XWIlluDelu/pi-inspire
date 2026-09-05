@@ -653,8 +653,7 @@ const ConversationStage = memo(function ConversationStage() {
       )}
       queue={state.queue}
       pendingAction={state.pendingAction}
-      onManagePending={store.managePending}
-      onPendingMessageTexts={store.pendingMessageTexts}
+      onClearPending={store.clearPending}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}

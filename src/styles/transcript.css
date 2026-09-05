@@ -1233,24 +1233,17 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     border-color var(--dur-standard) var(--ease-standard);
 }
 
-.pending-groups:not(.is-paused) {
+.pending-groups {
   opacity: 0.75;
   background: transparent;
   border-color: color-mix(in srgb, var(--hairline) 75%, transparent);
 }
 
-.pending-groups:not(.is-paused):hover,
-.pending-groups:not(.is-paused):focus-within {
+.pending-groups:hover,
+.pending-groups:focus-within {
   opacity: 1;
   background: var(--bg-surface);
   border-color: var(--hairline);
-}
-
-.pending-groups.is-paused {
-  opacity: 1;
-  border-color: var(--hairline-strong);
-  box-shadow: 0 0 0 1px
-    color-mix(in srgb, var(--hairline-strong) 20%, transparent);
 }
 
 .pending-groups__head,
@@ -1285,14 +1278,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--muted);
-}
-
-.pending-groups.is-paused .pending-groups__title {
-  color: var(--ink);
-}
-
-.pending-groups.is-paused .pending-groups__title svg {
-  color: var(--warning);
 }
 
 .pending-groups__count {
@@ -1332,15 +1317,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .pending-group__control.icon-button:hover {
   color: var(--ink);
   background: var(--bg-control);
-}
-
-.pending-group__control--resume.icon-button {
-  color: var(--accent-deep);
-}
-
-.pending-group__control--resume.icon-button:hover {
-  color: var(--accent-hover);
-  background: var(--accent-tint);
 }
 
 .pending-group__control--clear.icon-button:hover {
@@ -1408,24 +1384,12 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-.pending-groups__empty {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.pending-groups__note {
+  margin: 0;
   padding: var(--space-3);
-  background: var(--bg-surface);
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: var(--leading-ui);
-}
-
-.pending-groups__empty-icon {
-  flex-shrink: 0;
-  color: var(--warning);
-}
-
-.pending-groups__empty-text {
-  color: var(--muted);
 }
 
 .pending-group + .pending-group {
@@ -1557,25 +1521,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   background: color-mix(in srgb, var(--info) 8%, transparent);
 }
 
-button.pending-group__mark {
-  cursor: pointer;
-}
-
-button.pending-group__mark--steering:hover {
-  border-color: var(--think);
-  background: color-mix(in srgb, var(--think) 18%, transparent);
-  color: var(--think);
-  transform: translateY(-0.5px);
-}
-
-button.pending-group__mark--follow-up:hover {
-  border-color: var(--info);
-  background: color-mix(in srgb, var(--info) 18%, transparent);
-  color: var(--info);
-  transform: translateY(-0.5px);
-}
-
-button.pending-group__mark:disabled,
 .pending-groups button:disabled {
   cursor: default;
   opacity: 0.45;
@@ -1606,28 +1551,6 @@ button.pending-group__mark:disabled,
   font-style: italic;
 }
 
-.pending-group__attachments {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.pending-group__content-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 0 4px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-inset);
-  border: 1px solid var(--hairline);
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
 .pending-group__item-actions {
   display: inline-flex;
   align-items: center;
@@ -1635,8 +1558,7 @@ button.pending-group__mark:disabled,
   height: 20px;
 }
 
-.pending-group__copy.icon-button,
-.pending-group__delete.icon-button {
+.pending-group__copy.icon-button {
   width: 22px;
   height: 22px;
   border-radius: var(--radius-xs);
@@ -1656,24 +1578,18 @@ button.pending-group__mark:disabled,
   opacity: 1;
 }
 
-.pending-groups:not(.is-paused) .pending-groups__actions .pending-group__copy {
+.pending-groups .pending-groups__actions .pending-group__copy {
   opacity: 0;
 }
 
-.pending-groups:not(.is-paused):hover
-  .pending-groups__actions
-  .pending-group__copy,
-.pending-groups:not(.is-paused):focus-within
-  .pending-groups__actions
-  .pending-group__copy {
+.pending-groups:hover .pending-groups__actions .pending-group__copy,
+.pending-groups:focus-within .pending-groups__actions .pending-group__copy {
   opacity: 1;
 }
 
 @media (hover: none) {
   .pending-group__item .pending-group__copy,
-  .pending-groups:not(.is-paused)
-    .pending-groups__actions
-    .pending-group__copy {
+  .pending-groups .pending-groups__actions .pending-group__copy {
     opacity: 0.75;
   }
 }
@@ -1681,15 +1597,6 @@ button.pending-group__mark:disabled,
 .pending-group__copy.icon-button:hover {
   color: var(--ink);
   background: var(--bg-inset);
-}
-
-.pending-group__delete.icon-button {
-  color: var(--faint);
-}
-
-.pending-group__delete.icon-button:hover {
-  color: var(--error);
-  background: var(--error-tint);
 }
 
 .extension-surface__item {

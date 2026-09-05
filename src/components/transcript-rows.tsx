@@ -2,11 +2,8 @@ import {
   Archive,
   ChevronRight,
   GitFork,
-  Image,
   Loader2,
   Package,
-  Pause,
-  Play,
   Trash2,
   X,
 } from "lucide-react";
@@ -18,7 +15,6 @@ import type {
   ToolVisibilityPreference,
   VisibilityPreference,
 } from "../../shared/contracts";
-import type { PendingManagementIntent } from "../api";
 import {
   type ActivityTool,
   type ChatMessage,
@@ -615,24 +611,22 @@ export const UnknownRoleRow = memo(function UnknownRoleRow({
 export function PendingQueueGroups({
   queue,
   pendingAction,
-  onManage,
-  onReadTexts,
+  onClear,
 }: {
   queue: PendingQueues;
-  pendingAction: PendingManagementIntent["action"] | null;
-  onManage: (action: PendingManagementIntent) => Promise<boolean>;
-  onReadTexts: (messageIds: readonly string[]) => Promise<string[] | null>;
+  pendingAction: "clear" | null;
+  onClear: () => Promise<boolean>;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
-  useEffect(() => setConfirmClear(false), [queue.revision, queue.paused]);
+  useEffect(() => {
+    if (queue.totalCount === 0) setConfirmClear(false);
+  }, [queue.totalCount]);
 
   const groups = [
     {
       key: "steering",
       label: "Steer",
       mark: "S",
-      target: "followUp" as const,
-      targetLabel: "Queue",
       start: 0,
       items: queue.steering,
     },
@@ -640,8 +634,6 @@ export function PendingQueueGroups({
       key: "follow-up",
       label: "Queue",
       mark: "Q",
-      target: "steer" as const,
-      targetLabel: "Steer",
       start: queue.steering.length,
       items: queue.followUp,
     },
@@ -657,76 +649,38 @@ export function PendingQueueGroups({
   const hasText = entries.some(
     (entry) => entry.textPreview.length > 0 || entry.textTruncated,
   );
-  const canCopyAll =
-    hasText &&
-    (queue.managementAvailable ||
-      entries.every((entry) => !entry.textTruncated));
-  const exactCopy = queue.managementAvailable
-    ? async () => {
-        const texts = await onReadTexts(entries.map((entry) => entry.id));
-        return texts
-          ? texts
-              .map(
-                (text, index) =>
-                  `${index + 1}. ${text.replace(/\n/g, "\n   ")}`,
-              )
-              .join("\n")
-          : null;
-      }
-    : undefined;
+  const previewOnly = entries.some((entry) => entry.textTruncated);
+  const omitted = queue.totalCount - entries.length;
+  if (queue.totalCount === 0) return null;
 
   return (
-    <section
-      className={`pending-groups${queue.paused ? " is-paused" : ""}`}
-      aria-label={queue.paused ? "Pending input paused" : "Pending input"}
-    >
+    <section className="pending-groups" aria-label="Pending input">
       <div className="pending-groups__head">
         <div className="pending-groups__lead">
-          <span className="pending-groups__title">
-            {queue.paused ? <Pause size={12} aria-hidden /> : null}
-            {queue.paused ? "Pending paused" : "Pending input"}
-          </span>
+          <span className="pending-groups__title">Pending input</span>
           <span
             className="pending-groups__count"
-            title={`${entries.length} pending ${entries.length === 1 ? "item" : "items"}`}
+            title={`${queue.totalCount} pending items`}
           >
-            <span aria-hidden>{entries.length}</span>
+            <span aria-hidden>{queue.totalCount}</span>
             <span className="visually-hidden">
-              {entries.length} pending items
+              {queue.totalCount} pending items
             </span>
           </span>
         </div>
         <div className="pending-groups__actions">
-          {canCopyAll ? (
+          {hasText ? (
             <CopyAction
-              {...(exactCopy
-                ? { getText: exactCopy }
-                : { text: copyAllPreview })}
-              label="all pending input"
+              text={copyAllPreview}
+              label={
+                previewOnly || omitted > 0
+                  ? "displayed pending previews"
+                  : "all pending input"
+              }
               className="pending-group__copy"
             />
           ) : null}
-          {queue.managementAvailable ? (
-            <button
-              type="button"
-              className={`icon-button pending-group__control${queue.paused ? " pending-group__control--resume" : ""}`}
-              aria-label={
-                queue.paused ? "Resume Pending input" : "Pause Pending input"
-              }
-              title={queue.paused ? "Resume Pending" : "Pause Pending"}
-              disabled={busy}
-              onClick={() =>
-                void onManage({ action: queue.paused ? "resume" : "pause" })
-              }
-            >
-              {queue.paused ? (
-                <Play size={13} aria-hidden />
-              ) : (
-                <Pause size={13} aria-hidden />
-              )}
-            </button>
-          ) : null}
-          {queue.paused && entries.length > 0 ? (
+          {queue.totalCount > 0 ? (
             confirmClear ? (
               <span className="pending-groups__confirm">
                 <span className="pending-groups__confirm-label">
@@ -736,7 +690,11 @@ export function PendingQueueGroups({
                   type="button"
                   className="pending-groups__confirm-btn"
                   disabled={busy}
-                  onClick={() => void onManage({ action: "clear" })}
+                  onClick={() =>
+                    void onClear().then((cleared) => {
+                      if (cleared) setConfirmClear(false);
+                    })
+                  }
                 >
                   Clear all
                 </button>
@@ -765,14 +723,17 @@ export function PendingQueueGroups({
           ) : null}
         </div>
       </div>
-      {queue.paused && entries.length === 0 ? (
-        <div className="pending-groups__empty">
-          <Pause size={13} className="pending-groups__empty-icon" aria-hidden />
-          <span className="pending-groups__empty-text">
-            Pending queue is paused. New steering and follow-up submissions will
-            stay queued until resumed.
-          </span>
-        </div>
+      {confirmClear ? (
+        <p className="pending-groups__note" role="status">
+          Clear whatever remains queued when Pi handles this request. Items may
+          be consumed meanwhile; the current run is not stopped.
+        </p>
+      ) : null}
+      {previewOnly || omitted > 0 ? (
+        <p className="pending-groups__note">
+          Text previews only; copy uses the displayed text, not omitted content.
+          {omitted > 0 ? ` ${omitted} more pending items are not shown.` : ""}
+        </p>
       ) : null}
       {groups.map((group) => (
         <section
@@ -804,52 +765,22 @@ export function PendingQueueGroups({
             {group.items.map((entry, index) => {
               const number = group.start + index + 1;
               const contentLabel =
-                entry.textPreview ||
-                (entry.imageCount > 0
-                  ? entry.imageCount === 1
-                    ? "Image"
-                    : `${entry.imageCount} images`
-                  : entry.nonTextContentCount > 0
-                    ? "Non-text content"
-                    : "No text content");
-              const canCopyText =
-                (entry.textPreview.length > 0 || entry.textTruncated) &&
-                (queue.managementAvailable || !entry.textTruncated);
+                entry.textPreview || "No text in Pi queue projection";
+              const canCopyText = entry.textPreview.length > 0;
               return (
                 <li key={entry.id} className="pending-group__item">
                   <span className="pending-group__number" aria-hidden>
                     {number}.
                   </span>
                   <div className="pending-group__mark-col">
-                    {queue.paused ? (
-                      <button
-                        type="button"
-                        className={`pending-group__mark pending-group__mark--${group.key} is-action`}
-                        title={`Move to ${group.targetLabel} queue`}
-                        aria-label={`Move ${group.label} item ${index + 1} to ${group.targetLabel}`}
-                        disabled={busy}
-                        onClick={() =>
-                          void onManage({
-                            action: "convert",
-                            messageId: entry.id,
-                            target: group.target,
-                          })
-                        }
-                      >
-                        <span className="pending-group__mark-text">
-                          {group.mark}
-                        </span>
-                      </button>
-                    ) : (
-                      <span
-                        className={`pending-group__mark pending-group__mark--${group.key}`}
-                        title={group.label}
-                      >
-                        <span className="pending-group__mark-text">
-                          {group.mark}
-                        </span>
+                    <span
+                      className={`pending-group__mark pending-group__mark--${group.key}`}
+                      title={group.label}
+                    >
+                      <span className="pending-group__mark-text">
+                        {group.mark}
                       </span>
-                    )}
+                    </span>
                   </div>
                   <div className="pending-group__content">
                     <pre
@@ -860,56 +791,14 @@ export function PendingQueueGroups({
                       {contentLabel}
                       {entry.textTruncated ? "…" : ""}
                     </pre>
-                    {entry.imageCount > 0 ||
-                    entry.nonTextContentCount > entry.imageCount ? (
-                      <div className="pending-group__attachments">
-                        {entry.imageCount > 0 ? (
-                          <span
-                            className="pending-group__content-kind"
-                            title={`${entry.imageCount} ${entry.imageCount === 1 ? "image" : "images"}`}
-                          >
-                            <Image size={11} aria-hidden />
-                            {entry.imageCount}
-                          </span>
-                        ) : null}
-                        {entry.nonTextContentCount > entry.imageCount ? (
-                          <span className="pending-group__content-kind">
-                            +{entry.nonTextContentCount - entry.imageCount}{" "}
-                            other
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </div>
                   <div className="pending-group__item-actions">
                     {canCopyText ? (
                       <CopyAction
-                        {...(queue.managementAvailable
-                          ? {
-                              getText: async () =>
-                                (await onReadTexts([entry.id]))?.[0] ?? null,
-                            }
-                          : { text: entry.textPreview })}
-                        label={`${group.label} item ${index + 1}`}
+                        text={entry.textPreview}
+                        label={`${group.label} item ${index + 1}${entry.textTruncated ? " preview" : ""}`}
                         className="pending-group__copy"
                       />
-                    ) : null}
-                    {queue.paused ? (
-                      <button
-                        type="button"
-                        className="icon-button pending-group__delete"
-                        aria-label={`Delete ${group.label} item ${index + 1}`}
-                        title="Delete Pending item"
-                        disabled={busy}
-                        onClick={() =>
-                          void onManage({
-                            action: "delete",
-                            messageId: entry.id,
-                          })
-                        }
-                      >
-                        <X size={13} aria-hidden />
-                      </button>
                     ) : null}
                   </div>
                 </li>
