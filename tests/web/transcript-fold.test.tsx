@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
+import { ResponseActivityFold } from "../../src/components/transcript-fold";
 
 function transcript(
   messages: React.ComponentProps<typeof Transcript>["messages"],
@@ -27,6 +28,71 @@ afterEach(() => {
 });
 
 describe("response activity folds", () => {
+  it.each(["collapsed", "compact"] as const)(
+    "animates only a live fold's existing %s dots and stops on settlement or error",
+    (visibility) => {
+      const props = {
+        visibility,
+        closeRequested: false,
+        telemetry: Array.from({ length: 25 }, (_, index) => ({
+          id: String(index),
+          kind: "tool" as const,
+        })),
+      };
+      const view = (live: boolean, error = false) => (
+        <>
+          <ResponseActivityFold
+            {...props}
+            lifecycleActive={live}
+            deferredRanges={
+              error
+                ? [
+                    {
+                      cursor: "failed-range",
+                      afterMessageId: "response",
+                      messageCount: 1,
+                      kinds: ["tool"],
+                      status: "error",
+                      error: "Cannot load history",
+                    },
+                  ]
+                : []
+            }
+          >
+            Activity
+          </ResponseActivityFold>
+          <ResponseActivityFold {...props} lifecycleActive={false}>
+            Settled activity
+          </ResponseActivityFold>
+        </>
+      );
+      const { container, rerender } = render(view(true));
+      const active = () =>
+        container.querySelectorAll(".activity-fold__dots--active");
+      expect(active()).toHaveLength(1);
+      expect(active()[0]!.children).toHaveLength(3);
+      expect(active()[0]).toHaveAttribute("aria-hidden", "true");
+      rerender(view(false));
+      expect(active()).toHaveLength(0);
+      rerender(view(true, true));
+      expect(active()).toHaveLength(0);
+    },
+  );
+
+  it("does not add dots to an expanded live fold with nothing omitted", () => {
+    const { container } = render(
+      <ResponseActivityFold
+        visibility="expanded"
+        lifecycleActive
+        closeRequested={false}
+      >
+        Activity
+      </ResponseActivityFold>,
+    );
+    expect(container.querySelector(".activity-fold__dots--active")).toBeNull();
+    expect(container.querySelector(".activity-fold__dots")).toBeNull();
+  });
+
   it("renders Pi compaction summaries as dedicated context checkpoints", async () => {
     const { container } = render(
       transcript(
@@ -948,7 +1014,13 @@ describe("response activity folds", () => {
     );
     expect(folds).toHaveLength(1);
     expect(folds[0]).toHaveAttribute("data-activity-fold", "closed");
-    expect(within(folds[0]!).getByText("···")).toBeVisible();
+    const summary = within(folds[0]!).getByRole("button", {
+      name: "Expand assistant activity",
+    });
+    expect(summary).toBeVisible();
+    expect(
+      summary.querySelectorAll(".activity-fold__dots > span"),
+    ).toHaveLength(3);
     expect(screen.getByText("opening response")).toBeVisible();
     expect(screen.getByText("closing response")).toBeVisible();
 
