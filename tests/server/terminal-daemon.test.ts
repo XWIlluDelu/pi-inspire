@@ -136,6 +136,65 @@ describe("terminal daemon", () => {
     await server.stop();
   });
 
+  it.each(["remove", "restart"] as const)(
+    "keeps the %s RPC open through graceful stop and delayed PTY exit",
+    async (method) => {
+      const { client, directory, ptys, server } = await setup();
+      const terminal = await client.create({ cwd: directory });
+      const pty = ptys[0]!;
+      const exit = pty.kill.bind(pty);
+      let markStopping!: () => void;
+      const stopping = new Promise<void>((resolve) => {
+        markStopping = resolve;
+      });
+      vi.spyOn(pty, "kill").mockImplementation((signal) => {
+        markStopping();
+        if (signal === "SIGKILL") setTimeout(() => exit(signal), 4_000);
+      });
+      vi.useFakeTimers();
+      try {
+        let settled = false;
+        const request =
+          method === "remove"
+            ? client.remove(terminal.id, false)
+            : client.restart(terminal.id);
+        const result = request.then(
+          (receipt) => {
+            settled = true;
+            return receipt;
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+        // The request has reached the real IPC server before time advances.
+        await stopping;
+        await vi.advanceTimersByTimeAsync(5_500);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(500);
+        await expect(result).resolves.toMatchObject({
+          catalogEpoch: terminal.catalogEpoch,
+        });
+        const catalog = await client.list(directory);
+        if (method === "remove") expect(catalog.terminals).toEqual([]);
+        else {
+          expect(catalog.terminals).toMatchObject([
+            { id: terminal.id, status: "running" },
+          ]);
+          expect(catalog.terminals[0]!.outputEpoch).not.toBe(
+            terminal.outputEpoch,
+          );
+        }
+      } finally {
+        exit();
+        vi.useRealTimers();
+        await client.close();
+        await server.stop();
+      }
+    },
+  );
+
   it("keeps terminal RPC and byte streams behind authenticated IPC", async () => {
     const { address, client, directory, ptys, server } = await setup();
     await client.probe();
