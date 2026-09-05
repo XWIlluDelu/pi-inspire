@@ -37,6 +37,9 @@ import type {
 import { TerminalServiceError } from "./terminal-service.js";
 
 const RPC_TIMEOUT_MS = 5_000;
+// A lifecycle mutation may need graceful stop, process-tree termination and
+// PTY output drain before the daemon can acknowledge the result.
+const LIFECYCLE_RPC_TIMEOUT_MS = 15_000;
 const ATTACH_TIMEOUT_MS = 30_000;
 const IPC_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024;
 
@@ -411,16 +414,21 @@ export class TerminalDaemonClient implements TerminalService {
       const decoder = new TerminalIpcDecoder();
       const requestId = randomUUID();
       let settled = false;
-      const timeout = setTimeout(() => {
-        finish(
-          new TerminalServiceError(
-            "terminal_daemon_timeout",
-            503,
-            "The terminal service did not respond in time.",
-          ),
-        );
-        socket.destroy();
-      }, RPC_TIMEOUT_MS);
+      const timeout = setTimeout(
+        () => {
+          finish(
+            new TerminalServiceError(
+              "terminal_daemon_timeout",
+              503,
+              "The terminal service did not respond in time.",
+            ),
+          );
+          socket.destroy();
+        },
+        method === "remove" || method === "restart"
+          ? LIFECYCLE_RPC_TIMEOUT_MS
+          : RPC_TIMEOUT_MS,
+      );
       timeout.unref?.();
 
       const finish = (error?: unknown, result?: Result): void => {

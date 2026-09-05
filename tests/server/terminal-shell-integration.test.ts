@@ -77,7 +77,7 @@ describe("terminal shell integration", () => {
     );
     expect(bash.args).toEqual([
       "--init-file",
-      "/private/integration/bash-init.sh",
+      join("/private/integration", "bash-init.sh"),
       "-i",
     ]);
     const zsh = integratedTerminalLaunch(
@@ -85,15 +85,16 @@ describe("terminal shell integration", () => {
       "/private/integration",
       { ZDOTDIR: "/original" },
     );
-    expect(zsh.env.ZDOTDIR).toBe("/private/integration/zsh");
+    expect(zsh.env.ZDOTDIR).toBe(join("/private/integration", "zsh"));
     expect(zsh.enabled).toBe(true);
     const fish = integratedTerminalLaunch(
       profile("/usr/bin/fish"),
       "/private/it's",
       {},
     );
+    const fishScript = join("/private/it's", "fish-integration.fish");
     expect(fish.args.join(" ")).toContain(
-      "'/private/it'\\''s/fish-integration.fish'",
+      `'${fishScript.replaceAll("'", "'\\''")}'`,
     );
   });
 });

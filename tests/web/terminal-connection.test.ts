@@ -215,8 +215,14 @@ describe("TerminalConnection", () => {
       // A stale close must not revoke the new connection's writer state.
       old?.disconnect();
       expect(connection.sendInput("new\r")).toBe(true);
+      // jsdom queues zero-delay storage events when the owner token changes.
+      // Let that DOM work settle before checking transport-owned cleanup.
+      await vi.advanceTimersByTimeAsync(0);
       connection.stop();
       expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(api.terminalAttachTicket).toHaveBeenCalledTimes(2);
+      expect(status).toHaveBeenLastCalledWith("offline");
     },
   );
 
