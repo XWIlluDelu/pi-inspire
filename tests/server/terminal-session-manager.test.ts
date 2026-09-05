@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -471,41 +472,116 @@ describe("TerminalSessionManager", () => {
     }
   });
 
-  it("retains a terminal when its PTY cannot be stopped", async () => {
-    vi.useFakeTimers();
+  it("uses a platform-valid native PTY kill when tree termination fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pty-fallback-"));
+    const nativePty = createRequire(import.meta.url)(
+      "@lydell/node-pty",
+    ) as typeof import("@lydell/node-pty");
     const pty = new FakePty();
-    vi.spyOn(pty, "kill").mockImplementation((signal) => {
-      pty.signals.push(signal);
-    });
+    // No live POSIX process/group can have this PID. On Windows the empty
+    // SystemRoot guarantees taskkill cannot start, exercising its fallback.
+    Object.defineProperty(pty, "pid", { value: 2_147_483_647 });
+    const kill = vi.spyOn(pty, "kill");
+    const spawn = vi.spyOn(nativePty, "spawn").mockReturnValue(pty as never);
     const manager = new TerminalSessionManager({
       profiles: [
         {
-          id: "bash",
-          label: "Bash",
-          shell: "/bin/bash",
-          args: ["-l"],
+          id: "test",
+          label: "Test shell",
+          shell: "test-shell",
+          args: [],
           available: true,
           isDefault: true,
         },
       ],
-      ptyFactory: () => pty,
-      ownerReconnectGraceMs: 20,
+      env: { ...process.env, SystemRoot: directory },
     });
     try {
-      const terminal = await manager.create({ cwd: process.cwd() });
-      const removing = manager.remove(terminal.id, false);
-      const rejected = expect(removing).rejects.toMatchObject({
-        code: "terminal_stop_timeout",
-      });
-      await vi.advanceTimersByTimeAsync(3_000);
-      await rejected;
-      expect(manager.list().terminals).toHaveLength(1);
-      pty.emitExit(0);
+      const terminal = await manager.create({ cwd: directory });
+      await manager.remove(terminal.id, true);
+      expect(kill.mock.calls).toEqual(
+        process.platform === "win32" ? [[]] : [["SIGKILL"]],
+      );
+      expect(manager.list().terminals).toEqual([]);
     } finally {
+      pty.emitExit(0);
       await manager.close();
-      vi.useRealTimers();
+      spawn.mockRestore();
+      await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    "waits for PTY output drain before removing a terminal (force=%s)",
+    async (force) => {
+      vi.useFakeTimers();
+      const { manager, spawns } = setup();
+      let pty: FakePty | undefined;
+      try {
+        const terminal = await manager.create({ cwd: process.cwd() });
+        pty = spawns[0]!.pty;
+        const delayedPty = pty;
+        vi.spyOn(pty, "kill").mockImplementation((signal) => {
+          delayedPty.signals.push(signal);
+          if (signal === "SIGKILL") {
+            // ConPTY delays onExit while draining output after process exit.
+            setTimeout(() => delayedPty.emitExit(0), 1_500);
+          }
+        });
+        let settled = false;
+        const removing = manager.remove(terminal.id, force).then(
+          (receipt) => {
+            settled = true;
+            return receipt;
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+        await vi.advanceTimersByTimeAsync(force ? 1_200 : 3_200);
+        expect(settled).toBe(false);
+        expect(manager.list().terminals).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(300);
+        await expect(removing).resolves.toMatchObject({
+          catalogEpoch: terminal.catalogEpoch,
+          revision: expect.any(Number),
+        });
+        expect(manager.list().terminals).toHaveLength(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        pty?.emitExit(0);
+        await manager.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "retains a terminal when its PTY cannot be stopped (force=%s)",
+    async (force) => {
+      vi.useFakeTimers();
+      const { manager, spawns } = setup();
+      let pty: FakePty | undefined;
+      try {
+        const terminal = await manager.create({ cwd: process.cwd() });
+        pty = spawns[0]!.pty;
+        vi.spyOn(pty, "kill").mockImplementation(() => {});
+        const removing = manager.remove(terminal.id, force);
+        const rejected = expect(removing).rejects.toMatchObject({
+          code: "terminal_stop_timeout",
+        });
+        await vi.advanceTimersByTimeAsync(force ? 5_000 : 7_000);
+        await rejected;
+        expect(manager.list().terminals).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        pty?.emitExit(0);
+        await manager.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("does not spawn new PTYs after terminal-service shutdown begins", async () => {
     const first = setup();
@@ -539,7 +615,15 @@ describe("TerminalSessionManager", () => {
             id: "sh",
             label: "Shell",
             shell: "/bin/sh",
-            args: [],
+            // Start the fixture through argv, not interactive input sent before
+            // macOS has finished initializing its PTY/shell. Publish readiness
+            // only after the child has installed its HUP disposition.
+            args: [
+              "-c",
+              'sh -c \'trap "" HUP; printf "%s" "$$" > "$1"; exec sleep 600\' sh "$1" & wait',
+              "inspire-tree-test",
+              childPidPath,
+            ],
             available: true,
             isDefault: true,
           },
@@ -548,26 +632,14 @@ describe("TerminalSessionManager", () => {
       let childPid = 0;
       try {
         const terminal = await manager.create({ cwd: directory });
-        const attachment = await manager.attach(
-          {
-            terminalId: terminal.id,
-            clientId: "tree-test",
-            cols: terminal.cols,
-            rows: terminal.rows,
+        await vi.waitFor(
+          async () => {
+            childPid = Number(await readFile(childPidPath, "utf8"));
+            expect(childPid).toBeGreaterThan(1);
+            expect(() => process.kill(childPid, 0)).not.toThrow();
           },
-          new FakeSink(),
+          { timeout: 10_000 },
         );
-        attachment.writeInput(
-          1,
-          Buffer.from(
-            `sh -c 'trap "" HUP; exec sleep 600' & printf '%s' "$!" > '${childPidPath}'\r`,
-          ),
-        );
-        await vi.waitFor(async () => {
-          childPid = Number(await readFile(childPidPath, "utf8"));
-          expect(childPid).toBeGreaterThan(1);
-          expect(() => process.kill(childPid, 0)).not.toThrow();
-        });
 
         await manager.remove(terminal.id, false);
         await vi.waitFor(() =>
@@ -585,5 +657,6 @@ describe("TerminalSessionManager", () => {
         await rm(directory, { recursive: true, force: true });
       }
     },
+    20_000,
   );
 });
