@@ -1,4 +1,5 @@
 import { requestError } from "./request-error.js";
+import { lastAssistantText } from "./assistant-text.js";
 import type {
   ActiveSnapshot,
   ComposerHistoryPage,
@@ -35,8 +36,19 @@ function requireProjection(slot: RuntimeSlot) {
 export class RuntimeReadController {
   constructor(private readonly host: RuntimeReadControllerHost) {}
 
-  async snapshot(): Promise<ActiveSnapshot> {
+  async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
     this.host.assertAvailable();
+    // Addressed reads never follow the Host's last-selected session: separate
+    // browsers can observe separate workers, including across reconnects.
+    if (sessionId !== undefined) {
+      if (sessionId === null)
+        return {
+          active: null,
+          runState: "idle",
+          sessionStatuses: this.host.sessionStatuses(),
+        };
+      return this.host.snapshotSlot(this.host.requireSlot(sessionId));
+    }
     while (true) {
       const slot = this.host.selectedSlot();
       if (!slot)
@@ -112,6 +124,25 @@ export class RuntimeReadController {
         slot.viewId,
         cursor,
       ),
+    );
+  }
+
+  lastAssistantText(
+    sessionId: string,
+    viewId: string,
+  ): Promise<{ text: string | null }> {
+    return this.projectionRead(
+      sessionId,
+      (projection, slot, effectiveLeafId) => {
+        if (slot.viewId !== viewId)
+          throw requestError(
+            "The branch changed; copy the response again",
+            409,
+          );
+        return {
+          text: lastAssistantText(projection.viewMessages(effectiveLeafId)),
+        };
+      },
     );
   }
 

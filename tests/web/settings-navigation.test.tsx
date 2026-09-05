@@ -68,6 +68,10 @@ describe("Settings component UX and navigation", () => {
       "Desktop send key",
       "On launch",
       "Completion alerts",
+      "Steering delivery",
+      "Follow-up delivery",
+      "Automatic context compaction",
+      "Automatic retry",
     ])
       expect(screen.getAllByText(name).length).toBeGreaterThan(0);
 
@@ -96,6 +100,10 @@ describe("Settings component UX and navigation", () => {
     expect(
       screen.getByRole("link", { name: "Pi Coding Agent" }),
     ).toHaveAttribute("href", "https://github.com/earendil-works/pi");
+    expect(screen.getByRole("link", { name: "Pi changelog" })).toHaveAttribute(
+      "href",
+      "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md",
+    );
     expect(
       screen.getByRole("button", { name: "Restore defaults" }),
     ).toBeInTheDocument();

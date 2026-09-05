@@ -402,6 +402,11 @@ describe("History contextual mode", () => {
         onOpenSession={() => undefined}
       />,
     );
+    expect(
+      screen.getByRole("option", {
+        name: /\/compact.*Compact the current context/,
+      }),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Filter commands"), {
       target: { value: "latest branch" },
     });

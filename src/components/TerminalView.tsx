@@ -45,6 +45,7 @@ import {
   TerminalConnection,
   type TerminalTransportStatus,
 } from "../terminal-connection";
+import { terminalFileLinks } from "../terminal-links";
 import type { TerminalUiSettings } from "../terminal-settings";
 
 interface TerminalViewProps {
@@ -82,9 +83,6 @@ interface SearchState {
   resultIndex: number;
   resultCount: number;
 }
-
-const FILE_REFERENCE_PATTERN =
-  /(?:^|[\s("'`])((?:(?:\.{1,2}[\\/])|[\\/]|[A-Za-z]:[\\/])?[\p{L}\p{N}\p{M}_@+.,~\\/-]+\.[A-Za-z0-9]{1,12}(?::\d{1,9})?(?::\d{1,9})?)/gu;
 
 const initialSearch: SearchState = {
   open: false,
@@ -449,41 +447,16 @@ export const TerminalView = memo(function TerminalView({
           callback(undefined);
           return;
         }
-        const line = xterm.buffer.active
-          .getLine(lineNumber - 1)
-          ?.translateToString(true);
+        const line = xterm.buffer.active.getLine(lineNumber - 1);
         if (!line) {
           callback(undefined);
           return;
         }
-        const links = [...line.matchAll(FILE_REFERENCE_PATTERN)]
-          .map((match) => {
-            const text = match[1];
-            if (!text || match.index === undefined) return null;
-            if (
-              !text.includes("/") &&
-              !text.includes("\\") &&
-              /\.(?:com|net|org|io)(?::\d+)?(?::\d+)?$/iu.test(text)
-            )
-              return null;
-            const offset = match[0].lastIndexOf(text);
-            const start = match.index + offset + 1;
-            return {
-              range: {
-                start: { x: start, y: lineNumber },
-                end: { x: start + text.length - 1, y: lineNumber },
-              },
-              text,
-              activate: (_event: MouseEvent, value: string) =>
-                onOpenFileRef.current?.(
-                  terminalFileReference(
-                    value,
-                    descriptorRef.current.currentCwd,
-                  ),
-                ),
-            };
-          })
-          .filter((link) => link !== null);
+        const links = terminalFileLinks(line, lineNumber, (_event, value) =>
+          onOpenFileRef.current?.(
+            terminalFileReference(value, descriptorRef.current.currentCwd),
+          ),
+        );
         callback(links.length > 0 ? links : undefined);
       },
     });

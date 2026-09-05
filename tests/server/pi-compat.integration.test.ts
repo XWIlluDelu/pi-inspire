@@ -239,6 +239,16 @@ describe("installed Pi compatibility boundary", () => {
         steering: [],
         followUp: [],
       });
+      await expect(rpc.request({ type: "get_state" })).resolves.toMatchObject({
+        pendingMessageCount: 0,
+        isStreaming: false,
+      });
+      // Clearing an already-drained queue is a successful boundary operation,
+      // not a stale-revision failure or a claim about earlier displayed rows.
+      await expect(rpc.request({ type: "clear_queue" })).resolves.toEqual({
+        steering: [],
+        followUp: [],
+      });
 
       const all = await rpc.request<{
         entries: Array<Record<string, unknown>>;

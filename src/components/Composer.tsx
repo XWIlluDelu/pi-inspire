@@ -1,19 +1,14 @@
 import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
-  memo,
   useRef,
   useState,
 } from "react";
-import { parseCompactCommand } from "../../shared/commands";
-import {
-  isAbortableRunState,
-  isBusyRunState,
-  THINKING_LEVELS,
-} from "../../shared/contracts";
+import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
 import { clipboardFiles } from "../clipboard-files";
 import {
   type ComposerHistoryScope,
@@ -23,6 +18,7 @@ import {
   rememberComposerHistory,
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { supportedThinkingLevels } from "../model-options";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
@@ -89,6 +85,16 @@ export const Composer = memo(function Composer() {
       thinkingLevel: source.thinkingLevel,
       desktopSendKey: source.prefs.desktopSendKey,
       recentModelIds: source.prefs.recentModelIds,
+      nativeCommandUiRequest: source.nativeCommandUiRequest,
+      activeHostCommand: source.sessionId
+        ? source.commandActivities[source.sessionId]?.find(
+            (activity) =>
+              activity.status === "running" &&
+              (activity.command === "compact" ||
+                activity.command === "export" ||
+                activity.command === "reload"),
+          )
+        : undefined,
     }),
     shallowEqual,
   );
@@ -149,14 +155,13 @@ export const Composer = memo(function Composer() {
   const busy = isBusyRunState(state.runState);
   const sessionOpening = state.sessionSelectionPending;
 
-  // Conflict recovery keeps the existing steer-shaped keyboard path, but it
-  // is not part of the host's active/queued busy ownership set.
-  const composerBusy = busy || state.runState === "conflict";
   const abortable = isAbortableRunState(state.runState);
   const isRunning = state.runState === "running";
   const isRetrying = state.runState === "retrying";
   const isCompacting = state.runState === "compacting";
   const isFailed = state.runState === "failed";
+  const hostCommandBusy = Boolean(state.activeHostCommand);
+  const deliveryBusy = busy && !isCompacting;
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -254,14 +259,16 @@ export const Composer = memo(function Composer() {
 
   const canSend = Boolean(
     !sessionOpening &&
+      !isCompacting &&
+      !hostCommandBusy &&
       sessionId &&
       (draft.trim() ||
         state.attachments.length > 0 ||
         state.projectFiles.length > 0),
   );
-  const activeBehavior = busy
+  const activeBehavior = deliveryBusy
     ? deliveryBehavior
-    : composerBusy
+    : state.runState === "conflict"
       ? "steer"
       : undefined;
   const submit = async (behavior?: "steer" | "followUp") => {
@@ -270,13 +277,9 @@ export const Composer = memo(function Composer() {
     const owner = sessionId;
     if (owner && sessionDraft(owner) !== message)
       setSessionDraft(owner, message);
+    const recordsHistory = !store.isNativeCommand(message);
     const sent = await store.sendPrompt(message, behavior);
     if (!sent || !owner) return;
-    const recordsHistory = !(
-      parseCompactCommand(message) &&
-      state.attachments.length === 0 &&
-      state.projectFiles.length === 0
-    );
     if (recordsHistory && historyScope) {
       const entries = rememberComposerHistory(
         historyScope,
@@ -313,12 +316,13 @@ export const Composer = memo(function Composer() {
       ) ?? state.model)
     : null;
   const thinkingSupported = activeModel?.reasoning !== false;
+  const thinkingLevels = supportedThinkingLevels(activeModel);
 
   return (
     <form
       className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
       aria-label="Message composer"
-      aria-busy={busy || sessionOpening || undefined}
+      aria-busy={busy || hostCommandBusy || sessionOpening || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(activeBehavior);
@@ -375,17 +379,21 @@ export const Composer = memo(function Composer() {
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={
-          busy
-            ? deliveryBehavior === "steer"
-              ? "Add direction to the running task…"
-              : "Add a follow-up for after this task…"
-            : "Message Pi…"
+          isCompacting
+            ? "Keep writing — send when compaction finishes…"
+            : state.activeHostCommand
+              ? `Keep writing — send when /${state.activeHostCommand.command} finishes…`
+              : deliveryBusy
+                ? deliveryBehavior === "steer"
+                  ? "Add direction to the running task…"
+                  : "Add a follow-up for after this task…"
+                : "Message Pi…"
         }
         label="Message"
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />
-      {busy ? (
+      {deliveryBusy ? (
         <div className="composer__delivery">
           <div className="segmented" role="group" aria-label="Message delivery">
             <button
@@ -416,6 +424,13 @@ export const Composer = memo(function Composer() {
           models={state.availableModels}
           recent={state.recentModelIds}
           disabled={sessionOpening}
+          openRequest={
+            state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+            state.nativeCommandUiRequest.action === "model"
+              ? state.nativeCommandUiRequest
+              : undefined
+          }
+          onOpenRequestHandled={store.consumeNativeCommandUiRequest}
           onChange={(provider, id) => void store.setModel(provider, id)}
         />
         <Dropdown
@@ -432,7 +447,14 @@ export const Composer = memo(function Composer() {
             thinkingSupported ? state.thinkingLevel : "thinking unavailable"
           }
           disabled={!thinkingSupported || sessionOpening}
-          options={THINKING_LEVELS.map((level) => ({
+          openRequest={
+            state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+            state.nativeCommandUiRequest.action === "thinking"
+              ? state.nativeCommandUiRequest.id
+              : undefined
+          }
+          onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+          options={thinkingLevels.map((level) => ({
             value: level,
             label: level,
           }))}
@@ -462,7 +484,7 @@ export const Composer = memo(function Composer() {
         </button>
         <span className="composer__spacer" />
         <ContextMeter />
-        {busy ? (
+        {deliveryBusy ? (
           <button
             type="submit"
             className="composer__send"
@@ -490,9 +512,17 @@ export const Composer = memo(function Composer() {
             aria-label={
               state.runState === "conflict"
                 ? "Recover session"
-                : "Abort running task"
+                : isCompacting
+                  ? "Cancel context compaction"
+                  : "Abort running task"
             }
-            title={state.runState === "conflict" ? "Recover session" : "Abort"}
+            title={
+              state.runState === "conflict"
+                ? "Recover session"
+                : isCompacting
+                  ? "Cancel compaction"
+                  : "Abort"
+            }
           >
             <Square size={14} aria-hidden />
           </button>

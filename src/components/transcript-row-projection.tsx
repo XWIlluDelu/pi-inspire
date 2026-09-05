@@ -42,6 +42,7 @@ import {
 } from "./transcript-fold";
 import {
   AssistantTurn,
+  ContextCheckpointRow,
   UnknownRoleRow,
   UnpairedToolResultRow,
   UserBubble,
@@ -555,6 +556,26 @@ export function useTranscriptRows({
           turnOrdinal: currentTurnOrdinal,
           turnId: currentTurnId,
           turnStart: true,
+        });
+        index += 1;
+        continue;
+      }
+
+      if (
+        message.role === "compactionSummary" ||
+        message.role === "branchSummary"
+      ) {
+        flushActivity(true);
+        const summary =
+          typeof message.summary === "string" ? message.summary : "";
+        built.push({
+          key,
+          node: <ContextCheckpointRow message={message} />,
+          searchText: settled ? summary : "",
+          searchScope: "model",
+          turnOrdinal: currentTurnOrdinal,
+          turnId: currentTurnId,
+          turnStart: false,
         });
         index += 1;
         continue;

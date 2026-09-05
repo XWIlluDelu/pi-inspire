@@ -136,6 +136,9 @@ export interface RuntimeSlot {
   runState: RunState;
   /** State to restore after the current manual or automatic compaction ends. */
   compactionReturnState: RunState | null;
+  /** Pi RPC can set this SettingsManager value but does not expose it from
+   * get_state, so the Host caches the SDK-observed value between snapshots. */
+  autoRetryEnabled: boolean | null;
   attention: CompletionAttention | null;
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
   pendingExtensionUiOwners: Map<string, PiRpcProcess>;
@@ -213,6 +216,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     ready: false,
     runState: "idle",
     compactionReturnState: null,
+    autoRetryEnabled: null,
     attention: null,
     pendingExtensionUiRequests: new Map(),
     pendingExtensionUiOwners: new Map(),

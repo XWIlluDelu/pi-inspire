@@ -1,5 +1,5 @@
 const MAX_STREAM_CONTENT_INDEX = 255;
-const MAX_STREAM_TEXT_CHARS = 64_000;
+export const MAX_STREAM_TEXT_CHARS = 64_000;
 export const MAX_ASSISTANT_STREAM_BATCH_EVENTS = 2_048;
 
 type JsonRecord = Record<string, unknown>;

@@ -83,6 +83,12 @@ export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
 export const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
 
 export class FakeWebSocket {
+  static OPEN = 1;
+  readyState = 0;
+  sent: string[] = [];
+  send(data: string): void {
+    this.sent.push(data);
+  }
   static instances: FakeWebSocket[] = [];
   static bootstrapSnapshot: ActiveSnapshot | undefined;
   static bootstrapUpdateStatus: HostUpdateStatus | undefined;
@@ -97,10 +103,13 @@ export class FakeWebSocket {
     FakeWebSocket.instances.push(this);
   }
 
-  close(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
   open(snapshot = FakeWebSocket.bootstrapSnapshot): void {
     if (this.opened) return;
     this.opened = true;
+    this.readyState = 1;
     this.onopen?.({});
     if (snapshot)
       this.emit({

@@ -845,6 +845,15 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     try {
       const compacted = JSON.stringify(projection.messages);
       expect(compacted).toContain("summary of old work");
+      expect(projection.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "compactionSummary",
+            summary: "summary of old work",
+            tokensBefore: 1000,
+          }),
+        ]),
+      );
       expect(compacted).toContain("tool output");
       expect(compacted).not.toContain("abandoned");
 

@@ -27,7 +27,12 @@ import {
   boundedTranscriptProjection,
   type ProjectionReconcileResult,
   TRANSIENT_OVERLAY_MAX_BYTES,
+  TRANSCRIPT_ITEM_MAX_BYTES,
 } from "./session-projection.js";
+import {
+  assistantDeltaProjectionBytes,
+  type ReducedAssistantDelta,
+} from "./runtime-stream-budget.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
@@ -195,6 +200,7 @@ export class RuntimePersistenceOwnershipController {
     slot: RuntimeSlot,
     message: unknown,
     phase: "start" | "update" | "end",
+    delta?: ReducedAssistantDelta,
   ): unknown {
     const correlation = messageFallbackCorrelation(message);
     let liveId = correlation
@@ -204,7 +210,24 @@ export class RuntimePersistenceOwnershipController {
       liveId = `${slot.id}:live:${++slot.nextOverlayId}`;
       if (correlation) slot.activeOverlayIds.set(correlation, liveId);
     }
-    const boundedProjection = boundedTranscriptProjection(message);
+    const index = slot.overlay.findIndex(
+      (item) => this.overlayIdentity(item) === liveId,
+    );
+    const previousBytes = slot.overlayItemBytes[index];
+    const incrementalBytes =
+      phase === "update" &&
+      delta &&
+      index >= 0 &&
+      slot.overlay[index] === delta.previous &&
+      slot.overlayItemBytes.length === slot.overlay.length &&
+      previousBytes !== undefined &&
+      this.overlayIdentity(message) === liveId
+        ? assistantDeltaProjectionBytes(message, delta, previousBytes)
+        : null;
+    const boundedProjection =
+      incrementalBytes !== null && incrementalBytes <= TRANSCRIPT_ITEM_MAX_BYTES
+        ? { value: message, bytes: incrementalBytes }
+        : boundedTranscriptProjection(message);
     const bounded = boundedProjection.value;
     const boundedRecord =
       bounded && typeof bounded === "object" && !Array.isArray(bounded)
@@ -232,9 +255,6 @@ export class RuntimePersistenceOwnershipController {
       slot.overlayItemBytes.length === next.length
         ? [...slot.overlayItemBytes]
         : next.map(overlayItemBytes);
-    const index = next.findIndex(
-      (item) => this.overlayIdentity(item) === liveId,
-    );
     const durableEnd =
       phase === "end" &&
       customEntryId !== null &&

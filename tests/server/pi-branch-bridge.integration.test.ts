@@ -588,9 +588,8 @@ export default function (pi) {
       expect(forked.snapshot.pendingQueues).toEqual({
         steering: [],
         followUp: [],
-        paused: false,
+        totalCount: 0,
         revision: 0,
-        managementAvailable: false,
       });
       await vi.waitFor(() => expect(workers).toHaveLength(2));
       expect(sourcePid).not.toBeNull();

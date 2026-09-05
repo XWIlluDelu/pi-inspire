@@ -1,5 +1,9 @@
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
-import { isRunState, isSessionRuntimeStatus } from "../../shared/contracts";
+import {
+  isRunState,
+  isSessionRuntimeStatus,
+  type SessionDetailInterest,
+} from "../../shared/contracts";
 import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl } from "../api";
 import type { WireEvent } from "../events";
@@ -91,6 +95,7 @@ interface ConnectionControllerHost {
     bootstrapped: boolean;
     authorityId: string | null;
     snapshotDigest: string | null;
+    sessionId: string | null;
   };
   patch(patch: {
     connection?: ManagedConnectionState;
@@ -163,6 +168,8 @@ function authoritativeSnapshot(
 export class ConnectionController {
   private socket: WebSocket | null = null;
   private socketPhase: "bootstrap" | "resume" | null = null;
+  private detailSessionId: string | null = null;
+  private detailRevision = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
@@ -194,6 +201,41 @@ export class ConnectionController {
     this.openSocket(token, "bootstrap");
   }
 
+  /** Selection commits keep the global stream alive, but fence its detail
+   * projection behind a new addressed snapshot. */
+  updateDetailInterest(): void {
+    const socket = this.socket;
+    const sessionId = this.host.state().sessionId;
+    if (
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      sessionId === this.detailSessionId
+    )
+      return;
+    this.detailSessionId = sessionId;
+    this.detailRevision += 1;
+    this.host.invalidateSnapshotDigest();
+    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
+    this.streamUpdateTimer = null;
+    this.pendingStreamUpdate = null;
+    const interest: SessionDetailInterest = {
+      type: "detail_interest",
+      sessionId,
+      revision: this.detailRevision,
+    };
+    try {
+      socket.send(JSON.stringify(interest));
+    } catch {
+      this.failSocket(socket);
+      return;
+    }
+    this.clearSnapshotTimer();
+    this.snapshotTimer = setTimeout(
+      () => this.failSocket(socket),
+      FIRST_SNAPSHOT_TIMEOUT_MS,
+    );
+  }
+
   private openSocket(
     token: string | null,
     phase: "bootstrap" | "resume",
@@ -217,11 +259,16 @@ export class ConnectionController {
     this.host.patch({
       connection: state.bootstrapped ? "reconnecting" : "connecting",
     });
+    this.detailSessionId = state.sessionId;
+    this.detailRevision = 0;
     const socket = new WebSocket(
-      eventsUrl(token, state.snapshotDigest ?? null),
+      eventsUrl(token, state.snapshotDigest ?? null, state.sessionId),
     );
     this.socket = socket;
     this.socketPhase = phase;
+    socket.onopen = () => {
+      if (this.socket === socket) this.updateDetailInterest();
+    };
     // Bound the whole connection handshake, not only an already-open socket:
     // a black-holed TCP/WebSocket negotiation may otherwise remain CONNECTING
     // indefinitely without producing an error or close event.
@@ -239,6 +286,15 @@ export class ConnectionController {
         return;
       }
 
+      // An older snapshot may already be in flight when selection changes.
+      // Its queue belongs to the old interest and cannot replace this owner.
+      if (
+        event.type === "snapshot" &&
+        event.detailRevision !== undefined &&
+        (event.detailRevision !== this.detailRevision ||
+          event.detailSessionId !== this.host.state().sessionId)
+      )
+        return;
       const hostState = this.host.state();
       if (!this.synchronized) {
         const snapshot = authoritativeSnapshot(
@@ -292,6 +348,7 @@ export class ConnectionController {
         }
         if (!this.applySocketEvent(socket, event)) return;
         this.host.recordSnapshotDigest(snapshot.digest);
+        this.clearSnapshotTimer();
         return;
       }
       // Host-wide update status is carried on the authenticated stream but is
