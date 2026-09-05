@@ -1050,7 +1050,7 @@ export const TerminalView = memo(function TerminalView({
                   Take control
                 </button>
               ) : null}
-              <details className="terminal-command-menu">
+              <details className="terminal-command-menu" data-terminal-menu>
                 <summary
                   className="icon-button"
                   aria-label="Terminal command history"

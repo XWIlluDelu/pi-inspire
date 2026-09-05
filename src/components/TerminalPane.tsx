@@ -43,6 +43,7 @@ import {
   subscribeTerminalInsertion,
   type TerminalUiAction,
 } from "../terminal-actions";
+import { dismissTerminalMenu, TERMINAL_MENU_SELECTOR } from "../terminal-menus";
 import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
@@ -356,16 +357,47 @@ export const TerminalPane = memo(function TerminalPane({
   }, [activeId, catalog, terminals]);
 
   useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const openMenus = () =>
+      pane.querySelectorAll<HTMLDetailsElement>(
+        `${TERMINAL_MENU_SELECTOR}[open]`,
+      );
     const dismissMenus = (event: PointerEvent) => {
-      for (const menu of paneRef.current?.querySelectorAll<HTMLDetailsElement>(
-        "details[open]",
-      ) ?? []) {
-        if (!menu.contains(event.target as Node)) menu.removeAttribute("open");
+      for (const menu of openMenus()) {
+        if (!menu.contains(event.target as Node)) menu.open = false;
       }
     };
+    const closeOtherMenus = (event: Event) => {
+      const current = event.target;
+      if (
+        !(current instanceof HTMLDetailsElement) ||
+        !current.open ||
+        !current.matches(TERMINAL_MENU_SELECTOR)
+      )
+        return;
+      for (const menu of openMenus()) {
+        if (menu !== current) menu.open = false;
+      }
+    };
+    // Native toggle does not bubble; capture includes command history in the
+    // child view without duplicating menu ownership in every trigger.
+    pane.addEventListener("toggle", closeOtherMenus, true);
     document.addEventListener("pointerdown", dismissMenus, true);
-    return () =>
+    return () => {
+      pane.removeEventListener("toggle", closeOtherMenus, true);
       document.removeEventListener("pointerdown", dismissMenus, true);
+    };
+  }, [cwd]);
+
+  const onMenuKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.key === "Escape" &&
+      dismissTerminalMenu(paneRef.current, event.target)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }, []);
 
   useEffect(() => {
@@ -906,6 +938,7 @@ export const TerminalPane = memo(function TerminalPane({
     <div
       ref={paneRef}
       className={`terminal-pane${focused ? " terminal-pane--focused" : ""}`}
+      onKeyDown={onMenuKeyDown}
     >
       {sessionCwd && cwd !== sessionCwd ? (
         <div className="terminal-project-context">
@@ -1018,7 +1051,7 @@ export const TerminalPane = memo(function TerminalPane({
             <Plus size={15} aria-hidden />
           </button>
           {(catalog?.profiles.length ?? 0) > 1 ? (
-            <details className="terminal-menu">
+            <details className="terminal-menu" data-terminal-menu>
               <summary
                 className="terminal-tabs__profile"
                 aria-label="Choose terminal profile"
@@ -1048,7 +1081,10 @@ export const TerminalPane = memo(function TerminalPane({
             </details>
           ) : null}
         </div>
-        <details className="terminal-menu terminal-menu--more">
+        <details
+          className="terminal-menu terminal-menu--more"
+          data-terminal-menu
+        >
           <summary
             className="icon-button"
             aria-label="Terminal actions"
@@ -1177,6 +1213,7 @@ export const TerminalPane = memo(function TerminalPane({
         </details>
         <details
           className="terminal-menu terminal-menu--projects"
+          data-terminal-menu
           onToggle={(event) => {
             if (event.currentTarget.open) void loadGlobal();
           }}
