@@ -390,6 +390,108 @@ test("activity folds move through the manual density ladder", async ({
   );
 });
 
+test("activity dots swap theme colors without layout motion and respect reduced motion", async ({
+  page,
+}, testInfo) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const dots = page
+    .locator(".activity-fold__summary-badge .activity-fold__dots")
+    .first();
+  await expect(dots).toBeVisible();
+  // Lifecycle wiring is covered by the fold unit tests. Isolate CSS here so
+  // animation checks do not depend on the mock worker's streaming duration.
+  await dots.evaluate((element) =>
+    element.classList.add("activity-fold__dots--active"),
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  for (const palette of ["amber", "teal"]) {
+    for (const theme of ["light", "dark"]) {
+      const result = await dots.evaluate(
+        (element, { palette, theme }) => {
+          document.documentElement.dataset.palette = palette;
+          document.documentElement.dataset.theme = theme;
+          const rootStyle = getComputedStyle(document.documentElement);
+          const color = (token: string) => {
+            const probe = document.createElement("span");
+            probe.style.color = rootStyle.getPropertyValue(token).trim();
+            return probe.style.color;
+          };
+          const frames = [100, 1100].map((time) => {
+            const colors = Array.from(element.children, (dot) => {
+              for (const animation of dot.getAnimations()) {
+                animation.pause();
+                animation.currentTime = time;
+              }
+              return getComputedStyle(dot, "::before").backgroundColor;
+            });
+            const { width, height } = element.getBoundingClientRect();
+            return { colors, width, height };
+          });
+          const reference = document.createElement("span");
+          reference.textContent = "···";
+          reference.style.letterSpacing = "0.25em";
+          element.parentElement!.append(reference);
+          const originalWidth = reference.getBoundingClientRect().width;
+          reference.remove();
+          return {
+            frames,
+            originalWidth,
+            tool: color("--activity-tool"),
+            thinking: color("--activity-think"),
+            squares: Array.from(element.children, (dot) => {
+              const square = getComputedStyle(dot, "::before");
+              return {
+                width: square.width,
+                height: square.height,
+                radius: square.borderRadius,
+              };
+            }),
+          };
+        },
+        { palette, theme },
+      );
+      expect(result.frames[0]!.colors).toEqual([
+        result.tool,
+        result.thinking,
+        result.tool,
+      ]);
+      expect(result.frames[1]!.colors).toEqual([
+        result.thinking,
+        result.tool,
+        result.thinking,
+      ]);
+      expect(result.squares).toEqual(
+        Array.from({ length: 3 }, () => ({
+          width: "2px",
+          height: "2px",
+          radius: "0px",
+        })),
+      );
+      expect(result.frames[0]!.width).toBeCloseTo(result.originalWidth, 1);
+      expect(result.frames[0]!.width).toBe(result.frames[1]!.width);
+      expect(result.frames[0]!.height).toBe(result.frames[1]!.height);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".transcript").hover();
+  await page.mouse.wheel(0, -5000);
+  await dots.scrollIntoViewIfNeeded();
+  await expect(dots).toBeInViewport();
+  await dots.screenshot({
+    path: testInfo.outputPath("square-activity-dots.png"),
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await dots.evaluate((element) =>
+      Array.from(
+        element.children,
+        (dot) => getComputedStyle(dot).animationName,
+      ),
+    ),
+  ).toEqual(["none", "none", "none"]);
+});
+
 test("Pending stays read-only until an explicit Clear all confirmation", async ({
   page,
 }) => {
