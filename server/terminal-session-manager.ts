@@ -60,6 +60,9 @@ const DEFAULT_RING_BYTES = 8 * 1024 * 1024;
 const DEFAULT_SCROLLBACK_ROWS = 20_000;
 const DEFAULT_OWNER_RECONNECT_GRACE_MS = 30_000;
 const TERMINATE_GRACE_MS = 2_000;
+// ConPTY may drain output for a second before emitting onExit. Allow room for
+// that drain and scheduling latency; a kill request alone is not confirmation.
+const PTY_EXIT_TIMEOUT_MS = 5_000;
 const TERMINAL_DATA_PAYLOAD_BYTES = MAX_TERMINAL_SOCKET_MESSAGE_BYTES - 13;
 const MAX_SERIALIZED_SNAPSHOT_BYTES = 3 * 1024 * 1024;
 const EMULATOR_PAUSE_BYTES = 4 * 1024 * 1024;
@@ -282,7 +285,8 @@ function defaultPtyFactory(
       (pty.write as unknown as (value: string | Buffer) => void)(data),
     pause: () => pty.pause(),
     resume: () => pty.resume(),
-    kill: (signal) => pty.kill(signal),
+    kill: (signal) =>
+      pty.kill(process.platform === "win32" ? undefined : signal),
     killTree: (signal) => {
       if (process.platform === "win32")
         return signalProcessTree(
@@ -290,12 +294,10 @@ function defaultPtyFactory(
             pid: pty.pid,
             exitCode: null,
             signalCode: null,
-            kill: (requestedSignal) => {
-              pty.kill(
-                typeof requestedSignal === "string"
-                  ? requestedSignal
-                  : undefined,
-              );
+            kill: () => {
+              // node-pty rejects POSIX signal arguments on Windows, including
+              // in the direct-PTY fallback when taskkill fails or times out.
+              pty.kill();
               return true;
             },
           },
@@ -1637,6 +1639,23 @@ export class TerminalSessionManager implements TerminalService {
     );
   }
 
+  private async waitForPtyExit(
+    session: ManagedTerminal,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        session.exitPromise.then(() => true),
+        new Promise<false>((resolvePromise) => {
+          timer = setTimeout(() => resolvePromise(false), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async stopPty(
     session: ManagedTerminal,
     force: boolean,
@@ -1651,12 +1670,7 @@ export class TerminalSessionManager implements TerminalService {
       // The process may have exited between the state check and the signal.
     }
     if (force) {
-      await Promise.race([
-        session.exitPromise,
-        new Promise<void>((resolvePromise) =>
-          setTimeout(resolvePromise, 1_000),
-        ),
-      ]);
+      await this.waitForPtyExit(session, PTY_EXIT_TIMEOUT_MS);
       if (session.status === "running")
         terminalError(
           "terminal_stop_timeout",
@@ -1665,12 +1679,7 @@ export class TerminalSessionManager implements TerminalService {
         );
       return;
     }
-    const exited = await Promise.race([
-      session.exitPromise.then(() => true),
-      new Promise<false>((resolvePromise) =>
-        setTimeout(() => resolvePromise(false), TERMINATE_GRACE_MS),
-      ),
-    ]);
+    const exited = await this.waitForPtyExit(session, TERMINATE_GRACE_MS);
     if (exited) {
       try {
         // A shell can exit on SIGHUP while a child that ignored it remains.
@@ -1687,10 +1696,7 @@ export class TerminalSessionManager implements TerminalService {
     } catch {
       // Best effort after the graceful timeout.
     }
-    await Promise.race([
-      session.exitPromise,
-      new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 1_000)),
-    ]);
+    await this.waitForPtyExit(session, PTY_EXIT_TIMEOUT_MS);
     if (session.status === "running")
       terminalError(
         "terminal_stop_timeout",
