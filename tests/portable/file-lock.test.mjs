@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import fs, {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -91,6 +100,94 @@ test("continues after a crashed owner", async () => {
       await once(holder, "close");
     }
   }
+});
+
+for (const transitionScan of [1, 2]) {
+  test(`does not miss a choosing-to-ticket rename during scan ${transitionScan}`, async (t) => {
+    // Use a real process-birth identity for a second live participant, but
+    // control exactly when its choosing file becomes a numbered ticket.
+    const seed = await acquireFileLock(await lockPath());
+    const identity = seed.owner;
+    await seed.release();
+    const path = await lockPath();
+    await mkdir(path, { mode: 0o700 });
+    const lower = "00000000-0000-4000-8000-000000000001";
+    const upper = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+    const holderToken = transitionScan === 1 ? upper : lower;
+    const contenderToken = transitionScan === 1 ? lower : upper;
+    const choosing = `choosing-${holderToken}.json`;
+    const ticket = `ticket-1-${holderToken}.json`;
+    await writeFile(
+      join(path, choosing),
+      JSON.stringify({ ...identity, token: holderToken }),
+    );
+
+    const realReaddir = fs.readdir;
+    let scans = 0;
+    t.mock.method(crypto, "randomUUID", () => contenderToken);
+    t.mock.method(fs, "readdir", async (...args) => {
+      const names = await realReaddir(...args);
+      if (args[0] === path && ++scans === transitionScan) {
+        assert.ok(names.includes(choosing));
+        // The directory snapshot contains choosing, but lstat/readFile now
+        // sees ENOENT there. The owner is still live under its ticket name.
+        await rename(join(path, choosing), join(path, ticket));
+      }
+      return names;
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+
+    let unexpectedLease;
+    try {
+      await assert.rejects(
+        async () => {
+          unexpectedLease = await acquireFileLock(path, {
+            waitMs: 150,
+            retryMs: 5,
+          });
+        },
+        (error) => error?.code === "ELOCKTIMEOUT",
+      );
+      assert.ok(scans > transitionScan);
+      assert.equal(
+        JSON.parse(await readFile(join(path, ticket), "utf8")).token,
+        holderToken,
+      );
+    } finally {
+      await unexpectedLease?.release();
+    }
+  });
+}
+
+test("preserves all updates when writers arrive together", async () => {
+  const path = await lockPath();
+  const counterPath = `${path}.counter`;
+  await writeFile(counterPath, "0");
+  let active = 0;
+  const results = await Promise.allSettled(
+    Array.from({ length: 8 }, async () => {
+      const lease = await acquireFileLock(path, { waitMs: 5_000, retryMs: 5 });
+      active += 1;
+      try {
+        assert.equal(active, 1, "portable lock admitted concurrent writers");
+        const value = Number(await readFile(counterPath, "utf8"));
+        await delay(2);
+        await lease.assertOwned();
+        await writeFile(counterPath, String(value + 1));
+      } finally {
+        active -= 1;
+        await lease.release();
+      }
+    }),
+  );
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
+  assert.equal(Number(await readFile(counterPath, "utf8")), 8);
 });
 
 test("keeps queued owners mutually exclusive", async () => {

@@ -21,6 +21,7 @@ const DEFAULT_WAIT_MS = 5_000;
 const DEFAULT_RETRY_MS = 50;
 const DEFAULT_INVALID_STALE_MS = 30_000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
+const PARTICIPANT_MOVED = Symbol("participant-moved");
 const PARTICIPANT_PATTERN =
   /^(choosing|ticket-(\d+))-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/u;
 
@@ -234,7 +235,12 @@ async function inspectParticipant(directory, participant, invalidStaleMs) {
       return { ...participant, blocked: true };
     value = JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
-    if (error?.code === "ENOENT") return null;
+    if (error?.code === "ENOENT") {
+      // Choosing is atomically renamed to ticket-N. A stale directory entry
+      // is not proof the participant left: omitting it can either assign a
+      // duplicate ticket ahead of an owner or admit two critical sections.
+      return participant.phase === "choosing" ? PARTICIPANT_MOVED : null;
+    }
     if (
       metadata &&
       Date.now() - metadata.mtimeMs >= invalidStaleMs
@@ -258,18 +264,27 @@ async function inspectParticipant(directory, participant, invalidStaleMs) {
   return { ...participant, owner: value, blocked: false };
 }
 
-async function scanParticipants(directory, options) {
-  const entries = await readdir(directory);
-  const participants = entries
-    .map(parseParticipantName)
-    .filter((entry) => entry !== null);
-  return (
-    await Promise.all(
+async function scanParticipants(directory, options, deadline) {
+  while (true) {
+    const entries = await readdir(directory);
+    const participants = entries
+      .map(parseParticipantName)
+      .filter((entry) => entry !== null);
+    const inspected = await Promise.all(
       participants.map((participant) =>
         inspectParticipant(directory, participant, options.invalidStaleMs),
       ),
-    )
-  ).filter((participant) => participant !== null);
+    );
+    if (!inspected.includes(PARTICIPANT_MOVED))
+      return inspected.filter((participant) => participant !== null);
+    if (Date.now() >= deadline)
+      throw lockError(
+        `Timed out waiting for the ${options.label} lock`,
+        "ELOCKTIMEOUT",
+      );
+    // Re-enumerate after a phase change, including during maximum-ticket
+    // selection. Retrying only the later ownership scan is not sufficient.
+  }
 }
 
 async function prepareLockDirectory(path, options) {
@@ -312,7 +327,7 @@ async function acquirePortableLock(path, owner, options) {
   const deadline = Date.now() + Math.max(0, options.waitMs);
   let participantPath = await publishParticipant(path, owner);
   try {
-    const initial = await scanParticipants(path, options);
+    const initial = await scanParticipants(path, options, deadline);
     const maximumTicket = initial.reduce(
       (maximum, participant) =>
         participant.ticket === null
@@ -368,7 +383,7 @@ async function acquirePortableLock(path, owner, options) {
     };
 
     while (true) {
-      const participants = await scanParticipants(path, options);
+      const participants = await scanParticipants(path, options, deadline);
       const blocked = participants.some((participant) => {
         if (participant.token === owner.token) return false;
         if (participant.blocked || participant.phase === "choosing") return true;
