@@ -389,6 +389,40 @@ afterEach(async () => {
   );
 });
 
+describe("RuntimeController complete assistant copy", () => {
+  it("reads unbounded settled text from the real JSONL branch and rejects stale views", async () => {
+    const text = `${"x".repeat(70_000)}THE_END_42\n`;
+    const { runtime, workers } = await setup([
+      {
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          timestamp: 2,
+        },
+      },
+    ]);
+    try {
+      const snapshot = await runtime.snapshot();
+      const page = snapshot.active!.transcriptPage;
+      expect(JSON.stringify(page.messages)).not.toContain("THE_END_42");
+      const count = workers.length;
+      expect(await runtime.lastAssistantText("session-a", page.viewId)).toEqual(
+        { text },
+      );
+      expect(workers).toHaveLength(count);
+      await expect(
+        runtime.lastAssistantText("session-a", "stale-view"),
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      await runtime.close();
+    }
+  });
+});
+
 describe("RuntimeController new-session materialization", () => {
   it("returns an empty session before its JSONL exists and accepts the exact first Pi flush", async () => {
     const fixture = await setupNewSession();

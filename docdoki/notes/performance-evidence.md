@@ -4,6 +4,12 @@ purpose: Frozen long-session evaluator, activation thresholds, and current evide
 
 # Performance evidence
 
+## Targeted streaming work counters
+
+The review of `0c7b390` identified two concrete costs outside the older evaluator's limited stream scenario: background body delivery before browser filtering, and cumulative assistant overlay serialization on every valid delta. The user explicitly requested these targeted changes; the historical no-change decisions below do not forbid them or establish their latency benefit.
+
+`tests/server/runtime-stream-budget.test.ts` drives the real event reducer and overlay owner with alternating 32-character text/thinking fragments. With incremental accounting disabled, 1,000/2,000 updates serialize cumulative assistant messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON. The incremental path produces identical overlays while serializing only 34/68 KB of fragment JSON and no cumulative assistant messages in that hot path. It also checks escaped characters, split surrogates, revision growth, string/item/overlay limits, structural fallback, and final/snapshot validation. These are serialization-work counters, not network, memory-peak, event-loop-delay, or remote-latency measurements.
+
 ## Reproducible evaluator
 
 Run from the repository root with its isolated loopback ports free (defaults: host 14587, web 15173), with no build, check, test, or other intentional CPU workload running concurrently. Override them with `INSPIRE_BENCHMARK_HOST_PORT` and `INSPIRE_BENCHMARK_WEB_PORT` when needed:

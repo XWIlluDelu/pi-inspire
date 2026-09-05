@@ -1,5 +1,5 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
-import { INSPIRE_COMMANDS } from "../shared/commands";
+import { PI_NATIVE_COMMANDS } from "../shared/commands";
 import type { ProjectFileResult } from "./api";
 
 export interface PiCommand {
@@ -8,7 +8,15 @@ export interface PiCommand {
   /** Pi currently reports extension/prompt/skill. Keep unknown future sources
    * attributable instead of collapsing or rejecting them. */
   source?: string;
+  argumentHint?: string;
 }
+
+const INSPIRE_COMMANDS: PiCommand[] = PI_NATIVE_COMMANDS.map((command) => ({
+  name: command.name,
+  description: command.description,
+  source: "builtin",
+  ...("argumentHint" in command ? { argumentHint: command.argumentHint } : {}),
+}));
 
 export type CaretCompletion =
   | { kind: "file"; start: number; end: number; query: string }
@@ -114,6 +122,7 @@ export function rankProjectFiles(
 
 export function resolveCommandInventory(
   commands: readonly PiCommand[],
+  includeNativeCommands = true,
 ): PiCommand[] {
   const byName = new Map<string, PiCommand>();
   // Pi dispatches the first matching extension command before prompt/skill
@@ -121,9 +130,22 @@ export function resolveCommandInventory(
   for (const command of commands) {
     if (!byName.has(command.name)) byName.set(command.name, command);
   }
-  // The host intercepts `/compact` before Pi dispatch, so its descriptor is
-  // authoritative even if an extension or prompt registers the same name.
-  for (const command of INSPIRE_COMMANDS) byName.set(command.name, command);
+  // A first-message composer can run inherited runtime resources and the
+  // Host-owned /compact compatibility path, but browser-surface commands need
+  // an already selected session. Keep that reduced surface truthful.
+  if (!includeNativeCommands) {
+    const compact = INSPIRE_COMMANDS.find(
+      (command) => command.name === "compact",
+    )!;
+    byName.set(compact.name, compact);
+    return [...byName.values()];
+  }
+  // Pi dispatches dynamic resources before interactive built-ins. Compact is
+  // the one deliberate exception: INSΠRE owns its RPC lifecycle end to end.
+  for (const command of INSPIRE_COMMANDS) {
+    if (command.name !== "compact" && byName.has(command.name)) continue;
+    byName.set(command.name, command);
+  }
   return [...byName.values()];
 }
 

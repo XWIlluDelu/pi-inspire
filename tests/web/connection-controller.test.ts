@@ -8,6 +8,12 @@ import {
 } from "../../src/controllers/connection-controller";
 
 class ImmediateCloseSocket {
+  static OPEN = 1;
+  readyState = 0;
+  sent: string[] = [];
+  send(data: string): void {
+    this.sent.push(data);
+  }
   static instances: ImmediateCloseSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
@@ -26,6 +32,7 @@ class ImmediateCloseSocket {
   }
 
   open(): void {
+    this.readyState = 1;
     this.onopen?.();
   }
 
@@ -50,6 +57,7 @@ function harness() {
       bootstrapped: true,
       authorityId,
       snapshotDigest,
+      sessionId: null as string | null,
     })),
     patch: vi.fn(),
     applyEvent: vi.fn(),
@@ -73,6 +81,62 @@ afterEach(() => {
 });
 
 describe("ConnectionController", () => {
+  it("keeps socket-local interest through selection, stale snapshots, and resume", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    const state = { ...host.state(), sessionId: "a" as string | null };
+    host.state.mockImplementation(() => state);
+    controller.connect(null);
+    const socket = ImmediateCloseSocket.instances[0];
+    expect(new URL(socket.url).searchParams.get("detail")).toBe("a");
+    socket.open();
+    state.sessionId = "b";
+    controller.updateDetailInterest();
+    expect(JSON.parse(socket.sent[0])).toEqual({
+      type: "detail_interest",
+      sessionId: "b",
+      revision: 1,
+    });
+    socket.emit({ ...snapshot, detailSessionId: "a", detailRevision: 0 });
+    expect(host.applyEvent).not.toHaveBeenCalled();
+    const confirmed = { ...snapshot, detailSessionId: "b", detailRevision: 1 };
+    socket.emit(confirmed);
+    expect(host.applyEvent).toHaveBeenCalledWith(confirmed);
+    state.sessionId = null;
+    controller.updateDetailInterest();
+    expect(JSON.parse(socket.sent[1])).toEqual({
+      type: "detail_interest",
+      sessionId: null,
+      revision: 2,
+    });
+    socket.emit({ ...snapshot, detailSessionId: null, detailRevision: 2 });
+    expect(socket.closeCount).toBe(0);
+    socket.close();
+    vi.advanceTimersByTime(1_000);
+    expect(
+      new URL(ImmediateCloseSocket.instances[1].url).searchParams.get("detail"),
+    ).toBe("");
+    expect(host.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("sends a selection committed while the handshake was still connecting", () => {
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    const state = { ...host.state() };
+    host.state.mockImplementation(() => state);
+    controller.connect(null);
+    state.sessionId = "new-owner";
+    controller.updateDetailInterest();
+    const socket = ImmediateCloseSocket.instances[0];
+    expect(socket.sent).toEqual([]);
+    socket.open();
+    expect(JSON.parse(socket.sent[0])).toMatchObject({
+      sessionId: "new-owner",
+      revision: 1,
+    });
+  });
+
   it("detaches a replaced socket before an eager close callback can reconnect", () => {
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();

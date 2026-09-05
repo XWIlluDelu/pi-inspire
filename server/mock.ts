@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -16,9 +15,12 @@ import type {
   GitDiffResponse,
   GitDiffSide,
   GitStatusResponse,
+  HostNativeCommandRequest,
+  HostNativeCommandResponse,
   ModelOption,
   NewSessionOptions,
   PendingQueues,
+  PiMessageDeliveryMode,
   PromptRequest,
   SessionDeleteResponse,
   SessionListResponse,
@@ -31,9 +33,11 @@ import type {
 import { emptyPendingQueues } from "../shared/contracts.js";
 import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
+import { lastAssistantText } from "./assistant-text.js";
 import type { GitInspectionLike } from "./git-inspection.js";
+import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
-import type { PendingManagementRequest, RuntimeLike } from "./runtime.js";
+import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
@@ -497,7 +501,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   >();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pendingBySession = new Map<string, PendingQueues>();
-  private readonly pendingText = new Map<string, string>();
   private nextSession = 0;
   private nextPending = 0;
 
@@ -517,16 +520,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   private pendingFor(sessionId: string): PendingQueues {
     let pending = this.pendingBySession.get(sessionId);
     if (!pending) {
-      pending = { ...emptyPendingQueues(), managementAvailable: true };
+      pending = emptyPendingQueues();
       this.pendingBySession.set(sessionId, pending);
     }
     return pending;
   }
 
-  private clearPending(pending: PendingQueues): boolean {
+  private drainPending(pending: PendingQueues): boolean {
     const entries = [...pending.steering, ...pending.followUp];
     if (entries.length === 0) return false;
-    for (const entry of entries) this.pendingText.delete(entry.id);
+    pending.totalCount = 0;
     pending.steering = [];
     pending.followUp = [];
     pending.revision += 1;
@@ -551,16 +554,14 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const pending = this.pendingFor(request.sessionId);
     const id = `mock-pending-${++this.nextPending}`;
     const text = request.message;
-    this.pendingText.set(id, text);
     const entry = {
       id,
       textPreview: text.slice(0, 512),
       textLength: text.length,
       textTruncated: text.length > 512,
-      imageCount: 0,
-      nonTextContentCount: 0,
     };
     (kind === "steer" ? pending.steering : pending.followUp).push(entry);
+    pending.totalCount += 1;
     pending.revision += 1;
     this.publishPending(request.sessionId);
   }
@@ -618,6 +619,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
             contextWindow: 131_072,
             percent: 9.64,
           },
+        },
+        runtimeSettings: {
+          autoCompactionEnabled: true,
+          autoRetryEnabled: true,
+          steeringMode: "all",
+          followUpMode: "one-at-a-time",
         },
         availableModels: structuredClone(MOCK_AVAILABLE_MODELS),
         commands: [
@@ -701,9 +708,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         ["running", "retrying", "compacting", "queued", "conflict"].includes(
           status.runState,
         )) ||
-      pending?.paused ||
-      (pending?.steering.length ?? 0) > 0 ||
-      (pending?.followUp.length ?? 0) > 0
+      (pending?.totalCount ?? 0) > 0
     ) {
       throw requestError(
         "Wait for the session's active work to finish before deleting it",
@@ -714,12 +719,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (index < 0) throw requestError("Session not found", 404);
     summaries.splice(index, 1);
     this.sessions.delete(sessionId);
-    if (pending) {
-      for (const entry of [...pending.steering, ...pending.followUp]) {
-        this.pendingText.delete(entry.id);
-      }
-      this.pendingBySession.delete(sessionId);
-    }
+    this.pendingBySession.delete(sessionId);
     delete this.state.sessionStatuses[sessionId];
     return { sessionId, disposition: "trashed" };
   }
@@ -795,9 +795,8 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       await this.compact(request.sessionId);
       return null;
     }
-    const pending = this.pendingFor(request.sessionId);
-    if (active.isStreaming || pending.paused) {
-      if (active.isStreaming && !request.behavior) {
+    if (active.isStreaming) {
+      if (!request.behavior) {
         throw new Error("Mock session is already streaming");
       }
       this.queuePrompt(
@@ -862,8 +861,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         message: structuredClone(assistant),
       });
       const pending = this.pendingFor(sessionId);
-      if (!pending.paused && this.clearPending(pending))
-        this.publishPending(sessionId);
+      if (this.drainPending(pending)) this.publishPending(sessionId);
       this.emitSession(sessionId, { type: "agent_settled" });
     }, this.streamIntervalMs);
     this.timers.set(sessionId, timer);
@@ -871,107 +869,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return text ? { text, images: [], files: [] } : null;
   }
 
-  async managePending(
-    sessionId: string,
-    request: PendingManagementRequest,
-  ): Promise<PendingQueues> {
-    const active = this.requireSession(sessionId);
-    const pending = this.pendingFor(sessionId);
-    if (request.expectedRevision !== pending.revision) {
-      throw requestError("Pending messages changed; retry", 409);
-    }
-    const requirePaused = () => {
-      if (!pending.paused) {
-        throw requestError("Pause Pending input before modifying it", 409);
-      }
-    };
-    const remove = (id: string) => {
-      const steeringIndex = pending.steering.findIndex(
-        (item) => item.id === id,
-      );
-      if (steeringIndex >= 0)
-        return pending.steering.splice(steeringIndex, 1)[0];
-      const followUpIndex = pending.followUp.findIndex(
-        (item) => item.id === id,
-      );
-      if (followUpIndex >= 0)
-        return pending.followUp.splice(followUpIndex, 1)[0];
-      return undefined;
-    };
-
-    switch (request.action) {
-      case "pause":
-        if (!pending.paused) {
-          pending.paused = true;
-          pending.revision += 1;
-        }
-        break;
-      case "resume":
-        if (pending.paused) {
-          pending.paused = false;
-          pending.revision += 1;
-        }
-        break;
-      case "delete": {
-        requirePaused();
-        const removed = remove(request.messageId);
-        if (!removed) {
-          throw requestError("Pending message not found", 409);
-        }
-        this.pendingText.delete(removed.id);
-        pending.revision += 1;
-        break;
-      }
-      case "clear": {
-        requirePaused();
-        this.clearPending(pending);
-        break;
-      }
-      case "convert": {
-        requirePaused();
-        const target =
-          request.target === "steer" ? pending.steering : pending.followUp;
-        if (!target.some((item) => item.id === request.messageId)) {
-          const moved = remove(request.messageId);
-          if (!moved) {
-            throw requestError("Pending message not found", 409);
-          }
-          target.push(moved);
-          pending.revision += 1;
-        }
-        break;
-      }
-    }
-
-    this.publishPending(sessionId);
-    if (
-      request.action === "resume" &&
-      !active.isStreaming &&
-      this.clearPending(pending)
-    )
-      this.publishPending(sessionId);
-    return structuredClone(pending);
-  }
-
-  async pendingMessageTexts(
-    sessionId: string,
-    messageIds: readonly string[],
-  ): Promise<Array<{ id: string; text: string }>> {
+  async clearPending(sessionId: string): Promise<void> {
     this.requireSession(sessionId);
-    const pending = this.pendingFor(sessionId);
-    const currentIds = new Set(
-      [...pending.steering, ...pending.followUp].map((item) => item.id),
-    );
-    if (new Set(messageIds).size !== messageIds.length) {
-      throw requestError("Pending message ids must be unique", 400);
-    }
-    return messageIds.map((id) => {
-      const text = currentIds.has(id) ? this.pendingText.get(id) : undefined;
-      if (text === undefined) {
-        throw requestError("Pending message not found", 409);
-      }
-      return { id, text };
-    });
+    if (this.drainPending(this.pendingFor(sessionId)))
+      this.publishPending(sessionId);
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -984,8 +885,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (this.state.active?.sessionId === active.sessionId)
       this.state.runState = "aborted";
     const pending = this.pendingFor(active.sessionId);
-    if (!pending.paused && this.clearPending(pending))
-      this.publishPending(active.sessionId);
+    if (this.drainPending(pending)) this.publishPending(active.sessionId);
     this.emitSession(active.sessionId, { type: "agent_settled" });
   }
 
@@ -1025,9 +925,97 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
     this.requireSession(sessionId).thinkingLevel = level;
   }
+  async setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings)
+      session.runtimeSettings.autoCompactionEnabled = enabled;
+  }
+  async setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings)
+      session.runtimeSettings.autoRetryEnabled = enabled;
+  }
+  async setSteeringMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings) session.runtimeSettings.steeringMode = mode;
+  }
+  async setFollowUpMode(
+    sessionId: string,
+    mode: PiMessageDeliveryMode,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    if (session.runtimeSettings) session.runtimeSettings.followUpMode = mode;
+  }
+  async nativeCommand(
+    request: HostNativeCommandRequest,
+  ): Promise<HostNativeCommandResponse> {
+    this.requireSession(request.sessionId);
+    if (request.command === "compact") {
+      const result = (await this.compact(request.sessionId)) as {
+        tokensBefore: number;
+        estimatedTokensAfter: number;
+      };
+      return {
+        command: "compact",
+        outcome: "completed",
+        message: `Context compacted from ${result.tokensBefore.toLocaleString()} to about ${result.estimatedTokensAfter.toLocaleString()} tokens.`,
+        details: [
+          {
+            label: "Before",
+            value: `${result.tokensBefore.toLocaleString()} tokens`,
+          },
+          {
+            label: "After (estimate)",
+            value: `${result.estimatedTokensAfter.toLocaleString()} tokens`,
+          },
+        ],
+      };
+    }
+    if (request.command === "export") {
+      if (request.argument?.toLocaleLowerCase().endsWith(".jsonl")) {
+        throw requestError(
+          "JSONL export is not available in the browser yet. Use /export in Pi's terminal for a branch-only JSONL file.",
+          409,
+        );
+      }
+      return {
+        command: "export",
+        outcome: "completed",
+        message: "Session exported to HTML.",
+        details: [
+          {
+            label: "File",
+            value: request.argument || `/mock/${request.sessionId}.html`,
+          },
+        ],
+      };
+    }
+    if (request.argument) {
+      throw requestError("/reload does not accept arguments", 400);
+    }
+    return {
+      command: "reload",
+      outcome: "completed",
+      message:
+        "Pi extensions, skills, prompts, context files, and themes were reloaded.",
+    };
+  }
   async extensionUiResponse(): Promise<void> {}
-  async snapshot(): Promise<ActiveSnapshot> {
-    return structuredClone(this.state);
+  async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
+    if (sessionId === undefined) return structuredClone(this.state);
+    const active = sessionId === null ? null : this.requireSession(sessionId);
+    return structuredClone({
+      active,
+      runState:
+        sessionId === null
+          ? "idle"
+          : (this.state.sessionStatuses[sessionId]?.runState ?? "idle"),
+      sessionStatuses: this.state.sessionStatuses,
+      ...(sessionId ? { pendingQueues: this.pendingFor(sessionId) } : {}),
+    });
   }
   async transcriptPage(
     sessionId: string,
@@ -1095,6 +1083,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       continuationCursor: null,
     };
   }
+  async lastAssistantText(
+    sessionId: string,
+    viewId: string,
+  ): Promise<{ text: string | null }> {
+    const active = this.requireSession(sessionId);
+    if (active.transcriptPage.viewId !== viewId)
+      throw requestError("The branch changed; copy the response again", 409);
+    return { text: lastAssistantText(active.transcriptPage.messages) };
+  }
+
   async composerHistory(
     sessionId: string,
     start = 0,

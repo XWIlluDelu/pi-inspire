@@ -145,6 +145,110 @@ describe("TerminalConnection", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(["ticket", "socket", "attach", "replay", "inactive"] as const)(
+    "recovers a silent %s stall without waiting for close",
+    async (phase) => {
+      let finishTicket!: (value: { ticket: string }) => void;
+      const api = {
+        terminalAttachTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+      };
+      if (phase === "ticket")
+        api.terminalAttachTicket.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishTicket = resolve;
+            }),
+        );
+      const status = vi.fn();
+      const connection = new TerminalConnection(
+        api as never,
+        terminal.id,
+        {
+          dimensions: () => ({ cols: 80, rows: 24 }),
+          data: vi.fn(),
+          control: vi.fn(),
+          status,
+          error: vi.fn(),
+        },
+        "client-1",
+      );
+      connection.start();
+      await nextTurn();
+      const old = FakeWebSocket.sockets[0];
+      if (phase === "attach" || phase === "replay" || phase === "inactive")
+        old!.open();
+      if (phase === "replay") {
+        old!.receive(
+          JSON.stringify({
+            type: "attached",
+            terminal,
+            writable: true,
+            replay: "snapshot",
+            nextInputSequence: 1,
+          }),
+        );
+        old!.receive(snapshotFrame());
+        expect(status).not.toHaveBeenCalledWith("connected");
+      }
+      if (phase === "inactive") {
+        makeReady(old!, 1);
+        connection.sendInput("once\r");
+      }
+      // A dead transport is allowed never to deliver its close event.
+      if (old) vi.spyOn(old, "close").mockImplementation(() => {});
+      await vi.advanceTimersByTimeAsync(
+        (phase === "replay" || phase === "inactive" ? 30_000 : 10_000) + 400,
+      );
+      expect(api.terminalAttachTicket).toHaveBeenCalledTimes(2);
+      if (phase === "ticket") {
+        expect(api.terminalAttachTicket.mock.calls[0]![1].aborted).toBe(true);
+        finishTicket({ ticket: "stale" });
+        await nextTurn();
+        expect(FakeWebSocket.sockets).toHaveLength(1);
+      }
+      const current = FakeWebSocket.sockets.at(-1)!;
+      current.open();
+      const attach = JSON.parse(String(current.sent[0]));
+      if (phase === "replay") expect(attach.nextOutputOffset).toBeUndefined();
+      if (phase === "inactive") expect(attach.nextOutputOffset).toBe(0);
+      makeReady(current, phase === "inactive" ? 2 : 1);
+      // A stale close must not revoke the new connection's writer state.
+      old?.disconnect();
+      expect(connection.sendInput("new\r")).toBe(true);
+      connection.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("keeps an idle shell alive with application ping/heartbeat", async () => {
+    const connection = new TerminalConnection(
+      {
+        terminalAttachTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+      } as never,
+      terminal.id,
+      {
+        dimensions: () => ({ cols: 80, rows: 24 }),
+        data: vi.fn(),
+        control: vi.fn(),
+        status: vi.fn(),
+        error: vi.fn(),
+      },
+      "client-1",
+    );
+    connection.start();
+    await nextTurn();
+    const socket = FakeWebSocket.sockets[0]!;
+    socket.open();
+    makeReady(socket, 1);
+    for (let index = 0; index < 12; index += 1) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(JSON.parse(String(socket.sent.at(-1)))).toEqual({ type: "ping" });
+      socket.receive(JSON.stringify({ type: "heartbeat" }));
+    }
+    expect(FakeWebSocket.sockets).toHaveLength(1);
+    connection.stop();
+  });
+
   it("accepts chunked snapshots without advancing the raw output offset", async () => {
     const data = vi.fn();
     const error = vi.fn();

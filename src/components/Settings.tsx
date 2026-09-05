@@ -11,29 +11,30 @@ import {
 } from "lucide-react";
 import {
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
   type ActivityFoldVisibilityPreference,
   type CompletionAttentionPreference,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
   type LaunchPreference,
   type PalettePreference,
+  type PiMessageDeliveryMode,
   type PiUpdateCheckResponse,
   type ProjectDisplayPreference,
   type ReadingWidthPreference,
   type ThemePreference,
+  TOOL_VISIBILITY_PREFERENCES,
   type ToolVisibilityPreference,
   type UpdateCheckResponse,
+  VISIBILITY_PREFERENCES,
   type VisibilityPreference,
 } from "../../shared/contracts";
 import {
@@ -84,6 +85,15 @@ const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
   { value: "enter", label: "Enter" },
   { value: "mod-enter", label: "Ctrl/⌘ Enter" },
 ];
+
+const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [
+  { value: "one-at-a-time", label: "One at a time" },
+  { value: "all", label: "All queued messages" },
+];
+
+function isMessageDeliveryMode(value: string): value is PiMessageDeliveryMode {
+  return value === "all" || value === "one-at-a-time";
+}
 
 const REASONING_DETAILS = VISIBILITY_PREFERENCES.map((value) => ({
   value,
@@ -458,6 +468,8 @@ export const Settings = memo(function Settings({
       inspireUpdateCheck: source.inspireUpdateCheck,
       inspireUpdateChecking: source.inspireUpdateChecking,
       version: source.version,
+      sessionId: source.sessionId,
+      runtimeSettings: source.runtimeSettings,
     }),
     shallowEqual,
   );
@@ -745,7 +757,7 @@ export const Settings = memo(function Settings({
                 id="behavior"
                 icon={<Compass size={14} />}
                 title="Behavior"
-                description="Set startup routing and background completion alerts."
+                description="Set workbench behavior and controls owned by the live Pi runtime."
               >
                 <SettingField
                   label="On launch"
@@ -778,6 +790,128 @@ export const Settings = memo(function Settings({
                       )
                     }
                   />
+                </SettingField>
+
+                <SettingField
+                  label="Steering delivery"
+                  description="When work is running, deliver queued directions one at a time or together at the next safe boundary."
+                >
+                  <Dropdown
+                    label="Steering delivery"
+                    className="dropdown--field"
+                    value={state.runtimeSettings?.steeringMode ?? ""}
+                    display={
+                      state.runtimeSettings?.steeringMode
+                        ? undefined
+                        : "Unavailable"
+                    }
+                    options={MESSAGE_DELIVERY_MODES}
+                    disabled={
+                      !state.sessionId ||
+                      state.runtimeSettings?.steeringMode === null ||
+                      state.runtimeSettings === null
+                    }
+                    onChange={(mode) => {
+                      if (isMessageDeliveryMode(mode))
+                        void store.setSteeringMode(mode);
+                    }}
+                  />
+                </SettingField>
+
+                <SettingField
+                  label="Follow-up delivery"
+                  description="After work settles, start queued follow-ups one at a time or deliver them together."
+                >
+                  <Dropdown
+                    label="Follow-up delivery"
+                    className="dropdown--field"
+                    value={state.runtimeSettings?.followUpMode ?? ""}
+                    display={
+                      state.runtimeSettings?.followUpMode
+                        ? undefined
+                        : "Unavailable"
+                    }
+                    options={MESSAGE_DELIVERY_MODES}
+                    disabled={
+                      !state.sessionId ||
+                      state.runtimeSettings?.followUpMode === null ||
+                      state.runtimeSettings === null
+                    }
+                    onChange={(mode) => {
+                      if (isMessageDeliveryMode(mode))
+                        void store.setFollowUpMode(mode);
+                    }}
+                  />
+                </SettingField>
+
+                <SettingField
+                  label="Automatic context compaction"
+                  description="Let Pi summarize older context when the active model approaches its context limit."
+                >
+                  <label className="settings-switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label="Automatic context compaction"
+                      checked={
+                        state.runtimeSettings?.autoCompactionEnabled === true
+                      }
+                      disabled={
+                        !state.sessionId ||
+                        state.runtimeSettings?.autoCompactionEnabled === null ||
+                        state.runtimeSettings === null
+                      }
+                      onChange={(event) =>
+                        void store.setAutoCompaction(
+                          event.currentTarget.checked,
+                        )
+                      }
+                    />
+                    <span className="settings-switch__track" aria-hidden>
+                      <span className="settings-switch__thumb" />
+                    </span>
+                    <span className="settings-switch__state" aria-hidden>
+                      {state.runtimeSettings?.autoCompactionEnabled === null ||
+                      state.runtimeSettings === null
+                        ? "Unavailable"
+                        : state.runtimeSettings.autoCompactionEnabled
+                          ? "On"
+                          : "Off"}
+                    </span>
+                  </label>
+                </SettingField>
+
+                <SettingField
+                  label="Automatic retry"
+                  description="Let Pi retry transient provider failures such as rate limits and service overloads."
+                >
+                  <label className="settings-switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label="Automatic retry"
+                      checked={state.runtimeSettings?.autoRetryEnabled === true}
+                      disabled={
+                        !state.sessionId ||
+                        state.runtimeSettings?.autoRetryEnabled === null ||
+                        state.runtimeSettings === null
+                      }
+                      onChange={(event) =>
+                        void store.setAutoRetry(event.currentTarget.checked)
+                      }
+                    />
+                    <span className="settings-switch__track" aria-hidden>
+                      <span className="settings-switch__thumb" />
+                    </span>
+                    <span className="settings-switch__state" aria-hidden>
+                      {state.runtimeSettings?.autoRetryEnabled === null ||
+                      state.runtimeSettings === null
+                        ? "Unavailable"
+                        : state.runtimeSettings.autoRetryEnabled
+                          ? "On"
+                          : "Off"}
+                    </span>
+                  </label>
                 </SettingField>
               </Section>
 
@@ -845,6 +979,14 @@ export const Settings = memo(function Settings({
                   rel="noreferrer noopener"
                 >
                   Pi Coding Agent
+                </a>
+                <a
+                  className="settings__utility"
+                  href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Pi changelog
                 </a>
                 <button
                   type="button"

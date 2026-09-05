@@ -151,6 +151,7 @@ export function ComposerInput({
   onHistoryCancel,
   history = [],
   commands,
+  includeNativeCommands = true,
   completionDisabled = false,
   disabled = false,
   completionScope,
@@ -175,6 +176,7 @@ export function ComposerInput({
   onHistoryCancel?: () => void;
   history?: readonly ComposerHistoryEntry[];
   commands: readonly PiCommand[];
+  includeNativeCommands?: boolean;
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
@@ -285,12 +287,13 @@ export function ComposerInput({
       return;
     }
     const token = parseCaretCompletion(draft, caret);
+    setCompletionActive(0);
     setCompletion(token?.kind === "file" && !searchProjectFiles ? null : token);
   };
 
   const commandInventory = useMemo(
-    () => resolveCommandInventory(commands),
-    [commands],
+    () => resolveCommandInventory(commands, includeNativeCommands),
+    [commands, includeNativeCommands],
   );
 
   useEffect(() => {
@@ -335,7 +338,7 @@ export function ComposerInput({
     const ranked = rankCommands(commandInventory, completion.query);
     if (!completion.query.trim()) {
       const sourceOrder = new Map(
-        ["inspire", "extension", "prompt", "skill"].map((source, index) => [
+        ["builtin", "extension", "prompt", "skill"].map((source, index) => [
           source,
           index,
         ]),
@@ -348,11 +351,14 @@ export function ComposerInput({
     }
     return ranked.map((command) => ({
       key: `${command.source ?? "command"}:${command.name}`,
-      title: `/${command.name}`,
+      title: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""}`,
       hint: command.description,
-      group: command.source
-        ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}`
-        : "Command",
+      group:
+        command.source === "builtin"
+          ? "Pi"
+          : command.source
+            ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}`
+            : "Command",
       command,
     }));
   }, [commandInventory, completion, completionFiles]);
@@ -373,8 +379,12 @@ export function ComposerInput({
     const reusesInlineDelimiter = Boolean(
       item.command && existingDelimiter && /[ \t]/.test(existingDelimiter),
     );
+    const addsArgumentDelimiter = Boolean(
+      item.command &&
+        (item.command.source !== "builtin" || item.command.argumentHint),
+    );
     const replacement = item.command
-      ? `/${item.command.name}${reusesInlineDelimiter ? "" : " "}`
+      ? `/${item.command.name}${reusesInlineDelimiter || !addsArgumentDelimiter ? "" : " "}`
       : "";
     const inserted = replaceCompletionToken(value, completion, replacement);
     const next = reusesInlineDelimiter

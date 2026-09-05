@@ -10,9 +10,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  modelIdentityKey,
   type ModelIdentity,
   type ModelOption,
+  modelIdentityKey,
 } from "../../shared/contracts";
 import {
   type FloatingMenuConstraints,
@@ -111,6 +111,8 @@ export function ModelSelector({
   onChange,
   emptyLabel = "No session model",
   disabled = false,
+  openRequest,
+  onOpenRequestHandled,
 }: {
   value: ModelOption | null;
   models: ModelOption[];
@@ -118,6 +120,8 @@ export function ModelSelector({
   onChange: (provider: string, id: string) => void;
   emptyLabel?: string;
   disabled?: boolean;
+  openRequest?: { id: number; query?: string };
+  onOpenRequestHandled?: (id: number) => void;
 }) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -126,6 +130,7 @@ export function ModelSelector({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const handledOpenRequest = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -164,20 +169,36 @@ export function ModelSelector({
     };
   }, [groups]);
 
-  const show = () => {
-    if (models.length === 0) return;
-    setQuery("");
-    const unfiltered = groupPreparedModels(preparedModels, recent).flatMap(
-      (group) => group.models,
-    );
-    setActive(
-      Math.max(
-        0,
-        unfiltered.findIndex((model) => modelIdentityKey(model) === currentKey),
-      ),
-    );
-    setOpen(true);
-  };
+  const show = useCallback(
+    (initialQuery = "") => {
+      if (models.length === 0) return;
+      setQuery(initialQuery);
+      const filtered = groupPreparedModels(
+        preparedModels,
+        recent,
+        initialQuery,
+      ).flatMap((group) => group.models);
+      setActive(
+        initialQuery
+          ? 0
+          : Math.max(
+              0,
+              filtered.findIndex(
+                (model) => modelIdentityKey(model) === currentKey,
+              ),
+            ),
+      );
+      setOpen(true);
+    },
+    [currentKey, models.length, preparedModels, recent],
+  );
+
+  useEffect(() => {
+    if (!openRequest || handledOpenRequest.current === openRequest.id) return;
+    handledOpenRequest.current = openRequest.id;
+    if (!disabled) show(openRequest.query ?? "");
+    onOpenRequestHandled?.(openRequest.id);
+  }, [disabled, openRequest, onOpenRequestHandled, show]);
 
   const restoreTriggerFocus = () => {
     requestAnimationFrame(() => triggerRef.current?.focus());

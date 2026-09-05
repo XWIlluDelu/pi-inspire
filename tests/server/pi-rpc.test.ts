@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MAX_RPC_LINE_BYTES,
   MAX_RPC_OUTBOUND_LINE_BYTES,
+  PiRpcCancelledError,
   PiRpcOutcomeUnknownError,
   PiRpcProcess,
 } from "../../server/pi-rpc.js";
@@ -22,6 +23,47 @@ afterEach(async () => {
 });
 
 describe("PiRpcProcess", () => {
+  it("marks an explicitly stopped compact request as cancelled, not outcome-unknown", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) >= 0) {
+    const command = JSON.parse(buffer.slice(0, index));
+    buffer = buffer.slice(index + 1);
+    if (command.type === "get_state") {
+      process.stdout.write(JSON.stringify({
+        type: "response",
+        id: command.id,
+        command: command.type,
+        success: true,
+        data: { isStreaming: false }
+      }) + "\\n");
+    }
+  }
+});
+`,
+      "utf8",
+    );
+    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+    processes.push(rpc);
+    await rpc.start();
+    const result = rpc
+      .request({ type: "compact" }, 10_000)
+      .catch((error: Error) => error);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    await rpc.stop("compact");
+    const failure = await result;
+    expect(failure).toBeInstanceOf(PiRpcCancelledError);
+    expect(failure).not.toBeInstanceOf(PiRpcOutcomeUnknownError);
+  });
+
   it("uses LF-only JSONL framing and correlates responses", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
     directories.push(directory);

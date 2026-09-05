@@ -27,6 +27,35 @@ afterEach(() => {
 });
 
 describe("response activity folds", () => {
+  it("renders Pi compaction summaries as dedicated context checkpoints", async () => {
+    const { container } = render(
+      transcript(
+        [
+          {
+            role: "compactionSummary",
+            summary: "## Goal\n\nPreserve the parser decisions.",
+            tokensBefore: 42_500,
+            timestamp: Date.now(),
+          },
+        ],
+        "compact",
+      ),
+    );
+
+    const title = screen.getByText("Context compacted");
+    const checkpoint = title.closest("details") as HTMLDetailsElement;
+    expect(title).toBeVisible();
+    expect(screen.getByText("42,500 tokens before")).toBeVisible();
+    expect(container.querySelector(".card__generic")).toBeNull();
+    expect(checkpoint).not.toHaveAttribute("open");
+    fireEvent.click(title.closest("summary")!);
+    expect(checkpoint).toHaveAttribute("open");
+    expect(
+      await screen.findByText(/Preserve the parser decisions\./),
+    ).toBeVisible();
+    expect(container.textContent).not.toContain('"tokensBefore"');
+  });
+
   it("keeps the unchanged card state between two interactive rails", () => {
     const consoleError = vi
       .spyOn(console, "error")

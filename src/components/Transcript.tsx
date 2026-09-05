@@ -28,7 +28,6 @@ import {
   type VisibilityPreference,
 } from "../../shared/contracts";
 import { userTurnSummary } from "../../shared/user-turns";
-import type { PendingManagementIntent } from "../api";
 import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { transcriptProjectionKey } from "../transcript-projection-key";
@@ -86,8 +85,7 @@ export const Transcript = memo(function Transcript({
   projectionIncarnation = "",
   queue = emptyPendingQueues(),
   pendingAction = null,
-  onManagePending = store.managePending,
-  onPendingMessageTexts = store.pendingMessageTexts,
+  onClearPending = store.clearPending,
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
@@ -122,11 +120,8 @@ export const Transcript = memo(function Transcript({
   viewId?: string;
   projectionIncarnation?: string;
   queue?: PendingQueues;
-  pendingAction?: PendingManagementIntent["action"] | null;
-  onManagePending?: (action: PendingManagementIntent) => Promise<boolean>;
-  onPendingMessageTexts?: (
-    messageIds: readonly string[],
-  ) => Promise<string[] | null>;
+  pendingAction?: "clear" | null;
+  onClearPending?: () => Promise<boolean>;
   extensionDisplays?: ExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
@@ -692,16 +687,13 @@ export const Transcript = memo(function Transcript({
               ))}
             </div>
           )}
-          {queue.paused ||
-          queue.steering.length > 0 ||
-          queue.followUp.length > 0 ||
-          genericExtensionDisplays.length > 0 ? (
+          {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
               <PendingQueueGroups
+                key={sessionId}
                 queue={queue}
                 pendingAction={pendingAction}
-                onManage={onManagePending}
-                onReadTexts={onPendingMessageTexts}
+                onClear={onClearPending}
               />
               <ExtensionDisplaySurface displays={genericExtensionDisplays} />
             </div>
