@@ -799,18 +799,15 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.25em;
   opacity: 0.72;
   transition:
     color var(--dur-micro) var(--ease-standard),
-    opacity var(--dur-micro) var(--ease-standard),
-    letter-spacing var(--dur-micro) var(--ease-standard);
+    opacity var(--dur-micro) var(--ease-standard);
 }
 
 .activity-fold__omission:hover {
   color: var(--accent);
   opacity: 1;
-  letter-spacing: 0.35em;
 }
 
 .activity-fold__omission:focus-visible {
@@ -829,6 +826,47 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .activity-fold__summary--error .activity-fold__summary-badge {
   color: var(--danger);
   opacity: 0.9;
+}
+
+.activity-fold__dots {
+  display: inline-flex;
+  align-items: center;
+}
+
+.activity-fold__dots > span {
+  display: grid;
+  place-items: center;
+  width: 1ch;
+  height: 1em;
+  margin-inline-end: 0.25em;
+}
+
+.activity-fold__dots > span::before {
+  content: "";
+  width: 2px;
+  height: 2px;
+  background: currentColor;
+}
+
+/* Local activity feedback: no layout changes or JavaScript animation clock. */
+.activity-fold__dots--active > span {
+  color: var(--activity-tool);
+  animation: activity-dots-swap 2s steps(1, end) infinite;
+}
+
+.activity-fold__dots--active > span:nth-child(2) {
+  color: var(--activity-think);
+  animation-delay: -1s;
+}
+
+@keyframes activity-dots-swap {
+  0%,
+  100% {
+    color: var(--activity-tool);
+  }
+  50% {
+    color: var(--activity-think);
+  }
 }
 
 @keyframes activity-omission-pulse {
@@ -865,19 +903,16 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   background: transparent;
   color: var(--faint);
   font-size: 11px;
-  letter-spacing: 0.25em;
   opacity: 0.65;
   transition:
     color var(--dur-micro) var(--ease-standard),
     opacity var(--dur-micro) var(--ease-standard),
-    letter-spacing var(--dur-micro) var(--ease-standard),
     transform var(--dur-micro) var(--ease-standard);
 }
 
 .activity-fold__summary:hover .activity-fold__summary-badge {
   color: var(--accent);
   opacity: 1;
-  letter-spacing: 0.35em;
   transform: scale(1.08);
 }
 
@@ -890,7 +925,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   outline-offset: 1px;
   border-radius: var(--radius-xs);
   color: var(--accent-deep);
-  letter-spacing: 0.35em;
 }
 
 @keyframes activity-segment-pulse {

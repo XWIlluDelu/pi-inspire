@@ -33,14 +33,29 @@ export type ActivityTelemetryItem = {
 
 export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
 
+function ActivityFoldDots({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`activity-fold__dots${active ? " activity-fold__dots--active" : ""}`}
+      aria-hidden
+    >
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
 function ActivityFoldOmission({
   contentId,
+  active,
   status,
   label,
   title,
   onClick,
 }: {
   contentId: string;
+  active: boolean;
   status: "idle" | "loading" | "error";
   label: string;
   title: string;
@@ -76,7 +91,7 @@ function ActivityFoldOmission({
       data-activity-range={status}
       onClick={onClick}
     >
-      <span aria-hidden>···</span>
+      <ActivityFoldDots active={active && status !== "error"} />
     </button>
   );
 }
@@ -366,6 +381,7 @@ export function ResponseActivityFold({
         {showOmission ? (
           <ActivityFoldOmission
             contentId={contentId}
+            active={lifecycleActive}
             status={omissionStatus}
             label={omissionLabel}
             title={deferredError?.error ?? omissionLabel}
@@ -394,7 +410,7 @@ export function ResponseActivityFold({
           onClick={() => expandToCompact("upper", "center")}
         >
           <span className="activity-fold__summary-badge" aria-hidden>
-            ···
+            <ActivityFoldDots active={lifecycleActive && !deferredError} />
           </span>
         </button>
       ) : null}
