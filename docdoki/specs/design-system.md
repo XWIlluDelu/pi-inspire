@@ -125,8 +125,11 @@ declaration.
   aligned to that toolbar; at the 390px target they remain on one row rather
   than promoting model or effort controls to a second row. A constrained model
   label truncates inside its trigger rather than painting across adjacent
-  controls. The detailed input, delivery, and ownership contract lives in
-  [[composer]].
+  controls. Completion titles can wrap within their column; long filenames do
+  not paint across the adjacent path hint. Model status badges and their
+  selected-row backgrounds preserve AA text contrast across both palettes and
+  luminosity modes. The detailed input, delivery, and ownership contract lives
+  in [[composer]].
 - Files, Changes, and History share the contextual pane rather than creating a
   fourth workbench column. File/resource safety and change semantics belong to
   [[resource-preview]]; branch behavior belongs to [[session-continuity]].
