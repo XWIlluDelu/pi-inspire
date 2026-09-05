@@ -400,12 +400,20 @@ export function ModelSelector({
                             ) : null}
                           </span>
                           <span className="model-picker__badges">
-                            {selected ? <span>Active</span> : null}
+                            {selected ? (
+                              <span className="model-picker__badge model-picker__badge--active">
+                                Active
+                              </span>
+                            ) : null}
                             {!selected && recentKeys.has(key) ? (
-                              <span>Recent</span>
+                              <span className="model-picker__badge model-picker__badge--recent">
+                                Recent
+                              </span>
                             ) : null}
                             {model.reasoning === false ? (
-                              <span>No thinking</span>
+                              <span className="model-picker__badge model-picker__badge--neutral">
+                                No thinking
+                              </span>
                             ) : null}
                             {selected ? <Check size={12} aria-hidden /> : null}
                           </span>

@@ -16,6 +16,7 @@ import {
 import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { dismissTerminalMenu } from "../terminal-menus";
 import { useModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
@@ -48,7 +49,19 @@ export const ContextPane = memo(function ContextPane({
   const modalPaneRef = useModalFocus<HTMLDivElement>(
     isModal,
     "context-pane",
-    onClose,
+    (event) => {
+      // This shortcut belongs to the focused terminal's capture listener,
+      // not the drawer or an open terminal menu.
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.target instanceof Element &&
+        modalPaneRef.current?.contains(event.target) &&
+        event.target.closest(".terminal-pane--focused")
+      )
+        return false;
+      if (!dismissTerminalMenu(modalPaneRef.current, event.target)) onClose?.();
+    },
   );
   const [resourcePage, setResourcePage] = useState<
     (SessionResourceListResponse & { clientTransportGeneration: number }) | null
