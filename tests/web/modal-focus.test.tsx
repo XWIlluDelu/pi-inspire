@@ -3,7 +3,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { Settings } from "../../src/components/Settings";
+import { SettingsContent } from "../../src/components/Settings";
+import { SettingsDialog } from "../../src/components/SettingsDialog";
 import { useModalFocus } from "../../src/use-modal-focus";
 
 describe("modal focus ownership", () => {
@@ -13,7 +14,11 @@ describe("modal focus ownership", () => {
     opener.focus();
 
     const user = userEvent.setup();
-    const view = render(<Settings onClose={() => undefined} />);
+    const view = render(
+      <SettingsDialog onClose={() => undefined}>
+        <SettingsContent />
+      </SettingsDialog>,
+    );
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const first = screen.getByRole("button", { name: "Close settings" });
     const last = screen.getByRole("button", { name: "Restore defaults" });
