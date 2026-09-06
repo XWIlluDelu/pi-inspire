@@ -250,7 +250,7 @@ describe("settled transcript search", () => {
 });
 
 describe("transcript live follow", () => {
-  it("omits settled empty retry artifacts but represents the active empty call", () => {
+  it("shows settled empty Pi errors without treating them as the active empty call", () => {
     const settled = [
       { role: "user", content: "question", timestamp: 1 },
       { role: "assistant", content: [], stopReason: "error", timestamp: 2 },
@@ -268,7 +268,8 @@ describe("transcript live follow", () => {
         toolVisibility="dynamic"
       />,
     );
-    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
+    expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(1);
     expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
 
     const settledRetry = {
@@ -289,7 +290,8 @@ describe("transcript live follow", () => {
       />,
     );
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
-    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(2);
+    expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(2);
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
 
     const activeRetry = {
       role: "assistant",
@@ -306,7 +308,7 @@ describe("transcript live follow", () => {
         toolVisibility="dynamic"
       />,
     );
-    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
+    expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
     expect(screen.getByText("Working…")).toBeInTheDocument();
   });
 

@@ -1161,6 +1161,121 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   line-height: var(--leading-reading);
 }
 
+.assistant-error {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-left: var(--witness) solid var(--error);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+}
+
+.assistant-error__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-bottom: var(--space-1);
+  color: var(--error);
+}
+
+.assistant-error__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--error);
+}
+
+.assistant-error__label {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-ui);
+  color: color-mix(in srgb, var(--error) 80%, var(--ink));
+}
+
+.assistant-error__copy.icon-button {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+  border-radius: var(--radius-xs);
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.assistant-error__copy.icon-button:hover,
+.assistant-error__copy.icon-button:focus-visible {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.assistant-error__message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-reading-small);
+  line-height: var(--leading-mono);
+}
+
+.assistant-error__disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  margin-top: 6px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
+}
+
+.assistant-error__disclosure:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.assistant-error__disclosure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .assistant-error__copy.icon-button::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+  }
+
+  .assistant-error__disclosure {
+    height: 28px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 600px) {
+  .assistant-error {
+    padding: var(--space-2) 10px;
+  }
+}
+
 .assistant-activity {
   display: inline-flex;
   align-items: center;
