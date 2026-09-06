@@ -7,7 +7,16 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Settings } from "../../src/components/Settings";
+import { SettingsContent } from "../../src/components/Settings";
+import { SettingsDialog } from "../../src/components/SettingsDialog";
+
+function Settings({ onClose }: { onClose: () => void }) {
+  return (
+    <SettingsDialog onClose={onClose}>
+      <SettingsContent />
+    </SettingsDialog>
+  );
+}
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
