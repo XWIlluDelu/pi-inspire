@@ -31,6 +31,7 @@ import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
@@ -49,7 +50,7 @@ const DeferredContextSurface = lazy(() =>
   loadContextPane().then((module) => ({ default: module.ContextPane })),
 );
 const DeferredSettingsSurface = lazy(() =>
-  loadSettings().then((module) => ({ default: module.Settings })),
+  loadSettings().then((module) => ({ default: module.SettingsContent })),
 );
 
 function reportDeferredSurfaceError(error: unknown): void {
@@ -115,53 +116,21 @@ function ContextPaneLoading({
   );
 }
 
-function SettingsLoading({
-  onClose,
-  onRetry,
-}: {
-  onClose: () => void;
-  onRetry?: () => void;
-}) {
-  const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
+function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog settings"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="settings__header">
-          <h2 className="settings__title">Settings</h2>
-          <button
-            type="button"
-            className="icon-button settings__close-btn"
-            onClick={onClose}
-            aria-label="Close settings"
-            title="Close"
-          >
-            <X size={15} aria-hidden />
+    <div className="res__empty" role={onRetry ? "alert" : "status"}>
+      {onRetry ? (
+        <>
+          Settings could not be opened.
+          <button type="button" onClick={onRetry}>
+            Reload
           </button>
-        </header>
-        <div className="res__empty" role={onRetry ? "alert" : "status"}>
-          {onRetry ? (
-            <>
-              Settings could not be opened.
-              <button type="button" onClick={onRetry}>
-                Reload
-              </button>
-            </>
-          ) : (
-            <>
-              <Loader2 size={14} className="spin" aria-hidden /> Loading
-              settings
-            </>
-          )}
-        </div>
-      </div>
+        </>
+      ) : (
+        <>
+          <Loader2 size={14} className="spin" aria-hidden /> Loading settings
+        </>
+      )}
     </div>
   );
 }
@@ -201,22 +170,16 @@ function DeferredSettings({
   onClose: () => void;
 }) {
   return (
-    <RenderErrorBoundary
-      onError={reportDeferredSurfaceError}
-      fallback={
-        <SettingsLoading
-          onClose={onClose}
-          onRetry={() => window.location.reload()}
-        />
-      }
-    >
-      <Suspense fallback={<SettingsLoading onClose={onClose} />}>
-        <DeferredSettingsSurface
-          initialCategory={initialCategory}
-          onClose={onClose}
-        />
-      </Suspense>
-    </RenderErrorBoundary>
+    <SettingsDialog onClose={onClose}>
+      <RenderErrorBoundary
+        onError={reportDeferredSurfaceError}
+        fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
+      >
+        <Suspense fallback={<SettingsLoading />}>
+          <DeferredSettingsSurface initialCategory={initialCategory} />
+        </Suspense>
+      </RenderErrorBoundary>
+    </SettingsDialog>
   );
 }
 
