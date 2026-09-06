@@ -40,6 +40,7 @@ import {
   type ActivityTelemetryItem,
   ResponseActivityFold,
 } from "./transcript-fold";
+import { AssistantError } from "./AssistantError";
 import {
   AssistantTurn,
   ContextCheckpointRow,
@@ -700,9 +701,12 @@ export function useTranscriptRows({
           }
         }
 
-        // Pi may persist an empty error response before retrying. Only the
-        // currently active empty assistant becomes a real Working activity.
-        if (segments.length === 0 && assistantStreaming) {
+        // Empty failed messages get their own error row below, not Working.
+        if (
+          segments.length === 0 &&
+          assistantStreaming &&
+          message.stopReason !== "error"
+        ) {
           segments.push({
             kind: "activity",
             start: 0,
@@ -853,6 +857,26 @@ export function useTranscriptRows({
             segmentTelemetry,
           );
         });
+
+        if (message.stopReason === "error") {
+          // The outcome belongs after this message's content, outside activity
+          // disclosure. Even an empty Pi error must survive historical folding.
+          flushActivity(true);
+          const errorText =
+            typeof message.errorMessage === "string" &&
+            message.errorMessage.trim()
+              ? message.errorMessage
+              : "PI did not provide error details.";
+          built.push({
+            key: `error:${projectedKey}`,
+            node: <AssistantError text={errorText} />,
+            searchText: errorText,
+            searchScope: "model",
+            turnOrdinal: currentTurnOrdinal,
+            turnId: currentTurnId,
+            turnStart: false,
+          });
+        }
 
         index = activityEnd;
         continue;

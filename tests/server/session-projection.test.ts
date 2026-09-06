@@ -314,6 +314,42 @@ describe("SessionProjection framing and last-good state", () => {
     ]);
   });
 
+  it("retains error details when message breadth or content budgets omit other fields", () => {
+    const dense = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [
+        `field-${index}`,
+        "x".repeat(4_000),
+      ]),
+    );
+    const projected = boundedTranscriptValue({
+      ...dense,
+      role: "assistant",
+      content: Array.from({ length: 64 }, () => dense),
+      stopReason: "error",
+      errorMessage: "WebSocket error",
+    });
+    expect(projected).toMatchObject({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "WebSocket error",
+    });
+    expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThanOrEqual(
+      256 * 1024,
+    );
+    const omitted = boundedTranscriptValue({
+      role: "assistant",
+      content: Array.from({ length: 64 }, () => dense),
+      stopReason: "error",
+      errorMessage: "fetch failed",
+    });
+    expect(omitted).toMatchObject({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "fetch failed",
+      content: expect.stringContaining("message omitted"),
+    });
+  });
+
   it("keeps persisted image bytes server-side while exposing stable browser references", async () => {
     const data = Buffer.alloc(512 * 1024, 7).toString("base64");
     const { projection } = await fixture([
@@ -984,6 +1020,53 @@ describe("SessionProjection bounded paging", () => {
       expect(() => projection.page(range.cursor)).toThrow(/wrong purpose/);
     } finally {
       await projection.close();
+    }
+  });
+
+  it("restores Pi errors from disk and keeps empty or thinking-only errors visible in older pages", async () => {
+    const lines: unknown[] = [message("u0", null, "user", "prompt", 1)];
+    let parent = "u0";
+    for (let index = 0; index < 130; index += 1) {
+      const id = `a${index}`;
+      const entry = message(
+        id,
+        parent,
+        "assistant",
+        index % 2 === 0
+          ? []
+          : [{ type: "thinking", thinking: "partial thought" }],
+        index + 2,
+      );
+      lines.push({
+        ...entry,
+        message: {
+          ...entry.message,
+          stopReason: "error",
+          errorMessage: `fetch failed ${index}`,
+        },
+      });
+      parent = id;
+    }
+    const { record, projection } = await fixture(lines);
+    await projection.close();
+    const reopened = await SessionProjection.open(record);
+    try {
+      let page = reopened.latestPage();
+      const received = [...page.messages];
+      while (page.hasOlder) {
+        page = reopened.visiblePage(page.olderCursor!);
+        expect(page.activityRanges).toBeUndefined();
+        received.unshift(...page.messages);
+      }
+      expect(received).toHaveLength(131);
+      for (let index = 0; index < 130; index += 1) {
+        expect(received[index + 1]).toMatchObject({
+          stopReason: "error",
+          errorMessage: `fetch failed ${index}`,
+        });
+      }
+    } finally {
+      await reopened.close();
     }
   });
 

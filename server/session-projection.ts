@@ -522,11 +522,32 @@ function boundedTranscriptItem(
           : {}),
       }
     : {};
-  const decorate = (projected: unknown): unknown =>
+  const decorate = (projected: unknown, stringChars: number): unknown =>
     projected && typeof projected === "object" && !Array.isArray(projected)
       ? {
           ...(projected as Record<string, unknown>),
           ...identityMetadata,
+          // Error outcomes remain inspectable even when large content forces
+          // the reduced or omitted projection. Keep the same string budget.
+          ...(sourceRecord?.role === "assistant" &&
+          sourceRecord.stopReason === "error"
+            ? {
+                role: "assistant",
+                stopReason: "error",
+                ...(typeof sourceRecord.errorMessage === "string"
+                  ? {
+                      errorMessage: projectSafeValue(
+                        sourceRecord.errorMessage,
+                        {
+                          depth: 0,
+                          stringChars,
+                          arrayItems: 0,
+                        },
+                      ),
+                    }
+                  : {}),
+              }
+            : {}),
           ...(persistedIndex !== undefined
             ? { __inspireMessageIndex: persistedIndex }
             : {}),
@@ -536,7 +557,10 @@ function boundedTranscriptItem(
     { depth: 16, stringChars: 64_000, arrayItems: 256, objectEntries: 256 },
     { depth: 8, stringChars: 2_000, arrayItems: 32, objectEntries: 32 },
   ]) {
-    const projected = decorate(projectSafeValue(browserValue, limits));
+    const projected = decorate(
+      projectSafeValue(browserValue, limits),
+      limits.stringChars,
+    );
     const serialized = JSON.stringify(projected) ?? "null";
     if (Buffer.byteLength(serialized) <= TRANSCRIPT_ITEM_MAX_BYTES)
       return { value: projected, serialized };
@@ -548,21 +572,28 @@ function boundedTranscriptItem(
   const role = typeof record.role === "string" ? record.role : "unknown";
   const omitted =
     "[message omitted: projected content exceeded the transcript item limit]";
-  const projected = decorate({
-    role,
-    ...(record.timestamp !== undefined ? { timestamp: record.timestamp } : {}),
-    ...(typeof record.display === "boolean" ? { display: record.display } : {}),
-    ...(typeof record.toolCallId === "string"
-      ? { toolCallId: record.toolCallId }
-      : {}),
-    ...(typeof record.toolName === "string"
-      ? { toolName: record.toolName }
-      : {}),
-    content:
-      role === "assistant" && !isVisibleTranscriptBoundary(value)
-        ? [{ type: "projectionOmitted", content: omitted }]
-        : omitted,
-  });
+  const projected = decorate(
+    {
+      role,
+      ...(record.timestamp !== undefined
+        ? { timestamp: record.timestamp }
+        : {}),
+      ...(typeof record.display === "boolean"
+        ? { display: record.display }
+        : {}),
+      ...(typeof record.toolCallId === "string"
+        ? { toolCallId: record.toolCallId }
+        : {}),
+      ...(typeof record.toolName === "string"
+        ? { toolName: record.toolName }
+        : {}),
+      content:
+        role === "assistant" && !isVisibleTranscriptBoundary(value)
+          ? [{ type: "projectionOmitted", content: omitted }]
+          : omitted,
+    },
+    2_000,
+  );
   return { value: projected, serialized: JSON.stringify(projected) };
 }
 
@@ -596,6 +627,7 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   const record = value as Record<string, unknown>;
   if (record.role === "user") return true;
   if (record.role !== "assistant") return false;
+  if (record.stopReason === "error") return true;
   if (typeof record.content === "string") return record.content.length > 0;
   return (
     Array.isArray(record.content) &&

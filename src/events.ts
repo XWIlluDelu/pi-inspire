@@ -69,6 +69,7 @@ export interface ChatMessage {
   provider?: string;
   model?: string;
   stopReason?: string;
+  errorMessage?: string;
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
