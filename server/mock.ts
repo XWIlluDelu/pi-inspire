@@ -51,6 +51,7 @@ const mockHistoryWorkspace = process.env.INSPIRE_MOCK_WORKSPACE
   : resolve("/home/demo/pi-extension");
 const RESOURCE_FIXTURE_SESSION_ID = "mock-resources";
 const PROMPT_MAP_FIXTURE_SESSION_ID = "mock-prompt-map";
+const ERROR_FIXTURE_SESSION_ID = "mock-errors";
 const BRANCH_FIXTURE_SESSION_ID = "mock-branch";
 const BRANCH_EARLIER_LEAF_ID = "mock-branch-earlier";
 const BRANCH_LATEST_LEAF_ID = "mock-branch-latest";
@@ -77,6 +78,15 @@ const baseSummaries: SessionSummary[] = [
 ];
 
 const browserFixtureSummaries: SessionSummary[] = [
+  {
+    id: ERROR_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Pi error display fixture",
+    created: new Date(now - 3_600_000).toISOString(),
+    modified: new Date(now - 60_000).toISOString(),
+    messageCount: 3,
+  },
   {
     id: PROMPT_MAP_FIXTURE_SESSION_ID,
     cwd: mockWorkspace,
@@ -318,6 +328,28 @@ const resourceFixtureMessages = [
 ];
 
 function messagesForFixture(id: string): unknown[] {
+  if (id === ERROR_FIXTURE_SESSION_ID)
+    return [
+      {
+        role: "user",
+        content: "Inspect the interrupted reply.",
+        timestamp: now - 3_000,
+      },
+      {
+        role: "assistant",
+        timestamp: now - 2_000,
+        content: [{ type: "text", text: "Partial output before the failure." }],
+        stopReason: "error",
+        errorMessage: "WebSocket error",
+      },
+      {
+        role: "assistant",
+        timestamp: now - 1_000,
+        content: [],
+        stopReason: "error",
+        errorMessage: `fetch failed\n${"Diagnostic detail: request unavailable. ".repeat(25)}\n<details>原始错误信息</details>`,
+      },
+    ];
   if (id === RESOURCE_FIXTURE_SESSION_ID) return resourceFixtureMessages;
   if (id === PROMPT_MAP_FIXTURE_SESSION_ID) return promptMapFixtureMessages;
   return initialMessages;

@@ -1756,6 +1756,59 @@ describe("RuntimeController projection ownership gate", () => {
     }
   });
 
+  it.each([
+    { content: [] },
+    { content: [{ type: "text", text: "partial output" }] },
+  ])(
+    "preserves Pi failure details across live events, reconnect snapshots, and persistence (%j)",
+    async ({ content }) => {
+      const { runtime, workers, path } = await setup();
+      try {
+        const forwarded: Array<Record<string, unknown>> = [];
+        runtime.on("event", (event) => {
+          const record = event as Record<string, unknown>;
+          if (record.type === "message_end") forwarded.push(record);
+        });
+        const live = { role: "assistant", content, timestamp: 2 };
+        const failed = {
+          ...live,
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+        };
+        const worker = workers[0]!;
+        worker.emit("event", { type: "agent_start" });
+        worker.emit("event", { type: "message_start", message: live });
+        worker.emit("event", { type: "message_end", message: failed });
+        expect(forwarded).toHaveLength(1);
+        expect(forwarded[0]!.message).toMatchObject(failed);
+        const reconnect = await runtime.snapshot();
+        expect(reconnect.runState).toBe("failed");
+        expect(reconnect.active?.transcriptPage.messages.at(-1)).toMatchObject(
+          failed,
+        );
+        await appendFile(
+          path,
+          `${JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z", message: failed })}\n`,
+        );
+        worker.emit("event", { type: "agent_settled" });
+        await vi.waitFor(async () => {
+          const snapshot = await runtime.snapshot();
+          const errors = snapshot.active?.transcriptPage.messages.filter(
+            (value) =>
+              (value as { stopReason?: string }).stopReason === "error",
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors![0]).toMatchObject({
+            ...failed,
+            __inspireEntryId: "a1",
+          });
+        });
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
   it("forwards stable lifecycle IDs and keeps equal-timestamp ordinary assistant messages distinct", async () => {
     const { runtime, workers } = await setup();
     try {
