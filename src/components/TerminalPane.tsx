@@ -25,9 +25,11 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   MAX_TERMINAL_TITLE_CHARS,
@@ -37,6 +39,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
+import { TerminalCatalogController } from "../terminal-catalog";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
@@ -123,7 +126,14 @@ export const TerminalPane = memo(function TerminalPane({
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
   const [cwd, setCwd] = useState(sessionCwd);
-  const [catalog, setCatalog] = useState<TerminalCatalogResponse | null>(null);
+  const catalogController = useMemo(
+    () => new TerminalCatalogController(cwd),
+    [cwd, reloadKey],
+  );
+  const catalog = useSyncExternalStore(
+    catalogController.subscribe,
+    catalogController.snapshot,
+  );
   const [globalCatalog, setGlobalCatalog] =
     useState<TerminalCatalogResponse | null>(null);
   const [activeId, setActiveId] = useState<string | null>(
@@ -158,13 +168,23 @@ export const TerminalPane = memo(function TerminalPane({
     (action: TerminalUiAction) => boolean
   >(() => false);
 
+  useLayoutEffect(() => {
+    catalogController.active = true;
+    setCreating(false);
+    setError(null);
+    setRenameId(null);
+    renamePendingRef.current = false;
+    return () => {
+      catalogController.active = false;
+    };
+  }, [catalogController]);
+
   const terminals = catalog?.terminals ?? EMPTY_TERMINALS;
   const activeTerminal = terminals.find((terminal) => terminal.id === activeId);
 
   useEffect(() => {
     if (launchTarget || lastSessionCwdRef.current === sessionCwd) return;
     lastSessionCwdRef.current = sessionCwd;
-    setCatalog(null);
     setActiveId(null);
     setCwd(sessionCwd);
   }, [launchTarget, sessionCwd]);
@@ -180,7 +200,6 @@ export const TerminalPane = memo(function TerminalPane({
           (terminal) => terminal.id === launchTarget.id,
         );
         if (!target) throw new Error("The requested terminal no longer exists");
-        setCatalog(null);
         setCwd(target.projectCwd);
         setActiveId(target.id);
       })
@@ -199,7 +218,6 @@ export const TerminalPane = memo(function TerminalPane({
 
   const load = useCallback(async () => {
     if (!cwd) {
-      setCatalog(null);
       setActiveId(null);
       return;
     }
@@ -208,8 +226,11 @@ export const TerminalPane = memo(function TerminalPane({
     setError(null);
     try {
       const next = await api.terminals(cwd);
-      if (generation !== requestGeneration.current) return;
-      setCatalog(next);
+      if (
+        generation !== requestGeneration.current ||
+        !catalogController.replace(next)
+      )
+        return;
       setActiveId((current) => {
         const preferred = current ?? storedActiveTerminal(cwd);
         return next.terminals.some((terminal) => terminal.id === preferred)
@@ -217,16 +238,18 @@ export const TerminalPane = memo(function TerminalPane({
           : (next.terminals[0]?.id ?? null);
       });
     } catch (loadError) {
-      if (generation !== requestGeneration.current) return;
+      if (generation !== requestGeneration.current || !catalogController.active)
+        return;
       setError(
         loadError instanceof Error
           ? loadError.message
           : "Terminals failed to load",
       );
     } finally {
-      if (generation === requestGeneration.current) setLoading(false);
+      if (generation === requestGeneration.current && catalogController.active)
+        setLoading(false);
     }
-  }, [api, cwd]);
+  }, [api, cwd, catalogController]);
 
   const loadGlobal = useCallback(async () => {
     if (globalLoading) return;
@@ -260,14 +283,7 @@ export const TerminalPane = memo(function TerminalPane({
       polling = true;
       try {
         const next = await api.terminals(cwd);
-        if (!cancelled)
-          setCatalog((current) =>
-            !current ||
-            next.catalogEpoch !== current.catalogEpoch ||
-            next.revision > current.revision
-              ? next
-              : current,
-          );
+        if (!cancelled) catalogController.replace(next);
       } catch {
         // The attached terminal sockets expose transport failures directly;
         // catalog polling remains a quiet status refresh.
@@ -280,14 +296,13 @@ export const TerminalPane = memo(function TerminalPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [api, cwd]);
+  }, [api, cwd, catalogController]);
 
   useEffect(
     () =>
       subscribeTerminalInsertion(() => {
         if (!sessionCwd || !hasTerminalInsertion(sessionCwd)) return;
         if (cwd !== sessionCwd) {
-          setCatalog(null);
           setActiveId(null);
           setCwd(sessionCwd);
         }
@@ -429,6 +444,26 @@ export const TerminalPane = memo(function TerminalPane({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [focused]);
 
+  const commitDescriptor = useCallback(
+    async (terminal: TerminalDescriptor, select = false) => {
+      const result = catalogController.upsert(terminal);
+      if (result === "refresh") await load();
+      if (
+        select &&
+        catalogController.active &&
+        catalogController
+          .snapshot()
+          ?.terminals.some(
+            (candidate) =>
+              candidate.id === terminal.id &&
+              candidate.catalogEpoch === terminal.catalogEpoch,
+          )
+      )
+        setActiveId(terminal.id);
+    },
+    [catalogController, load],
+  );
+
   const createTerminal = useCallback(
     async (profile?: TerminalProfile) => {
       if (!cwd || creating) return;
@@ -439,35 +474,19 @@ export const TerminalPane = memo(function TerminalPane({
           cwd,
           ...(profile ? { profileId: profile.id } : {}),
         });
-        setCatalog((current) =>
-          current
-            ? {
-                ...current,
-                revision:
-                  current.catalogEpoch === terminal.catalogEpoch
-                    ? Math.max(current.revision, terminal.catalogRevision)
-                    : current.revision,
-                terminals: [...current.terminals, terminal],
-              }
-            : {
-                catalogEpoch: terminal.catalogEpoch,
-                revision: terminal.catalogRevision,
-                profiles: [],
-                terminals: [terminal],
-              },
-        );
-        setActiveId(terminal.id);
+        await commitDescriptor(terminal, true);
       } catch (createError) {
+        if (!catalogController.active) return;
         setError(
           createError instanceof Error
             ? createError.message
             : "Terminal could not be created",
         );
       } finally {
-        setCreating(false);
+        if (catalogController.active) setCreating(false);
       }
     },
-    [api, creating, cwd],
+    [api, creating, cwd, catalogController, commitDescriptor],
   );
 
   useEffect(() => {
@@ -496,22 +515,12 @@ export const TerminalPane = memo(function TerminalPane({
     terminals,
   ]);
 
-  const applyDescriptor = useCallback((terminal: TerminalDescriptor) => {
-    setCatalog((current) =>
-      current
-        ? {
-            ...current,
-            revision:
-              current.catalogEpoch === terminal.catalogEpoch
-                ? Math.max(current.revision, terminal.catalogRevision)
-                : current.revision,
-            terminals: current.terminals.map((candidate) =>
-              candidate.id === terminal.id ? terminal : candidate,
-            ),
-          }
-        : current,
-    );
-  }, []);
+  const applyDescriptor = useCallback(
+    (terminal: TerminalDescriptor) => {
+      void commitDescriptor(terminal);
+    },
+    [commitDescriptor],
+  );
 
   const markBackgroundOutput = useCallback((id: string) => {
     setUnreadIds((current) => {
@@ -605,30 +614,23 @@ export const TerminalPane = memo(function TerminalPane({
     setError(null);
     try {
       const removed = await api.removeTerminal(terminal.id, force);
+      if (!catalogController.active) return;
       setRecentlyClosed({ terminal, closedAt: Date.now() });
-      setCatalog((current) =>
-        current
-          ? {
-              ...current,
-              revision:
-                current.catalogEpoch === removed.catalogEpoch
-                  ? Math.max(current.revision, removed.revision)
-                  : current.revision,
-              terminals: current.terminals.filter(
-                (candidate) => candidate.id !== terminal.id,
-              ),
-            }
-          : current,
-      );
-      if (activeId === terminal.id) {
-        const index = terminals.findIndex(
+      const before = catalogController.snapshot()?.terminals ?? [];
+      const result = catalogController.remove(terminal.id, removed);
+      if (result === "refresh") await load();
+      else if (result === "applied") {
+        const index = before.findIndex(
           (candidate) => candidate.id === terminal.id,
         );
-        setActiveId(
-          terminals[index + 1]?.id ?? terminals[index - 1]?.id ?? null,
+        setActiveId((current) =>
+          current === terminal.id
+            ? (before[index + 1]?.id ?? before[index - 1]?.id ?? null)
+            : current,
         );
       }
     } catch (closeError) {
+      if (!catalogController.active) return;
       setError(
         closeError instanceof Error
           ? closeError.message
@@ -651,20 +653,9 @@ export const TerminalPane = memo(function TerminalPane({
               title: `${source.title.slice(0, MAX_TERMINAL_TITLE_CHARS - 5)} copy`,
             })
           : created;
-      setCatalog((current) =>
-        current
-          ? {
-              ...current,
-              revision:
-                current.catalogEpoch === duplicate.catalogEpoch
-                  ? Math.max(current.revision, duplicate.catalogRevision)
-                  : current.revision,
-              terminals: [...current.terminals, duplicate],
-            }
-          : current,
-      );
-      setActiveId(duplicate.id);
+      await commitDescriptor(duplicate, true);
     } catch (duplicateError) {
+      if (!catalogController.active) return;
       setError(
         duplicateError instanceof Error
           ? duplicateError.message
@@ -684,16 +675,19 @@ export const TerminalPane = memo(function TerminalPane({
       return;
     try {
       const restarted = await api.restartTerminal(terminal.id);
-      applyDescriptor(restarted);
+      await commitDescriptor(restarted);
+      if (!catalogController.active) return;
       setOpenedIds((current) => {
         const next = new Set(current);
         next.delete(terminal.id);
         return next;
       });
       requestAnimationFrame(() => {
+        if (!catalogController.active) return;
         setOpenedIds((current) => new Set(current).add(terminal.id));
       });
     } catch (restartError) {
+      if (!catalogController.active) return;
       setError(
         restartError instanceof Error
           ? restartError.message
@@ -717,8 +711,9 @@ export const TerminalPane = memo(function TerminalPane({
       const renamed = await api.renameTerminal(id, {
         title: renameValue.trim() || null,
       });
-      applyDescriptor(renamed);
+      await commitDescriptor(renamed);
     } catch (renameError) {
+      if (!catalogController.active) return;
       setError(
         renameError instanceof Error
           ? renameError.message
@@ -745,25 +740,14 @@ export const TerminalPane = memo(function TerminalPane({
               title: closed.terminal.title,
             })
           : terminal;
-      if (cwd === targetCwd)
-        setCatalog((current) =>
-          current
-            ? {
-                ...current,
-                revision:
-                  current.catalogEpoch === restored.catalogEpoch
-                    ? Math.max(current.revision, restored.catalogRevision)
-                    : current.revision,
-                terminals: [...current.terminals, restored],
-              }
-            : current,
-        );
+      if (!catalogController.active) return;
+      if (cwd === targetCwd) await commitDescriptor(restored, true);
       else {
-        setCatalog(null);
         setCwd(targetCwd);
+        setActiveId(restored.id);
       }
-      setActiveId(restored.id);
     } catch (restoreError) {
+      if (!catalogController.active) return;
       setError(
         restoreError instanceof Error
           ? restoreError.message
@@ -778,7 +762,6 @@ export const TerminalPane = memo(function TerminalPane({
     position: "before" | "after" = "before",
   ) => {
     if (!cwd || fromId === targetId) return;
-    const previous = terminals;
     const next = [...terminals];
     const fromIndex = next.findIndex((terminal) => terminal.id === fromId);
     if (fromIndex < 0 || !next.some((terminal) => terminal.id === targetId))
@@ -787,20 +770,17 @@ export const TerminalPane = memo(function TerminalPane({
     if (!moved) return;
     const targetIndex = next.findIndex((terminal) => terminal.id === targetId);
     next.splice(position === "after" ? targetIndex + 1 : targetIndex, 0, moved);
-    setCatalog((current) =>
-      current ? { ...current, terminals: next } : current,
-    );
+    const rollback = catalogController.order(next);
     try {
-      setCatalog(
+      catalogController.replace(
         await api.reorderTerminals({
           cwd,
           terminalIds: next.map((terminal) => terminal.id),
         }),
       );
     } catch (reorderError) {
-      setCatalog((current) =>
-        current ? { ...current, terminals: previous } : current,
-      );
+      if (!catalogController.active) return;
+      rollback();
       setError(
         reorderError instanceof Error
           ? reorderError.message
@@ -948,7 +928,6 @@ export const TerminalPane = memo(function TerminalPane({
           <button
             type="button"
             onClick={() => {
-              setCatalog(null);
               setActiveId(null);
               setCwd(sessionCwd);
             }}
@@ -1243,7 +1222,6 @@ export const TerminalPane = memo(function TerminalPane({
                       type="button"
                       key={terminal.id}
                       onClick={(event) => {
-                        setCatalog(null);
                         setActiveId(terminal.id);
                         setCwd(projectCwd);
                         event.currentTarget

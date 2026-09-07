@@ -35,6 +35,7 @@ import type {
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import { PreviewProjection } from "./fixtures/preview-projection.js";
 import { SessionProjection } from "../../server/session-projection.js";
+import { ResourceStore } from "../../server/resources.js";
 import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
@@ -1136,6 +1137,82 @@ describe("RuntimeController concurrent sessions", () => {
       ).toBeUndefined();
       expect(runtime.activeSessionId).toBe("b");
     } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps addressed resources readable while another browser selects a different session", async () => {
+    const project = fixtureCwd("/project");
+    await writeFile(join(project, "report.md"), "report bytes");
+    const resources = new ResourceStore();
+    const runtime = new RuntimeController(
+      catalog([record("a", project), record("b", "/other")]),
+      trackedAttachmentStore(),
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      async (session) => {
+        const snapshot = await previewSnapshot(session);
+        snapshot.transcriptPage.messages = [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "[report](report.md)" },
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: Buffer.from("pixels").toString("base64"),
+              },
+            ],
+          },
+        ];
+        return new PreviewProjection(session.id, snapshot);
+      },
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime, "a");
+      const pendingContext = await runtime.resourceContext("a");
+      await runtime.openSession("b");
+      await waitForReady(runtime, "b");
+      await expect(pendingContext.loadMessages!()).resolves.toHaveLength(1);
+      expect((await runtime.snapshot("a")).active?.sessionId).toBe("a");
+      const context = await runtime.resourceContext("a");
+      expect((await resources.list(context)).resources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reference: "report.md" }),
+          expect.objectContaining({ reference: "pi-embedded://0/1" }),
+        ]),
+      );
+      await expect(resources.probe(context, ["report.md"])).resolves.toEqual([
+        {
+          reference: "report.md",
+          availability: "available",
+          workspacePath: "report.md",
+        },
+      ]);
+      const file = await resources.resolve(context, "report.md");
+      const resource = resources.get(file.id, "a", context.viewId);
+      await resources.revalidate(resource, context);
+      const opened = await resources.openForServing(resource);
+      try {
+        expect(await opened.handle.readFile("utf8")).toBe("report bytes");
+      } finally {
+        await opened.handle.close();
+      }
+      const image = await resources.resolve(context, "pi-embedded://0/1");
+      expect(
+        (
+          await resources.embeddedContent(
+            resources.get(image.id, "a", context.viewId),
+            context,
+          )
+        ).data.toString(),
+      ).toBe("pixels");
+      expect(runtime.activeSessionId).toBe("b");
+      expect(() => resources.get(file.id, "b", context.viewId)).toThrow(
+        "no longer available",
+      );
+    } finally {
+      await resources.close();
       await runtime.close();
     }
   });

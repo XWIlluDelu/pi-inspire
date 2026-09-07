@@ -213,7 +213,6 @@ export const TerminalView = memo(function TerminalView({
   const onCommandCompleteRef = useRef(onCommandComplete);
   const ctrlLatchedRef = useRef(false);
   const altLatchedRef = useRef(false);
-  const replayModeRef = useRef<"delta" | "snapshot">("snapshot");
   const replayGenerationRef = useRef(0);
   const snapshotStartedRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
@@ -270,7 +269,6 @@ export const TerminalView = memo(function TerminalView({
     (message: TerminalServerControlMessage) => {
       const xterm = xtermRef.current;
       if (message.type === "attached") {
-        replayModeRef.current = message.replay;
         replayGenerationRef.current += 1;
         snapshotStartedRef.current = false;
         writableRef.current = message.writable;

@@ -160,22 +160,10 @@ export class RuntimeReadController {
 
   resourceContext(sessionId: string): Promise<ResourceContext> {
     this.host.assertAvailable();
-    const slot = this.host.selectedSlot();
-    if (!slot || slot.id !== sessionId) {
-      throw requestError(
-        "The resource does not belong to the visible session",
-        409,
-      );
-    }
+    const slot = this.host.requireSlot(sessionId);
     return this.host.useSlot(slot, async () => {
-      if (this.host.selectedSessionId() !== slot.id) {
-        throw requestError(
-          "The resource does not belong to the visible session",
-          409,
-        );
-      }
       await this.host.reconcileSlot(slot, true);
-      if (this.host.selectedSessionId() !== slot.id || !slot.projection) {
+      if (this.host.requireSlot(sessionId) !== slot || !slot.projection) {
         throw requestError(
           "The resource does not belong to the visible branch view",
           409,
@@ -214,7 +202,7 @@ export class RuntimeReadController {
   ): SessionProjectionView {
     const projection = slot.projection;
     if (
-      this.host.selectedSessionId() !== slot.id ||
+      this.host.requireSlot(slot.id) !== slot ||
       slot.viewId !== viewId ||
       projection?.revision !== revision
     ) {
