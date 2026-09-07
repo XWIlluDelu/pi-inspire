@@ -1126,6 +1126,10 @@ button.res__more:hover {
 }
 
 .image-preview--file img {
+  /* Keep the inspection background on the image, not on its letterboxing.
+     The button above still owns definite bounds for viewBox-only SVGs. */
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 

@@ -12,6 +12,8 @@ import { useModalFocus } from "../use-modal-focus";
 
 const IMAGE_ZOOM = 2;
 const PAN_THRESHOLD_PX = 6;
+const IMAGE_BACKGROUNDS = ["Checkerboard", "White", "Black"] as const;
+type ImageBackground = (typeof IMAGE_BACKGROUNDS)[number];
 
 interface Point {
   x: number;
@@ -39,6 +41,7 @@ function ImageLightbox({
   const imageRef = useRef<HTMLImageElement>(null);
   const gestureRef = useRef<PanGesture | null>(null);
   const suppressClickRef = useRef(false);
+  const [background, setBackground] = useState<ImageBackground>("Checkerboard");
   const [zoomed, setZoomed] = useState(false);
   const [panning, setPanning] = useState(false);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -100,6 +103,33 @@ function ImageLightbox({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
+        <div className="image-lightbox__toolbar">
+          <div
+            className="image-lightbox__backgrounds"
+            role="group"
+            aria-label="Image background"
+          >
+            {IMAGE_BACKGROUNDS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={background === option}
+                onClick={() => setBackground(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="image-lightbox__close"
+            onClick={onClose}
+            aria-label="Close image preview"
+            title="Close"
+          >
+            <X size={18} aria-hidden />
+          </button>
+        </div>
         <button
           ref={canvasRef}
           type="button"
@@ -149,6 +179,8 @@ function ImageLightbox({
         >
           <img
             ref={imageRef}
+            className="image-surface"
+            data-background={background.toLowerCase()}
             src={src}
             alt={alt}
             draggable={false}
@@ -157,15 +189,6 @@ function ImageLightbox({
             }}
             onDragStart={(event) => event.preventDefault()}
           />
-        </button>
-        <button
-          type="button"
-          className="image-lightbox__close"
-          onClick={onClose}
-          aria-label="Close image preview"
-          title="Close"
-        >
-          <X size={18} aria-hidden />
         </button>
       </div>
     </div>,
@@ -207,6 +230,7 @@ export function ImagePreview({
       >
         {src ? (
           <img
+            className="image-surface"
             src={src}
             alt={alt}
             draggable={false}
