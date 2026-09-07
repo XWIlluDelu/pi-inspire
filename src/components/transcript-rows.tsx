@@ -31,8 +31,6 @@ import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {
   type CollapsedActivity,
   CollapsedActivityStrip,
-  CustomMessageCard,
-  customActivityItems,
   GenericCard,
   genericContentTitle,
   hasRenderableAssistantContent,
@@ -63,7 +61,7 @@ function clockTime(timestamp?: number): string {
   });
 }
 
-// --- Collapsible cards (thinking / tool / custom / generic) ---
+// --- Turns and activity ---
 
 function MessageActions({
   text,
@@ -196,7 +194,6 @@ export const UserBubble = memo(function UserBubble({
 
 function hasCollapsibleActivityRun(
   items: ReturnType<typeof contentItems>,
-  trailingCustomCount: number,
 ): boolean {
   let currentToolRun = 0;
   for (const item of items) {
@@ -207,17 +204,14 @@ function hasCollapsibleActivityRun(
       currentToolRun = 0;
     }
   }
-  return currentToolRun + trailingCustomCount > 1;
+  return false;
 }
 
 export const AssistantTurn = memo(function AssistantTurn({
   message,
   toolResults,
   toolActivity,
-  customMessages,
   activityItemIds = [],
-  customActivityIds = [],
-  customCollapseRequested,
   streaming,
   dynamicActive,
   thinkingVisibility,
@@ -230,10 +224,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
   toolActivity: Record<string, ActivityTool>;
-  customMessages: ChatMessage[];
   activityItemIds?: string[];
-  customActivityIds?: string[];
-  customCollapseRequested: boolean;
   streaming: boolean;
   dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
@@ -250,19 +241,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   responseCopyText?: string;
 }) {
   const items = contentItems(message);
-  const customActivities = customActivityItems(customMessages).map(
-    (activity, index) => ({
-      ...activity,
-      key: customActivityIds[index] ?? activity.key,
-    }),
+  const hasVisibleContent = hasRenderableAssistantContent(
+    message,
+    thinkingVisibility,
+    toolVisibility,
   );
-  const hasVisibleContent =
-    hasRenderableAssistantContent(
-      message,
-      thinkingVisibility,
-      toolVisibility,
-    ) ||
-    (toolVisibility !== "hidden" && customMessages.length > 0);
   const dynamicTools = toolVisibility === "dynamic";
   const toolKeys = items.flatMap((item, index) =>
     item.type === "toolCall"
@@ -273,25 +256,13 @@ export const AssistantTurn = memo(function AssistantTurn({
         ]
       : [],
   );
-  const activityKeys = [
-    ...toolKeys,
-    ...customActivities.map((activity) => activity.key),
-  ];
-  const hasActivities = activityKeys.length > 0;
-  const collapseEligible = hasCollapsibleActivityRun(
-    items,
-    customActivities.length,
-  );
-  const lifecycleObserved =
-    dynamicActive ||
-    customMessages.some((custom) => typeof custom.__inspireLiveId === "string");
-  const collapseRequested =
-    !dynamicActive && (customMessages.length === 0 || customCollapseRequested);
+  const hasActivities = toolKeys.length > 0;
+  const collapseEligible = hasCollapsibleActivityRun(items);
   const dynamicBatch = useDynamicActivityGroup(
     dynamicTools,
-    lifecycleObserved,
-    collapseRequested,
-    activityKeys,
+    dynamicActive,
+    !dynamicActive,
+    toolKeys,
     collapseEligible,
   );
   const renderedItems: React.ReactNode[] =
@@ -308,7 +279,6 @@ export const AssistantTurn = memo(function AssistantTurn({
     collapseEligible &&
     (toolVisibility === "collapsed" ||
       (dynamicTools && dynamicBatch.collapsed));
-  let customActivitiesRendered = false;
   // Execution events, not membership in the current batch, own the running
   // status. After reconnect an unobserved call stays expanded but unknown.
   const live = streaming;
@@ -319,10 +289,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       const start = index;
       let end = start;
       while (end < items.length && items[end]?.type === "toolCall") end += 1;
-      const joinsTrailingCustoms =
-        end === items.length && customActivities.length > 0;
-      const runLength =
-        end - start + (joinsTrailingCustoms ? customActivities.length : 0);
+      const runLength = end - start;
       if (runLength > 1) {
         const activities: CollapsedActivity[] = [];
         for (let cursor = start; cursor < end; cursor += 1) {
@@ -336,10 +303,6 @@ export const AssistantTurn = memo(function AssistantTurn({
           });
         }
         index = end;
-        if (joinsTrailingCustoms) {
-          activities.push(...customActivities);
-          customActivitiesRendered = true;
-        }
         renderedItems.push(
           <CollapsedActivityStrip
             key={`tools:${activities[0]?.key ?? start}`}
@@ -414,42 +377,6 @@ export const AssistantTurn = memo(function AssistantTurn({
       }
     }
     index += 1;
-  }
-
-  if (!customActivitiesRendered && customActivities.length > 0) {
-    if (collapsedActivities && customActivities.length > 1) {
-      renderedItems.push(
-        <CollapsedActivityStrip
-          key={`customs:${customActivities[0]!.key}`}
-          activities={customActivities}
-          live={false}
-        />,
-      );
-    } else {
-      customMessages.forEach((custom, index) => {
-        const activityKey = customActivities[index]!.key;
-        renderedItems.push(
-          <ActivityItemBoundary key={activityKey} id={activityKey}>
-            <CustomMessageCard
-              message={custom}
-              visibility={ordinaryToolVisibility}
-              dynamic={dynamicTools}
-              forceClosed={dynamicTools && dynamicBatch.closing}
-              onDynamicClosed={
-                dynamicTools
-                  ? () => dynamicBatch.markClosed(activityKey)
-                  : undefined
-              }
-              onManualOpenChange={
-                dynamicTools
-                  ? (open) => dynamicBatch.setInspectionHeld(activityKey, open)
-                  : undefined
-              }
-            />
-          </ActivityItemBoundary>,
-        );
-      });
-    }
   }
 
   const divider = showLead && assistantRoundDisplay === "divider";
@@ -551,15 +478,29 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
         }}
       >
         <summary>
-          <Archive size={14} aria-hidden />
+          <Archive size={14} className="context-checkpoint__icon" aria-hidden />
           <span className="context-checkpoint__title">
             {compacted ? "Context compacted" : "Branch context"}
           </span>
           {tokens ? (
             <span className="context-checkpoint__metric">{tokens}</span>
           ) : null}
+          <span className="context-checkpoint__spacer" aria-hidden />
           {timestamp ? (
             <time className="context-checkpoint__time">{timestamp}</time>
+          ) : null}
+          {summary ? (
+            <span
+              className="context-checkpoint__action-wrap"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <CopyAction
+                text={summary}
+                label={compacted ? "Compaction summary" : "Branch summary"}
+                className="context-checkpoint__copy"
+              />
+            </span>
           ) : null}
           <ChevronRight
             className="context-checkpoint__chevron"
@@ -574,12 +515,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
             ) : (
               <p>No summary was recorded.</p>
             )}
-            {summary ? (
-              <MessageActions
-                text={summary}
-                copyLabel={compacted ? "Compaction summary" : "Branch summary"}
-              />
-            ) : null}
           </div>
         ) : null}
       </details>

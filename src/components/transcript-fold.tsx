@@ -23,7 +23,7 @@ const COMPACT_ACTIVITY_CARD_LIMIT = 24;
 
 export type ActivityTelemetryItem = {
   id: string;
-  kind: "thinking" | "tool" | "custom";
+  kind: "thinking" | "tool";
   label?: string;
   live?: boolean;
   /** Deferred ranges describe omitted activity but do not correspond to a

@@ -31,7 +31,6 @@ import {
   type ActivityTool,
   type ChatMessage,
   contentItems,
-  messageKey,
   type ToolCallContent,
   toolResultText,
 } from "../events";
@@ -52,20 +51,14 @@ import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
   CARD_TRANSITION_MS,
-  DYNAMIC_CUSTOM_CLOSE_DELAY_MS,
-  DYNAMIC_CUSTOM_EXPANDED_MIN_MS,
   DYNAMIC_THINKING_CLOSE_DELAY_MS,
   DYNAMIC_THINKING_EXPANDED_MIN_MS,
   DYNAMIC_TOOL_CLOSE_DELAY_MS,
   DYNAMIC_TOOL_EXPANDED_MIN_MS,
   prefersReducedMotion,
-  useDynamicActivityGroup,
   useDynamicCardOpen,
 } from "./transcript-activity";
-import {
-  ActivityItemBoundary,
-  useVisibleActivityItemIds,
-} from "./transcript-activity-visibility";
+import { useVisibleActivityItemIds } from "./transcript-activity-visibility";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -1013,15 +1006,7 @@ interface CollapsedToolActivity {
   activity?: ActivityTool;
 }
 
-interface CollapsedCustomActivity {
-  kind: "custom";
-  key: string;
-  message: ChatMessage;
-  title: string;
-  customType: string;
-}
-
-export type CollapsedActivity = CollapsedToolActivity | CollapsedCustomActivity;
+export type CollapsedActivity = CollapsedToolActivity;
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   running: "running",
@@ -1030,49 +1015,10 @@ const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   unknown: "no result",
 };
 
-function inspectableValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  return JSON.stringify(value, null, 2) ?? String(value);
-}
-
-function CustomMessageDetails({ message }: { message: ChatMessage }) {
-  return (
-    <div className="card__sections">
-      <div>
-        <div className="card__section-label">Content</div>
-        <pre className="card__mono">
-          {inspectableValue(message.content ?? [])}
-        </pre>
-      </div>
-      {message.details !== undefined ? (
-        <div>
-          <div className="card__section-label">Details</div>
-          <pre className="card__mono">{inspectableValue(message.details)}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function collapsedActivityPresentation(
   activity: CollapsedActivity,
   live: boolean,
 ) {
-  if (activity.kind === "custom") {
-    return {
-      custom: true,
-      failed: false,
-      label: `${activity.title}: custom activity`,
-      title: `${activity.title} · ${activity.customType}`,
-      content: (
-        <>
-          <Package size={14} aria-hidden />
-          <code className="activity-strip__kind">{activity.customType}</code>
-        </>
-      ),
-    };
-  }
-
   const status = toolStatus(activity.result, activity.activity, live);
   const resolved = toolPresentationRegistry.resolve({
     call: activity.call,
@@ -1082,7 +1028,6 @@ function collapsedActivityPresentation(
     ? toolPresentationSummaryText(resolved.summary)
     : toolSummary(activity.call);
   return {
-    custom: false,
     failed: status === "failure",
     label: `${activity.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
     title: `${activity.call.name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
@@ -1178,7 +1123,7 @@ export function CollapsedActivityStrip({
             <button
               key={activity.key}
               type="button"
-              className={`activity-strip__item ${presentation.custom ? "activity-strip__item--custom" : ""} ${active ? "activity-strip__item--active" : ""} ${presentation.failed ? "activity-strip__item--failed" : ""}`}
+              className={`activity-strip__item ${active ? "activity-strip__item--active" : ""} ${presentation.failed ? "activity-strip__item--failed" : ""}`}
               aria-label={presentation.label}
               aria-expanded={active}
               aria-controls={active ? panelId : undefined}
@@ -1245,32 +1190,6 @@ export function CollapsedActivityStrip({
                 />
               </div>
             </section>
-          ) : rendered?.kind === "custom" ? (
-            <section
-              key={rendered.key}
-              id={panelId}
-              className="card card--custom activity-strip__detail"
-            >
-              <CardHeader
-                expanded
-                icon={<Package size={14} aria-hidden />}
-                label={
-                  <code className="card__tool-name">{rendered.title}</code>
-                }
-                toggleLabel={`${rendered.title} custom activity details`}
-                onToggle={() => setSelectedIndex(null)}
-                summary={
-                  <code className="card__custom-kind">
-                    {rendered.customType}
-                  </code>
-                }
-                copyText={customClipboardText(rendered.message)}
-                copyLabel={`${rendered.title} block`}
-              />
-              <div className="card__body">
-                <CustomMessageDetails message={rendered.message} />
-              </div>
-            </section>
           ) : null}
         </div>
       </div>
@@ -1321,67 +1240,6 @@ export function genericContentTitle(item: object): string | null {
         .replace(/[-_]+/g, " ")
         .replace(/^./, (character) => character.toUpperCase())
     : bounded;
-}
-
-function customMessageType(message: ChatMessage): string {
-  const value =
-    typeof message.customType === "string"
-      ? message.customType.trim().slice(0, 80)
-      : "";
-  return value || "custom";
-}
-
-function customMessageTitle(message: ChatMessage): string {
-  return humanizeGenericType(customMessageType(message));
-}
-
-function customClipboardText(message: ChatMessage): string {
-  const sections = [
-    customMessageTitle(message),
-    `Type: ${customMessageType(message)}`,
-    "Content",
-    inspectableValue(message.content ?? []),
-  ];
-  if (message.details !== undefined)
-    sections.push("Details", inspectableValue(message.details));
-  return sections.join("\n\n");
-}
-
-function customActivityIdentity(
-  message: ChatMessage,
-  fallbackIndex: number,
-): string {
-  if (message.__inspireEntryId) return `entry:${message.__inspireEntryId}`;
-  if (message.__inspireLiveId) return `live:${message.__inspireLiveId}`;
-  if (message.timestamp != null) {
-    return `${customMessageType(message)}:${String(message.timestamp)}`;
-  }
-  return (
-    messageKey(message) ?? `${customMessageType(message)}:${fallbackIndex}`
-  );
-}
-
-function customActivityKeys(messages: ChatMessage[]): string[] {
-  const occurrences = new Map<string, number>();
-  return messages.map((message, index) => {
-    const identity = customActivityIdentity(message, index);
-    const occurrence = occurrences.get(identity) ?? 0;
-    occurrences.set(identity, occurrence + 1);
-    return `custom:${identity}:${occurrence}`;
-  });
-}
-
-export function customActivityItems(
-  messages: ChatMessage[],
-): CollapsedCustomActivity[] {
-  const keys = customActivityKeys(messages);
-  return messages.map((message, index) => ({
-    kind: "custom",
-    key: keys[index]!,
-    message,
-    title: customMessageTitle(message),
-    customType: customMessageType(message),
-  }));
 }
 
 export function assistantEndsWithToolRun(message: ChatMessage): boolean {
@@ -1460,125 +1318,4 @@ function toolIcon(name: string): React.ReactNode {
     default:
       return <Wrench size={14} aria-hidden />;
   }
-}
-
-export function CustomMessageCard({
-  message,
-  visibility,
-  dynamic,
-  forceClosed = false,
-  onDynamicClosed,
-  onManualOpenChange,
-}: {
-  message: ChatMessage;
-  visibility: StaticVisibility;
-  dynamic: boolean;
-  forceClosed?: boolean;
-  onDynamicClosed?: () => void;
-  onManualOpenChange?: (open: boolean) => void;
-}) {
-  const lifecycleObserved = typeof message.__inspireLiveId === "string";
-  const complete = message.__inspireSettled === true || !lifecycleObserved;
-  const dynamicOpen = useDynamicCardOpen(
-    dynamic,
-    lifecycleObserved,
-    complete,
-    DYNAMIC_CUSTOM_EXPANDED_MIN_MS,
-    onDynamicClosed,
-    DYNAMIC_CUSTOM_CLOSE_DELAY_MS,
-  );
-  return (
-    <CollapsibleCard
-      defaultVisibility={
-        dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
-      }
-      forceClosed={forceClosed}
-      onManualOpenChange={onManualOpenChange}
-      className="card--custom"
-      icon={<Package size={14} aria-hidden />}
-      label={
-        <code className="card__tool-name">{customMessageTitle(message)}</code>
-      }
-      toggleLabel={`${customMessageTitle(message)} custom activity`}
-      copyText={customClipboardText(message)}
-      copyLabel={`${customMessageTitle(message)} block`}
-    >
-      <CustomMessageDetails message={message} />
-    </CollapsibleCard>
-  );
-}
-
-export function CustomActivityBatch({
-  messages,
-  activityItemIds = [],
-  toolVisibility,
-  collapseRequested,
-}: {
-  messages: ChatMessage[];
-  activityItemIds?: string[];
-  toolVisibility: ToolVisibilityPreference;
-  collapseRequested: boolean;
-}) {
-  const dynamic = toolVisibility === "dynamic";
-  const activities = customActivityItems(messages).map((activity, index) => ({
-    ...activity,
-    key: activityItemIds[index] ?? activity.key,
-  }));
-  const activityKeys = activities.map((activity) => activity.key);
-  const lifecycleObserved = messages.some(
-    (message) => typeof message.__inspireLiveId === "string",
-  );
-  const collapseEligible = activities.length > 1;
-  const dynamicBatch = useDynamicActivityGroup(
-    dynamic,
-    lifecycleObserved,
-    collapseRequested,
-    activityKeys,
-    collapseEligible,
-  );
-  const ordinaryVisibility: StaticVisibility =
-    toolVisibility === "compact" || toolVisibility === "collapsed" || dynamic
-      ? "collapsed"
-      : toolVisibility;
-  const collapsed =
-    collapseEligible &&
-    (toolVisibility === "collapsed" || (dynamic && dynamicBatch.collapsed));
-
-  if (toolVisibility === "hidden" || activities.length === 0) return null;
-  return (
-    <div className="turn turn--custom">
-      <div
-        className={`custom-activity-batch ${dynamic ? `dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}` : ""}`}
-      >
-        {collapsed ? (
-          <CollapsedActivityStrip activities={activities} live={false} />
-        ) : (
-          messages.map((message, index) => {
-            const activityKey = activityKeys[index]!;
-            return (
-              <ActivityItemBoundary key={activityKey} id={activityKey}>
-                <CustomMessageCard
-                  message={message}
-                  visibility={ordinaryVisibility}
-                  dynamic={dynamic}
-                  forceClosed={dynamic && dynamicBatch.closing}
-                  onDynamicClosed={
-                    dynamic
-                      ? () => dynamicBatch.markClosed(activityKey)
-                      : undefined
-                  }
-                  onManualOpenChange={
-                    dynamic
-                      ? (open) =>
-                          dynamicBatch.setInspectionHeld(activityKey, open)
-                      : undefined
-                  }
-                />
-              </ActivityItemBoundary>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
 }

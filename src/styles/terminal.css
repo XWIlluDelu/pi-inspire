@@ -180,7 +180,7 @@
 
 .terminal-tab__rename {
   min-width: 0;
-  width: calc(100% - 24px);
+  width: calc(100% - 32px);
   height: 23px;
   margin-left: 4px;
   border: 1px solid var(--accent);
@@ -557,8 +557,9 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 4px;
-  background: var(--bg-overlay);
+  background: var(--bg-raised);
   box-shadow: var(--shadow-overlay);
+  animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
 .terminal-command-menu__popover button {
@@ -573,9 +574,13 @@
   font: 400 var(--text-xs) / 1 var(--font-sans);
   text-align: left;
   cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
-.terminal-command-menu__popover button:hover:not(:disabled) {
+.terminal-command-menu__popover button:hover:not(:disabled),
+.terminal-command-menu__popover button:focus-visible {
   color: var(--ink);
   background: var(--bg-control);
 }
@@ -962,7 +967,12 @@
 @media (hover: none), (pointer: coarse), (max-width: 720px) {
   .terminal-settings {
     width: calc(100vw - 16px);
-    max-height: calc(100dvh - 16px);
+    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
+  }
+
+  .terminal-undo,
+  .terminal-pane__error {
+    bottom: calc(58px + var(--safe-bottom));
   }
 
   .terminal-settings__header,
@@ -1002,6 +1012,10 @@
 
   .terminal-tab__select {
     padding-right: 35px;
+  }
+
+  .terminal-tab__rename {
+    width: calc(100% - 40px);
   }
 
   .terminal-tab__close {
