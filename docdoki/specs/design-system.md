@@ -114,11 +114,15 @@ declaration.
   rail carries only the mark. A selected session uses a restrained accent edge
   and tint, while project/session hierarchy, curation, and runtime state remain
   legible without duplicating a session into a separate status group.
-- Assistant prose is an open document flow. User turns, thinking/tool/custom
-  activity, code, tables, math, notices, and the composer each use their own
+- Assistant prose is an open document flow. User turns, thinking/tool
+  activity, extension-authored context messages, code, tables, math, notices, and the composer each use their own
   compact structure, but all inherit shared surfaces, borders, type, and
   semantic roles. Activity cards communicate kind and outcome through both
-  iconography and their bounded semantic edge.
+  iconography and their bounded semantic edge. Displayed custom messages instead
+  use a neutral message surface with an information-blue edge, a package/type
+  header, directly readable Markdown, and optional separately folded Details;
+  they do not inherit tool status or activity density. PI error retains its
+  existing red-edge surface.
 - The composer is a single reading-width instrument with attachment/reference
   work above the writing field and a quiet metadata toolbar below. Model,
   thinking, project files, attachments, context usage, and send/abort stay

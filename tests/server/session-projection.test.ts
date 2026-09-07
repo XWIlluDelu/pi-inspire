@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionRecord } from "../../server/session-catalog.js";
 import {
   boundedTranscriptValue,
   MAX_PERSISTED_ENTRY_BYTES,
@@ -20,7 +21,6 @@ import {
   TRANSCRIPT_PAGE_MAX_BYTES,
   TRANSCRIPT_PAGE_MAX_MESSAGES,
 } from "../../server/session-projection.js";
-import type { SessionRecord } from "../../server/session-catalog.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
 
 const directories: string[] = [];
@@ -1067,6 +1067,63 @@ describe("SessionProjection bounded paging", () => {
       }
     } finally {
       await reopened.close();
+    }
+  });
+
+  it("keeps visible custom messages in ordinary older and user-turn pages", async () => {
+    const lines: unknown[] = [message("u0", null, "user", "prompt", 1)];
+    let parent = "u0";
+    for (let index = 0; index < 130; index += 1) {
+      const id = `custom-${index}`;
+      lines.push({
+        type: "custom_message",
+        id,
+        parentId: parent,
+        timestamp: new Date(index + 2).toISOString(),
+        customType: "review",
+        content: `extension message ${index}`,
+        display: true,
+        details: { index },
+      });
+      parent = id;
+    }
+    const { projection } = await fixture(lines);
+    try {
+      let page = projection.latestPage();
+      const received = [...page.messages];
+      while (page.hasOlder) {
+        page = projection.visiblePage(page.olderCursor!);
+        expect(page.activityRanges).toBeUndefined();
+        received.unshift(...page.messages);
+      }
+      expect(received).toHaveLength(131);
+      expect(received[1]).toMatchObject({
+        role: "custom",
+        content: "extension message 0",
+        details: { index: 0 },
+      });
+      const turns = projection.userTurnIndexPage(undefined);
+      const turn = turns.turns[0]!;
+      let target = projection.userTurnTranscriptPage(turn.id);
+      const targetMessages = [...target.messages];
+      expect(target.activityRanges).toBeUndefined();
+      while (target.hasMoreInTurn) {
+        target = projection.userTurnTranscriptPage(
+          turn.id,
+          projection.leafId,
+          undefined,
+          target.continuationCursor!,
+        );
+        expect(target.activityRanges).toBeUndefined();
+        targetMessages.push(...target.messages);
+      }
+      expect(
+        targetMessages.filter(
+          (value) => (value as { role?: string }).role === "custom",
+        ),
+      ).toHaveLength(130);
+    } finally {
+      await projection.close();
     }
   });
 

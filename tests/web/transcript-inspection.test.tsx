@@ -531,7 +531,7 @@ describe("transcript density preferences", () => {
     expect(screen.queryByText("hidden reasoning")).toBeNull();
   });
 
-  it("toggles thinking, tool, and custom cards from non-interactive header space", () => {
+  it("toggles thinking and tool cards from non-interactive header space", () => {
     render(
       <Transcript
         messages={[
@@ -575,9 +575,6 @@ describe("transcript density preferences", () => {
         .closest(".card") as HTMLElement,
       screen
         .getByText("read", { selector: ".card__tool-name" })
-        .closest(".card") as HTMLElement,
-      screen
-        .getByText("Intercom message", { selector: ".card__tool-name" })
         .closest(".card") as HTMLElement,
     ];
     for (const card of cards) {
@@ -1509,7 +1506,7 @@ describe("transient conversation projections", () => {
     expect(container.querySelector(".card--generic")).toBeNull();
   });
 
-  it("renders visible custom messages as aligned, inspectable activity and omits display:false", () => {
+  it("renders visible custom messages outside tool activity and omits display:false", () => {
     const { rerender, container } = render(
       <Transcript
         messages={[
@@ -1546,18 +1543,16 @@ describe("transient conversation projections", () => {
       />,
     );
     const title = screen.getByText("Intercom message");
-    expect(title).toHaveClass("card__tool-name");
-    const card = title.closest(".card") as HTMLElement;
-    expect(card).toHaveClass("card--custom");
-    expect(card.querySelector(".card__icon svg")).toHaveAttribute(
+    expect(title).toHaveClass("custom-message__title");
+    const card = title.closest(".custom-message") as HTMLElement;
+    expect(card.closest("[data-activity-fold]")).toBeNull();
+    expect(card.querySelector(".custom-message__head svg")).toHaveAttribute(
       "width",
       "14",
     );
-    const header = card.querySelector(".card__disclosure") as HTMLButtonElement;
-    expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(card.querySelector(".card__status")).toBeEmptyDOMElement();
-    fireEvent.click(header);
-    expect(screen.getByText(/visible extension message/)).toBeInTheDocument();
+    expect(card.querySelector("details")).toBeNull();
+    expect(card.querySelector(".card__status")).toBeNull();
+    expect(screen.getByText(/visible extension message/)).toBeVisible();
 
     rerender(
       <Transcript
@@ -1575,10 +1570,11 @@ describe("transient conversation projections", () => {
         toolVisibility="hidden"
       />,
     );
-    expect(container.querySelector(".turn--custom")).toBeNull();
+    expect(screen.getByText(/visible extension message/)).toBeVisible();
+    expect(container.querySelectorAll(".turn--custom")).toHaveLength(1);
   });
 
-  it("collapses adjacent custom activity into typed tiles without invented result status", async () => {
+  it("keeps adjacent custom messages readable without invented result status", () => {
     const { container } = render(
       <Transcript
         messages={[
@@ -1609,44 +1605,20 @@ describe("transient conversation projections", () => {
         toolVisibility="collapsed"
       />,
     );
-    const strip = container.querySelector(".activity-strip") as HTMLElement;
-    expect(
-      strip.querySelectorAll(".activity-strip__item--custom"),
-    ).toHaveLength(2);
+    expect(container.querySelectorAll(".custom-message")).toHaveLength(2);
+    expect(container.querySelector(".activity-strip")).toBeNull();
+    expect(container.querySelector("[data-activity-fold]")).toBeNull();
     expect(screen.queryByText("hidden_context")).not.toBeInTheDocument();
-
-    const intercom = screen.getByRole("button", {
-      name: "Intercom message: custom activity",
-    });
-    expect(within(intercom).getByText("intercom_message")).toHaveClass(
-      "activity-strip__kind",
-    );
+    expect(screen.getByText("one")).toBeVisible();
+    expect(screen.getByText("two")).toBeVisible();
     expect(
-      intercom.querySelector(
+      container.querySelector(
         ".status-success, .status-error, .status-unknown, .spin",
       ),
     ).toBeNull();
-    fireEvent.click(intercom);
-    const detail = strip.querySelector(
-      ".activity-strip__detail",
-    ) as HTMLElement;
-    expect(detail).toHaveClass("card--custom");
-    expect(detail.querySelector(".card__custom-kind")).toHaveTextContent(
-      "intercom_message",
-    );
-    expect(within(detail).getByText("one")).toBeInTheDocument();
-    fireEvent.click(
-      within(detail).getByRole("button", {
-        name: "Collapse Intercom message custom activity details",
-      }),
-    );
-    expect(intercom).toHaveAttribute("aria-expanded", "false");
-    await waitFor(() =>
-      expect(screen.queryByText("one")).not.toBeInTheDocument(),
-    );
   });
 
-  it("merges trailing custom activity into the preceding final tool strip", () => {
+  it("keeps trailing custom messages separate from the preceding final tool strip", () => {
     const toolBatch = {
       role: "assistant",
       timestamp: 25,
@@ -1698,12 +1670,17 @@ describe("transient conversation projections", () => {
     const strips = container.querySelectorAll(".activity-strip");
     expect(strips).toHaveLength(1);
     const items = strips[0]!.querySelectorAll(".activity-strip__item");
-    expect(items).toHaveLength(3);
-    expect(items[2]).toHaveAccessibleName("Intercom message: custom activity");
-    expect(container.querySelector(".turn--custom")).toBeNull();
+    expect(items).toHaveLength(2);
+    expect(screen.getByText("delivered")).toBeVisible();
+    const custom = container.querySelector(".turn--custom")!;
+    expect(custom.closest("[data-activity-fold]")).toBeNull();
+    expect(
+      strips[0]!.compareDocumentPosition(custom) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
-  it("keeps one Dynamic lifecycle when a custom activity adopts its durable timestamp", () => {
+  it("keeps custom details open when its live message adopts a durable timestamp", () => {
     vi.useFakeTimers();
     const props = {
       streaming: true,
@@ -1714,6 +1691,7 @@ describe("transient conversation projections", () => {
       role: "custom",
       customType: "intercom_message",
       content: "owned once",
+      details: { source: "peer" },
       display: true,
       timestamp: 50,
       __inspireLiveId: "custom-live-owned",
@@ -1723,10 +1701,9 @@ describe("transient conversation projections", () => {
     const { container, rerender } = render(
       <Transcript messages={[started]} {...props} />,
     );
-    const header = container.querySelector(
-      ".card--custom .card__disclosure",
-    ) as HTMLButtonElement;
-    expect(header).toHaveAttribute("aria-expanded", "true");
+    const details = container.querySelector(".custom-message__details")!;
+    fireEvent.click(within(details as HTMLElement).getByText("Details"));
+    expect(details).toHaveAttribute("open");
 
     rerender(
       <Transcript
@@ -1741,15 +1718,11 @@ describe("transient conversation projections", () => {
         {...props}
       />,
     );
-    expect(container.querySelector(".card--custom .card__disclosure")).toBe(
-      header,
-    );
-    expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1_499));
-    expect(header).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1));
-    expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelectorAll(".card--custom")).toHaveLength(1);
+    expect(container.querySelector(".custom-message__details")).toBe(details);
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(details).toHaveAttribute("open");
+    expect(container.querySelectorAll(".custom-message")).toHaveLength(1);
+    expect(screen.getByText("owned once")).toBeVisible();
   });
 
   it("renders placed text widgets and an attributable raw fallback", () => {
