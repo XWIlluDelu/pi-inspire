@@ -124,6 +124,8 @@ interface ResolvedResource {
   selectedPath?: string;
   /** Canonical target pinned by this opaque handle. */
   path?: string;
+  /** Index root to invalidate if an indexed serving path disappears. */
+  workspaceRoot?: string;
   /** Filesystem object captured at resolve time. The retained anchor keeps
    * that inode allocated, making the device/inode pair non-reusable while this
    * opaque resource handle is live. */
@@ -220,8 +222,12 @@ export function referencePath(referenceInput: string, cwd: string): string {
   reference = stripResourceLocation(reference);
 
   if (/^vscode:\/\/file\//i.test(reference)) {
-    const url = new URL(reference);
-    reference = decoded(url.pathname);
+    // VS Code puts the filesystem path after the `file` authority. Convert
+    // through a file URL so Windows drive prefixes (/C:/...) and escaping
+    // follow native URL-to-path rules without damaging POSIX absolute paths.
+    const url = new URL("file:///");
+    url.pathname = new URL(reference).pathname;
+    reference = fileURLToPath(url);
   } else if (/^file:\/\//i.test(reference)) {
     const url = new URL(reference);
     url.hash = "";
@@ -763,6 +769,7 @@ export class ResourceStore {
           descriptor,
           selectedPath,
           path,
+          ...(canonicalIndexed && workspaceRoot ? { workspaceRoot } : {}),
           fileId: fileIdentity(details),
           anchor,
           authority,
@@ -818,6 +825,8 @@ export class ResourceStore {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
+        if (resource.workspaceRoot)
+          invalidateProjectIndex(resource.workspaceRoot);
         throw requestError("The referenced file was not found", 404);
       }
       if (
@@ -920,10 +929,9 @@ export class ResourceStore {
           ? relative(workspaceRoot, resource.path)
           : "..";
       if (workspaceRoot && resource.path && !escapesBase(within)) {
-        // Serving is the authority boundary, not the five-second explorer
-        // cache. Rebuild once so a newly ignored/deleted path is revoked
-        // before any headers or bytes leave the Host.
-        invalidateProjectIndex(workspaceRoot);
+        // Share the short-lived explorer index, including an in-flight scan.
+        // Ignore-rule changes take effect on expiry or explicit Files refresh;
+        // path, branch, and pinned file-object checks remain per request.
         if (await isIndexedProjectFile(workspaceRoot, resource.path)) return;
       }
       // An exact Files/Changes selection is index-only: reference syntax must
