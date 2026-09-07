@@ -379,15 +379,11 @@ export const Composer = memo(function Composer() {
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={
-          isCompacting
-            ? "Keep writing — send when compaction finishes…"
-            : state.activeHostCommand
-              ? `Keep writing — send when /${state.activeHostCommand.command} finishes…`
-              : deliveryBusy
-                ? deliveryBehavior === "steer"
-                  ? "Add direction to the running task…"
-                  : "Add a follow-up for after this task…"
-                : "Message Pi…"
+          deliveryBusy
+            ? deliveryBehavior === "steer"
+              ? "Add direction to the running task…"
+              : "Add a follow-up for after this task…"
+            : "Message Pi…"
         }
         label="Message"
         onKeyDown={onKeyDown}

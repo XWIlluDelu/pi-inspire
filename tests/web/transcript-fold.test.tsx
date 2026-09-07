@@ -113,13 +113,28 @@ describe("response activity folds", () => {
     expect(title).toBeVisible();
     expect(screen.getByText("42,500 tokens before")).toBeVisible();
     expect(container.querySelector(".card__generic")).toBeNull();
+    expect(container.querySelector(".context-checkpoint__icon")).not.toBeNull();
+    expect(
+      container.querySelector(".context-checkpoint__chevron"),
+    ).not.toBeNull();
     expect(checkpoint).not.toHaveAttribute("open");
+
+    const copyBtn = screen.getByRole("button", {
+      name: "Copy compaction summary",
+    });
+    expect(copyBtn).toBeVisible();
+    fireEvent.click(copyBtn);
+    expect(checkpoint).not.toHaveAttribute("open");
+
     fireEvent.click(title.closest("summary")!);
     expect(checkpoint).toHaveAttribute("open");
     expect(
       await screen.findByText(/Preserve the parser decisions\./),
     ).toBeVisible();
     expect(container.textContent).not.toContain('"tokensBefore"');
+
+    fireEvent.click(copyBtn);
+    expect(checkpoint).toHaveAttribute("open");
   });
 
   it("keeps the unchanged card state between two interactive rails", () => {
@@ -868,11 +883,12 @@ describe("response activity folds", () => {
     expect(replaced).toHaveAttribute("data-activity-fold", "open");
   });
 
-  it("retains inner custom-card state when an older page extends its batch", () => {
+  it("retains custom details when an older page prepends another message", () => {
     const recentCustom = {
       role: "custom",
       customType: "intercom",
-      content: { message: "recent" },
+      content: "recent",
+      details: { source: "peer" },
       __inspireEntryId: "custom-recent",
       timestamp: 2,
     };
@@ -886,16 +902,12 @@ describe("response activity folds", () => {
         toolVisibility: "expanded",
       }),
     );
-    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    const recentDisclosure = within(fold).getByRole("button", {
-      name: "Collapse Intercom custom activity",
-    });
-    fireEvent.click(recentDisclosure);
-    fireEvent.click(
-      within(fold).getByRole("button", {
-        name: "Collapse assistant activity from the upper boundary",
-      }),
-    );
+    const details = container.querySelector(
+      ".custom-message__details",
+    ) as HTMLElement;
+    fireEvent.click(within(details).getByText("Details"));
+    expect(details).toHaveAttribute("open");
+    expect(container.querySelector("[data-activity-fold]")).toBeNull();
 
     rerender(
       transcript(
@@ -915,12 +927,10 @@ describe("response activity folds", () => {
       ),
     );
 
-    expect(container.querySelector("[data-activity-fold]")).toBe(fold);
-    expect(fold).toHaveAttribute("data-activity-fold", "closed");
-    fireEvent.click(
-      within(fold).getByRole("button", { name: "Expand assistant activity" }),
-    );
-    expect(recentDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".custom-message__details")).toBe(details);
+    expect(details).toHaveAttribute("open");
+    expect(container.querySelectorAll(".custom-message")).toHaveLength(2);
+    expect(container.querySelector("[data-activity-fold]")).toBeNull();
   });
 
   it("retains fold identity when an older tool call adopts a loaded result", () => {
@@ -1104,7 +1114,7 @@ describe("response activity folds", () => {
     expect(fold).toHaveAttribute("data-activity-fold", "open");
   });
 
-  it("treats a live displayed custom message as activity that can still grow", () => {
+  it("keeps live and settled custom messages outside adaptive activity folds", () => {
     vi.useFakeTimers();
     const started = {
       role: "custom",
@@ -1117,17 +1127,16 @@ describe("response activity folds", () => {
     const { container, rerender } = render(
       transcript([started], "dynamic", { runState: "idle" }),
     );
-    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    expect(fold).toHaveAttribute("data-activity-fold", "open");
-    act(() => vi.advanceTimersByTime(2_400));
-
+    expect(container.querySelector("[data-activity-fold]")).toBeNull();
+    expect(screen.getByText("intercom is working")).toBeVisible();
     rerender(
       transcript([{ ...started, __inspireSettled: true }], "dynamic", {
         runState: "idle",
       }),
     );
-    act(() => vi.advanceTimersByTime(800));
-    expect(fold).toHaveAttribute("data-activity-fold", "closed");
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(container.querySelector("[data-activity-fold]")).toBeNull();
+    expect(screen.getByText("intercom is working")).toBeVisible();
   });
 
   it("dynamically closes a tail fold when the authoritative run fails", () => {

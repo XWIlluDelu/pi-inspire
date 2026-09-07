@@ -62,7 +62,7 @@ export const CommandActivity = memo(function CommandActivity() {
                           : "Info"}
               </span>
             </div>
-            <p>{activity.message}</p>
+            {activity.message ? <p>{activity.message}</p> : null}
             {activity.details?.length ? (
               <dl className="command-activity__details">
                 {activity.details.map((detail, index) => (

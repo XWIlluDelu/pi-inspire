@@ -1180,18 +1180,12 @@ export class AppStore {
       this.notify("warning", "Wait for the active command to finish");
       return false;
     }
-    const messages = {
-      compact:
-        "Compacting context… Keep writing; sending resumes when it finishes. Press Esc to cancel.",
-      export: "Exporting the current session to HTML…",
-      reload: "Reloading Pi resources…",
-    } as const;
     const id = this.presentCommandActivity(
       sessionId,
       input,
       command,
       "running",
-      messages[command],
+      "",
     );
     this.hostCommandRuns.set(sessionId, id);
     const transportGeneration = this.transportGeneration;
