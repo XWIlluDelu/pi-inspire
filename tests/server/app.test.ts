@@ -2349,8 +2349,8 @@ describe("local host API", () => {
       .send({ sessionId, reference: "unmentioned.txt" })
       .expect(403);
 
-    // A handle resolved here must stop serving once another session is the
-    // visible one, even though the handle itself is still alive.
+    // A second browser selecting another session does not revoke this
+    // browser's addressed resource operations or existing handles.
     await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
@@ -2361,7 +2361,22 @@ describe("local host API", () => {
         `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
       )
       .set("Authorization", `Bearer ${token}`)
-      .expect(409);
+      .expect(200);
+    for (const [operation, body] of [
+      ["list", { sessionId }],
+      ["probe", { sessionId, references: ["preview.md"] }],
+      ["resolve", { sessionId, reference: "preview.md" }],
+    ] as const) {
+      await request(application.server)
+        .post(`/api/resources/${operation}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send(body)
+        .expect(200);
+    }
+    await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content?sessionId=mock-active`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
   });
 
   it("uses the current resource size after resolve when a file grows or shrinks", async () => {

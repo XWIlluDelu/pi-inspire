@@ -1273,12 +1273,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return { sessionId, snapshot: await this.snapshot(), editorText: "" };
   }
   async resourceContext(sessionId: string): Promise<ResourceContext> {
-    const active = this.state.active;
-    if (!active || active.sessionId !== sessionId) {
-      throw requestError(
-        "The resource does not belong to the visible session",
-        409,
-      );
+    const active = this.sessions.get(sessionId);
+    if (!active) {
+      throw requestError("That session is not open on this host", 409);
     }
     return {
       sessionId,
