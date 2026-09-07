@@ -1,0 +1,182 @@
+/* Shared by attachments, conversation images, and the file reader. The image
+   owns its opaque inspection background; the modal scrim only dims the shell. */
+.image-surface {
+  --image-white: #fff;
+  --image-black: #000;
+  --image-check-light: #eee;
+  --image-check-dark: #ccc;
+  background-color: var(--image-check-light);
+  background-image: repeating-conic-gradient(
+    var(--image-check-dark) 0% 25%,
+    var(--image-check-light) 0% 50%
+  );
+  background-size: 16px 16px;
+}
+
+.image-surface[data-background="white"] {
+  background-color: var(--image-white);
+  background-image: none;
+}
+
+.image-surface[data-background="black"] {
+  background-color: var(--image-black);
+  background-image: none;
+}
+
+.image-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--faint);
+  cursor: zoom-in;
+}
+
+.image-preview:disabled {
+  cursor: default;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image-preview--attachment {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+}
+
+.image-preview--message {
+  width: clamp(132px, 28vw, 280px);
+  height: clamp(96px, 20vw, 210px);
+}
+
+.overlay.image-lightbox {
+  z-index: 80;
+  align-items: center;
+  padding: var(--space-6);
+  overflow: hidden;
+}
+
+.image-lightbox__dialog {
+  --image-control-bg: #242424;
+  --image-control-hover: #404040;
+  --image-control-ink: #fff;
+  --image-control-selected: #eee;
+  --image-control-selected-ink: #171717;
+  position: relative;
+  width: min(94vw, 1400px);
+  height: min(92dvh, 1000px);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow: hidden;
+  outline: none;
+}
+
+.image-lightbox__toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.image-lightbox__backgrounds {
+  display: flex;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--image-control-bg);
+}
+
+.image-lightbox__backgrounds button {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--image-control-ink);
+  font-size: var(--text-sm);
+}
+
+.image-lightbox__backgrounds button:hover {
+  background: var(--image-control-hover);
+}
+
+.image-lightbox__backgrounds button[aria-pressed="true"] {
+  background: var(--image-control-selected);
+  color: var(--image-control-selected-ink);
+}
+
+.image-lightbox__toolbar button:focus-visible {
+  outline: 2px solid var(--image-control-ink);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 5px var(--image-control-bg);
+}
+
+.image-lightbox__canvas {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  touch-action: manipulation;
+}
+
+.image-lightbox__canvas--zoomed {
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-lightbox__canvas--panning {
+  cursor: grabbing;
+}
+
+.image-lightbox__canvas > img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  transform-origin: center;
+  transition: transform var(--dur-standard) var(--ease-standard);
+  will-change: transform;
+}
+
+.image-lightbox__canvas--panning > img {
+  transition: none;
+}
+
+.image-lightbox__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--image-control-bg);
+  color: var(--image-control-ink);
+}
+
+.image-lightbox__close:hover {
+  background: var(--image-control-hover);
+}

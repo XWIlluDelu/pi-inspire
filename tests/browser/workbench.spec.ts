@@ -693,7 +693,29 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
       '[data-workspace-path="tests/browser/fixtures/file-previews/vector.svg"]',
     )
     .click();
-  await expect(resources.getByAltText("vector.svg")).toBeVisible();
+  const vector = resources.getByAltText("vector.svg");
+  await expect(vector).toBeVisible();
+  await expect(vector).not.toHaveCSS("background-image", "none");
+  const vectorGeometry = await vector.evaluate((image) => {
+    const bounds = image.getBoundingClientRect();
+    const canvas = image.parentElement!.getBoundingClientRect();
+    return {
+      ratio: bounds.width / bounds.height,
+      width: bounds.width,
+      height: bounds.height,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    };
+  });
+  // The checkerboard belongs to the actual image rectangle, not letterboxing;
+  // viewBox-only SVGs must still have non-zero, contained intrinsic geometry.
+  expect(vectorGeometry.ratio).toBeCloseTo(720 / 420, 2);
+  expect(vectorGeometry.width).toBeGreaterThan(0);
+  expect(vectorGeometry.height).toBeGreaterThan(0);
+  expect(vectorGeometry.width).toBeLessThanOrEqual(vectorGeometry.canvasWidth);
+  expect(vectorGeometry.height).toBeLessThanOrEqual(
+    vectorGeometry.canvasHeight,
+  );
   await resources.getByRole("button", { name: "Source", exact: true }).click();
   await expect(
     resources.getByRole("region", { name: "File source" }),
