@@ -11,8 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listProjectDirectory } from "../../server/project-files.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  invalidateProjectIndex,
+  listProjectDirectory,
+} from "../../server/project-files.js";
+import * as gitRunner from "../../server/git-runner.js";
 import {
   openCanonicalResourceFile,
   ResourceStore,
@@ -177,6 +181,24 @@ describe("ResourceStore", () => {
     expect(() => resources.get(descriptor.id, "s2", descriptor.viewId)).toThrow(
       "no longer available",
     );
+  });
+
+  it("opens native VS Code file URIs with escaped spaces and line/column suffixes", async () => {
+    const { project } = await workspace();
+    const file = join(project, "my report.md");
+    await writeFile(file, "report");
+    const reference =
+      pathToFileURL(file).href.replace(/^file:\/\//, "vscode://file") + ":5:10";
+    expect(referencePath(reference, project)).toBe(file);
+    expect(referencePath(reference.replace(":5:10", "#L5"), project)).toBe(
+      file,
+    );
+    await expect(
+      resources.resolve(
+        { ...resourceIdentity(), cwd: project, messages: [] },
+        reference,
+      ),
+    ).resolves.toMatchObject({ name: "my report.md" });
   });
 
   it("classifies common source and extensionless project files as text", async () => {
@@ -665,23 +687,59 @@ describe("ResourceStore", () => {
     },
   );
 
-  it("revokes cached index authority before serving newly ignored content", async () => {
+  it.each(["expiry", "refresh"])(
+    "shares the preview index until %s revokes newly ignored content",
+    async (mode) => {
+      const { project } = await workspace();
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      await promisify(execFile)("git", ["-C", project, "init", "-q"]);
+      await writeFile(join(project, "draft.txt"), "draft\n");
+      const context = { ...resourceIdentity(), cwd: project, messages: [] };
+      const git = vi.spyOn(gitRunner, "spawnGit");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+      try {
+        const descriptor = await resources.resolve(context, "draft.txt");
+        const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
+        expect(
+          git.mock.calls.filter(([args]) => args.includes("ls-files")),
+        ).toHaveLength(2);
+        await writeFile(join(project, ".gitignore"), "draft.txt\n");
+        await Promise.all(
+          Array.from({ length: 3 }, () =>
+            resources.revalidate(resource, context),
+          ),
+        );
+        expect(
+          git.mock.calls.filter(([args]) => args.includes("ls-files")),
+        ).toHaveLength(2);
+        if (mode === "refresh") invalidateProjectIndex(project);
+        else clock.mockReturnValue(Date.now() + 5_001);
+        await expect(
+          resources.revalidate(resource, context),
+        ).rejects.toMatchObject({ status: 403 });
+        expect(
+          git.mock.calls.filter(([args]) => args.includes("ls-files")),
+        ).toHaveLength(4);
+      } finally {
+        git.mockRestore();
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it("invalidates a cached index when an already-resolved serving file disappears", async () => {
     const { project } = await workspace();
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    await promisify(execFile)("git", ["-C", project, "init", "-q"]);
-    await writeFile(join(project, "draft.txt"), "draft\n");
+    await writeFile(join(project, "gone.txt"), "gone");
     const context = { ...resourceIdentity(), cwd: project, messages: [] };
-    const descriptor = await resources.resolve(context, "draft.txt");
+    const descriptor = await resources.resolve(context, "gone.txt");
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-
-    await writeFile(join(project, ".gitignore"), "draft.txt\n");
-
-    await expect(resources.revalidate(resource, context)).rejects.toMatchObject(
-      {
-        status: 403,
-      },
-    );
+    await unlink(join(project, "gone.txt"));
+    await resources.revalidate(resource, context);
+    await expect(resources.openForServing(resource)).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(listProjectDirectory(project)).resolves.toEqual([]);
   });
 
   it("retains an explicit citation after workspace index authority is removed", async () => {
@@ -699,6 +757,7 @@ describe("ResourceStore", () => {
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
 
     await writeFile(join(project, ".gitignore"), "draft.txt\n");
+    invalidateProjectIndex(project);
 
     await expect(
       resources.revalidate(resource, context),
@@ -803,6 +862,7 @@ describe("ResourceStore", () => {
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
 
     await writeFile(join(project, ".gitignore"), "secret#L12\n");
+    invalidateProjectIndex(project);
 
     await expect(resources.revalidate(resource, context)).rejects.toMatchObject(
       { status: 403 },
