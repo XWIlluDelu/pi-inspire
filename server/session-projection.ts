@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import {
   createHash,
   createHmac,
@@ -15,9 +14,9 @@ import type {
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
 import {
-  MAX_SESSION_ID_CHARS,
   type BranchTreeResponse,
   type ComposerHistoryPage,
+  MAX_SESSION_ID_CHARS,
   type ProjectionHealth,
   type TranscriptActivityKind,
   type TranscriptActivityPage,
@@ -41,6 +40,7 @@ import {
   migrateSessionEntries,
   sessionEntryToContextMessages,
 } from "./pi-runtime.js";
+import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
 import { JsonlObjectDecoder } from "./session-jsonl.js";
@@ -626,6 +626,8 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (record.role === "user") return true;
+  // Visible extension messages are context content, not lazily hidden tools.
+  if (record.role === "custom") return record.display !== false;
   if (record.role !== "assistant") return false;
   if (record.stopReason === "error") return true;
   if (typeof record.content === "string") return record.content.length > 0;

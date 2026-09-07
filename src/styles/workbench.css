@@ -162,7 +162,7 @@ body.pane-resizing--vertical .nav {
   color: var(--ink);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .ctx__modes button:disabled {
@@ -211,7 +211,7 @@ body.pane-resizing--vertical .nav {
   color: var(--accent-deep);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .segmented button:disabled,

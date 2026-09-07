@@ -72,6 +72,7 @@
   scroll-padding-top: calc(var(--space-3) + 44px);
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
   mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
 
@@ -681,8 +682,7 @@
   background: var(--activity-think);
 }
 
-.activity-fold__segment--tool,
-.activity-fold__segment--custom {
+.activity-fold__segment--tool {
   background: var(--activity-tool);
 }
 
@@ -957,55 +957,114 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint {
-  border-block: 1px solid var(--hairline);
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-left: var(--witness) solid var(--info);
+  border-radius: var(--radius-surface);
   color: var(--muted);
+  overflow: hidden;
+  animation: card-in var(--dur-standard) var(--ease-standard);
 }
 
 .context-checkpoint > summary {
-  min-height: 36px;
-  padding: 7px var(--space-2);
+  min-height: calc(var(--activity-row-h) - 2px);
+  padding: 4px var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);
   cursor: pointer;
   list-style: none;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   user-select: none;
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint > summary::-webkit-details-marker {
+.context-checkpoint > summary::-webkit-details-marker,
+.context-checkpoint > summary::marker {
   display: none;
 }
 
 .context-checkpoint > summary:hover,
 .context-checkpoint > summary:focus-visible {
-  background: color-mix(in srgb, var(--bg-inset) 64%, transparent);
+  background: var(--bg-inset);
   color: var(--ink);
+  outline: none;
 }
 
-.context-checkpoint > summary > svg {
+.context-checkpoint > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.context-checkpoint__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   color: var(--info);
 }
 
 .context-checkpoint__title {
   color: var(--ink);
-  font-weight: 650;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+  white-space: nowrap;
 }
 
-.context-checkpoint__metric,
+.context-checkpoint__metric {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  white-space: nowrap;
+}
+
+.context-checkpoint__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .context-checkpoint__time {
   color: var(--faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  white-space: nowrap;
 }
 
-.context-checkpoint__time {
-  margin-left: auto;
+.context-checkpoint__action-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.context-checkpoint__copy.icon-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  color: var(--faint);
+  border-radius: var(--radius-xs);
+  opacity: 0;
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.context-checkpoint:hover .context-checkpoint__copy,
+.context-checkpoint:focus-within .context-checkpoint__copy {
+  opacity: 1;
+}
+
+.context-checkpoint__copy.icon-button:hover,
+.context-checkpoint__copy.icon-button:focus-visible {
+  background: var(--bg-inset);
+  color: var(--ink);
 }
 
 .context-checkpoint__chevron {
   flex: 0 0 auto;
+  color: var(--muted);
   transition: transform var(--dur-micro) var(--ease-standard);
 }
 
@@ -1014,9 +1073,9 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint__body {
-  padding: var(--space-2) var(--space-3) var(--space-3) 34px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--bg-inset) 52%, transparent);
+  background: var(--bg-activity);
 }
 
 .context-checkpoint__body > p {
@@ -1025,8 +1084,30 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   font-size: var(--text-sm);
 }
 
-.context-checkpoint__body .turn__actions {
-  opacity: 1;
+.context-checkpoint__body .rich-text > :first-child {
+  margin-top: 0;
+}
+
+.context-checkpoint__body .rich-text > :last-child {
+  margin-bottom: 0;
+}
+
+@media (hover: none) {
+  .context-checkpoint__copy.icon-button {
+    opacity: 0.75;
+  }
+}
+
+@media (pointer: coarse) {
+  .context-checkpoint > summary {
+    min-height: 38px;
+  }
+
+  .context-checkpoint__copy.icon-button::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
 }
 
 /* One attribution line above the answer carries who, model, and time; the
@@ -1161,6 +1242,87 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   line-height: var(--leading-reading);
 }
 
+/* Extension-authored context stays readable independently of tool activity. */
+.custom-message {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-left: var(--witness) solid var(--info);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+}
+
+.custom-message__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+  margin-bottom: var(--space-2);
+  color: var(--info);
+}
+
+.custom-message__head > svg { flex: 0 0 auto; }
+.custom-message__title {
+  color: color-mix(in srgb, var(--info) 80%, var(--ink));
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.custom-message__type {
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.custom-message__copy.icon-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+  border-radius: var(--radius-control);
+}
+.custom-message__copy.icon-button:hover {
+  color: var(--ink);
+  background: var(--bg-inset);
+}
+.custom-message__body { min-width: 0; }
+.custom-message__body > .rich-text:first-child > :first-child { margin-top: 0; }
+.custom-message__body > .rich-text:last-child > :last-child { margin-bottom: 0; }
+.custom-message__details {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.custom-message__details > summary {
+  width: fit-content;
+  min-height: 28px;
+  padding: var(--space-1) 0;
+  cursor: pointer;
+}
+.custom-message__details > summary:hover { color: var(--ink); }
+.custom-message__details > summary:focus-visible,
+.custom-message__copy.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.custom-message__raw {
+  margin: var(--space-1) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-reading-small);
+  line-height: var(--leading-mono);
+  color: var(--body);
+}
+@media (pointer: coarse) {
+  .custom-message__copy.icon-button { width: 44px; height: 44px; }
+  .custom-message__details > summary { min-height: 44px; align-content: center; }
+}
+
 .assistant-error {
   min-width: 0;
   padding: var(--space-2) var(--space-3);
@@ -1168,6 +1330,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   border-left: var(--witness) solid var(--error);
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
+  animation: card-in var(--dur-standard) var(--ease-standard);
 }
 
 .assistant-error__head {
@@ -1265,8 +1428,8 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   }
 
   .assistant-error__disclosure {
-    height: 28px;
-    padding: 0 10px;
+    min-height: 36px;
+    padding: 0 var(--space-3);
   }
 }
 

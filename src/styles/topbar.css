@@ -317,6 +317,15 @@
   color: inherit;
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.banner--error button:hover,
+.banner--error button:focus-visible {
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .banner--warning {
@@ -331,4 +340,13 @@
   color: inherit;
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.banner--warning button:hover,
+.banner--warning button:focus-visible {
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }

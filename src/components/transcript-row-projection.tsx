@@ -28,11 +28,11 @@ import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
 } from "../store";
+import { AssistantError } from "./AssistantError";
+import { CustomMessage } from "./CustomMessage";
 import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
 import {
   assistantEndsWithToolRun,
-  CustomActivityBatch,
-  customActivityItems,
   genericContentTitle,
 } from "./transcript-cards";
 import {
@@ -40,7 +40,6 @@ import {
   type ActivityTelemetryItem,
   ResponseActivityFold,
 } from "./transcript-fold";
-import { AssistantError } from "./AssistantError";
 import {
   AssistantTurn,
   ContextCheckpointRow,
@@ -147,17 +146,13 @@ export function useTranscriptRows({
   onMaterializeActivityRanges,
   preserveActivityAnchorRef,
 }: TranscriptRowProjectionOptions) {
-  // Activity runs and their custom batches are semantic groups even while
+  // Activity runs are semantic groups even while
   // older pages extend them from the left or live events extend them from the
   // right. Member aliases retain the already-mounted disclosure owners.
   const activityProjectionIdentities = useMemo(
     () => ({
       folds: {
         prefix: `activity-fold:${sessionId}\u0000${projectionViewKey}`,
-        byMember: new Map<string, string>(),
-      },
-      customBatches: {
-        prefix: `custom-batch:${sessionId}\u0000${projectionViewKey}`,
         byMember: new Map<string, string>(),
       },
       manualFoldPresentation: new Map<string, ActivityFoldPresentation>(),
@@ -294,17 +289,14 @@ export function useTranscriptRows({
       kind: "response" | "activity";
       start: number;
       content: ChatMessage["content"];
-      customMessages: ChatMessage[];
     };
 
     const built: Row[] = [];
     const foldIdentityClaims: ProjectionIdentityClaim[] = [];
-    const customBatchIdentityClaims: ProjectionIdentityClaim[] = [];
     const claimedFoldKeys = new Set<string>();
-    const claimedCustomBatchKeys = new Set<string>();
     // Outer disclosure state must survive live-overlay adoption. Ordinary Pi
-    // messages keep their timestamp correlation; displayed custom activity can
-    // change timestamps and instead carries its host-paired durable entry id.
+    // messages keep their timestamp correlation; displayed custom messages can
+    // change timestamps and instead carry their host-paired durable entry ids.
     const projectionKeyOccurrences = new Map<string, number>();
     const deferredRangeAlias = (message: ChatMessage): string[] =>
       typeof message.__inspireActivityRangeCursor === "string"
@@ -409,15 +401,6 @@ export function useTranscriptRows({
       activityRun = null;
     };
 
-    const hasLaterAssistant = new Array<boolean>(
-      projectionMessages.length + 1,
-    ).fill(false);
-    for (let index = projectionMessages.length - 1; index >= 0; index -= 1) {
-      hasLaterAssistant[index] =
-        hasLaterAssistant[index + 1]! ||
-        asMessage(projectionMessages[index]).role === "assistant";
-    }
-
     for (let index = 0; index < projectionMessages.length; ) {
       const message = asMessage(projectionMessages[index]);
 
@@ -466,72 +449,35 @@ export function useTranscriptRows({
       }
 
       if (message.role === "custom") {
-        const customMessages: ChatMessage[] = [];
-        const customProjectionKeys: string[] = [];
-        while (index < projectionMessages.length) {
-          const candidateIndex = index;
-          const candidate = asMessage(projectionMessages[index]);
-          if (candidate.role !== "custom") break;
-          // display:false remains in Pi/model context but is absent from the
-          // browser activity run and does not split adjacent visible messages.
-          if (candidate.display !== false) {
-            customMessages.push(candidate);
-            customProjectionKeys.push(
-              projectionKey(
-                candidate,
-                messageKey(candidate) ?? `custom:${candidateIndex}`,
-              ),
-            );
-          }
-          index += 1;
-        }
-        if (toolVisibility !== "hidden" && customMessages.length > 0) {
-          const projectedCustomKey = customProjectionKeys[0]!;
-          const customKey = claimProjectionIdentity(
-            activityProjectionIdentities.customBatches,
-            claimedCustomBatchKeys,
-            customBatchIdentityClaims,
-            customProjectionKeys,
+        if (message.display !== false) {
+          flushActivity(true);
+          const customKey = projectionKey(
+            message,
+            messageKey(message) ?? `custom:${index}`,
           );
-          const customLive = customMessages.some(
-            (custom) =>
-              typeof custom.__inspireLiveId === "string" &&
-              custom.__inspireSettled !== true,
-          );
-          const customActivityIds = customProjectionKeys.map(
-            (projectionKey) => `${projectionKey}:custom`,
-          );
-          const customTelemetry: ActivityTelemetryItem[] = customMessages.map(
-            (c, customIndex) => ({
-              id: customActivityIds[customIndex]!,
-              kind: "custom",
-              label:
-                (c as { customType?: string }).customType ?? "Custom activity",
-              live:
-                typeof c.__inspireLiveId === "string" &&
-                c.__inspireSettled !== true,
-            }),
-          );
-          appendActivity(
-            projectedCustomKey,
-            <ActivitySegmentBoundary ids={customActivityIds}>
-              <CustomActivityBatch
-                key={customKey}
-                messages={customMessages}
-                activityItemIds={customActivityIds}
-                toolVisibility={toolVisibility}
-                collapseRequested={!runBusy || hasLaterAssistant[index]!}
+          built.push({
+            key: `custom:${customKey}`,
+            node: (
+              <CustomMessage
+                message={message}
+                sessionId={sessionId}
+                viewId={viewId}
+                projectionKey={projectionViewKey}
               />
-            </ActivitySegmentBoundary>,
-            customLive,
-            [
-              ...customProjectionKeys.slice(1),
-              ...customMessages.flatMap(deferredRangeAlias),
-            ],
-            undefined,
-            customTelemetry,
-          );
+            ),
+            searchText:
+              typeof message.__inspireLiveId !== "string" ||
+              message.__inspireSettled === true
+                ? messageText(message)
+                : "",
+            // Searchable in All, without pretending the extension is the user or model.
+            searchScope: null,
+            turnOrdinal: currentTurnOrdinal,
+            turnId: currentTurnId,
+            turnStart: false,
+          });
         }
+        index += 1;
         continue;
       }
 
@@ -584,7 +530,6 @@ export function useTranscriptRows({
 
       if (message.role === "assistant") {
         let activityEnd = index + 1;
-        const trailingCustomMessages: ChatMessage[] = [];
         const trailingActivityKeys: string[] = [];
         if (assistantEndsWithToolRun(message)) {
           const ownToolCallIds = new Set(
@@ -612,17 +557,7 @@ export function useTranscriptRows({
               activityEnd += 1;
               continue;
             }
-            if (candidate.role === "custom") {
-              if (candidate.display !== false) {
-                trailingCustomMessages.push(candidate);
-                trailingActivityKeys.push(
-                  projectionKey(
-                    candidate,
-                    messageKey(candidate) ?? `custom:${activityEnd}`,
-                  ),
-                  ...deferredRangeAlias(candidate),
-                );
-              }
+            if (candidate.role === "custom" && candidate.display === false) {
               activityEnd += 1;
               continue;
             }
@@ -640,11 +575,7 @@ export function useTranscriptRows({
           itemIndex: number,
         ) => {
           const previous = segments.at(-1);
-          if (
-            previous?.kind === kind &&
-            Array.isArray(previous.content) &&
-            previous.customMessages.length === 0
-          ) {
+          if (previous?.kind === kind && Array.isArray(previous.content)) {
             previous.content.push(item);
             return;
           }
@@ -652,7 +583,6 @@ export function useTranscriptRows({
             kind,
             start: itemIndex,
             content: [item],
-            customMessages: [],
           });
         };
 
@@ -662,7 +592,6 @@ export function useTranscriptRows({
               kind: "response",
               start: 0,
               content: message.content,
-              customMessages: [],
             });
           }
         } else {
@@ -687,20 +616,6 @@ export function useTranscriptRows({
           });
         }
 
-        if (toolVisibility !== "hidden" && trailingCustomMessages.length > 0) {
-          const previous = segments.at(-1);
-          if (previous?.kind === "activity") {
-            previous.customMessages = trailingCustomMessages;
-          } else {
-            segments.push({
-              kind: "activity",
-              start: contentItems(message).length,
-              content: [],
-              customMessages: trailingCustomMessages,
-            });
-          }
-        }
-
         // Empty failed messages get their own error row below, not Working.
         if (
           segments.length === 0 &&
@@ -711,7 +626,6 @@ export function useTranscriptRows({
             kind: "activity",
             start: 0,
             content: [],
-            customMessages: [],
           });
         }
 
@@ -740,9 +654,6 @@ export function useTranscriptRows({
           const activityItemIds = fragmentItems.map(
             (_, itemIndex) => `${segmentKey}:item:${itemIndex}`,
           );
-          const customActivityIds = customActivityItems(
-            segment.customMessages,
-          ).map((activity) => `${segmentKey}:${activity.key}`);
           const segmentStreaming =
             assistantStreaming && segmentIndex === segments.length - 1;
           const node = (
@@ -751,12 +662,7 @@ export function useTranscriptRows({
               message={fragmentMessage}
               toolResults={toolResults}
               toolActivity={toolActivity}
-              customMessages={segment.customMessages}
               activityItemIds={activityItemIds}
-              customActivityIds={customActivityIds}
-              customCollapseRequested={
-                !runBusy || hasLaterAssistant[activityEnd]!
-              }
               streaming={segmentStreaming}
               dynamicActive={assistantDynamicActive}
               thinkingVisibility={thinkingVisibility}
@@ -764,9 +670,7 @@ export function useTranscriptRows({
               assistantRoundDisplay={assistantRoundDisplay}
               showLead={segmentIndex === leadSegment}
               roundActivityItemId={
-                segment.kind === "activity"
-                  ? (activityItemIds[0] ?? customActivityIds[0])
-                  : undefined
+                segment.kind === "activity" ? activityItemIds[0] : undefined
               }
               responseCopyText={
                 segment.kind === "response" && segmentIndex === lastResponse
@@ -793,11 +697,6 @@ export function useTranscriptRows({
             return;
           }
 
-          const customLive = segment.customMessages.some(
-            (custom) =>
-              typeof custom.__inspireLiveId === "string" &&
-              custom.__inspireSettled !== true,
-          );
           const segmentTelemetry: ActivityTelemetryItem[] = [];
           fragmentItems.forEach((item, itemIndex) => {
             if (item.type === "thinking") {
@@ -831,17 +730,6 @@ export function useTranscriptRows({
               live: true,
             };
           }
-          segment.customMessages.forEach((c, customIndex) => {
-            segmentTelemetry.push({
-              id: customActivityIds[customIndex]!,
-              kind: "custom",
-              label:
-                (c as { customType?: string }).customType ?? "Custom activity",
-              live:
-                typeof c.__inspireLiveId === "string" &&
-                c.__inspireSettled !== true,
-            });
-          });
           appendActivity(
             segmentKey,
             <ActivitySegmentBoundary
@@ -849,7 +737,7 @@ export function useTranscriptRows({
             >
               {node}
             </ActivitySegmentBoundary>,
-            assistantDynamicActive || segmentStreaming || customLive,
+            assistantDynamicActive || segmentStreaming,
             segmentIndex === lastActivity
               ? [...trailingActivityKeys, ...deferredRangeAlias(message)]
               : deferredRangeAlias(message),
@@ -950,7 +838,7 @@ export function useTranscriptRows({
     }
 
     flushActivity(false, true);
-    return { rows: built, foldIdentityClaims, customBatchIdentityClaims };
+    return { rows: built, foldIdentityClaims };
   }, [
     projectionMessages,
     activeAssistantMessageKey,
@@ -971,7 +859,7 @@ export function useTranscriptRows({
     viewId,
     projectionViewKey,
   ]);
-  const { rows, foldIdentityClaims, customBatchIdentityClaims } = rowProjection;
+  const { rows, foldIdentityClaims } = rowProjection;
   useLayoutEffect(() => {
     const commit = (
       registry: ProjectionIdentityRegistry,
@@ -983,15 +871,7 @@ export function useTranscriptRows({
       }
     };
     commit(activityProjectionIdentities.folds, foldIdentityClaims);
-    commit(
-      activityProjectionIdentities.customBatches,
-      customBatchIdentityClaims,
-    );
-  }, [
-    activityProjectionIdentities,
-    customBatchIdentityClaims,
-    foldIdentityClaims,
-  ]);
+  }, [activityProjectionIdentities, foldIdentityClaims]);
 
   return rows;
 }

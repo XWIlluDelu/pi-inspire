@@ -39,9 +39,15 @@ Make Pi's built-in command syntax a first-class Web interaction: supported comma
 ## Current state
 
 - **Completed:** The shared registry covers Pi 0.84's interactive built-ins while preserving runtime extension/prompt/skill precedence (with `/compact` as the deliberate Host override). Browser-native commands reuse model, thinking, settings, sessions, History, naming, copy, update, and new-session surfaces. Host-native compact, HTML export, and resource reload have typed authenticated routes and named lifecycle receipts. Terminal-only commands point to the persistent project terminal, and unknown slash or bang commands cannot consume a model turn.
-- **Completed:** Manual compaction acknowledges immediately in Composer, runs outside the prompt timeout, blocks misleading Steer/Queue delivery, and can be cancelled by replacing only its owning worker. Durable compaction and branch summaries render as searchable dedicated cards. Settings now expose Pi's auto-compaction, auto-retry, steering, and follow-up modes.
+- **Completed:** Manual compaction acknowledges immediately in Composer, runs outside the prompt timeout, currently blocks compaction-time delivery rather than implementing Pi TUI's separate compaction queue, and can be cancelled by replacing only its owning worker. Durable compaction and branch summaries render as searchable dedicated cards. Settings now expose Pi's auto-compaction, auto-retry, steering, and follow-up modes.
 - **Remaining outside the built-in surface:** An extension `registerCommand()` handler still owns the prompt RPC until its preflight completes. Long handlers and unbounded extension dialogs therefore retain the existing 30-second prompt-confirmation boundary; changing that safely needs its own accepted-operation identity and cancellation design.
 - **Modified files:** shared command/contracts; Host runtime/RPC/routes; Web store, Composer, command palette, Settings, transcript projection/styles; focused server/Web tests and owning specs.
+
+## User review: command copy and compaction UX
+
+- Removed the browser-authored running explanations for compact/export/reload and the command-specific “keep writing” editor placeholders. Running receipts retain command identity and phase; Host results and error diagnostics remain. Focused store/Composer tests pass (136 tests), as does TypeScript checking.
+- Source inspection of the repository's Pi 0.84.4 and locally installed Pi 0.85.1 distinguishes TUI from RPC: interactive input uses `queueCompactionMessage` for steer/follow-up and `flushCompactionQueue` after compaction. `AgentSession.prompt` rejects ordinary input while manual compaction is active. The existing Web send block is an adapter limitation, not upstream UI parity; this review does not implement a new queue.
+- Proposed, not yet decided or implemented: successful compaction should retain only its authoritative chronological context-summary row, without a second persistent Composer result requiring dismissal. Running feedback, command failures, and export paths need their own lifecycle treatment rather than moving every transient notice into durable conversation history. The user requested a transcript inventory before choosing broader visual unification.
 
 ## Next actions
 

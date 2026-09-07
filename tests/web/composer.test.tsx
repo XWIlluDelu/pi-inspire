@@ -609,10 +609,7 @@ describe("composer-adjacent status and queued controls", () => {
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
-    expect(textarea).toHaveAttribute(
-      "placeholder",
-      "Keep writing — send when compaction finishes…",
-    );
+    expect(textarea).toHaveAttribute("placeholder", "Message Pi…");
     expect(
       screen.queryByRole("group", { name: "Message delivery" }),
     ).not.toBeInTheDocument();

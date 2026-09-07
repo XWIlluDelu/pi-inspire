@@ -4236,6 +4236,36 @@ describe("composer session partitions", () => {
 describe("Pi native command dispatch", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it.each(["compact", "export", "reload"])(
+    "shows /%s running without invented progress guidance",
+    async (command) => {
+      const native = deferred<RouteResponse>();
+      installFetch((url, init) => {
+        if (url.startsWith("/api/control/native-command"))
+          return native.promise;
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+
+      await store.sendPrompt(`/${command}`);
+      expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+        command,
+        status: "running",
+        message: "",
+      });
+
+      native.resolve({
+        body: { command, outcome: "completed", message: "Host result" },
+      });
+      await vi.waitFor(() =>
+        expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+          status: "success",
+          message: "Host result",
+        }),
+      );
+    },
+  );
+
   it("routes host commands away from the model and retains their result", async () => {
     const nativeBodies: Record<string, unknown>[] = [];
     let promptCount = 0;
