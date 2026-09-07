@@ -19,6 +19,8 @@
 
 ## Implemented capability
 
+Shared image previews separate the standard modal scrim from a neutral transparency checkerboard, with viewer-local White/Black alternatives. [[image-preview-backgrounds]] records the rationale and regression evidence.
+
 Displayed custom messages are independently readable, information-blue extension context with Markdown and optional Details, outside tool activity folds. PI error retains its existing presentation. [[custom-message-presentation]] records the projection boundary and verification scope.
 
 Pi reply errors are visible at the failed message, including empty replies, retained partial output, and expandable/copyable details restored from Pi history. [[follow-pi-error-display-2026-09-06]] records implementation evidence and deployment scope.
