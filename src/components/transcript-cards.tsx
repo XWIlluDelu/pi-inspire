@@ -16,7 +16,15 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   ToolVisibilityPreference,
   VisibilityPreference,
@@ -70,7 +78,7 @@ interface CardHeaderProps {
   onToggle: () => void;
   summary?: React.ReactNode;
   status?: React.ReactNode;
-  copyText?: string;
+  copyText?: string | (() => string);
   copyLabel?: string;
   controlsId?: string;
 }
@@ -129,7 +137,14 @@ function CardHeader({
       {summary}
       <span className="card__header-spacer" aria-hidden />
       {copyText ? (
-        <CopyAction text={copyText} label={copyLabel} className="card__copy" />
+        <CopyAction
+          text={typeof copyText === "string" ? copyText : undefined}
+          getText={
+            typeof copyText === "function" ? async () => copyText() : undefined
+          }
+          label={copyLabel}
+          className="card__copy"
+        />
       ) : null}
     </div>
   );
@@ -143,7 +158,7 @@ interface CardProps {
   toggleLabel: string;
   summary?: React.ReactNode;
   status?: React.ReactNode;
-  copyText?: string;
+  copyText?: string | (() => string);
   copyLabel?: string;
   children: React.ReactNode;
   forceClosed?: boolean;
@@ -302,7 +317,17 @@ export function ThinkingCard({
   );
 }
 
-type ToolStatus = "running" | "success" | "failure" | "unknown";
+type ToolStatus =
+  | "generating"
+  | "waiting"
+  | "interrupted"
+  | "running"
+  | "success"
+  | "failure"
+  | "unknown";
+
+// Partial paths are readable text, not usable resource identities yet.
+const ToolArgumentPreviewContext = createContext(false);
 
 function toolSummary(call: ToolCallContent): string {
   const args = call.arguments;
@@ -356,6 +381,9 @@ function FileRefButton({
   accessibleLabel: string;
   children?: React.ReactNode;
 }) {
+  const preview = useContext(ToolArgumentPreviewContext);
+  if (preview)
+    return <span className={className}>{children ?? reference}</span>;
   return (
     <button
       type="button"
@@ -438,16 +466,28 @@ function toolStatus(
   result: ChatMessage | undefined,
   activity: ActivityTool | undefined,
   liveFallback: boolean,
+  call: ToolCallContent,
 ): ToolStatus {
   if (result) return result.isError ? "failure" : "success";
   if (activity?.phase === "error") return "failure";
   if (activity?.phase === "done") return "success";
-  if (activity?.phase === "running" || liveFallback) return "running";
-  return "unknown";
+  if (activity?.phase === "running") return "running";
+  if (call.__inspireToolCall?.phase === "interrupted") return "interrupted";
+  if (call.__inspireToolCall?.phase === "streaming")
+    return liveFallback ? "generating" : "interrupted";
+  return liveFallback ? "waiting" : "unknown";
 }
 
 function statusIcon(status: ToolStatus) {
   switch (status) {
+    case "generating":
+      return (
+        <Loader2 size={14} className="spin" aria-label="generating arguments" />
+      );
+    case "waiting":
+      return <Circle size={12} aria-label="waiting to execute" />;
+    case "interrupted":
+      return <Circle size={12} aria-label="not executed" />;
     case "running":
       return <Loader2 size={14} className="spin" aria-label="running" />;
     case "success":
@@ -487,11 +527,17 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
 function PendingToolResult({ status }: { status: ToolStatus }) {
   return (
     <div className="card__pending">
-      {status === "running"
-        ? "Running…"
-        : status === "success" || status === "failure"
-          ? "Finalizing result…"
-          : "No result recorded"}
+      {status === "generating"
+        ? "Generating arguments…"
+        : status === "waiting"
+          ? "Waiting to execute…"
+          : status === "interrupted"
+            ? "Not executed"
+            : status === "running"
+              ? "Running…"
+              : status === "success" || status === "failure"
+                ? "Finalizing result…"
+                : "No result recorded"}
     </div>
   );
 }
@@ -509,9 +555,13 @@ function RawToolDetails({
   const output = result ? toolResultText(result) : "";
   const diff = result && !result.isError ? parseUnifiedDiff(output) : null;
   const truncated = !diff && output.length > 600;
+  if (call.__inspireToolCall && Object.keys(call.arguments ?? {}).length === 0)
+    return <PendingToolResult status={status} />;
   return (
     <>
-      <div className="card__section-label">Arguments</div>
+      <div className="card__section-label">
+        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
+      </div>
       {toolFileArguments(call).map((arg) => (
         <FileRefButton
           key={`${arg.key}:${arg.value}`}
@@ -583,10 +633,13 @@ function StructuredCode({
   startLine?: number;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const partial = useContext(ToolArgumentPreviewContext);
   const lines = text.split("\n");
   const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
   const visible =
-    clipped && !showAll ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES) : lines;
+    clipped && (!showAll || partial)
+      ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES)
+      : lines;
   return (
     <>
       <pre className="tool-code">
@@ -600,15 +653,21 @@ function StructuredCode({
         ))}
       </pre>
       {clipped ? (
-        <button
-          type="button"
-          className="card__show-all"
-          onClick={() => setShowAll((value) => !value)}
-        >
-          {showAll
-            ? "Show fewer lines"
-            : `Show all ${lines.length.toLocaleString()} lines`}
-        </button>
+        partial ? (
+          <div className="card__pending">
+            Showing first {STRUCTURED_CODE_PREVIEW_LINES} lines
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="card__show-all"
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll
+              ? "Show fewer lines"
+              : `Show all ${lines.length.toLocaleString()} lines`}
+          </button>
+        )
       ) : null}
     </>
   );
@@ -620,6 +679,7 @@ function ReplacementDiff({
   block: Extract<ToolPresentationBlock, { type: "replacement" }>;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const partial = useContext(ToolArgumentPreviewContext);
   const lines: DiffLine[] = [
     ...block.oldText
       .split("\n")
@@ -634,21 +694,27 @@ function ReplacementDiff({
       <ToolBlockHeading label={block.label} path={block.path} />
       <DiffView
         lines={
-          clipped && !showAll
+          clipped && (!showAll || partial)
             ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES)
             : lines
         }
       />
       {clipped ? (
-        <button
-          type="button"
-          className="card__show-all"
-          onClick={() => setShowAll((value) => !value)}
-        >
-          {showAll
-            ? "Show fewer lines"
-            : `Show all ${lines.length.toLocaleString()} lines`}
-        </button>
+        partial ? (
+          <div className="card__pending">
+            Showing first {STRUCTURED_CODE_PREVIEW_LINES} lines
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="card__show-all"
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll
+              ? "Show fewer lines"
+              : `Show all ${lines.length.toLocaleString()} lines`}
+          </button>
+        )
       ) : null}
     </div>
   );
@@ -898,6 +964,32 @@ function ToolDetails({
   status: ToolStatus;
   presentation: ResolvedToolPresentation | null;
 }) {
+  return (
+    <>
+      {call.__inspireToolCall?.truncated ? (
+        <div className="card__pending">Argument preview truncated</div>
+      ) : null}
+      <ToolDetailsContent
+        call={call}
+        result={result}
+        status={status}
+        presentation={presentation}
+      />
+    </>
+  );
+}
+
+function ToolDetailsContent({
+  call,
+  result,
+  status,
+  presentation,
+}: {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+  status: ToolStatus;
+  presentation: ResolvedToolPresentation | null;
+}) {
   if (!presentation)
     return <RawToolDetails call={call} result={result} status={status} />;
   const blocks = presentationBlocks(presentation);
@@ -922,7 +1014,7 @@ function toolClipboardText(
 ): string {
   const sections = [
     call.name,
-    "Arguments",
+    call.__inspireToolCall ? "Arguments (partial preview)" : "Arguments",
     JSON.stringify(call.arguments ?? {}, null, 2),
   ];
   if (result) sections.push("Result", toolResultText(result));
@@ -952,7 +1044,7 @@ export function ToolCard({
   onDynamicClosed?: () => void;
   onManualOpenChange?: (open: boolean) => void;
 }) {
-  const status = toolStatus(result, activity, live);
+  const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
   const dynamicOpen = useDynamicCardOpen(
     Boolean(dynamic),
@@ -967,34 +1059,36 @@ export function ToolCard({
     [call, result, toolPresentationRegistry],
   );
   return (
-    <CollapsibleCard
-      defaultVisibility={
-        dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
-      }
-      forceClosed={forceClosed}
-      onManualOpenChange={onManualOpenChange}
-      className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
-      icon={toolIcon(call.name)}
-      label={<code className="card__tool-name">{call.name}</code>}
-      toggleLabel={`${call.name} tool`}
-      summary={
-        presentation ? (
-          <PresentedSummary summary={presentation.summary} />
-        ) : (
-          <ToolSummary call={call} />
-        )
-      }
-      status={statusIcon(status)}
-      copyText={toolClipboardText(call, result)}
-      copyLabel={`${call.name} tool block`}
-    >
-      <ToolDetails
-        call={call}
-        result={result}
-        status={status}
-        presentation={presentation}
-      />
-    </CollapsibleCard>
+    <ToolArgumentPreviewContext value={Boolean(call.__inspireToolCall)}>
+      <CollapsibleCard
+        defaultVisibility={
+          dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
+        }
+        forceClosed={forceClosed}
+        onManualOpenChange={onManualOpenChange}
+        className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
+        icon={toolIcon(call.name)}
+        label={<code className="card__tool-name">{call.name}</code>}
+        toggleLabel={`${call.name} tool`}
+        summary={
+          presentation ? (
+            <PresentedSummary summary={presentation.summary} />
+          ) : (
+            <ToolSummary call={call} />
+          )
+        }
+        status={statusIcon(status)}
+        copyText={() => toolClipboardText(call, result)}
+        copyLabel={`${call.name} ${call.__inspireToolCall ? "argument preview" : "tool block"}`}
+      >
+        <ToolDetails
+          call={call}
+          result={result}
+          status={status}
+          presentation={presentation}
+        />
+      </CollapsibleCard>
+    </ToolArgumentPreviewContext>
   );
 }
 
@@ -1009,6 +1103,9 @@ interface CollapsedToolActivity {
 export type CollapsedActivity = CollapsedToolActivity;
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
+  generating: "generating arguments",
+  waiting: "waiting to execute",
+  interrupted: "not executed",
   running: "running",
   success: "finished",
   failure: "failed",
@@ -1019,7 +1116,12 @@ function collapsedActivityPresentation(
   activity: CollapsedActivity,
   live: boolean,
 ) {
-  const status = toolStatus(activity.result, activity.activity, live);
+  const status = toolStatus(
+    activity.result,
+    activity.activity,
+    live,
+    activity.call,
+  );
   const resolved = toolPresentationRegistry.resolve({
     call: activity.call,
     result: activity.result,
@@ -1155,41 +1257,61 @@ export function CollapsedActivityStrip({
       >
         <div className="activity-strip__reveal-inner">
           {rendered?.kind === "tool" ? (
-            <section
-              key={rendered.key}
-              id={panelId}
-              className={`card card--tool activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live) === "failure" ? "card--failed" : ""}`}
+            <ToolArgumentPreviewContext
+              value={Boolean(rendered.call.__inspireToolCall)}
             >
-              <CardHeader
-                expanded
-                icon={toolIcon(rendered.call.name)}
-                label={
-                  <code className="card__tool-name">{rendered.call.name}</code>
-                }
-                toggleLabel={`${rendered.call.name} tool details`}
-                onToggle={() => setSelectedIndex(null)}
-                summary={
-                  renderedPresentation ? (
-                    <PresentedSummary summary={renderedPresentation.summary} />
-                  ) : (
-                    <ToolSummary call={rendered.call} />
-                  )
-                }
-                status={statusIcon(
-                  toolStatus(rendered.result, rendered.activity, live),
-                )}
-                copyText={toolClipboardText(rendered.call, rendered.result)}
-                copyLabel={`${rendered.call.name} tool block`}
-              />
-              <div className="card__body">
-                <ToolDetails
-                  call={rendered.call}
-                  result={rendered.result}
-                  status={toolStatus(rendered.result, rendered.activity, live)}
-                  presentation={renderedPresentation}
+              <section
+                key={rendered.key}
+                id={panelId}
+                className={`card card--tool activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+              >
+                <CardHeader
+                  expanded
+                  icon={toolIcon(rendered.call.name)}
+                  label={
+                    <code className="card__tool-name">
+                      {rendered.call.name}
+                    </code>
+                  }
+                  toggleLabel={`${rendered.call.name} tool details`}
+                  onToggle={() => setSelectedIndex(null)}
+                  summary={
+                    renderedPresentation ? (
+                      <PresentedSummary
+                        summary={renderedPresentation.summary}
+                      />
+                    ) : (
+                      <ToolSummary call={rendered.call} />
+                    )
+                  }
+                  status={statusIcon(
+                    toolStatus(
+                      rendered.result,
+                      rendered.activity,
+                      live,
+                      rendered.call,
+                    ),
+                  )}
+                  copyText={() =>
+                    toolClipboardText(rendered.call, rendered.result)
+                  }
+                  copyLabel={`${rendered.call.name} ${rendered.call.__inspireToolCall ? "argument preview" : "tool block"}`}
                 />
-              </div>
-            </section>
+                <div className="card__body">
+                  <ToolDetails
+                    call={rendered.call}
+                    result={rendered.result}
+                    status={toolStatus(
+                      rendered.result,
+                      rendered.activity,
+                      live,
+                      rendered.call,
+                    )}
+                    presentation={renderedPresentation}
+                  />
+                </div>
+              </section>
+            </ToolArgumentPreviewContext>
           ) : null}
         </div>
       </div>

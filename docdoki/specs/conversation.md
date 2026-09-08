@@ -81,9 +81,10 @@ custom messages remain independent readable boundaries in this contract.
   concatenates only its response text blocks and excludes thinking, tool, custom, and generic
   activity payloads.
 
-  Each Thinking, tool, generic activity block, and displayed custom message independently
-  copies its complete source projection; tool copies include the name, full arguments, and
-  untruncated result, while custom copies include the type, content, and details.
+  Each Thinking, tool, generic activity block, and displayed custom message independently copies its
+  complete source projection; completed-tool copies include the name, arguments, and result under
+  the existing Host projection bounds, while a generating/interrupted call explicitly copies only
+  its partial argument preview. Custom copies include the type, content, and details.
 
 - User turns appear as compact bubbles while assistant answers use an open, left-aligned document
   flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken
@@ -154,11 +155,12 @@ custom messages remain independent readable boundaries in this contract.
 
 - Assistant text streams smoothly without visually rebuilding the entire transcript for every
   fragment. Pi 0.84 JSON/RPC `message_update` frames intentionally carry only
-  `assistantMessageEvent`; the Host reconstructs the active assistant from typed
-  thinking/text/tool-call deltas for both live events and reconnect snapshots. Both projections
-  use the same pure reducer, with ordered batching governed by [[session-transport]], and
-  resync rather than guessing against settled history.
-  Pi may emit an empty assistant `message_start` before the provider yields its
+  `assistantMessageEvent`; the Host reconstructs the active assistant from typed thinking/text
+  deltas and identity-bearing tool starts for both live events and reconnect snapshots. Tool
+  argument JSON is incrementally parsed and redacted into bounded display-only updates before it
+  reaches the browser. Both projections use the same pure reducer, with ordered batching governed
+  by [[session-transport]], and resync rather than guessing against settled history. Tool argument
+  preview and execution states are specified in [[activity-presentation]]. Pi may emit an empty assistant `message_start` before the provider yields its
   first visible thinking, text, or tool delta; that truthful waiting state renders a quiet
   `Working…` indicator and replaces it immediately when content arrives.
 

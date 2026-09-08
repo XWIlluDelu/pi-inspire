@@ -1,6 +1,7 @@
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
+  interruptAssistantToolCalls,
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
 import {
@@ -22,6 +23,8 @@ import {
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
 
+import type { ToolCallPreview } from "../shared/tool-argument-updates";
+
 // --- Chat message model (structural typing over Pi session messages) ---
 
 interface TextContent {
@@ -37,6 +40,8 @@ export interface ToolCallContent {
   id: string;
   name: string;
   arguments?: unknown;
+  /** Bounded, Host-authored argument preview; absent on a completed call. */
+  __inspireToolCall?: ToolCallPreview;
 }
 type AssistantContent =
   | TextContent
@@ -456,6 +461,11 @@ export function reduceEvent(
         !Array.isArray(events) ||
         events.length === 0 ||
         events.length > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
+        (event.sourceEventCount !== undefined &&
+          (!Number.isSafeInteger(event.sourceEventCount) ||
+            Number(event.sourceEventCount) < events.length ||
+            Number(event.sourceEventCount) >
+              MAX_ASSISTANT_STREAM_BATCH_EVENTS)) ||
         (event.streamTextLength !== undefined &&
           (!Number.isSafeInteger(event.streamTextLength) ||
             Number(event.streamTextLength) < 0)) ||
@@ -474,8 +484,8 @@ export function reduceEvent(
         if (!reconstructed) break;
       }
       if (!reconstructed) {
-        // Cumulative/raw Pi frames also carry projection no-ops such as
-        // toolcall_delta or an end marker whose complete text already matches.
+        // Raw Pi frames can carry projection no-ops such as an identity-less
+        // legacy start, an unprojected argument fragment, or matching text end.
         // Host-owned incremental batches never contain those; a failed batch
         // application therefore means this browser lost its stream base.
         if (event.type === "message_update_batch" || wireKey !== null)
@@ -493,7 +503,8 @@ export function reduceEvent(
         const currentRevision = streamRevision(current.messages[index]);
         if (
           currentRevision === null ||
-          Number(event.streamRevision) !== currentRevision + events.length
+          Number(event.streamRevision) !==
+            currentRevision + Number(event.sourceEventCount ?? events.length)
         ) {
           resync = true;
           break;
@@ -509,7 +520,7 @@ export function reduceEvent(
       break;
     }
     case "message_end": {
-      const message = asMessage(event.message);
+      const message = asMessage(interruptAssistantToolCalls(event.message));
       slice.messages = upsert(current.messages, message, settledKeys);
       changed = true;
       const key = messageKey(message);
