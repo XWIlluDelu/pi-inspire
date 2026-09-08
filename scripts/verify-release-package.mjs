@@ -538,7 +538,7 @@ try {
     "utf8",
   );
   for (const identity of [
-    "@earendil-works/pi-tui@0.84.4",
+    `@earendil-works/pi-tui@${sourcePackage.devDependencies["@earendil-works/pi-tui"]}`,
     "katex@",
     "react@",
     "rehype-katex@",
