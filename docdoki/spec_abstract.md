@@ -19,6 +19,10 @@
 
 ## Implemented capability
 
+Projection reads, ownership witnesses, and baseline commits now share one FIFO. Complete same-object bytes can survive metadata-only movement only after full revalidation; stale results cannot consume current claims or revive a writer. [[projection-reconciliation-ownership]] records the content-equivalence boundary, preserved startup/partial/replacement checks, and Node 22 / real-Pi / Chromium evidence.
+
+Observation deadlines no longer terminate healthy Pi mutations; prompt receipts preserve one operation, worker retirement requires exit evidence, terminal retries retain owner-side identities, and maintenance restarts consume current owner authority. [[operation-lifecycle-ownership]] records all five repairs, real Pi slow-compaction and browser recovery evidence, and the explicit terminal-service protocol upgrade boundary.
+
 Compaction and retry presentation now follow authoritative session state independently of commands or observed start events; retry details restore from Host snapshots, and update requests no longer overwrite Host checking state. [[state-authority-review]] records four repairs, other inspected boundaries, and verification limits.
 
 PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark. [[neutral-pwa-chrome]] records the checks and browser/OS update limits.
