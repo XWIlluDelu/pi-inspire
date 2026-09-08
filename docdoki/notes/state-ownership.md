@@ -140,6 +140,64 @@ Relevant code: `src/components/{ActivityBar,CommandActivity,Composer,Settings}.t
 
 These are bounded ownership-path inspections, supported where applicable by the existing suite; they do not establish that every project path is defect-free or constitute a security/performance audit.
 
+## Projection reconciliation ownership
+
+### Finding
+
+Awaiting an old queue tail does not join its transaction. Explicit reconciliations formerly waited
+for `RuntimeSlot.projectionTail`, but their read, asynchronous ownership witness, and baseline commit
+were not in that FIFO. Another read could replace the projection while the first witness waited,
+causing two legitimate appends to be compared against the same old writer baseline.
+
+A separate path treated changed stat metadata with unchanged committed contents as `not-append`.
+That is not proof of a content mutation. Raw `stat` fields can also be observed at different points
+in a concurrent append; such an experiment alone does not reproduce the reader's complete
+before/after validation. The exact filesystem origin of the reported timestamp movement remains
+unestablished. Synthetic full-reader tests establish the observation's handling independently of
+that origin.
+
+This extends [[state-ownership]]: a file observation, pending verification, and
+permission to advance the current writer baseline must remain distinct. The decided contract is
+[[session-persistence]].
+
+### Implementation
+
+- `SessionProjection` binds an asynchronous Host reconciliation consumer inside the same FIFO as
+  the physical read. Explicit calls, watch/poll hints, and watch-health failures cannot bypass a
+  pending ownership check. Hints retain one pending read and a coalesced dirty indication rather
+  than accumulating a read for each event. Retired watchers cannot publish new health failures.
+- `RuntimeProjectionCoordinator` no longer maintains an independent post-read handler queue.
+  `projectionTail` tracks the current consumer for lifecycle draining; the projection's FIFO owns
+  read/consume ordering. Diagnostics use the observation's captured byte counts, not a later
+  mutable projection. Consumer rejection still reaches the explicit caller and the runtime log.
+- Suspended startup reads remain owned by the startup attestor. Ordinary reads recheck suspension
+  after waking, and the FIFO drains consumers before the startup boundary proceeds. Startup's
+  identity/stat equality requirement is unchanged.
+- Post-await worker/projection checks prevent retired witnesses and deferred receipts from
+  repopulating baselines, consuming claims, or creating a new conflict after Stop. Claim consumption
+  uses matched identities: cancelling an earlier matched claim while a later receipt waits cannot
+  remove an unrelated future claim from the queue.
+- Empty overlays have an O(1) reconciliation path, avoiding a full persisted-message scan during
+  unchanged polling observations.
+
+### Content-equivalent metadata boundary
+
+The reader supplies `verifiedUnchangedContent` only after a stable, full-byte revalidation of the
+same object with no old or new incomplete tail. An owned-prefix shortcut cannot supply that proof.
+The coordinator additionally requires the exact existing writer baseline, healthy state, and no
+conflict or pending partial lease before refreshing the source version.
+
+The `projection_metadata_revalidated` diagnostic records only identities, versions, revision, and
+byte counts. This is acceptance of unchanged state, **not** evidence of who changed the timestamps.
+It does not consume a persistence expectation, accept a new entry, change the history/view, or
+reauthorize a conflicted writer. It is independent of running, compacting, or idle presentation.
+
+A completed in-place write of identical bytes also satisfies this state-equivalence proof. The old
+blanket wording that every same-byte rewrite must be rejected was too broad for this boundary;
+[[session-persistence]] now explicitly distinguishes it from content changes, object replacement,
+and incomplete-tail rewriting. Startup retains its stricter source-version comparison, and the
+pre-existing bounded new-file materialization handling is not broadened into a partial-tail lease.
+
 ## Resource and terminal ownership review
 
 ### Scope and decisions

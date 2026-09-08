@@ -94,22 +94,17 @@ export class RuntimeProjectionCoordinator {
         sourceVersion: projection.sourceVersion,
       });
     }
-    projection.on("update", (result) => {
+    projection.setReconcileHandler(async (result) => {
       if (slot.projection !== projection || this.host.isClosing()) return;
-      const handleCurrentProjection = () => {
-        if (slot.projection !== projection || this.host.isClosing()) return;
-        return this.handle(slot, result);
-      };
-      slot.projectionTail = slot.projectionTail
-        .then(handleCurrentProjection, handleCurrentProjection)
-        .catch((error) => {
-          if (!this.host.isClosing())
-            this.host.logRuntimeError(
-              slot.id,
-              error,
-              "projection_update_failed",
-            );
-        });
+      // The projection holds its read FIFO until this consumer settles. Merely
+      // queueing handlers after reads would allow a later observation to change
+      // the projection while an earlier ownership witness is still pending.
+      const handling = this.consume(slot, projection, result);
+      slot.projectionTail = handling.catch((error) => {
+        if (!this.host.isClosing())
+          this.host.logRuntimeError(slot.id, error, "projection_update_failed");
+      });
+      await handling;
     });
   }
 
@@ -253,10 +248,15 @@ export class RuntimeProjectionCoordinator {
 
   private async handle(
     slot: RuntimeSlot,
+    projection: SessionProjectionView,
     result: ProjectionReconcileResult,
   ): Promise<void> {
-    const projection = slot.projection;
-    if (!projection || this.host.isClosing()) return;
+    if (slot.projection !== projection || this.host.isClosing()) return;
+    const writer = slot.process;
+    const writerStillCurrent = () =>
+      slot.projection === projection &&
+      slot.process === writer &&
+      !this.host.isClosing();
     if (result.changed) slot.branchRevision += 1;
     if (result.messageChange === "replace") this.host.renewView(slot);
     const previousConflict = slot.conflict;
@@ -292,7 +292,7 @@ export class RuntimeProjectionCoordinator {
       sourceVersion: result.sourceVersion,
       previousLeafId: result.previousLeafId,
     });
-    const acceptOwnedAppend = async (): Promise<boolean> => {
+    const acceptOwnedAppend = async (): Promise<boolean | null> => {
       if (!strictPhysicalProgress) {
         lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       } else if (!result.changed) {
@@ -306,15 +306,17 @@ export class RuntimeProjectionCoordinator {
       } else {
         lastOwnership = await this.host.appendedEntriesOwnership(slot, result);
       }
+      if (!writerStillCurrent()) return null;
       this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
       if (!lastOwnership.owned) return false;
       this.captureWriterResult(slot, result);
       return true;
     };
 
-    const initialMetadataContinuation =
+    const metadataContinuation =
       slot.process !== null &&
-      initialMaterialization &&
+      slot.conflict === null &&
+      result.health.status === "ok" &&
       !result.changed &&
       result.sourceChanged &&
       result.previousRevision === slot.workerProjectionRevision &&
@@ -326,11 +328,31 @@ export class RuntimeProjectionCoordinator {
       result.committedBytes + result.uncommittedBytes ===
         slot.workerProjectionObservedBytes &&
       result.previousTailVerified;
+    const completeMetadataContinuation =
+      metadataContinuation &&
+      result.verifiedUnchangedContent === true &&
+      priorPartial === null &&
+      result.previousUncommittedBytes === 0 &&
+      result.uncommittedBytes === 0;
 
-    if (initialMetadataContinuation) {
-      // Delayed creation notifications can carry a newer source version after
-      // re-observing exactly the bytes already attributed to the new worker.
+    if (
+      completeMetadataContinuation ||
+      (metadataContinuation && initialMaterialization)
+    ) {
+      // This proves unchanged state, not who changed the timestamps. It admits
+      // no entry, consumes no append claim, and cannot extend an incomplete tail
+      // outside the existing new-file materialization boundary.
       this.captureWriterResult(slot, result);
+      if (completeMetadataContinuation)
+        this.diagnostics.record("debug", "projection_metadata_revalidated", {
+          sessionId: slot.id,
+          slotIncarnation: slot.incarnationId,
+          workerId: slot.bridge?.workerId,
+          revision: result.revision,
+          previousSourceVersion: result.previousSourceVersion,
+          sourceVersion: result.sourceVersion,
+          committedBytes: result.committedBytes,
+        });
       if (result.uncommittedBytes > 0)
         this.trackPartialPersistence(slot, result);
     } else if (slot.process && result.uncommittedBytes > 0) {
@@ -340,7 +362,7 @@ export class RuntimeProjectionCoordinator {
         slot.persistenceExpectations.length > 0;
       const exactPrior =
         !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
-      let owned = false;
+      let owned: boolean | null = false;
       if (!initiallyOwned) {
         lastOwnership = { owned: false, reason: "missing-claim" };
       } else if (!exactPrior) {
@@ -348,6 +370,7 @@ export class RuntimeProjectionCoordinator {
       } else {
         owned = await acceptOwnedAppend();
       }
+      if (owned === null) return;
       if (!owned) {
         await this.failPartialPersistence(
           slot,
@@ -365,6 +388,7 @@ export class RuntimeProjectionCoordinator {
         result.uncommittedBytes === 0 &&
         result.changed;
       const exactCompletion = exactPrior && (await acceptOwnedAppend());
+      if (exactCompletion === null) return;
       if (!exactPrior)
         lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       if (exactCompletion) this.clearPartialPersistence(slot);
@@ -397,6 +421,7 @@ export class RuntimeProjectionCoordinator {
         lastOwnership = result.changed
           ? await this.host.appendedEntriesOwnership(slot, result)
           : { owned: false, reason: "not-append" };
+        if (!writerStillCurrent()) return;
         this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
         if (lastOwnership.owned) {
           this.captureWriterResult(slot, result);
@@ -416,6 +441,7 @@ export class RuntimeProjectionCoordinator {
         await this.host.stopWriter(slot);
       }
     }
+    if (slot.projection !== projection || this.host.isClosing()) return;
     this.host.reconcileOverlay(slot, result.appendedEntries);
     if (!previousConflict && slot.conflict) {
       this.host.emitSlotEvent(slot, {
@@ -431,21 +457,11 @@ export class RuntimeProjectionCoordinator {
     });
   }
 
-  async reconcile(
+  private recordReconcile(
     slot: RuntimeSlot,
-    force = true,
+    result: ProjectionReconcileResult,
     startupAttestation = false,
-  ): Promise<ProjectionReconcileResult> {
-    if (!slot.projection)
-      throw requestError("Session projection is not available", 503);
-    await slot.projectionTail;
-    const result = startupAttestation
-      ? await slot.projection.reconcileSuspended(force)
-      : await slot.projection.reconcile(force);
-    // A filesystem-hint reconcile that completed before this explicit read may
-    // have published its ownership task while the projection gate was busy.
-    // Drain that observation before exposing this later one to the caller.
-    await slot.projectionTail;
+  ): void {
     if (
       startupAttestation ||
       result.changed ||
@@ -469,16 +485,38 @@ export class RuntimeProjectionCoordinator {
         fingerprint: result.fingerprint,
         previousSourceVersion: result.previousSourceVersion,
         sourceVersion: result.sourceVersion,
-        committedBytes: slot.projection.committedBytes,
-        uncommittedBytes: slot.projection.uncommittedBytes,
+        committedBytes: result.committedBytes,
+        uncommittedBytes: result.uncommittedBytes,
       });
     }
-    if (
-      !startupAttestation &&
-      (result.changed || result.healthChanged || result.sourceChanged)
-    ) {
-      await this.handle(slot, result);
-    } else {
+  }
+
+  private async consume(
+    slot: RuntimeSlot,
+    projection: SessionProjectionView,
+    result: ProjectionReconcileResult,
+  ): Promise<void> {
+    this.recordReconcile(slot, result);
+    if (result.changed || result.healthChanged || result.sourceChanged)
+      await this.handle(slot, projection, result);
+    else this.host.reconcileOverlay(slot, result.appendedEntries);
+  }
+
+  async reconcile(
+    slot: RuntimeSlot,
+    force = true,
+    startupAttestation = false,
+  ): Promise<ProjectionReconcileResult> {
+    const projection = slot.projection;
+    if (!projection)
+      throw requestError("Session projection is not available", 503);
+    const result = startupAttestation
+      ? await projection.reconcileSuspended(force)
+      : await projection.reconcile(force);
+    if (slot.projection !== projection)
+      throw requestError("Session projection changed while reconciling", 409);
+    if (startupAttestation) {
+      this.recordReconcile(slot, result, true);
       this.host.reconcileOverlay(slot, result.appendedEntries);
     }
     return result;
