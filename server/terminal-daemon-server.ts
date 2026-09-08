@@ -30,6 +30,8 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
+import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
+import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import type {
   TerminalAttachment,
   TerminalAttachOptions,
@@ -53,12 +55,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 function stringParam(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== "string") throw new Error(`${key} must be a string`);
-  return value;
-}
-
-function booleanParam(record: Record<string, unknown>, key: string): boolean {
-  const value = record[key];
-  if (typeof value !== "boolean") throw new Error(`${key} must be a boolean`);
   return value;
 }
 
@@ -137,6 +133,7 @@ function errorPayload(error: unknown): {
 }
 
 export class TerminalDaemonServer {
+  private readonly operations = new TerminalOperationReceipts();
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
   private stopping = false;
@@ -321,7 +318,20 @@ export class TerminalDaemonServer {
       ok: false,
     };
     try {
-      response.result = await this.dispatchRpc(request.method, request.params);
+      const execute = () => this.dispatchRpc(request.method, request.params);
+      response.result = await ([
+        "ping",
+        "getCatalog",
+        "getGlobalCatalog",
+        "getSettings",
+      ].includes(request.method)
+        ? execute()
+        : this.operations.run(
+            request.operation,
+            request.method,
+            request.params,
+            execute,
+          ));
       response.ok = true;
     } catch (error) {
       response.error = errorPayload(error);
@@ -338,6 +348,7 @@ export class TerminalDaemonServer {
       case "ping":
         return Promise.resolve({
           protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
+          operationEpoch: this.operations.getEpoch(),
         });
       case "getCatalog":
         return Promise.resolve(
@@ -345,46 +356,10 @@ export class TerminalDaemonServer {
         );
       case "getGlobalCatalog":
         return Promise.resolve(this.terminals.list());
-      case "create":
-        return this.terminals.create(
-          asRecord(values.request) as unknown as Parameters<
-            TerminalService["create"]
-          >[0],
-        );
-      case "rename": {
-        const title = values.title;
-        if (title !== null && typeof title !== "string")
-          throw new Error("title must be a string or null");
-        return this.terminals.rename(stringParam(values, "id"), { title });
-      }
-      case "reorder": {
-        if (
-          !Array.isArray(values.ids) ||
-          !values.ids.every((id) => typeof id === "string")
-        )
-          throw new Error("ids must be an array of strings");
-        return this.terminals.reorder(
-          stringParam(values, "projectCwd"),
-          values.ids as string[],
-        );
-      }
-      case "restart":
-        return this.terminals.restart(stringParam(values, "id"));
-      case "remove":
-        return this.terminals.remove(
-          stringParam(values, "id"),
-          booleanParam(values, "force"),
-        );
       case "getSettings":
         return Promise.resolve(this.terminals.getSettings());
-      case "updateSettings":
-        return this.terminals.updateSettings(
-          asRecord(values.patch) as Parameters<
-            TerminalService["updateSettings"]
-          >[0],
-        );
-      case "clearHistory":
-        return this.terminals.clearHistory();
+      default:
+        return dispatchTerminalMutation(this.terminals, method, values);
     }
   }
 
