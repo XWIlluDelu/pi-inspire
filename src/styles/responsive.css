@@ -722,13 +722,6 @@ body.srail-dragging {
       max(var(--space-2), var(--safe-left));
   }
 
-  .overlay.image-lightbox {
-    padding: max(var(--space-4), var(--safe-top))
-      max(var(--space-4), var(--safe-right))
-      max(var(--space-4), var(--safe-bottom))
-      max(var(--space-4), var(--safe-left));
-  }
-
   .dialog.settings {
     width: 100%;
     height: calc(
