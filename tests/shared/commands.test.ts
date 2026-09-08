@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   PI_NATIVE_COMMANDS,
   parseCommandInvocation,
-  parseCompactCommand,
   parseNativeCommand,
 } from "../../shared/commands";
 
@@ -49,8 +48,10 @@ describe("Pi native command inventory", () => {
       name: "model",
       argument: "anthropic/sonnet",
     });
-    expect(parseCompactCommand("/compact focus")).toEqual({
-      instructions: "focus",
+    expect(parseNativeCommand("/compact focus")).toMatchObject({
+      name: "compact",
+      argument: "focus",
+      descriptor: { execution: "host" },
     });
     expect(parseNativeCommand("/not-a-pi-command")).toBeNull();
     expect(parseCommandInvocation("/MODEL")).toMatchObject({ name: "MODEL" });

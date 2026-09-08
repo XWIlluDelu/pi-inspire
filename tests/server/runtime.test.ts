@@ -6,6 +6,7 @@ import {
   mkdtemp,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -165,8 +166,11 @@ function record(id: string, cwd: string): SessionRecord {
   };
 }
 
-async function persistedRecord(id: string): Promise<SessionRecord> {
-  const session = record(id, fixtureWorkspace);
+async function persistedRecord(
+  id: string,
+  cwd = fixtureWorkspace,
+): Promise<SessionRecord> {
+  const session = record(id, cwd);
   session.path = join(fixtureWorkspace, `${id}.jsonl`);
   await writeFile(
     session.path,
@@ -189,6 +193,14 @@ async function persistedRecord(id: string): Promise<SessionRecord> {
       .map((entry) => JSON.stringify(entry))
       .join("\n")}\n`,
   );
+  const details = await stat(session.path, { bigint: true });
+  session.source = {
+    dev: details.dev,
+    ino: details.ino,
+    size: details.size,
+    mtimeNs: details.mtimeNs,
+    ctimeNs: details.ctimeNs,
+  };
   return session;
 }
 
@@ -3340,9 +3352,9 @@ describe("RuntimeController concurrent sessions", () => {
   it("clears individually hidden sessions and every session in hidden folders after reserving all identities", async () => {
     const store = trackedAttachmentStore();
     const source = catalog([
-      record("a", "/loose"),
-      record("b", "/folder"),
-      record("c", "/folder"),
+      await persistedRecord("a", "/loose"),
+      await persistedRecord("b", "/folder"),
+      await persistedRecord("c", "/folder"),
       record("ordinary", "/ordinary"),
     ]);
     source.refresh = vi.fn(source.refresh);
@@ -3373,6 +3385,35 @@ describe("RuntimeController concurrent sessions", () => {
     );
     await runtime.close();
   });
+
+  it.each(["missing", "changed"])(
+    "retains real Hidden preflight with an injected delete adapter (%s file)",
+    async (failure) => {
+      const first = await persistedRecord("a");
+      const second = await persistedRecord("b");
+      if (failure === "missing") await rm(second.path);
+      else await writeFile(second.path, "changed after catalog observation\n");
+      const remove = vi.fn(async () => "trashed" as const);
+      const runtime = new RuntimeController(
+        catalog([first, second]),
+        trackedAttachmentStore(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        remove,
+      );
+      try {
+        await expect(
+          runtime.clearHiddenSessions(["a", "b"], ["a", "b"], []),
+        ).rejects.toMatchObject({ status: failure === "missing" ? 404 : 409 });
+        expect(remove).not.toHaveBeenCalled();
+        await expect(access(first.path)).resolves.toBeUndefined();
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
 
   it("preflights every Hidden file before moving the first one", async () => {
     const store = trackedAttachmentStore();

@@ -22,7 +22,7 @@ export interface AvailableUpdates {
   extensions: PiExtensionUpdate[];
 }
 
-/** One stable identity and presentation projection for every available update. */
+/** Browser presentation only; update identity and snoozing belong to the Host. */
 export function availableUpdates(
   state: UpdateAvailabilityState,
 ): AvailableUpdates | null {

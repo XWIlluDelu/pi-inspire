@@ -131,7 +131,7 @@ export function resolveCommandInventory(
     if (!byName.has(command.name)) byName.set(command.name, command);
   }
   // A first-message composer can run inherited runtime resources and the
-  // Host-owned /compact compatibility path, but browser-surface commands need
+  // Host-owned /compact prompt path, but browser-surface commands need
   // an already selected session. Keep that reduced surface truthful.
   if (!includeNativeCommands) {
     const compact = INSPIRE_COMMANDS.find(

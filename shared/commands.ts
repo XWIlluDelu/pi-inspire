@@ -178,12 +178,3 @@ export function parseNativeCommand(
   const descriptor = nativeCommand(invocation.name);
   return descriptor ? { ...invocation, descriptor } : null;
 }
-
-/** Kept as the narrow server-side compatibility parser for existing callers. */
-export function parseCompactCommand(
-  input: string,
-): { instructions?: string } | null {
-  const command = parseNativeCommand(input);
-  if (!command || command.name !== "compact") return null;
-  return command.argument ? { instructions: command.argument } : {};
-}

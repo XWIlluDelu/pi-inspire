@@ -5,7 +5,8 @@ import type { RuntimeSlot } from "./runtime-slot.js";
  * One registry binds each Pi process instance to exactly one mutable runtime
  * slot. RuntimeController owns slot meaning and cleanup policy; this helper
  * owns process-instance identity and guarantees event listeners are attached
- * once even when a fork rebinds the same child to its destination slot.
+ * once. A new session finalizes the identity of its existing provisional
+ * slot; an independent fork never transfers the source worker.
  */
 interface RuntimeProcessRegistryHost {
   recordProcessAttachment(slot: RuntimeSlot, rpc: PiRpcProcess): void;
@@ -39,9 +40,5 @@ export class RuntimeProcessRegistry {
 
   detach(rpc: PiRpcProcess): void {
     this.owners.delete(rpc);
-  }
-
-  rebind(rpc: PiRpcProcess, destination: RuntimeSlot): void {
-    this.owners.set(rpc, destination);
   }
 }
