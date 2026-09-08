@@ -55,6 +55,7 @@ import {
 import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
 import {
   type TerminalService,
+  TerminalServiceError,
   UnavailableTerminalService,
 } from "./terminal-service.js";
 import { TerminalSessionManager } from "./terminal-session-manager.js";
@@ -208,7 +209,10 @@ if (
     });
     console.error(`Terminal service unavailable: ${message}`);
     return new UnavailableTerminalService(
-      "The terminal service is unavailable. Restart the INSΠRE Host to retry.",
+      error instanceof TerminalServiceError &&
+        error.code === "terminal_service_restart_required"
+        ? error.message
+        : "The terminal service is unavailable. Restart the INSΠRE Host to retry.",
     );
   });
 }

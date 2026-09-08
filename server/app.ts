@@ -33,7 +33,10 @@ import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-
 import type { AttachmentStore } from "./attachments.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
-import type { MaintenanceRestartOutcome } from "./maintenance-restart.js";
+import type {
+  MaintenanceRestartOutcome,
+  MaintenanceRestartTransition,
+} from "./maintenance-restart.js";
 import { resolveProjectDirectory } from "./paths.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -348,6 +351,7 @@ const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
 const MAX_PROMPT_OPERATION_RESULTS = 2_048;
 const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
 const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
+const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
@@ -364,9 +368,13 @@ export function accessCookieName(host: string | undefined): string {
 
 interface MaintenanceRestartLike {
   reserve(): Promise<MaintenanceRestartOutcome>;
+  commit(leaseId: string): MaintenanceRestartTransition;
+  release(leaseId: string): MaintenanceRestartTransition;
 }
 
 interface AppDependencies {
+  /** An HTTP observation window, never a Pi operation deadline. */
+  promptObservationWindowMs?: number;
   token: string;
   runtime: RuntimeLike;
   catalog: SessionCatalogLike;
@@ -579,6 +587,9 @@ function apiError(
     error: message,
     ...(typeof code === "string" ? { code } : {}),
     ...(Array.isArray(matches) ? { matches } : {}),
+    ...((error as { outcomeUnknown?: unknown })?.outcomeUnknown === true
+      ? { outcomeUnknown: true }
+      : {}),
   });
 }
 
@@ -632,6 +643,58 @@ export function createInspireServer(deps: AppDependencies): {
       operation.promise = null;
       retainedPromptOperationResultBytes -= operation.resultBytes;
       operation.resultBytes = 0;
+    }
+  };
+
+  const observePrompt = async (
+    operationId: string,
+    operation: PromptOperationReceipt,
+    response: Response,
+  ) => {
+    const completion = operation.promise;
+    if (!completion)
+      throw requestError(
+        "This Host resolved that prompt operation, but its receipt retired; inspect the conversation before resending",
+        409,
+        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
+      );
+    const pending = {
+      accepted: false,
+      pending: true,
+      operationId,
+      authorityId,
+    } as const;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disconnected: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        completion,
+        new Promise<typeof pending>((resolve) => {
+          timer = setTimeout(
+            () => resolve(pending),
+            deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+          );
+          disconnected = () => resolve(pending);
+          response.once("close", disconnected);
+        }),
+      ]);
+    } catch (error) {
+      // This is the retained operation's own result. Middleware failures and
+      // missing/retired receipt lookups must never acquire this rejection proof.
+      const unknown = Boolean(
+        error &&
+          typeof error === "object" &&
+          "outcomeUnknown" in error &&
+          error.outcomeUnknown === true,
+      );
+      response.set({
+        "X-Inspire-Prompt-Operation": operationId,
+        "X-Inspire-Prompt-Outcome": unknown ? "unknown" : "rejected",
+      });
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (disconnected) response.off("close", disconnected);
     }
   };
 
@@ -760,13 +823,35 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await updateCoordinator.dismiss(identity));
   });
 
-  /** A successful response is a short exclusive lease. The local user timer
-   * consumes it immediately by asking systemd to restart the verified unit. */
+  /** Prepare alone never authorizes restart. The unique owner must commit after
+   * service inspection, and release only when restart definitely was not issued. */
   app.post("/api/maintenance/restart", async (_request, response) => {
     response.json(
       deps.maintenanceRestart
         ? await deps.maintenanceRestart.reserve()
         : { kind: "skipped", reason: "runtime-unsupported" },
+    );
+  });
+
+  const maintenanceLeaseSchema = z.object({
+    leaseId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  });
+  app.post("/api/maintenance/restart/commit", (request, response) => {
+    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
+    response.json(
+      deps.maintenanceRestart?.commit(leaseId) ?? {
+        kind: "skipped",
+        reason: "runtime-unsupported",
+      },
+    );
+  });
+  app.post("/api/maintenance/restart/release", (request, response) => {
+    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
+    response.json(
+      deps.maintenanceRestart?.release(leaseId) ?? {
+        kind: "skipped",
+        reason: "runtime-unsupported",
+      },
     );
   });
 
@@ -987,7 +1072,7 @@ export function createInspireServer(deps: AppDependencies): {
       throw requestError(
         "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
         409,
-        { code: "PROMPT_OPERATION_RESULT_RETIRED" },
+        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
       );
     if (!operation) {
       if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
@@ -1031,7 +1116,28 @@ export function createInspireServer(deps: AppDependencies): {
       promptOperations.set(prompt.operationId, receipt);
       operation = receipt;
     }
-    response.status(202).json(await operation.promise!);
+    response
+      .status(202)
+      .json(await observePrompt(prompt.operationId, operation, response));
+  });
+  app.get("/api/prompt/:operationId", async (request, response) => {
+    response.set("X-Inspire-Authority", authorityId);
+    const operationId = z.string().uuid().parse(request.params.operationId);
+    if (request.query.authorityId !== authorityId)
+      throw requestError("The prompt receipt belongs to another Host", 409, {
+        code: "HOST_AUTHORITY_CHANGED",
+        outcomeUnknown: true,
+      });
+    retirePromptOperationResults();
+    const operation = promptOperations.get(operationId);
+    if (!operation)
+      throw requestError("This Host cannot identify that prompt receipt", 409, {
+        code: "PROMPT_OPERATION_NOT_FOUND",
+        outcomeUnknown: true,
+      });
+    response
+      .status(202)
+      .json(await observePrompt(operationId, operation, response));
   });
   app.post("/api/control/native-command", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");

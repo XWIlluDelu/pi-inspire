@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const [portText] = process.argv.slice(2);
@@ -14,6 +14,12 @@ const preferencesPath = resolve(output, "preferences.json");
 const instanceStatePath = resolve(output, "instance.json");
 const stopRequestPath = resolve(output, "stop-request.json");
 const diagnosticsPath = resolve(output, "diagnostics.jsonl");
+const home = resolve(output, "fixture-home");
+await mkdir(home, { recursive: true, mode: 0o700 });
+await writeFile(
+  resolve(home, ".zshrc"),
+  "# Isolated browser fixture; no user startup or first-run wizard.\n",
+);
 await mkdir(output, { recursive: true, mode: 0o700 });
 if (process.platform !== "win32") await chmod(output, 0o700);
 await Promise.all([
@@ -35,6 +41,16 @@ const child = spawn(
   {
     env: {
       ...process.env,
+      // Shell startup, terminal settings/history and optional SDK discovery
+      // belong to this fixture, never to the developer's user profile.
+      HOME: home,
+      USERPROFILE: home,
+      ZDOTDIR: home,
+      APPDATA: resolve(home, "AppData", "Roaming"),
+      LOCALAPPDATA: resolve(home, "AppData", "Local"),
+      XDG_CONFIG_HOME: resolve(home, "config"),
+      XDG_STATE_HOME: resolve(home, "state"),
+      XDG_RUNTIME_DIR: resolve(home, "runtime"),
       INSPIRE_INSTALLATION_ROOT: resolve("."),
       INSPIRE_TOKEN: "inspire-browser-test-token",
       INSPIRE_PI_COMMAND: piCommand,

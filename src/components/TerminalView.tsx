@@ -45,6 +45,7 @@ import {
   TerminalConnection,
   type TerminalTransportStatus,
 } from "../terminal-connection";
+import { terminalActivationFocus } from "../terminal-focus";
 import { terminalFileLinks } from "../terminal-links";
 import type { TerminalUiSettings } from "../terminal-settings";
 
@@ -598,7 +599,6 @@ export const TerminalView = memo(function TerminalView({
       updateTheme();
       fit.fit();
       connection.start();
-      if (activeRef.current) xterm.focus();
     };
     void initialize();
     const resizeObserver = new ResizeObserver(() => {
@@ -645,11 +645,13 @@ export const TerminalView = memo(function TerminalView({
 
   useEffect(() => {
     if (!active) return;
-    requestAnimationFrame(() => {
+    const permitted = terminalActivationFocus();
+    const frame = requestAnimationFrame(() => {
       fitAndResize();
-      xtermRef.current?.focus();
+      if (activeRef.current && permitted()) xtermRef.current?.focus();
     });
-  }, [active, fitAndResize, ready, writable]);
+    return () => cancelAnimationFrame(frame);
+  }, [active, fitAndResize]);
 
   useEffect(
     () =>
@@ -663,6 +665,7 @@ export const TerminalView = memo(function TerminalView({
           return false;
         const dimensions = currentDimensions();
         connectionRef.current?.takeControl(dimensions.cols, dimensions.rows);
+        xtermRef.current?.focus();
         return true;
       }),
     [active, currentDimensions, descriptor.status, ready],
@@ -1042,6 +1045,7 @@ export const TerminalView = memo(function TerminalView({
                       dimensions.cols,
                       dimensions.rows,
                     );
+                    xtermRef.current?.focus();
                   }}
                 >
                   <Keyboard size={13} aria-hidden />

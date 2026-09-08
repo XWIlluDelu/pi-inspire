@@ -114,7 +114,11 @@ beforeAll(async () => {
       if (promptFails)
         return {
           status: 500,
-          headers: { "X-Inspire-Authority": TEST_HOST_AUTHORITY },
+          headers: {
+            "X-Inspire-Authority": TEST_HOST_AUTHORITY,
+            "X-Inspire-Prompt-Operation": String(body.operationId),
+            "X-Inspire-Prompt-Outcome": "rejected",
+          },
           body: { error: "boom" },
         };
       promptBodies.push(body);

@@ -90,6 +90,7 @@ export class RuntimeWorkerLifecycle {
       }
     }
     slot.process = null;
+    slot.pendingPrompt = null;
     slot.ready = false;
     slot.compactionReturnState = null;
     this.host.clearWriterBaseline(slot);
@@ -112,14 +113,17 @@ export class RuntimeWorkerLifecycle {
       extensionDisplays: [],
       extensionStatuses: {},
     });
-    const stopping = rpc
-      .stop(cancelledCommand)
-      .catch((error) => this.host.logRuntimeError(slot.id, error));
+    const stopping = rpc.stop(cancelledCommand);
     slot.stopping = stopping;
     try {
       await stopping;
-    } finally {
       if (slot.stopping === stopping) slot.stopping = null;
+    } catch (error) {
+      // Rejection is not an exit acknowledgement. Keep the rejected barrier
+      // so neither recovery nor another start can silently acquire this file.
+      this.host.logRuntimeError(slot.id, error, "worker_stop_unconfirmed");
+      throw error;
+    } finally {
       this.host.scheduleIdleWorkerEviction();
     }
   }

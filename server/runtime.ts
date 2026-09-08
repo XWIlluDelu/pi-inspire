@@ -121,7 +121,6 @@ import {
   type SessionProjectionView,
 } from "./session-projection.js";
 
-const BRANCH_BRIDGE_TIMEOUT_MS = 15_000;
 const BRANCH_EXTENSION_PATH = fileURLToPath(
   new URL(
     fileURLToPath(import.meta.url).endsWith(".ts")
@@ -167,17 +166,19 @@ function assertNativeCommandIdle(slot: RuntimeSlot, commandName: string): void {
 function runtimeResourceOwnsCommand(
   slot: RuntimeSlot,
   commandName: string,
+  source?: string,
 ): boolean {
   if (commandName === "compact") return false;
+  const command = slot.commands?.find((command) => {
+    if (!command || typeof command !== "object") return false;
+    const name = (command as { name?: unknown }).name;
+    return (
+      typeof name === "string" &&
+      name.replace(/^\/+/, "").toLocaleLowerCase() === commandName
+    );
+  });
   return Boolean(
-    slot.commands?.some((command) => {
-      if (!command || typeof command !== "object") return false;
-      const name = (command as { name?: unknown }).name;
-      return (
-        typeof name === "string" &&
-        name.replace(/^\/+/, "").toLocaleLowerCase() === commandName
-      );
-    }),
+    command && (!source || (command as { source?: unknown }).source === source),
   );
 }
 
@@ -210,8 +211,13 @@ function consoleRuntimeError(sessionId: string, error: unknown): void {
 type MaintenanceRestartBusyReason = "active-work" | "in-flight-operation";
 
 export type MaintenanceRestartDecision =
-  | { kind: "ready"; expiresAt: number }
+  | { kind: "ready"; leaseId: string; expiresAt: number }
   | { kind: "busy"; reason: MaintenanceRestartBusyReason };
+
+export type MaintenanceRestartTransition =
+  | { kind: "committed"; leaseId: string }
+  | { kind: "released" }
+  | { kind: "skipped"; reason: string };
 
 export interface RuntimeLike {
   /** Host default selection. Addressed operations and browser detail interests
@@ -295,6 +301,8 @@ export interface RuntimeLike {
   /** Fence new work for a short, scheduled service replacement after every
    * runtime slot has been proven idle. */
   reserveMaintenanceRestart?(): MaintenanceRestartDecision;
+  commitMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
+  releaseMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
   close(): Promise<void>;
 }
 
@@ -341,7 +349,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   /** Public operations retain this count from admission through every await,
    * closing gaps before they obtain a slot or enter a slot FIFO. */
   private maintenanceOperations = 0;
-  private maintenanceRestartExpiresAt: number | null = null;
+  private maintenanceRestart: {
+    leaseId: string;
+    expiresAt: number;
+    phase: "preparing" | "committed";
+  } | null = null;
   private maintenanceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
   private closePromise: Promise<void> | null = null;
@@ -355,7 +367,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     private readonly openSessionProjection: (
       session: SessionRecord,
     ) => Promise<SessionProjectionView> = SessionProjection.open,
-    private readonly branchBridgeTimeoutMs = BRANCH_BRIDGE_TIMEOUT_MS,
+    private readonly branchBridgeTimeoutMs: number | null = null,
     private readonly openForkProjection: (
       session: SessionRecord,
     ) => Promise<SessionProjectionView> = SessionProjection.open,
@@ -556,13 +568,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.selectedSessionId;
   }
 
-  /** Reserve a short no-new-work window only after every known runtime owner
-   * is idle. The timer must restart the host before it expires; otherwise this
-   * automatically restores normal admission without a recovery action. */
+  /** Prepare a short no-new-work lease. Only an authoritative commit of this
+   * exact lease may authorize restart; committed admission never auto-reopens. */
   reserveMaintenanceRestart(): MaintenanceRestartDecision {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
-    if (this.maintenanceRestartExpiresAt !== null)
+    if (this.maintenanceRestart !== null)
       return { kind: "busy", reason: "in-flight-operation" };
     if (this.hasActiveRuntimeWork())
       return { kind: "busy", reason: "active-work" };
@@ -570,7 +581,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       return { kind: "busy", reason: "in-flight-operation" };
 
     const expiresAt = Date.now() + MAINTENANCE_RESTART_LEASE_MS;
-    this.maintenanceRestartExpiresAt = expiresAt;
+    const leaseId = randomBytes(32).toString("base64url");
+    this.maintenanceRestart = { leaseId, expiresAt, phase: "preparing" };
     this.maintenanceRestartTimer = setTimeout(
       () => this.expireMaintenanceRestart(),
       MAINTENANCE_RESTART_LEASE_MS,
@@ -579,7 +591,46 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.diagnostics.record("info", "maintenance_restart_reserved", {
       expiresAt,
     });
-    return { kind: "ready", expiresAt };
+    return { kind: "ready", leaseId, expiresAt };
+  }
+
+  commitMaintenanceRestart(leaseId: string): MaintenanceRestartTransition {
+    this.assertNotClosing();
+    this.expireMaintenanceRestart();
+    const lease = this.maintenanceRestart;
+    if (!lease || lease.leaseId !== leaseId)
+      return { kind: "skipped", reason: "lease-invalid" };
+    if (lease.phase !== "preparing")
+      return { kind: "skipped", reason: "lease-already-committed" };
+    if (
+      this.hasActiveRuntimeWork() ||
+      this.maintenanceOperations > 0 ||
+      this.hasInFlightRuntimeOperation()
+    )
+      return { kind: "skipped", reason: "active-work" };
+    // No await between validation and closing admission indefinitely. A delayed
+    // external restart remains safe even after the preparation deadline passes.
+    lease.phase = "committed";
+    if (this.maintenanceRestartTimer !== null)
+      clearTimeout(this.maintenanceRestartTimer);
+    this.maintenanceRestartTimer = null;
+    this.diagnostics.record("info", "maintenance_restart_committed", {});
+    return { kind: "committed", leaseId };
+  }
+
+  /** The unique owner may release only when it will never issue this restart.
+   * Clearing the identity also rejects a commit request arriving after release. */
+  releaseMaintenanceRestart(leaseId: string): MaintenanceRestartTransition {
+    this.assertNotClosing();
+    this.expireMaintenanceRestart();
+    if (!this.maintenanceRestart || this.maintenanceRestart.leaseId !== leaseId)
+      return { kind: "skipped", reason: "lease-invalid" };
+    this.maintenanceRestart = null;
+    if (this.maintenanceRestartTimer !== null)
+      clearTimeout(this.maintenanceRestartTimer);
+    this.maintenanceRestartTimer = null;
+    this.diagnostics.record("info", "maintenance_restart_released", {});
+    return { kind: "released" };
   }
 
   private hasActiveRuntimeWork(): boolean {
@@ -616,9 +667,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private expireMaintenanceRestart(): void {
-    const expiresAt = this.maintenanceRestartExpiresAt;
-    if (expiresAt === null || Date.now() < expiresAt) return;
-    this.maintenanceRestartExpiresAt = null;
+    const lease = this.maintenanceRestart;
+    if (!lease || lease.phase === "committed" || Date.now() < lease.expiresAt)
+      return;
+    this.maintenanceRestart = null;
     if (this.maintenanceRestartTimer !== null) {
       clearTimeout(this.maintenanceRestartTimer);
       this.maintenanceRestartTimer = null;
@@ -629,7 +681,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private assertMaintenanceAvailable(): void {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
-    if (this.maintenanceRestartExpiresAt !== null)
+    if (this.maintenanceRestart !== null)
       throw requestError(
         "INSΠRE is preparing a scheduled maintenance restart",
         503,
@@ -927,9 +979,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     error: PiRpcOutcomeUnknownError,
   ): Promise<never> {
+    if (!error.stopped)
+      throw requestError(
+        `Pi ${error.command} outcome is not yet confirmed; its worker remains active`,
+        504,
+        {
+          code: "PI_RPC_OUTCOME_UNKNOWN",
+          outcomeUnknown: true,
+        },
+      );
     for (const expectation of slot.persistenceExpectations)
       expectation.settle(null);
-    await error.stopped.catch(() => undefined);
+    await error.stopped;
     await this.stopWriter(slot);
     if (slot.projection)
       await this.reconcileSlot(slot, true).catch(() => undefined);
@@ -987,11 +1048,25 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     rpc: PiRpcProcess,
     command: Record<string, unknown>,
-    timeoutMs?: number,
+    timeoutMs: number | null = null,
   ): Promise<T> {
     try {
       return await rpc.request<T>(command, timeoutMs);
     } catch (error) {
+      if (error instanceof PiRpcCancelledError && error.command === "prompt") {
+        if (error.stopped) await error.stopped;
+        await this.reconcileSlot(slot, true);
+        slot.runState = slot.conflict ? "conflict" : "aborted";
+        this.emitSlotEvent(slot, { type: "prompt_cancelled" });
+        throw requestError(
+          "Prompt cancelled before acceptance was confirmed; inspect the conversation before resending",
+          409,
+          {
+            code: "PI_RPC_OUTCOME_UNKNOWN",
+            outcomeUnknown: true,
+          },
+        );
+      }
       if (isPiRpcOutcomeUnknown(error))
         return this.failUnknownRpcOutcome(slot, error);
       throw error;
@@ -2001,9 +2076,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           if (!fullMessage && images.length === 0)
             throw new Error("Message or attachment is required");
           const previousRunState = slot.runState;
-          // Pi acknowledges ordinary prompt acceptance before agent_start can
-          // cross the event channel.
-          slot.runState = "queued";
+          // Pi owns preflight, including hooks/compaction/dialogs, before its
+          // prompt receipt. Publish admission so a silent hook is stoppable.
+          if (!isBusyRunState(previousRunState)) slot.runState = "queued";
+          slot.pendingPrompt = readySlot.process;
+          this.emitSlotEvent(slot, { type: "prompt_pending" });
           try {
             await this.requestPersistence(readySlot, readySlot.process, {
               type: "prompt",
@@ -2014,6 +2091,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : {}),
             });
             accepted = true;
+            slot.pendingPrompt = null;
+            // A registered extension's handler has finished at this receipt.
+            // Ordinary prompts stay queued until Pi supplies lifecycle events.
+            if (
+              slot.runState === "queued" &&
+              invocation &&
+              runtimeResourceOwnsCommand(slot, invocation.name, "extension")
+            ) {
+              slot.runState = previousRunState;
+              this.emitSlotEvent(slot, { type: "prompt_finished" });
+            }
             if (
               await this.reconcileAcceptedPersistence(slot, "the prompt", true)
             ) {
@@ -2083,8 +2171,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               }
             }
           } catch (error) {
-            if (slot.runState === "queued") slot.runState = previousRunState;
+            if (slot.runState === "queued") {
+              slot.runState = previousRunState;
+              this.emitSlotEvent(slot, { type: "prompt_finished" });
+            }
             throw error;
+          } finally {
+            if (slot.pendingPrompt === readySlot.process)
+              slot.pendingPrompt = null;
           }
         } catch (error) {
           const outcomeUnknown =
@@ -2116,7 +2210,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // cache entries are no longer needed. File attachments stay (their host
         // paths are part of the conversation text).
         if (request.attachmentIds?.length)
-          await this.attachments.releaseConsumed(request.attachmentIds);
+          await this.attachments
+            .releaseConsumed(request.attachmentIds)
+            .catch((error) =>
+              this.logRuntimeError(
+                slot.id,
+                error,
+                "accepted_prompt_cleanup_failed",
+              ),
+            );
         return acceptedHistoryEntry;
       });
     } catch (error) {
@@ -2281,14 +2383,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         bridgeRequest,
         BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
       );
-      const promptFence = ready.process.request(
-        { type: "prompt", message: `/${bridge.command} ${payload}` },
-        this.branchBridgeTimeoutMs,
-      );
+      const promptFence = ready.process
+        .request(
+          { type: "prompt", message: `/${bridge.command} ${payload}` },
+          this.branchBridgeTimeoutMs,
+        )
+        .then(
+          () => {
+            // For this registered command, the response fences the finished handler.
+            if (!pending.settled) {
+              pending.settled = true;
+              pending.reject(
+                new Error("Pi completed the branch command without its result"),
+              );
+            }
+          },
+          (error: unknown) => {
+            if (!pending.settled) {
+              pending.settled = true;
+              pending.reject(
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
+            throw error;
+          },
+        );
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const resultFence = Promise.race([
         pending.result,
         new Promise<BranchBridgeResult>((_resolve, reject) => {
+          if (this.branchBridgeTimeoutMs === null) return;
           timeout = setTimeout(
             () =>
               reject(new Error("Timed out waiting for branch bridge result")),
@@ -2706,13 +2830,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // authority and the next operation starts a fresh worker.
         for (const expectation of slot.persistenceExpectations)
           expectation.settle((entry) => entry.type === "compaction");
-        slot.runState = "aborted";
         await this.stopWriter(slot, "compact");
         slot.runState = slot.conflict ? "conflict" : "aborted";
         this.extensionUi.clear(slot, "aborted");
         return;
       }
-      await rpc.request({ type: "abort" });
+      if (slot.pendingPrompt === rpc || slot.pendingBranchBridge) {
+        // Pi abort need not interrupt a pre-prompt hook. Explicit Stop retires
+        // its owner outside the persistence FIFO waiting on that same hook.
+        await this.stopWriter(slot, "prompt");
+        slot.runState = slot.conflict ? "conflict" : "aborted";
+        this.emitSlotEvent(slot, { type: "prompt_cancelled" });
+      } else {
+        try {
+          await rpc.request({ type: "abort" }, 30_000);
+        } catch {
+          // Grace for an explicit Stop, not a runtime work allowance.
+          await this.stopWriter(slot);
+          slot.runState = slot.conflict ? "conflict" : "aborted";
+          this.emitSlotEvent(slot, { type: "prompt_cancelled" });
+        }
+      }
       this.extensionUi.clear(slot, "aborted");
     });
   }
@@ -2798,7 +2936,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               type: "export_html",
               ...(argument ? { outputPath: argument } : {}),
             },
-            180_000,
+            null,
           );
         });
         if (!result || typeof result.path !== "string" || !result.path) {
@@ -2854,7 +2992,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             ready.process,
             { type: "compact", customInstructions },
-            180_000,
+            null,
           );
           expectation.settle(compactionMatcher(result));
           await this.reconcileAcceptedPersistence(slot, "compaction", true);
@@ -3230,7 +3368,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (this.maintenanceRestartTimer !== null)
       clearTimeout(this.maintenanceRestartTimer);
     this.maintenanceRestartTimer = null;
-    this.maintenanceRestartExpiresAt = null;
+    this.maintenanceRestart = null;
     this.closing = true;
     this.selectionSequence += 1;
     this.closePromise = this.closeInside();

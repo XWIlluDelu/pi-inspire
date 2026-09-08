@@ -39,6 +39,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
+import { terminalOperations } from "../controllers/terminal-operation-controller";
 import { TerminalCatalogController } from "../terminal-catalog";
 import {
   hasTerminalInsertion,
@@ -123,6 +124,13 @@ export const TerminalPane = memo(function TerminalPane({
   onCommandComplete,
 }: TerminalPaneProps) {
   const api = useMemo(() => createApi(), []);
+  const pendingOperations = useSyncExternalStore(
+    terminalOperations.subscribe,
+    terminalOperations.snapshot,
+  );
+  const uncertainOperations = pendingOperations.filter(
+    (operation) => operation.uncertain,
+  );
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
   const [cwd, setCwd] = useState(sessionCwd);
@@ -167,6 +175,18 @@ export const TerminalPane = memo(function TerminalPane({
   const terminalActionHandlerRef = useRef<
     (action: TerminalUiAction) => boolean
   >(() => false);
+
+  useEffect(() => {
+    try {
+      terminalOperations.restore();
+    } catch (restoreError) {
+      setError(
+        restoreError instanceof Error
+          ? restoreError.message
+          : "Terminal operation recovery failed",
+      );
+    }
+  }, []);
 
   useLayoutEffect(() => {
     catalogController.active = true;
@@ -647,6 +667,8 @@ export const TerminalPane = memo(function TerminalPane({
         cols: source.cols,
         rows: source.rows,
       });
+      // Publish the committed shell independently of its optional title write.
+      await commitDescriptor(created, true);
       const duplicate =
         source.titleSource === "user"
           ? await api.renameTerminal(created.id, {
@@ -734,6 +756,7 @@ export const TerminalPane = memo(function TerminalPane({
         cols: closed.terminal.cols,
         rows: closed.terminal.rows,
       });
+      await commitDescriptor(terminal, true);
       const restored =
         closed.terminal.titleSource === "user"
           ? await api.renameTerminal(terminal.id, {
@@ -977,9 +1000,14 @@ export const TerminalPane = memo(function TerminalPane({
                   type="button"
                   id={`terminal-tab-${terminal.id}`}
                   className="terminal-tab__select"
+                  data-terminal-focus-trigger
                   aria-pressed={terminal.id === activeId}
                   aria-label={`${terminalLabel(terminal)}${unreadIds.has(terminal.id) ? ", new output" : ""}${bellIds.has(terminal.id) ? ", bell" : ""}`}
-                  aria-controls={`terminal-view-${terminal.id}`}
+                  aria-controls={
+                    openedIds.has(terminal.id)
+                      ? `terminal-view-${terminal.id}`
+                      : undefined
+                  }
                   aria-keyshortcuts="Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
                   tabIndex={terminal.id === activeId ? 0 : -1}
                   onClick={() => setActiveId(terminal.id)}
@@ -1022,6 +1050,7 @@ export const TerminalPane = memo(function TerminalPane({
           <button
             type="button"
             className="icon-button"
+            data-terminal-focus-trigger
             onClick={() => void createTerminal()}
             disabled={creating}
             aria-label="New terminal"
@@ -1045,6 +1074,7 @@ export const TerminalPane = memo(function TerminalPane({
                     <button
                       type="button"
                       key={profile.id}
+                      data-terminal-focus-trigger
                       onClick={(event) => {
                         void createTerminal(profile);
                         event.currentTarget
@@ -1150,6 +1180,7 @@ export const TerminalPane = memo(function TerminalPane({
                 ) : null}
                 <button
                   type="button"
+                  data-terminal-focus-trigger
                   onClick={() => void restartTerminal(activeTerminal)}
                 >
                   <RotateCcw size={13} aria-hidden /> Restart
@@ -1269,6 +1300,7 @@ export const TerminalPane = memo(function TerminalPane({
           <button
             type="button"
             className="button button--primary"
+            data-terminal-focus-trigger
             onClick={() => void createTerminal()}
             disabled={creating}
           >
@@ -1283,7 +1315,7 @@ export const TerminalPane = memo(function TerminalPane({
             .map((terminal) => (
               <div
                 id={`terminal-view-${terminal.id}`}
-                key={terminal.id}
+                key={`${terminal.id}:${terminal.outputEpoch}`}
                 className="terminal-views__item"
                 role="region"
                 aria-label={`${terminalLabel(terminal)} terminal`}
@@ -1332,6 +1364,53 @@ export const TerminalPane = memo(function TerminalPane({
             <X size={13} aria-hidden />
           </button>
         </div>
+      ) : null}
+      {uncertainOperations.length > 0 ? (
+        <section
+          className="terminal-pending"
+          aria-label="Unconfirmed terminal controls"
+        >
+          {uncertainOperations.map((operation) => (
+            <div
+              className="terminal-pending__row"
+              role="status"
+              key={operation.key}
+            >
+              <span className="terminal-pending__description">
+                <span
+                  className="terminal-pending__label"
+                  title={operation.label}
+                >
+                  {operation.label}
+                </span>
+                <span>Outcome unknown</span>
+              </span>
+              <button
+                type="button"
+                className="button button--quiet"
+                disabled={operation.busy}
+                aria-busy={operation.busy}
+                onClick={() => {
+                  void api
+                    .retryTerminalOperation(operation.key)
+                    .then(() => {
+                      if (catalogController.active) return load();
+                    })
+                    .catch((retryError: unknown) => {
+                      if (catalogController.active)
+                        setError(
+                          retryError instanceof Error
+                            ? retryError.message
+                            : "Terminal outcome remains unknown",
+                        );
+                    });
+                }}
+              >
+                {operation.busy ? "Checking…" : "Retry same operation"}
+              </button>
+            </div>
+          ))}
+        </section>
       ) : null}
       {error ? (
         <button

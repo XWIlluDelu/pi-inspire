@@ -1608,6 +1608,76 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("keeps replacement and prompt writes fenced when stop rejects without exit", async () => {
+    const store = trackedAttachmentStore();
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(workers[0]?.starts).toBe(1));
+      workers[0]!.stop = vi.fn(async () => {
+        throw new Error("Synthetic exit unconfirmed");
+      });
+      await expect(
+        runtime.nativeCommand({ sessionId: "a", command: "reload" }),
+      ).rejects.toThrow("exit unconfirmed");
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "must not acquire another writer",
+        }),
+      ).rejects.toThrow("exit unconfirmed");
+      expect(workers).toHaveLength(1);
+      expect(
+        workers[0]!.commands.some((command) => command.type === "prompt"),
+      ).toBe(false);
+    } finally {
+      await runtime.close().catch(() => undefined);
+    }
+  });
+
+  it("does not turn post-acceptance attachment cleanup failure into a rejected prompt", async () => {
+    const store = trackedAttachmentStore();
+    const attachment = await store.add(upload("cleanup.txt", "text/plain"));
+    vi.spyOn(store, "releaseConsumed").mockRejectedValue(
+      new Error("Synthetic cleanup failure"),
+    );
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "accepted synthetic upload",
+          attachmentIds: [attachment.id],
+        }),
+      ).resolves.not.toThrow();
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("routes a typed /compact to the RPC compact command instead of prompting", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
@@ -3883,6 +3953,86 @@ describe("RuntimeController concurrent sessions", () => {
 });
 
 describe("maintenance restart admission", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function idleRuntime() {
+    return new RuntimeController(
+      catalog([]),
+      trackedAttachmentStore(),
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      preview,
+    );
+  }
+
+  it("rejects an expired lease even after a fresh owner prepares", async () => {
+    vi.useFakeTimers();
+    const runtime = idleRuntime();
+    const old = runtime.reserveMaintenanceRestart();
+    if (old.kind !== "ready") throw new Error("Expected idle lease");
+    vi.advanceTimersByTime(30_000);
+    expect(runtime.commitMaintenanceRestart(old.leaseId)).toEqual({
+      kind: "skipped",
+      reason: "lease-invalid",
+    });
+    const fresh = runtime.reserveMaintenanceRestart();
+    if (fresh.kind !== "ready") throw new Error("Expected fresh lease");
+    expect(fresh.leaseId).not.toBe(old.leaseId);
+    expect(runtime.releaseMaintenanceRestart(old.leaseId).kind).toBe("skipped");
+    expect(runtime.commitMaintenanceRestart(old.leaseId).kind).toBe("skipped");
+    expect(runtime.commitMaintenanceRestart(fresh.leaseId).kind).toBe(
+      "committed",
+    );
+    await runtime.close();
+  });
+
+  it("never expires a committed drain and rejects duplicate or foreign commits", async () => {
+    vi.useFakeTimers();
+    const runtime = idleRuntime();
+    const lease = runtime.reserveMaintenanceRestart();
+    if (lease.kind !== "ready") throw new Error("Expected idle lease");
+    expect(runtime.commitMaintenanceRestart("foreign").kind).toBe("skipped");
+    expect(runtime.commitMaintenanceRestart(lease.leaseId)).toEqual({
+      kind: "committed",
+      leaseId: lease.leaseId,
+    });
+    expect(runtime.commitMaintenanceRestart(lease.leaseId)).toEqual({
+      kind: "skipped",
+      reason: "lease-already-committed",
+    });
+    vi.advanceTimersByTime(24 * 60 * 60 * 1_000);
+    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(runtime.releaseMaintenanceRestart("foreign").kind).toBe("skipped");
+    expect(runtime.reserveMaintenanceRestart().kind).toBe("busy");
+    expect(runtime.releaseMaintenanceRestart(lease.leaseId)).toEqual({
+      kind: "released",
+    });
+    expect(runtime.reserveMaintenanceRestart().kind).toBe("ready");
+    await runtime.close();
+  });
+
+  it("release cancels a reordered commit and cannot release the next owner", async () => {
+    const runtime = idleRuntime();
+    const lease = runtime.reserveMaintenanceRestart();
+    if (lease.kind !== "ready") throw new Error("Expected idle lease");
+    expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
+      "released",
+    );
+    expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
+      "skipped",
+    );
+    const next = runtime.reserveMaintenanceRestart();
+    expect(next.kind).toBe("ready");
+    expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
+      "skipped",
+    );
+    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
+      status: 503,
+    });
+    await runtime.close();
+  });
+
   it("fences every new runtime command after an idle lease", async () => {
     const store = trackedAttachmentStore();
     const runtime = new RuntimeController(
