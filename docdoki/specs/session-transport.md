@@ -96,6 +96,17 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   blocks writes and offers recovery; incomplete persistence, projection failure, and
   acceptance-unknown outcomes remain red blocking errors.
 
+### Prompt observation ownership
+
+- A prompt operation outlives any individual HTTP observer. The Host's bounded pending receipts and
+  authenticated, authority-bound read-only observation route preserve one dispatch while Pi performs
+  preflight/compaction/hooks. Browser observation cancellation or its 30-second transport deadline
+  does not cancel execution. Only the still-current browser owner may apply the eventual receipt.
+- Same-Host HTTP errors identify the responding process, not the original operation outcome. A
+  definitive prompt refusal must match that Host and operation's retained rejection receipt; a
+  refused/expired/missing observation remains uncertain and retains the operation identity as in
+  [[composer]]. Evidence and limits: [[operation-lifecycle-ownership]].
+
 ### View-bound transcript and bounded streaming
 
 - Every transcript snapshot/page carries an opaque branch-view generation plus its effective leaf.

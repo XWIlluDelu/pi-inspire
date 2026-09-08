@@ -263,13 +263,21 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   process-lifetime fingerprints and retires old response bodies to tombstones instead of forgetting
   an operation identity: concurrent or near-term copies await or return its one result without
   invoking Pi twice, a retired result fails closed, and changed content under one identity or an
-  identity from a replaced Host fails explicitly. After an acceptance-unknown transport,
-  request-timeout, marked-edge, or unowned 5xx result, a later user retry of the unchanged draft
-  reuses the exact operation identity and payload while the Host authority remains unchanged.
+  identity from a replaced Host fails explicitly. The POST owns one delivery, but each HTTP observer
+  waits at most 20 seconds before returning an explicit pending receipt. The browser then uses
+  authenticated, identity/authority-bound GET observations rather than resending text or attachments.
+  Each browser HTTP observation still has a 30-second limit; replacing its transport aborts only
+  observation, never Pi's task. Total acceptance may legitimately exceed those local windows.
 
-  The prompt route marks its own response with that authority, so a definitive same-Host application
-  refusal clears the identity; a Host restart requires the user to inspect the refreshed
-  conversation before resending. The project-file picker is one textbox-owned combobox: its input
+  After an acceptance-unknown transport, request-timeout, marked-edge, unowned 5xx, or explicit
+  Host-reported unknown/retired outcome, a later user retry of the unchanged draft reuses the exact
+  operation identity and payload while the Host authority remains unchanged. A same-Host header
+  identifies the respondent, not the operation result: only the retained operation's matched refusal
+  (Host authority, operation ID, and rejected outcome) clears the identity. A 401/404/500 from receipt
+  observation does not reject the original operation.
+  A Host restart requires the user to inspect the refreshed conversation before resending.
+  Upload cleanup after confirmed acceptance is best-effort and cannot turn that delivery into an
+  apparent rejection. Evidence and limits: [[operation-lifecycle-ownership]]. The project-file picker is one textbox-owned combobox: its input
   keeps DOM focus, exposes the popup with `aria-controls` and the active option with
   `aria-activedescendant`, and owns Arrow/Enter/Tab/Escape while disabled rows are skipped and every
   query generation clears obsolete results before new ones arrive. Closing the popup restores focus

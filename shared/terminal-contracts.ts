@@ -76,6 +76,21 @@ export interface TerminalServiceSettingsPatch {
   historyRetentionDays?: number;
 }
 
+/** Identifies one immutable control intent, fenced by the daemon's receipt epoch. */
+export interface TerminalOperationIdentity {
+  id: string;
+  epoch: string;
+}
+
+export type TerminalMutationMethod =
+  | "create"
+  | "rename"
+  | "reorder"
+  | "restart"
+  | "remove"
+  | "updateSettings"
+  | "clearHistory";
+
 export interface TerminalCreateRequest {
   cwd: string;
   profileId?: string;

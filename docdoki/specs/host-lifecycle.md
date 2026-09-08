@@ -125,9 +125,37 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
   enables/disables that timer in the same command.
 
   The timer never fetches updates: it restarts only if the installed external Pi version or a clean
-  source revision differs from the running identity, every runtime slot has no active
-  run/dialog/queue, and the host atomically grants a 30-second no-new-work lease. A busy, dirty,
-  indeterminate, or old host is skipped without force or same-day retry.
+  source revision differs from the running identity and every runtime slot has no active
+  run/dialog/queue or in-flight operation. A busy, dirty, indeterminate, or old host is skipped
+  without force or same-day retry.
+
+  Scheduled restart uses an authenticated, single-owner prepare/commit handoff, not a boolean idle
+  check. `POST /api/maintenance/restart` grants a unique, opaque `leaseId` and a 30-second `expiresAt`;
+  this preparation blocks new work but does not authorize restart. After all systemd ownership
+  inspections, the runner submits that exact identity to `/api/maintenance/restart/commit`. The Host
+  synchronously validates the current, unexpired preparing lease and idle runtime, then commits the
+  drain before responding. Only the matching `committed` response authorizes one external restart.
+  Expired, released, foreign, previous-Host, and duplicate commits cannot authorize another restart.
+  A preparation can expire and reopen admission; a committed drain **never auto-expires**, even if
+  the external command or its caller is delayed beyond the preparation deadline.
+
+  The lease owner does not retry commit or consume a late response after timeout. Before restart
+  issuance, cancellation, failed inspection, or a lost commit response triggers owner-bound
+  `/api/maintenance/restart/release` with the same `leaseId`. Release invalidates the identity, so a
+  reordered commit cannot restore authorization. A proven failure to spawn systemctl permits the
+  same release. An exit failure, signal, or lost result after command issuance does not prove that
+  systemd rejected the restart: the runner reports recovery required and retains the committed
+  drain. Lost release acknowledgement is also reported conservatively. Owner identities are neither
+  logged nor persisted by the runner; admission diagnostics contain no lease capabilities.
+
+  Recovery deliberately favors safety over automatic availability. If the runner dies or the
+  restart outcome is unknown, do not reopen admission merely because time passed, the runner exited,
+  or the service currently appears active. First establish that the lease owner cannot later issue
+  its command **and** that no submitted systemd restart job can still execute. Only then may a
+  retained owner explicitly release its lease, or an operator perform a separately authorized Host
+  replacement to clear the in-memory drain when the owner identity is lost. Do not replace the Host
+  and admit work while an old runner/job can still restart that replacement. This is a bounded
+  maintenance handoff, not a durable transaction across independent/manual Host replacements.
 
 ### Atomic browser-build publication
 

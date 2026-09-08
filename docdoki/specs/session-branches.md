@@ -49,9 +49,11 @@ continuity comes from [[session-transport]].
   LRU, while selected or running work retains its worker. Once materialized, the normal
   inode/version/append rules apply without exception.
 
-  Once an RPC request frame has been written, timeout or child loss is an explicit
-  acceptance-unknown outcome: the child is hard-stopped, disk is reconciled inside the operation
-  lane, and the session remains conflicted rather than retrying or restaging prompt attachments. The
+  Once an RPC request frame has been written, stream failure or child loss is an explicit
+  acceptance-unknown outcome: after confirmed worker termination, disk is reconciled inside the
+  operation lane and the session remains conflicted rather than retrying or restaging attachments.
+  A local observation timeout alone neither proves failure nor authorizes termination; Pi-owned
+  branch hooks and summaries have no generic wall-clock allowance (see [[pi-integration]]). The
   branch tree is a bounded projection of Pi entry identities; switching creates a non-evictable
   in-memory navigation lease until the next append durably commits that branch, while edit-from-here
   moves to the selected user turn's parent and prefills the composer without submitting.
@@ -77,8 +79,10 @@ continuity comes from [[session-transport]].
   worker receives randomized command, status-key, and worker identities; the host accepts only one
   bounded nonce-correlated `setStatus` result, awaits both that result and prompt completion, and
   independently verifies the post-operation leaf and absence of persisted deltas. The internal
-  command is hidden from completion and rejected at the public prompt boundary. Missing, duplicate,
-  malformed, stale, or mismatched results are never retried after possible side effects.
+  command is hidden from completion and rejected at the public prompt boundary. The registered
+  handler's RPC completion fences result delivery: completion without its matching result is a
+  protocol failure, not a reason to wait indefinitely. Missing, duplicate, malformed, stale, or
+  mismatched results are never retried after possible side effects.
 
 ### Independent fork publication
 

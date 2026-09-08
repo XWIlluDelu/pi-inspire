@@ -55,7 +55,7 @@ process.stdin.on("data", chunk => {
     processes.push(rpc);
     await rpc.start();
     const result = rpc
-      .request({ type: "compact" }, 10_000)
+      .request({ type: "compact" }, null)
       .catch((error: Error) => error);
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
     await rpc.stop("compact");
@@ -324,7 +324,7 @@ process.stdin.on("data", consume);
     );
   });
 
-  it("marks a written timeout acceptance-unknown, hard-stops, and preserves late disk evidence", async () => {
+  it("marks a bounded mutation timeout unknown without stopping its writer", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-unknown-"));
     directories.push(directory);
     const marker = join(directory, "persisted.txt");
@@ -352,26 +352,25 @@ process.stdin.on("data", chunk => {
     const rpc = new PiRpcProcess({ cwd: directory, cliPath });
     processes.push(rpc);
     await rpc.start();
-    const exited = new Promise<Error>((resolveExit) =>
-      rpc.once("exit", resolveExit),
-    );
+    const exits: Error[] = [];
+    rpc.on("exit", (error) => exits.push(error));
     const failure = await rpc
       .request({ type: "late" }, 80)
       .catch((error: Error) => error);
     expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
-    await (failure as PiRpcOutcomeUnknownError).stopped;
-    expect(await exited).toBe(failure);
+    expect((failure as PiRpcOutcomeUnknownError).stopped).toBeNull();
+    expect(rpc.available).toBe(true);
+    expect(rpc.hasPendingRequest("late")).toBe(true);
+    expect(exits).toEqual([]);
     expect(
       await import("node:fs/promises").then(({ readFile }) =>
         readFile(marker, "utf8"),
       ),
     ).toBe("committed");
-    await expect(rpc.request({ type: "second" })).rejects.toThrow(
-      /not available/,
-    );
+    await expect(rpc.request({ type: "second" })).resolves.toEqual({});
   });
 
-  it("retires a stalled read without reporting a mutation outcome conflict", async () => {
+  it("discards a valid late read response and keeps the worker usable", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-rpc-read-timeout-"),
     );
@@ -389,9 +388,9 @@ process.stdin.on("data", chunk => {
     const command = JSON.parse(buffer.slice(0, index));
     buffer = buffer.slice(index + 1);
     reads += 1;
-    if (reads === 1) {
-      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
-    }
+    const reply = () => process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
+    if (reads === 2) setTimeout(reply, 120);
+    else reply();
   }
 });`,
       "utf8",
@@ -399,19 +398,20 @@ process.stdin.on("data", chunk => {
     const rpc = new PiRpcProcess({ cwd: directory, cliPath });
     processes.push(rpc);
     await rpc.start();
-    const exited = new Promise<Error>((resolveExit) =>
-      rpc.once("exit", resolveExit),
-    );
+    const exits: Error[] = [];
+    rpc.on("exit", (error) => exits.push(error));
 
     const failure = await rpc
       .request({ type: "get_state" }, 80)
       .catch((error: Error) => error);
     expect(failure).toBeInstanceOf(Error);
     expect(failure).not.toBeInstanceOf(PiRpcOutcomeUnknownError);
-    expect(await exited).toBe(failure);
-    await expect(rpc.request({ type: "second" })).rejects.toThrow(
-      /not available/,
-    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(exits).toEqual([]);
+    expect(rpc.hasPendingRequest("get_state")).toBe(false);
+    await expect(rpc.request({ type: "second" })).resolves.toEqual({
+      isStreaming: false,
+    });
   });
 
   it("accepts a complete final response when stdout closes without a newline", async () => {
@@ -574,16 +574,20 @@ process.stdin.on("data", chunk => {
     );
   });
 
-  it("terminates tool descendants with their Pi worker", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-tree-"));
-    directories.push(directory);
-    const marker = join(directory, "child.pid");
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `import { spawn } from "node:child_process";
+  it.each(["graceful", "protocol-failure"])(
+    "terminates a SIGTERM-resistant synthetic worker tree after %s",
+    async (mode) => {
+      const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-tree-"));
+      directories.push(directory);
+      const marker = join(directory, "child.pid");
+      const cliPath = join(directory, "fake-pi.mjs");
+      await writeFile(
+        cliPath,
+        `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const tool = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
+process.on("SIGTERM", () => {});
+const tool = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "ignore"] });
+const ready = new Promise(resolve => tool.stdout.once("data", resolve));
 writeFileSync(${JSON.stringify(marker)}, String(tool.pid));
 let buffer = "";
 process.stdin.setEncoding("utf8");
@@ -593,32 +597,45 @@ process.stdin.on("data", chunk => {
   while ((index = buffer.indexOf("\\n")) >= 0) {
     const command = JSON.parse(buffer.slice(0, index));
     buffer = buffer.slice(index + 1);
-    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
+    ready.then(() => process.stdout.write(command.type === "break_protocol" ? "{malformed\\n" : JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n"));
   }
 });`,
-      "utf8",
-    );
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    await rpc.start();
-    const childPid = Number(await readFile(marker, "utf8"));
+        "utf8",
+      );
+      const rpc = new PiRpcProcess({ cwd: directory, cliPath });
+      processes.push(rpc);
+      await rpc.start();
+      const childPid = Number(await readFile(marker, "utf8"));
+      const leaderPid = rpc.pid!;
 
-    await rpc.stop();
-    let alive = true;
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      try {
-        process.kill(childPid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-          alive = false;
-          break;
-        }
-        throw error;
+      if (mode === "protocol-failure") {
+        const failure = await rpc
+          .request({ type: "break_protocol" })
+          .catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
+        if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
+          throw new Error("Expected confirmed-exit fence");
+        await failure.stopped;
+      } else {
+        await rpc.stop();
       }
-    }
-    expect(alive).toBe(false);
-  });
+      expect(() => process.kill(leaderPid, 0)).toThrow();
+      let alive = true;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+            alive = false;
+            break;
+          }
+          throw error;
+        }
+      }
+      expect(alive).toBe(false);
+    },
+  );
 
   it("starts the installed Pi RPC runtime without invoking a model", async () => {
     const rpc = new PiRpcProcess({

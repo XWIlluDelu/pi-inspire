@@ -93,6 +93,7 @@ describe("ComposerController", () => {
         message: "inspect this",
         projectFiles: ["/workspace/sent.ts"],
       }),
+      expect.any(AbortSignal),
     );
     expect(harness.slice()).toEqual({
       attachments: [
@@ -140,6 +141,43 @@ describe("ComposerController", () => {
           "ssh-reverse",
         ),
     ],
+    [
+      "the same Host explicitly reports Pi outcome unknown",
+      () =>
+        new ApiError(
+          504,
+          "Unknown",
+          undefined,
+          "PI_RPC_OUTCOME_UNKNOWN",
+          undefined,
+          "11111111-1111-4111-8111-111111111111",
+        ),
+    ],
+    [
+      "a same-Host unknown-outcome flag independent of HTTP status",
+      () =>
+        new ApiError(
+          409,
+          "Unknown",
+          undefined,
+          undefined,
+          undefined,
+          "11111111-1111-4111-8111-111111111111",
+          true,
+        ),
+    ],
+    [
+      "an expired same-Host result receipt",
+      () =>
+        new ApiError(
+          409,
+          "Retired",
+          undefined,
+          "PROMPT_OPERATION_RESULT_RETIRED",
+          undefined,
+          "11111111-1111-4111-8111-111111111111",
+        ),
+    ],
   ])("reuses one delivery identity after %s", async (_label, failure) => {
     const harness = createHarness();
     harness.prompt
@@ -156,6 +194,22 @@ describe("ComposerController", () => {
     expect(harness.prompt.mock.calls[1]![0]).toEqual(
       harness.prompt.mock.calls[0]![0],
     );
+  });
+
+  it("retires confirmation polling without cancelling or losing the delivery", async () => {
+    const harness = createHarness();
+    const pending = deferred<PromptAcceptedResponse>();
+    harness.prompt
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(acceptedPrompt);
+    const sending = harness.controller.send("synthetic prompt");
+    const [first, signal] = harness.prompt.mock.calls[0]!;
+    harness.replaceTransport();
+    expect(signal.aborted).toBe(true);
+    pending.resolve(acceptedPrompt);
+    await expect(sending).resolves.toBe(false);
+    await harness.controller.send("synthetic prompt");
+    expect(harness.prompt.mock.calls[1]![0]).toEqual(first);
   });
 
   it("starts a new operation after a definitive same-Host 5xx refusal", async () => {
@@ -314,6 +368,7 @@ describe("ComposerController", () => {
           fileReferences: ["pi-file://4/0", "pi-file://4/1"],
         },
       }),
+      expect.any(AbortSignal),
     );
     expect(harness.deleteAttachment).toHaveBeenCalledWith("draft-file");
     expect(harness.slice()).toMatchObject({
