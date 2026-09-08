@@ -15,12 +15,11 @@ import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
+import { accessCookieName, createInspireServer } from "../../server/app.js";
 import {
-  accessCookieName,
-  createInspireServer,
   MAX_JOINING_EVENT_BYTES,
   MAX_RUNTIME_EVENT_BYTES,
-} from "../../server/app.js";
+} from "../../server/runtime-event-sockets.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";

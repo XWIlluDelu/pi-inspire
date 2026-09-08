@@ -50,20 +50,12 @@ export interface TerminalDaemonRpcResponse {
   };
 }
 
-function terminalInstallationKey(
-  root: string,
-  host: string,
-  port: number,
-): string {
-  return installationKey(root, host, port);
-}
-
 export function defaultTerminalDaemonAddress(
   root: string,
   host: string,
   port: number,
 ): string {
-  const key = terminalInstallationKey(root, host, port).slice(0, 24);
+  const key = installationKey(root, host, port).slice(0, 24);
   if (process.platform === "win32")
     return `\\\\.\\pipe\\inspire-terminal-${key}`;
   return join(inspireRuntimeDirectory(), `${key}.terminal.sock`);
@@ -76,7 +68,7 @@ export function defaultTerminalDaemonTokenPath(
 ): string {
   return join(
     inspireStateDirectory(),
-    `${terminalInstallationKey(root, host, port)}.terminal-token`,
+    `${installationKey(root, host, port)}.terminal-token`,
   );
 }
 
@@ -87,6 +79,6 @@ export function defaultTerminalDaemonStatePath(
 ): string {
   return join(
     inspireStateDirectory(),
-    `${terminalInstallationKey(root, host, port)}.terminals.json`,
+    `${installationKey(root, host, port)}.terminals.json`,
   );
 }

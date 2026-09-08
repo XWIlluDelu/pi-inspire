@@ -37,7 +37,7 @@ interface RuntimeExtensionUiHost {
 }
 
 /** Owns response-bearing Pi extension UI requests from admission through
- * expiry, worker rebinding, ordered response delivery, and removal. */
+ * expiry, ordered process-bound response delivery, and removal. */
 export class RuntimeExtensionUiController {
   constructor(private readonly host: RuntimeExtensionUiHost) {}
 
@@ -56,28 +56,6 @@ export class RuntimeExtensionUiController {
     slot.pendingExtensionUiOwners.set(request.id, process);
     this.scheduleExpiry(slot, request);
     return request;
-  }
-
-  rebind(
-    source: RuntimeSlot,
-    destination: RuntimeSlot,
-    process: PiRpcProcess,
-  ): void {
-    for (const timer of source.pendingExtensionUiTimers.values())
-      clearTimeout(timer);
-    source.pendingExtensionUiTimers.clear();
-    for (const [id, request] of source.pendingExtensionUiRequests) {
-      if (source.pendingExtensionUiOwners.get(id) !== process) continue;
-      const rebound = {
-        ...request,
-        sessionId: destination.id,
-      } as ExtensionUiRequest;
-      destination.pendingExtensionUiRequests.set(id, rebound);
-      destination.pendingExtensionUiOwners.set(id, process);
-      this.scheduleExpiry(destination, rebound);
-    }
-    source.pendingExtensionUiRequests.clear();
-    source.pendingExtensionUiOwners.clear();
   }
 
   clear(slot: RuntimeSlot, reason: ExtensionUiClearReason): void {

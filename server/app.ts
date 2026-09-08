@@ -8,13 +8,10 @@ import express, {
   type Response,
 } from "express";
 import multer from "multer";
-import { WebSocket, WebSocketServer } from "ws";
 import { ZodError, z } from "zod";
-import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
 import {
   type BootstrapResponse,
   type GitDiffSide,
-  isSessionRuntimeStatus,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
   MAX_COMPOSER_HISTORY_ENTRIES,
@@ -32,19 +29,6 @@ import {
   MAX_RESOURCE_PROBE_REFERENCES,
   RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
-import {
-  decodeTerminalInputFrame,
-  MAX_TERMINAL_COLS,
-  MAX_TERMINAL_HISTORY_DAYS,
-  MAX_TERMINAL_INPUT_BYTES,
-  MAX_TERMINAL_PROFILE_ID_CHARS,
-  MAX_TERMINAL_ROWS,
-  MAX_TERMINAL_TITLE_CHARS,
-  MIN_TERMINAL_COLS,
-  MIN_TERMINAL_HISTORY_DAYS,
-  MIN_TERMINAL_ROWS,
-  type TerminalClientControlMessage,
-} from "../shared/terminal-contracts.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { GitInspectionLike } from "./git-inspection.js";
@@ -62,10 +46,9 @@ import { requestError } from "./request-error.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
-import type {
-  TerminalAttachment,
-  TerminalService,
-} from "./terminal-service.js";
+import type { TerminalService } from "./terminal-service.js";
+import { createTerminalGateway } from "./terminal-gateway.js";
+import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
 import type {
   ToolPresentationConfigLike,
   ToolPresentationConfigurationState,
@@ -361,86 +344,11 @@ const gitDiffSchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/),
   side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
 });
-const terminalIdSchema = z
-  .string()
-  .min(1)
-  .max(80)
-  .regex(/^[A-Za-z0-9_-]+$/u);
-const terminalDimensionsSchema = {
-  cols: z.number().int().min(MIN_TERMINAL_COLS).max(MAX_TERMINAL_COLS),
-  rows: z.number().int().min(MIN_TERMINAL_ROWS).max(MAX_TERMINAL_ROWS),
-};
-const terminalListSchema = z.object({
-  cwd: z.string().min(1).max(4_096).optional(),
-});
-const terminalCreateSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    profileId: z.string().min(1).max(MAX_TERMINAL_PROFILE_ID_CHARS).optional(),
-    cols: terminalDimensionsSchema.cols.optional(),
-    rows: terminalDimensionsSchema.rows.optional(),
-  })
-  .strict();
-const terminalRenameSchema = z
-  .object({ title: z.string().max(MAX_TERMINAL_TITLE_CHARS).nullable() })
-  .strict();
-const terminalReorderSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    terminalIds: z.array(terminalIdSchema).max(32),
-  })
-  .strict();
-const terminalSettingsPatchSchema = z
-  .object({
-    persistOutput: z.boolean().optional(),
-    historyRetentionDays: z
-      .number()
-      .int()
-      .min(MIN_TERMINAL_HISTORY_DAYS)
-      .max(MAX_TERMINAL_HISTORY_DAYS)
-      .optional(),
-  })
-  .strict()
-  .refine((value) => Object.keys(value).length > 0);
-const terminalAttachSchema = z
-  .object({
-    type: z.literal("attach"),
-    ticket: z.string().uuid(),
-    clientId: z.string().min(1).max(128),
-    ...terminalDimensionsSchema,
-    outputEpoch: z.string().min(1).max(80).optional(),
-    nextOutputOffset: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(Number.MAX_SAFE_INTEGER)
-      .optional(),
-    resizeRevision: z.number().int().nonnegative().max(0xffffffff).optional(),
-    ownerToken: z.string().min(1).max(128).optional(),
-  })
-  .strict();
-const terminalControlSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("resize"), ...terminalDimensionsSchema }).strict(),
-  z
-    .object({ type: z.literal("take_control"), ...terminalDimensionsSchema })
-    .strict(),
-  z.object({ type: z.literal("release_control") }).strict(),
-  z.object({ type: z.literal("ping") }).strict(),
-]);
-
-export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
-export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
-const MAX_SOCKET_BUFFERED_BYTES = 16 * 1024 * 1024;
-const STREAM_EVENT_BATCH_INTERVAL_MS = 16;
 const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
 const MAX_PROMPT_OPERATION_RESULTS = 2_048;
 const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
 const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
-const TERMINAL_ATTACH_TICKET_TTL_MS = 15_000;
-const MAX_TERMINAL_ATTACH_TICKETS = 2_048;
-const MAX_TERMINAL_SOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
-const MAX_TERMINAL_SOCKETS = 128;
 const ACCESS_COOKIE = "inspire_access";
 const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
 
@@ -683,31 +591,8 @@ export function createInspireServer(deps: AppDependencies): {
 } {
   const app = express();
   const authorityId = randomUUID();
-  const terminalTickets = new Map<
-    string,
-    { terminalId: string; expiresAt: number }
-  >();
-  const pruneTerminalTickets = (now = Date.now()): void => {
-    for (const [ticket, entry] of terminalTickets) {
-      if (entry.expiresAt <= now) terminalTickets.delete(ticket);
-    }
-    while (terminalTickets.size >= MAX_TERMINAL_ATTACH_TICKETS) {
-      const oldest = terminalTickets.keys().next().value;
-      if (typeof oldest !== "string") break;
-      terminalTickets.delete(oldest);
-    }
-  };
-  const consumeTerminalTicket = (
-    ticket: string,
-  ): { terminalId: string } | null => {
-    const now = Date.now();
-    pruneTerminalTickets(now);
-    const entry = terminalTickets.get(ticket);
-    terminalTickets.delete(ticket);
-    return entry && entry.expiresAt > now
-      ? { terminalId: entry.terminalId }
-      : null;
-  };
+  const heartbeatIntervalMs =
+    deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS;
   const updateCoordinator =
     deps.updateCoordinator ??
     new UpdateCoordinator({
@@ -840,78 +725,11 @@ export function createInspireServer(deps: AppDependencies): {
     });
   });
 
-  const requireTerminal = (): TerminalService => {
-    if (!deps.terminal)
-      throw requestError("Terminal service is unavailable", 503, {
-        code: "terminal_unavailable",
-      });
-    return deps.terminal;
-  };
-  app.get("/api/terminals", async (request, response) => {
-    const { cwd } = terminalListSchema.parse(request.query);
-    response.json(await requireTerminal().list(cwd));
-  });
-  app.post("/api/terminals", async (request, response) => {
-    response
-      .status(201)
-      .json(
-        await requireTerminal().create(
-          terminalCreateSchema.parse(request.body),
-        ),
-      );
-  });
-  app.get("/api/terminal-settings", async (_request, response) => {
-    response.json(await requireTerminal().getSettings());
-  });
-  app.patch("/api/terminal-settings", async (request, response) => {
-    response.json(
-      await requireTerminal().updateSettings(
-        terminalSettingsPatchSchema.parse(request.body),
-      ),
-    );
-  });
-  app.delete("/api/terminal-history", async (_request, response) => {
-    await requireTerminal().clearHistory();
-    response.status(204).end();
-  });
-  app.patch("/api/terminals/:id", async (request, response) => {
-    response.json(
-      await requireTerminal().rename(
-        terminalIdSchema.parse(request.params.id),
-        terminalRenameSchema.parse(request.body),
-      ),
-    );
-  });
-  app.post("/api/terminals/reorder", async (request, response) => {
-    const { cwd, terminalIds } = terminalReorderSchema.parse(request.body);
-    response.json(await requireTerminal().reorder(cwd, terminalIds));
-  });
-  app.post("/api/terminals/:id/restart", async (request, response) => {
-    response.json(
-      await requireTerminal().restart(
-        terminalIdSchema.parse(request.params.id),
-      ),
-    );
-  });
-  app.delete("/api/terminals/:id", async (request, response) => {
-    const id = terminalIdSchema.parse(request.params.id);
-    const force = request.query.force === "1";
-    response.json(await requireTerminal().remove(id, force));
-  });
-  app.post("/api/terminals/:id/attach-ticket", async (request, response) => {
-    const terminal = requireTerminal();
-    const terminalId = terminalIdSchema.parse(request.params.id);
-    const catalog = await terminal.list();
-    if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
-      throw requestError("Terminal was not found", 404, {
-        code: "terminal_not_found",
-      });
-    pruneTerminalTickets();
-    const ticket = randomUUID();
-    const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
-    terminalTickets.set(ticket, { terminalId, expiresAt });
-    response.json({ ticket, expiresAt: new Date(expiresAt).toISOString() });
-  });
+  const terminalGateway = createTerminalGateway(
+    app,
+    deps.terminal,
+    heartbeatIntervalMs,
+  );
 
   app.get("/api/update", async (request, response) => {
     const updateStatus = await updateCoordinator.checkInspire(
@@ -1581,447 +1399,12 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.use(apiError);
   const server = createServer(app);
-  const websocket = new WebSocketServer({
-    noServer: true,
-    maxPayload: 2 * 1024 * 1024,
-    perMessageDeflate: {
-      clientNoContextTakeover: true,
-      serverNoContextTakeover: true,
-      concurrencyLimit: 4,
-      threshold: 1_024,
-    },
+  const runtimeEvents = createRuntimeEventSockets({
+    runtime: deps.runtime,
+    updateCoordinator,
+    authorityId,
+    heartbeatIntervalMs,
   });
-  const terminalWebsocket = new WebSocketServer({
-    noServer: true,
-    maxPayload: MAX_TERMINAL_INPUT_BYTES + 5,
-    perMessageDeflate: false,
-  });
-  const sockets = new Set<WebSocket>();
-  const terminalSockets = new Set<WebSocket>();
-  const terminalAttachments = new Map<WebSocket, TerminalAttachment>();
-  const responsiveTerminalSockets = new Map<WebSocket, boolean>();
-  /** Sockets still waiting for their snapshot; live events queue here so the
-   * first frame a client processes is always the authoritative snapshot,
-   * with the queued events flushed after it in arrival order. */
-  const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
-  const responsiveSockets = new Map<WebSocket, boolean>();
-  const requestedSnapshotDigests = new WeakMap<WebSocket, string | null>();
-  const detailInterests = new WeakMap<
-    WebSocket,
-    { sessionId: string | null; revision: number }
-  >();
-  const backgroundStatuses = new WeakMap<WebSocket, Map<string, string>>();
-  const wantsDetail = (socket: WebSocket, sessionId: string): boolean =>
-    detailInterests.get(socket)?.sessionId === sessionId;
-  interface EventDestinations {
-    joining: boolean;
-    established: boolean;
-    sessionId?: string;
-  }
-  interface PendingStreamBatch {
-    key: string;
-    events: unknown[];
-    latest: Record<string, unknown>;
-    approximateBytes: number;
-  }
-  let pendingStreamBatch: PendingStreamBatch | null = null;
-  let streamBatchTimer: ReturnType<typeof setTimeout> | null = null;
-  const forgetSocket = (socket: WebSocket): void => {
-    sockets.delete(socket);
-    joining.delete(socket);
-    responsiveSockets.delete(socket);
-  };
-  const closeLaggingSocket = (socket: WebSocket, reason: string) => {
-    joining.delete(socket);
-    if (socket.readyState !== WebSocket.OPEN) return;
-    try {
-      socket.close(1013, reason);
-    } catch {
-      forgetSocket(socket);
-      socket.terminate();
-    }
-  };
-  const sendBounded = (socket: WebSocket, message: string): boolean => {
-    if (socket.readyState !== WebSocket.OPEN) return false;
-    if (
-      socket.bufferedAmount + Buffer.byteLength(message) >
-      MAX_SOCKET_BUFFERED_BYTES
-    ) {
-      closeLaggingSocket(socket, "Client fell behind");
-      return false;
-    }
-    try {
-      socket.send(message);
-      return true;
-    } catch {
-      forgetSocket(socket);
-      socket.terminate();
-      return false;
-    }
-  };
-  const sendTerminalBounded = (
-    socket: WebSocket,
-    message: string | Uint8Array,
-  ): boolean => {
-    if (socket.readyState !== WebSocket.OPEN) return false;
-    const bytes =
-      typeof message === "string"
-        ? Buffer.byteLength(message)
-        : message.byteLength;
-    if (socket.bufferedAmount + bytes > MAX_TERMINAL_SOCKET_BUFFERED_BYTES) {
-      socket.close(1013, "Terminal client fell behind");
-      return false;
-    }
-    try {
-      socket.send(message, { binary: typeof message !== "string" });
-      return true;
-    } catch {
-      socket.terminate();
-      return false;
-    }
-  };
-  const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
-  const heartbeatInterval = setInterval(() => {
-    for (const socket of sockets) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!responsiveSockets.get(socket)) {
-        joining.delete(socket);
-        socket.terminate();
-        continue;
-      }
-      responsiveSockets.set(socket, false);
-      try {
-        socket.ping();
-      } catch {
-        joining.delete(socket);
-        socket.terminate();
-        continue;
-      }
-      // Never overtake the authoritative first snapshot. Once joined, this
-      // application frame also gives browser clients an observable watchdog.
-      if (!joining.has(socket)) sendBounded(socket, heartbeatMessage);
-    }
-    for (const socket of terminalSockets) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!responsiveTerminalSockets.get(socket)) {
-        socket.terminate();
-        continue;
-      }
-      responsiveTerminalSockets.set(socket, false);
-      try {
-        socket.ping();
-      } catch {
-        socket.terminate();
-        continue;
-      }
-      if (terminalAttachments.has(socket))
-        sendTerminalBounded(socket, heartbeatMessage);
-    }
-  }, deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS);
-  heartbeatInterval.unref();
-
-  const broadcastEncoded = (
-    message: string,
-    messageBytes: number,
-    destinations: EventDestinations,
-  ): void => {
-    for (const socket of sockets) {
-      if (
-        destinations.sessionId &&
-        !wantsDetail(socket, destinations.sessionId)
-      )
-        continue;
-      const queue = joining.get(socket);
-      if (queue) {
-        if (!destinations.joining) continue;
-        if (queue.bytes + messageBytes > MAX_JOINING_EVENT_BYTES) {
-          closeLaggingSocket(socket, "Snapshot backlog exceeded");
-        } else {
-          queue.messages.push(message);
-          queue.bytes += messageBytes;
-        }
-      } else if (destinations.established) {
-        sendBounded(socket, message);
-      }
-    }
-  };
-  const serializeRuntimeEvent = (
-    event: unknown,
-  ): { message: string; bytes: number } | null => {
-    try {
-      const message = JSON.stringify(event);
-      if (message === undefined) return null;
-      return { message, bytes: Buffer.byteLength(message) };
-    } catch {
-      return null;
-    }
-  };
-  const closeProjectionDestinations = (
-    reason: string,
-    destinations: EventDestinations,
-  ): void => {
-    for (const socket of sockets) {
-      if (
-        destinations.sessionId &&
-        !wantsDetail(socket, destinations.sessionId)
-      )
-        continue;
-      const isJoining = joining.has(socket);
-      if (
-        (isJoining && destinations.joining) ||
-        (!isJoining && destinations.established)
-      )
-        closeLaggingSocket(socket, reason);
-    }
-  };
-  const flushStreamBatch = (): void => {
-    if (streamBatchTimer) clearTimeout(streamBatchTimer);
-    streamBatchTimer = null;
-    const pending = pendingStreamBatch;
-    pendingStreamBatch = null;
-    if (!pending) return;
-    const batch: Record<string, unknown> = { ...pending.latest };
-    delete batch.message;
-    delete batch.assistantMessageEvent;
-    delete batch.streamDelta;
-    batch.type = "message_update_batch";
-    batch.assistantMessageEvents = pending.events;
-    const destinations = {
-      joining: false,
-      established: true,
-      sessionId: String(batch.sessionId),
-    };
-    const encoded = serializeRuntimeEvent(batch);
-    if (!encoded) {
-      closeProjectionDestinations(
-        "Runtime event was not serializable",
-        destinations,
-      );
-      return;
-    }
-    if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-      closeProjectionDestinations(
-        "Runtime event exceeded projection budget",
-        destinations,
-      );
-      return;
-    }
-    broadcastEncoded(encoded.message, encoded.bytes, destinations);
-  };
-  const scheduleStreamBatch = (): void => {
-    if (streamBatchTimer) return;
-    streamBatchTimer = setTimeout(
-      flushStreamBatch,
-      STREAM_EVENT_BATCH_INTERVAL_MS,
-    );
-    streamBatchTimer.unref();
-  };
-  // Preserve global operation ownership and outcomes, never their bodies.
-  const globalLifecycle = new Set([
-    "agent_start",
-    "auto_retry_start",
-    "compaction_start",
-    "compaction_end",
-    "agent_settled",
-    "runtime_error",
-    "runtime_ready",
-  ]);
-  const compactStatus = (
-    record: Record<string, unknown>,
-    sessionId: string,
-  ): string | null => {
-    const sourceStatus = record.sessionStatus;
-    const status = isSessionRuntimeStatus(sourceStatus)
-      ? {
-          runState: sourceStatus.runState,
-          ...(sourceStatus.indicator
-            ? { indicator: sourceStatus.indicator }
-            : {}),
-          ...(sourceStatus.needsInput !== undefined
-            ? { needsInput: sourceStatus.needsInput }
-            : {}),
-        }
-      : undefined;
-    const lifecycle = globalLifecycle.has(String(record.type));
-    if (!status && !lifecycle) return null;
-    return JSON.stringify({
-      type: lifecycle ? record.type : "session_status",
-      sessionId,
-      ...(status ? { sessionStatus: status } : {}),
-      ...(record.type === "compaction_start"
-        ? { reason: record.reason === "manual" ? "manual" : "auto" }
-        : {}),
-      ...(record.type === "compaction_end"
-        ? {
-            result: record.result == null ? null : {},
-            aborted: record.aborted === true,
-            ...(typeof record.errorMessage === "string" &&
-            record.errorMessage.trim()
-              ? { errorMessage: "Compaction failed" }
-              : {}),
-          }
-        : {}),
-    });
-  };
-  const publishBackgroundStatus = (
-    record: Record<string, unknown>,
-    sessionId: string,
-  ): void => {
-    const compact = compactStatus(record, sessionId);
-    if (!compact) return;
-    const lifecycle = globalLifecycle.has(String(record.type));
-    const statusKey = isSessionRuntimeStatus(record.sessionStatus)
-      ? JSON.stringify(record.sessionStatus)
-      : undefined;
-    for (const socket of sockets) {
-      if (wantsDetail(socket, sessionId)) continue;
-      const statuses =
-        backgroundStatuses.get(socket) ?? new Map<string, string>();
-      backgroundStatuses.set(socket, statuses);
-      if (
-        !lifecycle &&
-        (statusKey === undefined || statuses.get(sessionId) === statusKey)
-      )
-        continue;
-      if (statusKey !== undefined) statuses.set(sessionId, statusKey);
-      const queue = joining.get(socket);
-      if (queue) {
-        const bytes = Buffer.byteLength(compact);
-        if (queue.bytes + bytes > MAX_JOINING_EVENT_BYTES)
-          closeLaggingSocket(socket, "Snapshot backlog exceeded");
-        else {
-          queue.messages.push(compact);
-          queue.bytes += bytes;
-        }
-      } else sendBounded(socket, compact);
-    }
-  };
-  const publishRuntimeEvent = (event: unknown): void => {
-    const record =
-      event && typeof event === "object" && !Array.isArray(event)
-        ? (event as Record<string, unknown>)
-        : null;
-    const sessionId =
-      typeof record?.sessionId === "string" ? record.sessionId : undefined;
-    const destinations = { joining: true, established: true, sessionId };
-    if (sessionId && record) {
-      publishBackgroundStatus(record, sessionId);
-      // Do not even serialize a session body nobody subscribed to.
-      if (![...sockets].some((socket) => wantsDetail(socket, sessionId)))
-        return;
-    }
-    const streamDelta =
-      record?.type === "message_update" &&
-      record.streamDelta === true &&
-      typeof record.sessionId === "string" &&
-      typeof record.streamMessageKey === "string" &&
-      record.assistantMessageEvent !== undefined;
-    if (!streamDelta || !record) {
-      const encoded = serializeRuntimeEvent(event);
-      if (!encoded) {
-        // A transport projection failure must not throw back through the
-        // runtime operation that emitted it. Re-bootstrap every client.
-        closeProjectionDestinations(
-          "Runtime event was not serializable",
-          destinations,
-        );
-        return;
-      }
-      if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-        // The next bootstrap snapshot is the recovery authority. Never enqueue
-        // one exceptional object into every browser socket.
-        closeProjectionDestinations(
-          "Runtime event exceeded projection budget",
-          destinations,
-        );
-        return;
-      }
-      flushStreamBatch();
-      broadcastEncoded(encoded.message, encoded.bytes, destinations);
-      return;
-    }
-
-    if (sockets.size === 0) return;
-
-    // Joining sockets need complete, overlap-safe replacements. Avoid the
-    // cumulative-message stringify entirely when every socket is established;
-    // otherwise that hidden O(response length × fragments) cost survives even
-    // after wire deltas have removed the redundant network bytes.
-    if (
-      [...joining.keys()].some((socket) =>
-        wantsDetail(socket, String(sessionId)),
-      )
-    ) {
-      const complete = serializeRuntimeEvent(event);
-      if (!complete) {
-        closeProjectionDestinations("Runtime event was not serializable", {
-          joining: true,
-          established: false,
-          sessionId,
-        });
-      } else if (complete.bytes > MAX_RUNTIME_EVENT_BYTES) {
-        closeProjectionDestinations(
-          "Runtime event exceeded projection budget",
-          {
-            joining: true,
-            established: false,
-            sessionId,
-          },
-        );
-      } else {
-        broadcastEncoded(complete.message, complete.bytes, {
-          joining: true,
-          established: false,
-          sessionId,
-        });
-      }
-    }
-    const hasEstablishedSocket = [...sockets].some(
-      (socket) =>
-        !joining.has(socket) &&
-        socket.readyState === WebSocket.OPEN &&
-        wantsDetail(socket, String(sessionId)),
-    );
-    if (!hasEstablishedSocket) return;
-
-    const compact = { ...record };
-    delete compact.message;
-    delete compact.streamDelta;
-    const compactEncoded = serializeRuntimeEvent(compact);
-    if (!compactEncoded) {
-      closeProjectionDestinations("Runtime event was not serializable", {
-        joining: false,
-        established: true,
-        sessionId,
-      });
-      return;
-    }
-    const key = `${record.sessionId}\0${record.streamMessageKey}`;
-    if (
-      pendingStreamBatch &&
-      (pendingStreamBatch.key !== key ||
-        pendingStreamBatch.events.length >= MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
-        pendingStreamBatch.approximateBytes + compactEncoded.bytes >
-          MAX_RUNTIME_EVENT_BYTES)
-    )
-      flushStreamBatch();
-    if (!pendingStreamBatch) {
-      pendingStreamBatch = {
-        key,
-        events: [],
-        latest: compact,
-        approximateBytes: 0,
-      };
-    }
-    pendingStreamBatch.events.push(record.assistantMessageEvent);
-    pendingStreamBatch.latest = compact;
-    pendingStreamBatch.approximateBytes += compactEncoded.bytes;
-    scheduleStreamBatch();
-  };
-  const unsubscribeUpdateStatus = updateCoordinator.subscribe((status) =>
-    publishRuntimeEvent({ type: "update_status", updateStatus: status }),
-  );
-  deps.runtime.on("event", publishRuntimeEvent);
 
   server.on("upgrade", (request, socket, head) => {
     let url: URL;
@@ -2059,287 +1442,15 @@ export function createInspireServer(deps: AppDependencies): {
       request.headers.origin !== undefined &&
       originIsAllowed
     ) {
-      if (terminalSockets.size >= MAX_TERMINAL_SOCKETS) {
-        socket.write(
-          "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n",
-        );
-        socket.destroy();
-        return;
-      }
-      terminalWebsocket.handleUpgrade(request, socket, head, (client) => {
-        terminalWebsocket.emit("connection", client, request);
-      });
+      terminalGateway.upgrade(request, socket, head);
       return;
     }
     if (url.pathname === "/events" && eventsAuthenticated && originIsAllowed) {
-      const detail = url.searchParams.get("detail");
-      if (
-        detail !== null &&
-        detail !== "" &&
-        !sessionIdField.safeParse(detail).success
-      ) {
-        socket.destroy();
-        return;
-      }
-      websocket.handleUpgrade(request, socket, head, (client) => {
-        detailInterests.set(client, { sessionId: detail || null, revision: 0 });
-        const requestedDigest = url.searchParams.get("snapshot");
-        requestedSnapshotDigests.set(
-          client,
-          requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
-            ? requestedDigest
-            : null,
-        );
-        websocket.emit("connection", client, request);
-      });
+      runtimeEvents.upgrade(request, socket, head, url);
       return;
     }
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
-  });
-
-  terminalWebsocket.on("connection", (socket) => {
-    terminalSockets.add(socket);
-    responsiveTerminalSockets.set(socket, true);
-    let attachment: TerminalAttachment | null = null;
-    let attaching = false;
-    let closed = false;
-    const attachTimeout = setTimeout(() => {
-      if (!attachment && socket.readyState === WebSocket.OPEN)
-        socket.close(1008, "Terminal attach timed out");
-    }, TERMINAL_ATTACH_TICKET_TTL_MS);
-    attachTimeout.unref();
-    const close = (): void => {
-      if (closed) return;
-      closed = true;
-      clearTimeout(attachTimeout);
-      terminalSockets.delete(socket);
-      responsiveTerminalSockets.delete(socket);
-      terminalAttachments.delete(socket);
-      attachment?.detach();
-      attachment = null;
-    };
-    const sendError = (code: string, message: string, fatal: boolean): void => {
-      sendTerminalBounded(
-        socket,
-        JSON.stringify({ type: "error", code, message, fatal }),
-      );
-    };
-    const sink = {
-      sendControl(message: unknown): void {
-        if (!sendTerminalBounded(socket, JSON.stringify(message)))
-          throw new Error("Terminal socket is not writable");
-      },
-      sendData(frame: Uint8Array): void {
-        if (!sendTerminalBounded(socket, frame))
-          throw new Error("Terminal socket is not writable");
-      },
-      close(code: number, reason: string): void {
-        if (socket.readyState === WebSocket.OPEN) socket.close(code, reason);
-      },
-    };
-    socket.on("pong", () => responsiveTerminalSockets.set(socket, true));
-    socket.on("error", () => {
-      close();
-      socket.terminate();
-    });
-    socket.on("close", close);
-    socket.on("message", (raw, isBinary) => {
-      if (closed) return;
-      if (!attachment) {
-        if (attaching || isBinary) {
-          sendError(
-            "terminal_attach_required",
-            "Attach before using the terminal",
-            true,
-          );
-          socket.close(1008, "Terminal attach required");
-          return;
-        }
-        let request: z.infer<typeof terminalAttachSchema>;
-        try {
-          request = terminalAttachSchema.parse(
-            JSON.parse(Buffer.from(raw as ArrayBuffer).toString("utf8")),
-          );
-        } catch {
-          sendError(
-            "invalid_terminal_attach",
-            "Terminal attach is invalid",
-            true,
-          );
-          socket.close(1008, "Invalid terminal attach");
-          return;
-        }
-        const ticket = consumeTerminalTicket(request.ticket);
-        if (!ticket) {
-          sendError(
-            "terminal_ticket_invalid",
-            "Terminal attach ticket is invalid or expired",
-            true,
-          );
-          socket.close(1008, "Invalid terminal ticket");
-          return;
-        }
-        attaching = true;
-        clearTimeout(attachTimeout);
-        const { ticket: _ticket, type: _type, ...options } = request;
-        void deps.terminal
-          ?.attach({ ...options, terminalId: ticket.terminalId }, sink)
-          .then((handle) => {
-            attaching = false;
-            if (closed) handle.detach();
-            else {
-              attachment = handle;
-              terminalAttachments.set(socket, handle);
-            }
-          })
-          .catch((error: unknown) => {
-            attaching = false;
-            const code =
-              typeof (error as { code?: unknown })?.code === "string"
-                ? String((error as { code: string }).code)
-                : "terminal_attach_failed";
-            const message =
-              error instanceof Error ? error.message : "Terminal attach failed";
-            sendError(code, message, true);
-            if (socket.readyState === WebSocket.OPEN)
-              socket.close(1011, "Terminal attach failed");
-          });
-        return;
-      }
-      try {
-        if (isBinary) {
-          const frame = decodeTerminalInputFrame(
-            Buffer.from(raw as ArrayBuffer),
-          );
-          attachment.writeInput(frame.sequence, frame.data);
-        } else {
-          const message = terminalControlSchema.parse(
-            JSON.parse(Buffer.from(raw as ArrayBuffer).toString("utf8")),
-          ) as Exclude<TerminalClientControlMessage, { type: "attach" }>;
-          attachment.control(message);
-        }
-      } catch (error) {
-        sendError(
-          "invalid_terminal_message",
-          error instanceof Error
-            ? error.message
-            : "Terminal message is invalid",
-          true,
-        );
-        socket.close(1008, "Invalid terminal message");
-      }
-    });
-  });
-
-  websocket.on("connection", (socket) => {
-    // A stream batch belongs only to the sockets that were established when
-    // its first delta arrived. Flush before admitting a new snapshot reader.
-    flushStreamBatch();
-    sockets.add(socket);
-    responsiveSockets.set(socket, true);
-    socket.on("pong", () => responsiveSockets.set(socket, true));
-    socket.on("error", () => {
-      forgetSocket(socket);
-      socket.terminate();
-    });
-    socket.on("close", () => forgetSocket(socket));
-    const synchronize = (): void => {
-      flushStreamBatch();
-      const previous = joining.get(socket);
-      const queue = {
-        messages: previous?.messages ?? [],
-        bytes: previous?.bytes ?? 0,
-      };
-      joining.set(socket, queue);
-      const interest = detailInterests.get(socket);
-      void Promise.all([
-        deps.runtime.snapshot(interest?.sessionId),
-        updateCoordinator.status(),
-      ]).then(
-        ([snapshot, updateStatus]) => {
-          const queued = joining.get(socket);
-          if (queued !== queue) return;
-          // Pending batches exclude this joining socket, which already queued
-          // their complete projections. Flush before it becomes established.
-          flushStreamBatch();
-          joining.delete(socket);
-          if (!queued || socket.readyState !== WebSocket.OPEN) return;
-          let message: string;
-          try {
-            const encodedSnapshot = JSON.stringify(snapshot);
-            const snapshotDigest = createHash("sha256")
-              .update(encodedSnapshot)
-              .digest("hex");
-            const unchanged =
-              requestedSnapshotDigests.get(socket) === snapshotDigest;
-            message = JSON.stringify({
-              type: "snapshot",
-              authorityId,
-              snapshotDigest,
-              updateStatus,
-              ...(interest
-                ? {
-                    detailSessionId: interest.sessionId,
-                    detailRevision: interest.revision,
-                  }
-                : {}),
-              ...(unchanged ? { unchanged: true } : { data: snapshot }),
-            });
-          } catch {
-            socket.close(1011, "Session state was not serializable");
-            return;
-          }
-          if (!sendBounded(socket, message)) return;
-          for (const message of queued.messages) {
-            // A superseded read may have queued detail for the previous owner.
-            // Retain its global lifecycle evidence, never replay its body.
-            const record = JSON.parse(message) as Record<string, unknown>;
-            const id =
-              typeof record.sessionId === "string" ? record.sessionId : null;
-            const projected =
-              id && !wantsDetail(socket, id)
-                ? compactStatus(record, id)
-                : message;
-            if (projected && !sendBounded(socket, projected)) break;
-          }
-        },
-        () => {
-          if (joining.get(socket) !== queue) return;
-          joining.delete(socket);
-          socket.close(1011, "Unable to load session state");
-        },
-      );
-    };
-    socket.on("message", (data, binary) => {
-      try {
-        if (
-          binary ||
-          Buffer.byteLength(data.toString()) > MAX_SESSION_ID_CHARS * 6 + 256
-        )
-          throw new Error("Invalid interest");
-        const interest = z
-          .object({
-            type: z.literal("detail_interest"),
-            sessionId: sessionIdField.nullable(),
-            revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-          })
-          .strict()
-          .parse(JSON.parse(data.toString()));
-        if (interest.revision <= (detailInterests.get(socket)?.revision ?? 0))
-          throw new Error("Stale interest");
-        // Flush under the OLD audience, then begin the NEW snapshot queue
-        // synchronously, before any asynchronous runtime read can yield.
-        flushStreamBatch();
-        detailInterests.set(socket, interest);
-        backgroundStatuses.delete(socket);
-        requestedSnapshotDigests.set(socket, null);
-        synchronize();
-      } catch {
-        socket.close(1008, "Invalid detail interest");
-      }
-    });
-    synchronize();
   });
 
   return {
@@ -2347,13 +1458,6 @@ export function createInspireServer(deps: AppDependencies): {
     server,
     authorityId,
     close: async () => {
-      clearInterval(heartbeatInterval);
-      if (streamBatchTimer) clearTimeout(streamBatchTimer);
-      streamBatchTimer = null;
-      pendingStreamBatch = null;
-      terminalTickets.clear();
-      deps.runtime.off("event", publishRuntimeEvent);
-      unsubscribeUpdateStatus();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening
@@ -2361,9 +1465,8 @@ export function createInspireServer(deps: AppDependencies): {
             server.close((error) => (error ? reject(error) : resolveClose()));
           })
         : Promise.resolve();
-      for (const socket of sockets) socket.close(1001, "Server shutting down");
-      for (const socket of terminalSockets)
-        socket.close(1001, "Server shutting down");
+      runtimeEvents.close();
+      terminalGateway.close();
       const runtimeResult = await deps.runtime.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),

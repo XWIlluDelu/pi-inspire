@@ -118,7 +118,7 @@ interface ManagedAttachment {
   detached: boolean;
 }
 
-interface ManagedTerminal {
+interface TerminalSessionMetadata {
   id: string;
   projectCwd: string;
   profile: ResolvedTerminalProfile;
@@ -127,17 +127,20 @@ interface ManagedTerminal {
   automaticTitle: string;
   currentCwd: string;
   currentCommand: string;
+  cols: number;
+  rows: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ManagedTerminal extends TerminalSessionMetadata {
   activeCommand: string;
   commandStartedAt: number | null;
   status: "running" | "exited";
   exitCode: number | null;
   signal: number | null;
-  cols: number;
-  rows: number;
   resizeRevision: number;
   outputEpoch: string;
-  createdAt: string;
-  updatedAt: string;
   ring: TerminalRingBuffer;
   emulator: HeadlessTerminal;
   serializer: SerializeAddon;
@@ -1063,16 +1066,8 @@ export class TerminalSessionManager implements TerminalService {
     return profile;
   }
 
-  private spawnSession(metadata: {
-    id: string;
-    projectCwd: string;
-    profile: ResolvedTerminalProfile;
-    cols: number;
-    rows: number;
-    createdAt: string;
-    titleSource: "automatic" | "user";
-    customTitle: string;
-  }): ManagedTerminal {
+  /** Live and restored tabs share one emulator and advisory-event setup. */
+  private createSession(metadata: TerminalSessionMetadata): ManagedTerminal {
     const emulator = new HeadlessTerminalConstructor({
       allowProposedApi: true,
       cols: metadata.cols,
@@ -1083,100 +1078,8 @@ export class TerminalSessionManager implements TerminalService {
     });
     const serializer = new SerializeAddonConstructor();
     emulator.loadAddon(serializer as never);
-    let resolveExit = () => {};
-    const exitPromise = new Promise<void>((resolvePromise) => {
-      resolveExit = resolvePromise;
-    });
-    const launch = integratedTerminalLaunch(
-      metadata.profile,
-      this.shellIntegrationDirectory,
-      environmentForPty(this.env, metadata.id),
-    );
-    const launchArgs =
-      process.platform === "win32" &&
-      basename(metadata.profile.shell).toLowerCase() === "wsl.exe"
-        ? [...launch.args, "--cd", metadata.projectCwd]
-        : launch.args;
-    const pty = this.ptyFactory(metadata.profile.shell, launchArgs, {
-      cols: metadata.cols,
-      rows: metadata.rows,
-      cwd: metadata.projectCwd,
-      env: environmentForPty(launch.env, metadata.id),
-    });
-    const now = this.now().toISOString();
     const session: ManagedTerminal = {
       ...metadata,
-      automaticTitle: metadata.profile.label,
-      currentCwd: metadata.projectCwd,
-      currentCommand: basename(metadata.profile.shell),
-      activeCommand: "",
-      commandStartedAt: null,
-      status: "running",
-      exitCode: null,
-      signal: null,
-      resizeRevision: 0,
-      outputEpoch: this.uuid(),
-      updatedAt: now,
-      ring: new TerminalRingBuffer(this.ringBytes),
-      emulator,
-      serializer,
-      emulatorTail: Promise.resolve(),
-      emulatorPendingBytes: 0,
-      ptyPausedForEmulator: false,
-      pty,
-      ptyDisposables: [],
-      emulatorDisposables: [],
-      attachments: new Map(),
-      owner: null,
-      exitPromise,
-      resolveExit,
-    };
-    session.emulatorDisposables.push(
-      emulator.onTitleChange((title) => this.handleTitle(session, title)),
-      emulator.parser.registerOscHandler(7, (value) => {
-        this.handleWorkingDirectory(session, value);
-        return false;
-      }),
-      emulator.parser.registerOscHandler(INSPIRE_SHELL_OSC, (value) => {
-        this.handleShellMarker(session, value);
-        return true;
-      }),
-    );
-    session.ptyDisposables.push(
-      pty.onData((data) => this.handleOutput(session, asOutputBytes(data))),
-      pty.onExit((event) => this.handleExit(session, event)),
-    );
-    return session;
-  }
-
-  private restoreSession(metadata: {
-    id: string;
-    projectCwd: string;
-    profile: ResolvedTerminalProfile;
-    cols: number;
-    rows: number;
-    createdAt: string;
-    updatedAt: string;
-    titleSource: "automatic" | "user";
-    customTitle: string;
-    automaticTitle: string;
-    currentCwd: string;
-    currentCommand: string;
-    persistedOutput: Buffer | null;
-  }): ManagedTerminal {
-    const emulator = new HeadlessTerminalConstructor({
-      allowProposedApi: true,
-      cols: metadata.cols,
-      rows: metadata.rows,
-      scrollback: this.scrollbackRows,
-      windowsPty:
-        process.platform === "win32" ? { backend: "conpty" } : undefined,
-    });
-    const serializer = new SerializeAddonConstructor();
-    emulator.loadAddon(serializer as never);
-    const { persistedOutput, ...restoredMetadata } = metadata;
-    const session: ManagedTerminal = {
-      ...restoredMetadata,
       activeCommand: "",
       commandStartedAt: null,
       status: "exited",
@@ -1209,6 +1112,61 @@ export class TerminalSessionManager implements TerminalService {
         return true;
       }),
     );
+    return session;
+  }
+
+  private spawnSession(
+    metadata: Omit<
+      TerminalSessionMetadata,
+      "updatedAt" | "automaticTitle" | "currentCwd" | "currentCommand"
+    >,
+  ): ManagedTerminal {
+    const launch = integratedTerminalLaunch(
+      metadata.profile,
+      this.shellIntegrationDirectory,
+      environmentForPty(this.env, metadata.id),
+    );
+    const launchArgs =
+      process.platform === "win32" &&
+      basename(metadata.profile.shell).toLowerCase() === "wsl.exe"
+        ? [...launch.args, "--cd", metadata.projectCwd]
+        : launch.args;
+    const session = this.createSession({
+      ...metadata,
+      automaticTitle: metadata.profile.label,
+      currentCwd: metadata.projectCwd,
+      currentCommand: basename(metadata.profile.shell),
+      updatedAt: this.now().toISOString(),
+    });
+    let pty: TerminalPty;
+    try {
+      pty = this.ptyFactory(metadata.profile.shell, launchArgs, {
+        cols: metadata.cols,
+        rows: metadata.rows,
+        cwd: metadata.projectCwd,
+        env: environmentForPty(launch.env, metadata.id),
+      });
+    } catch (error) {
+      this.disposeRuntime(session);
+      throw error;
+    }
+    session.pty = pty;
+    session.status = "running";
+    session.exitPromise = new Promise<void>((resolveExit) => {
+      session.resolveExit = resolveExit;
+    });
+    session.ptyDisposables.push(
+      pty.onData((data) => this.handleOutput(session, asOutputBytes(data))),
+      pty.onExit((event) => this.handleExit(session, event)),
+    );
+    return session;
+  }
+
+  private restoreSession(
+    metadata: TerminalSessionMetadata & { persistedOutput: Buffer | null },
+  ): ManagedTerminal {
+    const { persistedOutput, ...restoredMetadata } = metadata;
+    const session = this.createSession(restoredMetadata);
     if (persistedOutput?.byteLength) {
       session.ring.append(persistedOutput);
       this.queueEmulatorWrite(session, persistedOutput);

@@ -75,12 +75,6 @@ export class TerminalRingBuffer {
     return result;
   }
 
-  clear(): void {
-    this.chunks.length = 0;
-    this.retainedBytes = 0;
-    this.endOffset = 0;
-  }
-
   discardRetained(): void {
     this.chunks.length = 0;
     this.retainedBytes = 0;

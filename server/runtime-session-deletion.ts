@@ -189,12 +189,10 @@ export class RuntimeSessionDeletionController {
         409,
       );
     }
-    // The initial forced catalog read established one unambiguous id/path.
-    // The destructive adapter now reopens that exact path and verifies its
-    // current regular-file identity and embedded session id immediately
-    // before passing the original JSONL name to Pi's Trash-first operation.
-    // A second global scan cannot strengthen that path-local authority and
-    // made browser deletion pay for the full project catalog twice.
+    // The catalog lookup established one unambiguous id/path. The destructive
+    // adapter revalidates that exact file before moving it to a private
+    // quarantine for desktop Trash. Another global scan would not strengthen
+    // this path-local authority.
     try {
       const disposition = await this.host.deleteSessionRecord(initial);
       return { sessionId, disposition };

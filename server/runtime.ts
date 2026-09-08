@@ -13,7 +13,6 @@ import {
 } from "../shared/branch-bridge-protocol.js";
 import {
   parseCommandInvocation,
-  parseCompactCommand,
   parseNativeCommand,
 } from "../shared/commands.js";
 import {
@@ -67,7 +66,6 @@ import {
 } from "./runtime-composer-artifacts.js";
 import { RuntimeEventController } from "./runtime-events.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
-import { RuntimePendingController } from "./runtime-pending-controller.js";
 import {
   compactionMatcher,
   deferredExpectation,
@@ -216,8 +214,8 @@ export type MaintenanceRestartDecision =
   | { kind: "busy"; reason: MaintenanceRestartBusyReason };
 
 export interface RuntimeLike {
-  /** Id of the currently visible session; session-bound routes compare
-   * against this so stale handles cannot outlive a selection change. */
+  /** Host default selection. Addressed operations and browser detail interests
+   * retain their own session/view ownership independently of this value. */
   readonly activeSessionId: string | null;
   on(event: "event", listener: (event: unknown) => void): this;
   off(event: "event", listener: (event: unknown) => void): this;
@@ -331,7 +329,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly extensionUi: RuntimeExtensionUiController;
   private readonly events: RuntimeEventController;
   private readonly reads: RuntimeReadController;
-  private readonly pending: RuntimePendingController;
   private readonly deletions: RuntimeSessionDeletionController;
   private readonly projectionCoordinator: RuntimeProjectionCoordinator;
   private readonly startupAttestor: RuntimeStartupAttestor;
@@ -364,10 +361,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     ) => Promise<SessionProjectionView> = SessionProjection.open,
     private readonly deleteSessionRecord: DeleteSessionRecord = deleteSessionFile,
     private readonly diagnostics: DiagnosticLogger = nullDiagnosticLogger(),
-    private readonly validateSessionRecord: ValidateSessionRecord = deleteSessionRecord ===
-    deleteSessionFile
-      ? validateSessionFile
-      : async () => undefined,
+    private readonly validateSessionRecord: ValidateSessionRecord = validateSessionFile,
     private readonly stageFork: StageSessionFork = stageSessionFork,
   ) {
     super();
@@ -462,14 +456,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       effectiveLeaf: (slot) => this.effectiveLeaf(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
-    });
-    this.pending = new RuntimePendingController({
-      withMaintenance: (operation) => this.withMaintenanceOperation(operation),
-      requireSlot: (sessionId) => this.requireSlot(sessionId),
-      mutateSlot: (slot, operation) => this.mutateSlot(slot, operation),
-      ensureWriter: async (slot) =>
-        (await this.ensureFreshWriterInsideGate(slot)).process,
-      failUnknown: (slot, error) => this.failUnknownRpcOutcome(slot, error),
     });
     this.processRegistry = new RuntimeProcessRegistry({
       recordProcessAttachment: (slot, rpc) => {
@@ -1877,6 +1863,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         409,
       );
     }
+    // The first-message Composer uses the prompt boundary after creating its
+    // session. Compact still shares the standalone command's writer lifecycle;
+    // command admission above has already rejected attached artifacts.
+    if (native?.name === "compact") {
+      return this.mutateSlot(slot, async () => {
+        await this.compactSlot(slot, native.argument || undefined);
+        return null;
+      });
+    }
     // Lease uploads and begin the first project-file authorization before the
     // persistence FIFO. A worker startup already occupying that FIFO must not
     // leave staged files withdrawable or postpone selection until delivery.
@@ -1914,18 +1909,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       return await this.mutateSlot(slot, async () => {
         enteredGate = true;
         const message = entered;
-        // Keep the legacy typed /compact boundary for older clients. Current
-        // browser clients use the typed native-command route above.
-        const compact = parseCompactCommand(message);
-        if (
-          compact &&
-          !request.attachmentIds?.length &&
-          !request.historyArtifacts &&
-          !request.projectFiles?.length
-        ) {
-          await this.compactSlot(slot, compact.instructions);
-          return null;
-        }
         let accepted = false;
         let acceptedHistoryEntry: ComposerHistoryEntry | null = null;
         try {
@@ -2733,7 +2716,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   clearPending(sessionId: string): Promise<void> {
-    return this.pending.clear(sessionId);
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      await this.mutateSlot(slot, async () => {
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        // Consumption may race this request. queue_update, not the receipt,
+        // owns the display; discard Pi's potentially large returned texts.
+        await this.requestPersistence(slot, ready.process, {
+          type: "clear_queue",
+        });
+      });
+    });
   }
 
   async nativeCommand(
