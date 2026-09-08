@@ -19,6 +19,8 @@
 
 ## Implemented capability
 
+Compaction and retry presentation now follow authoritative session state independently of commands or observed start events; retry details restore from Host snapshots, and update requests no longer overwrite Host checking state. [[state-ownership]] records four repairs, other inspected boundaries, and verification limits.
+
 PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark. [[workbench-implementation]] records the checks and browser/OS update limits.
 
 Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. [[workbench-implementation]] records limits, linear-path traffic measurements, and the final Pi 0.85.1 / Node 22 / Chromium verification.

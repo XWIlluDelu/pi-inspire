@@ -24,6 +24,8 @@ interface State {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
+  inspireUpdateRequestPending: boolean;
+  piUpdateRequestPending: boolean;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
@@ -95,6 +97,8 @@ function harness() {
     piUpdateCheck: null,
     inspireUpdateChecking: false,
     piUpdateChecking: false,
+    inspireUpdateRequestPending: false,
+    piUpdateRequestPending: false,
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
@@ -159,8 +163,11 @@ describe("update status controller", () => {
     test.bootstrap(updateStatus(0));
 
     test.controller.refreshPi();
-    expect(test.state().piUpdateChecking).toBe(true);
-    await vi.waitFor(() => expect(test.state().piUpdateChecking).toBe(false));
+    expect(test.state().piUpdateRequestPending).toBe(true);
+    expect(test.state().piUpdateChecking).toBe(false);
+    await vi.waitFor(() =>
+      expect(test.state().piUpdateRequestPending).toBe(false),
+    );
     expect(test.api.piUpdate).toHaveBeenCalledWith(true);
     expect(test.state().piUpdateCheck?.pi).toMatchObject({
       kind: "available",
@@ -176,7 +183,7 @@ describe("update status controller", () => {
     );
     test.controller.refreshInspire();
     await vi.waitFor(() =>
-      expect(test.state().inspireUpdateChecking).toBe(false),
+      expect(test.state().inspireUpdateRequestPending).toBe(false),
     );
     expect(test.api.update).toHaveBeenCalledWith(true);
     expect(test.state()).toMatchObject({
@@ -241,6 +248,30 @@ describe("update status controller", () => {
     expect(test.state().updateSnoozedUntil).toBe(3_000_000);
   });
 
+  it("does not let a failed local request end a Host-owned check", async () => {
+    const test = harness();
+    test.bootstrap(updateStatus(1));
+    let rejectRequest!: (error: Error) => void;
+    test.api.update.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRequest = reject;
+        }),
+    );
+    test.controller.refreshInspire();
+    test.controller.applyEvent({
+      type: "update_status",
+      updateStatus: updateStatus(2, { inspireUpdateChecking: true }),
+    });
+    rejectRequest(new Error("HTTP response lost"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(test.state().inspireUpdateChecking).toBe(true);
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+    test.controller.applySnapshot(updateStatus(3));
+    expect(test.state().inspireUpdateChecking).toBe(false);
+  });
+
   it("does not publish a response owned by a replaced transport", async () => {
     const test = harness();
     test.bootstrap(updateStatus(1));
@@ -263,6 +294,37 @@ describe("update status controller", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(test.state().inspireUpdateCheck).toBeNull();
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+  });
+
+  it("keeps duplicate request guards separate from same-revision Host snapshots", async () => {
+    const test = harness();
+    test.bootstrap(updateStatus(1));
+    let complete!: (result: InspireUpdateCheckResult) => void;
+    test.api.update.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    test.controller.refreshInspire();
+    test.controller.applySnapshot(updateStatus(1));
+    test.controller.refreshInspire();
+    expect(test.api.update).toHaveBeenCalledTimes(1);
+    expect(test.state().inspireUpdateRequestPending).toBe(true);
+    expect(test.state().inspireUpdateChecking).toBe(false);
+    complete(inspireResult(updateStatus(2)));
+    await Promise.resolve();
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+  });
+
+  it("transport loss retires a local request without declaring Host work finished", () => {
+    const test = harness();
+    test.bootstrap(updateStatus(2, { inspireUpdateChecking: true }));
+    test.replaceTransport();
+    expect(test.state().inspireUpdateChecking).toBe(true);
+    test.bootstrap(updateStatus(0));
+    expect(test.state().inspireUpdateChecking).toBe(false);
   });
 
   it("fails a malformed Host update event instead of silently diverging", () => {

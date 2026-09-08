@@ -990,6 +990,32 @@ export interface PiRuntimeSettings {
   followUpMode: PiMessageDeliveryMode | null;
 }
 
+/** Optional detail of the current retry, not the authority for whether Pi is retrying. */
+export interface RetryInfo {
+  attempt: number;
+  maxAttempts: number;
+  message: string;
+}
+
+export function parseRetryInfo(value: unknown): RetryInfo | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const retry = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(retry.attempt) ||
+    Number(retry.attempt) < 1 ||
+    !Number.isSafeInteger(retry.maxAttempts) ||
+    Number(retry.maxAttempts) < 1 ||
+    Number(retry.attempt) > Number(retry.maxAttempts)
+  )
+    return null;
+  return {
+    attempt: Number(retry.attempt),
+    maxAttempts: Number(retry.maxAttempts),
+    message:
+      typeof retry.message === "string" ? retry.message.slice(0, 4_000) : "",
+  };
+}
+
 export interface ActiveSnapshot {
   active: null | {
     sessionId: string;
@@ -1022,6 +1048,8 @@ export interface ActiveSnapshot {
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   pendingExtensionUiRequests?: ExtensionUiRequest[];
   pendingQueues?: PendingQueues;
+  /** Bounded detail for the currently retrying worker, restored on join/reconnect. */
+  retry?: RetryInfo | null;
   extensionDisplays?: ExtensionDisplay[];
   extensionStatuses?: Record<string, string>;
 }
