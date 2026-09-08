@@ -24,6 +24,7 @@ import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
+import { ContextPaneState } from "./components/ContextPaneState";
 import { CopyAction } from "./components/CopyAction";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
@@ -31,7 +32,7 @@ import { Nav } from "./components/Nav";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
-import { SettingsDialog } from "./components/SettingsDialog";
+import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
 import { Transcript } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
@@ -81,20 +82,27 @@ function ContextPaneLoading({
           <X size={15} aria-hidden />
         </button>
       </div>
-      <div className="res__empty" role={onRetry ? "alert" : "status"}>
+      <ContextPaneState
+        icon={
+          onRetry ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <Loader2 size={17} className="spin" aria-hidden />
+          )
+        }
+        title={onRetry ? "Context could not be opened." : "Loading context"}
+        role={onRetry ? "alert" : "status"}
+      >
         {onRetry ? (
-          <>
-            Context could not be opened.
-            <button type="button" onClick={onRetry}>
-              Reload
-            </button>
-          </>
-        ) : (
-          <>
-            <Loader2 size={14} className="spin" aria-hidden /> Loading context
-          </>
-        )}
-      </div>
+          <button
+            type="button"
+            className="button res__state-action"
+            onClick={onRetry}
+          >
+            Reload
+          </button>
+        ) : null}
+      </ContextPaneState>
     </>
   );
   return isModal ? (
@@ -113,25 +121,6 @@ function ContextPaneLoading({
     <aside className="ctx res" id="context-pane" aria-label="Context panel">
       {content}
     </aside>
-  );
-}
-
-function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
-  return (
-    <div className="res__empty" role={onRetry ? "alert" : "status"}>
-      {onRetry ? (
-        <>
-          Settings could not be opened.
-          <button type="button" onClick={onRetry}>
-            Reload
-          </button>
-        </>
-      ) : (
-        <>
-          <Loader2 size={14} className="spin" aria-hidden /> Loading settings
-        </>
-      )}
-    </div>
   );
 }
 
