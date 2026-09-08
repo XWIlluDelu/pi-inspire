@@ -1,8 +1,10 @@
 import {
+  AlertTriangle,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   GitFork,
+  History,
   Loader2,
   PencilLine,
   RefreshCw,
@@ -22,6 +24,7 @@ import type {
 } from "../../shared/contracts";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { ContextPaneState } from "./ContextPaneState";
 import { relativeTime } from "./transcript-rows";
 
 const MAX_VISIBLE_BRANCH_LANE = 4;
@@ -588,21 +591,34 @@ export function BranchTree() {
   }, [tree]);
 
   if (!state.sessionId)
-    return <div className="res__empty">Open a session to inspect history.</div>;
+    return (
+      <ContextPaneState
+        icon={<History size={17} aria-hidden />}
+        title="Open a session to inspect history."
+      />
+    );
   if (!tree && state.branchTreeLoading)
     return (
-      <div className="res__empty" role="status">
-        <Loader2 size={14} className="spin" aria-hidden /> Loading history…
-      </div>
+      <ContextPaneState
+        icon={<Loader2 size={17} className="spin" aria-hidden />}
+        title="Loading history…"
+      />
     );
   if (!tree)
     return (
-      <div className="res__empty">
-        History is unavailable.
-        <button type="button" onClick={() => void store.loadBranchTree()}>
+      <ContextPaneState
+        icon={<AlertTriangle size={17} aria-hidden />}
+        title="History is unavailable."
+        role="alert"
+      >
+        <button
+          type="button"
+          className="button res__state-action"
+          onClick={() => void store.loadBranchTree()}
+        >
           Retry
         </button>
-      </div>
+      </ContextPaneState>
     );
 
   const blockedReason = state.branchActionId
@@ -766,9 +782,10 @@ export function BranchTree() {
           </div>
         ) : null}
         {tree.nodes.length === 0 ? (
-          <div className="res__empty">
-            History appears after the first message.
-          </div>
+          <ContextPaneState
+            icon={<History size={17} aria-hidden />}
+            title="History appears after the first message."
+          />
         ) : visibleGroups.length === 0 ? (
           <div className="branch-tree__no-results">
             No loaded history matches “{query}”.

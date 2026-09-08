@@ -26,6 +26,7 @@ covers:
   - tests/web/resource-path-label.test.tsx
   - tests/web/theme-init.test.ts
   - tests/browser/workbench.spec.ts
+  - tests/browser/loading-states.spec.ts
 ---
 
 # Design system
@@ -152,6 +153,16 @@ declaration.
   it. Settings update checks use the same section/card geometry as preferences:
   two compact status lanes separate Pi plus Extensions from INSΠRE, keep copy
   terse, and expose actions without promoting the surface into a dashboard.
+
+- Deferred Settings retains its existing desktop columns or narrow horizontal
+  navigation strip, content cards, and footer while the module loads. Inert,
+  static skeletons use shared neutral tokens; one concise status and small spinner
+  communicate loading without shimmer or invented progress. The same dialog and
+  focus owner stay mounted through loading, ready, and failure. Context and
+  History loading, empty, and unavailable states reuse `ContextPaneState` and its
+  centered icon/copy/action spacing rather than unstyled fallback text. Failure
+  states expose an alert and a styled recovery action; decorative skeletons are
+  hidden from assistive technology and never enter the tab order.
 
 ## Responsive, motion, and accessibility
 
