@@ -19,6 +19,7 @@ import {
   boundedTranscriptValue,
   type InitialMaterializationAttestation,
   type ProjectionReconcileResult,
+  type ProjectionReconcileHandler,
   type SessionProjectionView,
 } from "../../../server/session-projection.js";
 
@@ -42,6 +43,8 @@ export class PreviewProjection
   readonly committedBytes = 0;
   readonly uncommittedBytes = 0;
   readonly uncommittedFingerprint = null;
+  private reconcileHandler: ProjectionReconcileHandler | null = null;
+  private reconcileTail: Promise<void> = Promise.resolve();
 
   constructor(
     readonly sessionId: string,
@@ -77,6 +80,10 @@ export class PreviewProjection
   async suspendReconciliation(): Promise<void> {}
 
   resumeReconciliation(): void {}
+
+  setReconcileHandler(handler: ProjectionReconcileHandler): void {
+    this.reconcileHandler = handler;
+  }
 
   latestPage(
     overlay: readonly unknown[] = [],
@@ -206,7 +213,7 @@ export class PreviewProjection
     return this.preview.transcriptPage.messages;
   }
 
-  async reconcile(_force = false): Promise<ProjectionReconcileResult> {
+  private reconcileResult(): ProjectionReconcileResult {
     return {
       changed: false,
       initialMaterialization: false,
@@ -230,11 +237,27 @@ export class PreviewProjection
     };
   }
 
-  reconcileSuspended(force = false): Promise<ProjectionReconcileResult> {
-    return this.reconcile(force);
+  reconcile(_force = false): Promise<ProjectionReconcileResult> {
+    const reading = this.reconcileTail.then(async () => {
+      const result = this.reconcileResult();
+      await this.reconcileHandler?.(result);
+      return result;
+    });
+    this.reconcileTail = reading.then(
+      () => undefined,
+      () => undefined,
+    );
+    return reading;
+  }
+
+  async reconcileSuspended(_force = false): Promise<ProjectionReconcileResult> {
+    await this.reconcileTail;
+    return this.reconcileResult();
   }
 
   async close(): Promise<void> {
+    await this.reconcileTail;
+    this.reconcileHandler = null;
     this.removeAllListeners();
   }
 }

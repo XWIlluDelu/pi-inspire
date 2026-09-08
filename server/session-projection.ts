@@ -82,6 +82,8 @@ interface Candidate {
   uncommittedFingerprint: string | null;
   /** Fingerprints observed from this same read, never a later filesystem pass. */
   previousPrefixFingerprint: string | null;
+  /** This read hashed the old committed bytes instead of reusing an owned prefix. */
+  prefixRevalidated: boolean;
   previousTailFingerprint: string | null;
   header: SessionHeader | null;
   entries: SessionEntry[];
@@ -114,6 +116,8 @@ export interface ProjectionReconcileResult {
   healthChanged: boolean;
   /** Full file identity or unresolved-tail state moved even if no entry committed. */
   sourceChanged: boolean;
+  /** Present only after a stable, complete byte-for-byte revalidation of the same object. */
+  verifiedUnchangedContent?: true;
   previousSourceVersion: string | null;
   sourceVersion: string | null;
   /** Projection state captured by this exact filesystem observation. */
@@ -129,6 +133,10 @@ export interface ProjectionReconcileResult {
   appendedEntries?: readonly SessionEntry[];
   previousLeafId?: string | null;
 }
+
+export type ProjectionReconcileHandler = (
+  result: ProjectionReconcileResult,
+) => Promise<void>;
 
 export interface ProjectionEntryTarget {
   id: string;
@@ -162,6 +170,8 @@ export interface SessionProjectionView {
   hasActiveEntryType(type: string): boolean;
   suspendReconciliation(): Promise<void>;
   resumeReconciliation(): void;
+  /** The Host consumes each observation inside the read FIFO, before the next read. */
+  setReconcileHandler(handler: ProjectionReconcileHandler): void;
   /** Reuse the verified content-hash prefix only while the Host has an exact
    * append claim from the sole writer for this projection. */
   setOwnedAppendWindow?(isOpen: () => boolean): void;
@@ -873,30 +883,13 @@ export class SessionProjection
   private currentCommittedBytes = 0;
   private currentUncommittedBytes = 0;
   private currentUncommittedFingerprint: string | null = null;
-  private reconcileTail: Promise<ProjectionReconcileResult> = Promise.resolve({
-    changed: false,
-    initialMaterialization: false,
-    kind: "none",
-    messageChange: "none",
-    previousRevision: 0,
-    revision: 0,
-    previousFingerprint: "",
-    fingerprint: "",
-    healthChanged: false,
-    sourceChanged: false,
-    previousSourceVersion: null,
-    sourceVersion: null,
-    sourceIdentity: null,
-    committedBytes: 0,
-    uncommittedBytes: 0,
-    uncommittedFingerprint: null,
-    health: { status: "ok" },
-    previousUncommittedBytes: 0,
-    previousTailVerified: true,
-  });
+  private reconcileTail: Promise<void> = Promise.resolve();
+  private reconcileHandler: ProjectionReconcileHandler | null = null;
   private watcher: FSWatcher | null = null;
   private watchTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private hintReading = false;
+  private hintDirty = false;
   private reconciliationResume: Promise<void> | null = null;
   private resolveReconciliationResume: (() => void) | null = null;
   private closed = false;
@@ -1086,6 +1079,10 @@ export class SessionProjection
     this.ownedAppendWindow = isOpen;
   }
 
+  setReconcileHandler(handler: ProjectionReconcileHandler): void {
+    this.reconcileHandler = handler;
+  }
+
   entry(id: string): ProjectionEntryTarget | null {
     const found = this.currentEntriesById.get(id);
     if (!found) return null;
@@ -1207,10 +1204,11 @@ export class SessionProjection
   private startWatching(): void {
     if (this.closed || this.watcher || this.pollTimer) return;
     try {
-      this.watcher = watch(
+      const watcher = watch(
         dirname(this.path),
         { persistent: false },
         (_event, name) => {
+          if (this.closed || this.watcher !== watcher) return;
           if (name && name !== basename(this.path)) return;
           if (this.watchTimer) clearTimeout(this.watchTimer);
           this.watchTimer = setTimeout(() => {
@@ -1220,15 +1218,15 @@ export class SessionProjection
           this.watchTimer.unref();
         },
       );
-      this.watcher.on("error", (error) => {
-        if (this.closed) return;
-        const result = this.recordHealthFailure(
+      this.watcher = watcher;
+      watcher.on("error", (error) => {
+        if (this.closed || this.watcher !== watcher) return;
+        this.reportHealthFailure(
           new Error(`Session watch failed: ${error.message}`),
         );
-        if (result) this.emit("update", result);
       });
     } catch (error) {
-      this.currentHealth = healthError(error);
+      this.reportHealthFailure(error);
     }
     this.pollTimer = setInterval(
       () => this.reconcileFromHint(),
@@ -1238,35 +1236,67 @@ export class SessionProjection
   }
 
   private reconcileFromHint(): void {
+    if (this.closed || this.reconciliationResume) return;
+    if (this.hintReading) {
+      this.hintDirty = true;
+      return;
+    }
+    this.hintReading = true;
     void this.reconcile()
       .then((result) => {
         if (result.changed || result.healthChanged || result.sourceChanged)
           this.emit("update", result);
       })
-      .catch((error) => {
-        if (this.closed) return;
-        const result = this.recordHealthFailure(error);
-        if (result) this.emit("update", result);
+      .catch((error) => this.reportHealthFailure(error))
+      .finally(() => {
+        this.hintReading = false;
+        if (this.hintDirty) {
+          this.hintDirty = false;
+          this.reconcileFromHint();
+        }
       });
   }
 
+  private reportHealthFailure(error: unknown): void {
+    void this.enqueueObservation(async () => {
+      if (this.closed) return;
+      const result = this.recordHealthFailure(error);
+      if (!result) return;
+      await this.reconcileHandler?.(result);
+      this.emit("update", result);
+    }).catch(() => undefined);
+  }
+
   async reconcile(force = false): Promise<ProjectionReconcileResult> {
-    const resume = this.reconciliationResume;
-    if (resume) await resume;
-    return this.enqueueReconcile(force);
+    while (this.reconciliationResume) await this.reconciliationResume;
+    return this.enqueueReconcile(force, true);
   }
 
   reconcileSuspended(force = false): Promise<ProjectionReconcileResult> {
-    return this.enqueueReconcile(force);
+    // Startup attestation consumes its result itself while ordinary readers wait.
+    return this.enqueueReconcile(force, false);
   }
 
-  private enqueueReconcile(force: boolean): Promise<ProjectionReconcileResult> {
-    const run = this.reconcileTail.then(
-      () => this.reconcileOnce(force),
-      () => this.reconcileOnce(force),
+  private enqueueObservation<T>(observe: () => Promise<T>): Promise<T> {
+    const run = this.reconcileTail.then(observe);
+    // A failed operation still rejects its caller. Draining the FIFO means only
+    // that its consumer settled, not that the observation or worker stop succeeded.
+    this.reconcileTail = run.then(
+      () => undefined,
+      () => undefined,
     );
-    this.reconcileTail = run;
     return run;
+  }
+
+  private enqueueReconcile(
+    force: boolean,
+    consume: boolean,
+  ): Promise<ProjectionReconcileResult> {
+    return this.enqueueObservation(async () => {
+      const result = await this.reconcileOnce(force);
+      if (consume) await this.reconcileHandler?.(result);
+      return result;
+    });
   }
 
   private async reconcileOnce(
@@ -1315,6 +1345,16 @@ export class SessionProjection
       const initialFileAppearance =
         initialMaterialization && this.currentHeader === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
+      const verifiedUnchangedContent =
+        !changed &&
+        candidate.prefixRevalidated &&
+        this.currentIdentity !== null &&
+        sameObject(candidate.identity, this.currentIdentity) &&
+        previousUncommittedBytes === 0 &&
+        candidate.uncommittedBytes === 0 &&
+        candidate.committedBytes === this.currentCommittedBytes &&
+        candidate.identity.size === BigInt(this.currentCommittedBytes) &&
+        candidate.previousPrefixFingerprint === previousFingerprint;
       const previousEntries = this.currentEntries;
       const previousLeafId = this.currentLeafId;
       let kind: ProjectionReconcileResult["kind"] = "none";
@@ -1400,6 +1440,9 @@ export class SessionProjection
         fingerprint: this.fingerprint,
         healthChanged: previousHealth !== JSON.stringify(this.health),
         sourceChanged,
+        ...(verifiedUnchangedContent
+          ? { verifiedUnchangedContent: true as const }
+          : {}),
         previousSourceVersion,
         sourceVersion: this.sourceVersion,
         ...this.resultObservation(),
@@ -1589,6 +1632,7 @@ export class SessionProjection
             ? createHash("sha256").update(tail).digest("hex")
             : null,
         previousPrefixFingerprint: this.currentFingerprint,
+        prefixRevalidated: !reuseVerifiedPrefix,
         previousTailFingerprint:
           previousTailRemaining === 0 && this.currentUncommittedBytes > 0
             ? previousTailHash.digest("hex")
@@ -1697,6 +1741,7 @@ export class SessionProjection
                 : null,
             previousPrefixFingerprint:
               this.currentCommittedBytes === 0 ? null : "",
+            prefixRevalidated: true,
             previousTailFingerprint:
               previousTailBytes === this.currentUncommittedBytes &&
               this.currentUncommittedBytes > 0
@@ -1753,6 +1798,7 @@ export class SessionProjection
             tail.length > 0
               ? createHash("sha256").update(tail).digest("hex")
               : null,
+          prefixRevalidated: true,
           previousPrefixFingerprint:
             previousPrefixBytes === this.currentCommittedBytes &&
             this.currentCommittedBytes > 0
@@ -2505,7 +2551,8 @@ export class SessionProjection
     if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.watcher?.close();
-    await this.reconcileTail.catch(() => undefined);
+    await this.reconcileTail;
+    this.reconcileHandler = null;
     this.removeAllListeners();
     this.currentEntries = [];
     this.currentMessages = [];

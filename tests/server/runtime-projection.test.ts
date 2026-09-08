@@ -2031,53 +2031,80 @@ describe("RuntimeController projection ownership gate", () => {
     }
   });
 
-  it.each(["same-inode", "atomic"] as const)(
-    "conflicts and stops a busy writer after a %s same-content source replacement",
-    async (mode) => {
+  it("conflicts and stops a busy writer after an atomic same-content source replacement", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      await runtime.snapshot();
+      const worker = workers[0]!;
+      worker.emit("event", { type: "agent_start" });
+      const bytes = await readFile(path);
+      const replacement = `${path}.replacement`;
+      await writeFile(replacement, bytes);
+      await rename(replacement, path);
+      await vi.waitFor(() => expect(worker.stops).toBe(1));
+      expect((await runtime.snapshot()).runState).toBe("conflict");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("retires an idle writer after an atomic same-content source replacement and starts fresh before writing", async () => {
+    const { runtime, workers, path } = await setup();
+    try {
+      await runtime.snapshot();
+      const first = workers[0]!;
+      const bytes = await readFile(path);
+      const replacement = `${path}.replacement`;
+      await writeFile(replacement, bytes);
+      await rename(replacement, path);
+      await vi.waitFor(() => expect(first.stops).toBe(1));
+      expect((await runtime.snapshot()).runState).not.toBe("conflict");
+      await runtime.prompt({
+        sessionId: "session-a",
+        message: "fresh writer",
+      });
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      expect(workers[1]!.commands).toContainEqual({
+        type: "prompt",
+        message: "fresh writer",
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.each([false, true])(
+    "continues a fully verified same-object, same-byte rewrite (busy: %s) without acquiring another writer",
+    async (busy) => {
       const { runtime, workers, path } = await setup();
       try {
         await runtime.snapshot();
         const worker = workers[0]!;
-        worker.emit("event", { type: "agent_start" });
-        const bytes = await readFile(path);
-        if (mode === "same-inode") await writeFile(path, bytes);
-        else {
-          const replacement = `${path}.replacement`;
-          await writeFile(replacement, bytes);
-          await rename(replacement, path);
+        if (busy) {
+          worker.emit("event", { type: "agent_start" });
+          await vi.waitFor(async () =>
+            expect((await runtime.snapshot()).runState).toBe("running"),
+          );
         }
-        await vi.waitFor(() => expect(worker.stops).toBe(1));
-        expect((await runtime.snapshot()).runState).toBe("conflict");
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it.each(["same-inode", "atomic"] as const)(
-    "retires an idle writer after a %s same-content source replacement and starts fresh before writing",
-    async (mode) => {
-      const { runtime, workers, path } = await setup();
-      try {
-        await runtime.snapshot();
-        const first = workers[0]!;
-        const bytes = await readFile(path);
-        if (mode === "same-inode") await writeFile(path, bytes);
-        else {
-          const replacement = `${path}.replacement`;
-          await writeFile(replacement, bytes);
-          await rename(replacement, path);
+        await writeFile(path, await readFile(path));
+        const snapshot = await runtime.snapshot();
+        expect(snapshot.active?.projectionConflict).toBeNull();
+        expect(snapshot.runState).toBe(busy ? "running" : "idle");
+        if (busy) {
+          worker.emit("event", { type: "agent_settled" });
+          await vi.waitFor(async () =>
+            expect((await runtime.snapshot()).runState).toBe("idle"),
+          );
         }
-        await vi.waitFor(() => expect(first.stops).toBe(1));
-        expect((await runtime.snapshot()).runState).not.toBe("conflict");
         await runtime.prompt({
           sessionId: "session-a",
-          message: "fresh writer",
+          message: "continue same writer",
         });
-        await vi.waitFor(() => expect(workers).toHaveLength(2));
-        expect(workers[1]!.commands).toContainEqual({
+        expect(worker.stops).toBe(0);
+        expect(workers).toHaveLength(1);
+        expect(worker.commands).toContainEqual({
           type: "prompt",
-          message: "fresh writer",
+          message: "continue same writer",
         });
       } finally {
         await runtime.close();

@@ -73,17 +73,34 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
   its trusted leaf and accepts only when every observed appended entry is an exact persisted-JSON
   prefix of that contiguous worker chain.
 
+  Explicit reconciliation, filesystem/poll hints, and watch-health observations share one FIFO
+  through reading, asynchronous ownership verification, and writer-baseline commit. Queueing only
+  reads or only their subsequent handlers is insufficient. Hints coalesce while a consumer is
+  pending; a retired projection or worker cannot commit a late witness or deferred receipt.
+  Startup attestation retains its separate suspended-reader boundary.
+
   The live worker may already have advanced beyond the older disk snapshot, but its worker-only
   suffix is not accepted until a later disk reconciliation observes and proves it; matching
   persistence expectations that arrive during witness lookup are consumed only through the observed
-  prefix, while later claims remain queued. Owned partial persistence must advance that same lineage
+  prefix, while later claims remain queued. Matched claims retire by identity, not by a count of
+  current queue heads: an earlier claim may be cancelled while a later receipt is still pending. Owned partial persistence must advance that same lineage
   by strictly growing bytes with exact prefix/tail continuity. While the sole worker has an exact
   pending append claim, the projection extends its verified SHA-256 state and immutable normalized
   entry/message prefix; without that provenance it rereads and verifies the committed bytes before
   parsing a suffix.
 
-  Duplicate identities, missing or forward parents, same-byte rewrites, unmatched custom entries,
-  replacements, and worker/disk delta mismatches retain the last-good projection and fail closed.
+  A metadata-only observation may refresh the same worker's source version after a stable full-byte
+  revalidation of the same filesystem object, with healthy complete contents, no unresolved tail,
+  no conflict, and the exact prior writer baseline still current. Reusing an owned hash prefix is
+  not this proof. The observation admits no entry, consumes no append claim, and changes neither
+  the history revision nor the browser view. A completed in-place identical-byte rewrite is
+  indistinguishable from timestamp-only movement under this evidence and is treated as unchanged
+  state, not attributed to a writer. This exception does not relax startup source-version checks
+  or incomplete-tail continuation rules, including their existing bounded new-file boundary.
+
+  Duplicate identities, missing or forward parents, content rewrites, incomplete-tail rewrites,
+  unmatched custom entries, replacements (even with identical bytes), and worker/disk delta
+  mismatches retain the last-good projection and fail closed.
   Unselected idle workers form a three-entry LRU warm cache and transparently restart from Pi’s
   session file after reclamation; busy workers, accepted prompts awaiting their lifecycle event,
   in-flight host operations, and workers awaiting or consuming extension input are never reclaimed.
