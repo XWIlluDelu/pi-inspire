@@ -36,6 +36,11 @@
     : "comfortable";
   document.documentElement.dataset.theme =
     theme === "system" ? systemTheme : theme;
+  // Keep in sync with applyBrowserTheme; installed chrome is neutral across palettes.
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor)
+    themeColor.content =
+      document.documentElement.dataset.theme === "dark" ? "#14171A" : "#F4F5F6";
   document.documentElement.dataset.palette = palette;
   document.documentElement.dataset.contentTextSize = contentTextSize;
   document.documentElement.dataset.readingWidth = readingWidth;

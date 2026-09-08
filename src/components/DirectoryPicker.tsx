@@ -1,4 +1,11 @@
-import { CornerLeftUp, Folder, HardDrive, Loader2 } from "lucide-react";
+import {
+  CornerLeftUp,
+  Eye,
+  EyeOff,
+  Folder,
+  HardDrive,
+  Loader2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { store } from "../store";
@@ -108,7 +115,28 @@ export function DirectoryPicker({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className="dialog__title">Choose project directory</h2>
+        <div className="dirpicker__header">
+          <h2 className="dialog__title">Choose project directory</h2>
+          <button
+            type="button"
+            className="icon-button dirpicker__hidden"
+            aria-label="Show hidden folders"
+            aria-pressed={showHidden}
+            title={showHidden ? "Hide hidden folders" : "Show hidden folders"}
+            onClick={() => {
+              const hidden = !showHidden;
+              setShowHidden(hidden);
+              const { path, ...options } = requested.current;
+              load(path, { ...options, hidden });
+            }}
+          >
+            {showHidden ? (
+              <Eye size={16} aria-hidden />
+            ) : (
+              <EyeOff size={16} aria-hidden />
+            )}
+          </button>
+        </div>
         <div className="dirpicker__path">{listing?.path ?? "…"}</div>
         {roots.length > 1 ? (
           <div
@@ -130,19 +158,6 @@ export function DirectoryPicker({
             ))}
           </div>
         ) : null}
-        <label className="dirpicker__hidden">
-          <input
-            type="checkbox"
-            checked={showHidden}
-            onChange={(event) => {
-              const hidden = event.target.checked;
-              setShowHidden(hidden);
-              const { path, ...options } = requested.current;
-              load(path, { ...options, hidden });
-            }}
-          />
-          <span>Show hidden folders</span>
-        </label>
         <div className="dirpicker__list" aria-busy={loading}>
           {listing?.parent ? (
             <button

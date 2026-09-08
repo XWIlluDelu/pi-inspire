@@ -72,6 +72,7 @@
     "dev:host": "node scripts/start-dev-host.mjs",
     "dev:web": "vite",
     "build:web": "node scripts/build-web.mjs",
+    "icons:build": "node scripts/render-app-icons.mjs",
     "build": "npm run typecheck && npm run build:web",
     "release:build": "npm run typecheck && npm run build:web -- --clean && node scripts/build-release.mjs",
     "release:verify": "node scripts/verify-release-package.mjs",
