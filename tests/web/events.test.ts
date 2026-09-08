@@ -17,6 +17,115 @@ function reduce(
 }
 
 describe("message reconciliation", () => {
+  it("replays compacted tool argument batches across snapshots and rejects revision/identity gaps", () => {
+    const settled = new Set<string>();
+    const start = reduce(emptyEventSlice(), settled, {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        timestamp: 2,
+        content: [],
+        __inspireLiveId: "stream-write",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const shell = reduce(start.slice, settled, {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 1,
+      streamTextLength: 0,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_start",
+          contentIndex: 0,
+          id: "write-1",
+          toolName: "write",
+        },
+      ],
+    });
+    expect(shell.resync).toBe(false);
+    expect(shell.slice.messages[0]).toMatchObject({
+      content: [
+        {
+          id: "write-1",
+          name: "write",
+          arguments: {},
+          __inspireToolCall: { phase: "streaming" },
+        },
+      ],
+    });
+    const batch: WireEvent = {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 8,
+      streamTextLength: 16,
+      sourceEventCount: 7,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          argumentChars: 16,
+          argumentsTruncated: false,
+          argumentUpdates: [
+            { path: ["path"], set: "src/file.ts" },
+            { path: ["content"], set: "first" },
+          ],
+        },
+      ],
+    };
+    const preview = reduce(shell.slice, settled, batch);
+    expect(preview.resync).toBe(false);
+    expect(preview.slice.messages[0]).toMatchObject({
+      __inspireStreamRevision: 8,
+      content: [{ arguments: { content: "first" } }],
+    });
+    expect(reduce(preview.slice, settled, batch).resync).toBe(true);
+    expect(
+      reduce(shell.slice, settled, { ...batch, sourceEventCount: 6 }).resync,
+    ).toBe(true);
+    expect(
+      reduce(shell.slice, settled, {
+        ...batch,
+        streamMessageKey: "live:other-call",
+      }).resync,
+    ).toBe(true);
+    const restored = reduce(emptyEventSlice(), settled, {
+      type: "message_start",
+      message: preview.slice.messages[0],
+    });
+    const continued = reduce(restored.slice, settled, {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 9,
+      streamTextLength: 23,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          argumentChars: 23,
+          argumentsTruncated: false,
+          argumentUpdates: [{ path: ["content"], append: " second" }],
+        },
+      ],
+    });
+    expect(continued.resync).toBe(false);
+    expect(continued.slice.messages[0]).toMatchObject({
+      content: [{ arguments: { content: "first second" } }],
+    });
+    expect(preview.slice.messages[0]).toMatchObject({
+      content: [{ arguments: { content: "first" } }],
+    });
+    const interrupted = reduce(continued.slice, settled, {
+      type: "message_end",
+      message: {
+        ...continued.slice.messages[0],
+        stopReason: "aborted",
+      },
+    });
+    expect(interrupted.slice.messages[0]).toMatchObject({
+      content: [{ __inspireToolCall: { phase: "interrupted" } }],
+    });
+  });
   it("ignores a message_start whose key is already settled (post-resync duplicate)", () => {
     const slice = emptyEventSlice();
     slice.messages = [{ role: "user", content: "hi", timestamp: 1 }];

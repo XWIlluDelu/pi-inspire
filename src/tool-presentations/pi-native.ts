@@ -314,15 +314,34 @@ function writeRule(): ToolPresentationRule {
     present(input) {
       const args = record(input.call.arguments);
       if (!args) return null;
-      const path = stringValue(args, "path");
-      const content = stringValue(args, "content");
-      if (path === null || path.length === 0 || content === null) return null;
-      const lines = lineCount(content);
-      const description = `${lines === 0 ? "empty" : formatCount(lines, "line")} · ${formatBytes(utf8Bytes(content))}`;
+      const partial = Boolean(input.call.__inspireToolCall);
+      const path =
+        stringValue(args, "path") ??
+        (partial && args.path === undefined ? "" : null);
+      const content =
+        stringValue(args, "content") ??
+        (partial && args.content === undefined ? "" : null);
+      if (path === null || (!partial && path.length === 0) || content === null)
+        return null;
+      // Avoid rescanning the growing body just to resolve a collapsed summary.
+      const lines = partial ? 0 : lineCount(content);
+      const description = partial
+        ? ""
+        : `${lines === 0 ? "empty" : formatCount(lines, "line")} · ${formatBytes(utf8Bytes(content))}`;
       return presentation(
         summary([
-          { kind: "resource", text: path, reference: path },
-          { kind: "text", text: description, separator: "dot" },
+          ...(path
+            ? [{ kind: "resource" as const, text: path, reference: path }]
+            : []),
+          ...(description
+            ? [
+                {
+                  kind: "text" as const,
+                  text: description,
+                  separator: "dot" as const,
+                },
+              ]
+            : []),
         ]),
         () => {
           const blocks: ToolPresentationBlock[] = [

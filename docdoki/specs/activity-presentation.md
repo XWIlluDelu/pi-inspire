@@ -77,7 +77,24 @@ custom-message boundaries remain in [[conversation]]; typed tool rules are speci
   Terminal-only control formatting is dropped at the display boundary without rewriting Pi history.
 
 - Each tool call is correlated with its live status, partial output, final result, and failure
-  state.
+  state. When Pi supplies the call id and tool name at `toolcall_start` (public JSON/RPC since
+  0.84.3), the corresponding card appears immediately and its argument preview grows in place.
+  Identity-less legacy starts remain end-only; the Host never guesses a tool identity.
+
+  Argument generation (`Generating arguments…`), a complete call awaiting execution
+  (`Waiting to execute…`), execution (`Running…`), and actual result outcomes are distinct.
+  Argument preview does not imply that any file has been written. A generation interrupted by
+  abort, assistant error, or terminal worker failure remains inspectable as `Not executed`, unless
+  a tool execution/result receipt supplies stronger evidence. This applies to live and restored
+  failed assistant messages and does not create an additional persisted transcript store.
+
+  During argument generation, native write previews use the existing Content/code presentation;
+  unknown or not-yet-shape-compatible tools retain their ordinary named shell and partial argument
+  view. Partial resource paths are not actionable, and copies are explicitly labelled argument
+  previews. Streaming or interrupted code/replacement previews show at most 400 lines and never
+  offer an unbounded expanding view. The Host's argument-preview bounds and redaction are owned by
+  [[session-transport]]. A final authoritative call replaces the preview in the same card and
+  restores normal resource and copy actions under the existing transcript bounds.
 
 - Tool activity supports Adaptive, Expanded, Compact, Collapsed, and Hidden defaults in decreasing
   information density. Adaptive treats every assistant message’s tool calls as one Pi batch: each
@@ -110,13 +127,14 @@ custom-message boundaries remain in [[conversation]]; typed tool rules are speci
   Manually expanding a completed full-size tool pauses that batch’s collapse until the user closes
   it; a Collapsed tile remains directly inspectable through its downward detail reveal.
 
-- Known Pi-native tools resolve through the shared tool-presentation registry while retaining
-  the ordinary card shell and lifecycle. `read`, `write`, `edit`, `bash`, `grep`, `find`, and
-  `ls` render typed file, code, patch, terminal, match, and listing blocks; a successful edit
-  uses Pi's persisted authoritative patch and never recomputes workspace state. Rule bodies
-  remain lazy, and a missing, failing, malformed, or shape-incompatible selected rule returns
-  directly to the generic raw card. Complete copy actions continue to project the original
-  arguments and result.
+- Known Pi-native tools resolve through the shared tool-presentation registry while retaining the
+  ordinary card shell and lifecycle. `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`
+  render typed file, code, patch, terminal, match, and listing blocks; a successful edit uses Pi's
+  persisted authoritative patch and never recomputes workspace state. Rule bodies remain lazy, and a
+  missing, failing, malformed, or shape-incompatible selected rule returns directly to the generic
+  raw card. Complete copy actions continue to project the original arguments and result; argument
+  previews are explicitly partial. Copy serialization happens on demand rather than rescanning a
+  growing body in a collapsed card.
 
 - A tool result recognized as a unified diff renders as typed, tinted lines (added, removed,
   context, hunk, file markers) instead of a raw dump, and is never truncated; recognition is strict

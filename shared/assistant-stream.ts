@@ -1,3 +1,8 @@
+import {
+  applyToolArgumentUpdates,
+  MAX_TOOL_ARGUMENT_PREVIEW_CHARS,
+} from "./tool-argument-updates.js";
+
 const MAX_STREAM_CONTENT_INDEX = 255;
 export const MAX_STREAM_TEXT_CHARS = 64_000;
 export const MAX_ASSISTANT_STREAM_BATCH_EVENTS = 2_048;
@@ -44,8 +49,43 @@ export function assistantStreamTextLength(value: unknown): number {
         : typeof item?.thinking === "string"
           ? item.thinking
           : "";
-    return total + text.length;
+    const preview = record(item?.__inspireToolCall);
+    return (
+      total +
+      text.length +
+      (Number.isSafeInteger(preview?.characters)
+        ? Number(preview?.characters)
+        : 0)
+    );
   }, 0);
+}
+
+/** A failed/aborted assistant cannot have completed its pending tool batch.
+ * Preserve the requested content without implying execution or success. */
+export function interruptAssistantToolCalls(value: unknown): unknown {
+  const message = record(value);
+  if (
+    message?.role !== "assistant" ||
+    !["aborted", "error"].includes(String(message.stopReason)) ||
+    !Array.isArray(message.content)
+  )
+    return value;
+  return {
+    ...message,
+    content: message.content.map((part) => {
+      const call = record(part);
+      if (call?.type !== "toolCall") return part;
+      return {
+        ...call,
+        __inspireToolCall: {
+          ...record(call.__inspireToolCall),
+          phase: "interrupted",
+          characters: record(call.__inspireToolCall)?.characters ?? 0,
+          truncated: record(call.__inspireToolCall)?.truncated === true,
+        },
+      };
+    }),
+  };
 }
 
 /**
@@ -126,12 +166,61 @@ export function applyAssistantMessageDelta(
       };
       break;
     }
-    case "toolcall_start":
-    case "toolcall_delta":
-      // Pi's public start carries no identity/name and its deltas carry only an
-      // argument-string fragment. `toolcall_end` atomically supplies the typed
-      // ToolCall, so these events cannot safely mutate the browser projection.
-      return null;
+    case "toolcall_start": {
+      // Public Pi >= 0.84.3 supplies identity before the arguments. Earlier
+      // versions remain end-only; never invent or truncate a call identity.
+      if (
+        typeof event.id !== "string" ||
+        !event.id ||
+        event.id.length > 1_024 ||
+        typeof event.toolName !== "string" ||
+        !event.toolName ||
+        event.toolName.length > 256
+      )
+        return null;
+      if (existing?.type === "toolCall") return null;
+      content[index] = {
+        type: "toolCall",
+        id: event.id,
+        name: event.toolName,
+        arguments: {},
+        __inspireToolCall: {
+          phase: "streaming",
+          characters: 0,
+          truncated: false,
+        },
+      };
+      break;
+    }
+    case "toolcall_delta": {
+      // Raw Pi argument JSON is parsed/redacted by the Host, never forwarded.
+      // Both projections apply only these display-only structured updates.
+      const preview = record(existing?.__inspireToolCall);
+      if (
+        existing?.type !== "toolCall" ||
+        preview?.phase !== "streaming" ||
+        !Number.isSafeInteger(event.argumentChars) ||
+        Number(event.argumentChars) < Number(preview.characters) ||
+        Number(event.argumentChars) > MAX_TOOL_ARGUMENT_PREVIEW_CHARS ||
+        typeof event.argumentsTruncated !== "boolean"
+      )
+        return null;
+      const args = applyToolArgumentUpdates(
+        existing.arguments,
+        event.argumentUpdates,
+      );
+      if (args === null) return null;
+      content[index] = {
+        ...existing,
+        arguments: args,
+        __inspireToolCall: {
+          phase: "streaming",
+          characters: Number(event.argumentChars),
+          truncated: event.argumentsTruncated,
+        },
+      };
+      break;
+    }
     case "toolcall_end": {
       const toolCall = record(event.toolCall);
       if (!toolCall || toolCall.type !== "toolCall") return null;
