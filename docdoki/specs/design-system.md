@@ -15,6 +15,8 @@ covers:
   - src/styles/*.css
   - src/assets/fonts/**
   - src/assets/licenses/**
+  - scripts/render-app-icons.mjs
+  - src/visual-preferences.ts
   - scripts/import-ibm-plex-sans-sc.mjs
   - scripts/verify-release-package.mjs
   - server/preferences.ts
@@ -52,7 +54,15 @@ declaration.
   tile: ordinary PWA PNGs preserve transparency outside the rounded tile so a
   desktop shell cannot paint white corner wedges, while maskable and Apple
   touch assets use the full-bleed carbon master and rely on the operating
-  system's own mask.
+  system's own mask. Installed icons are palette-independent: carbon `#14171A`,
+  titanium-white brackets `#F4F6F8`, and silver ticks/aperture `#B9C0C7`.
+  In-app identity and the browser-tab favicon retain their existing accents.
+- Installed-window chrome uses neutral `#F4F5F6` in light mode and `#14171A`
+  in dark mode, identical across Amber and Jade. The page's `theme-color`
+  follows resolved luminosity before first paint and after Host bootstrap,
+  including system-theme changes; the manifest uses the neutral light fallback.
+  Browser/OS support owns the actual chrome rendering and installed-icon update
+  timing, not the page. Implementation and verification: [[neutral-pwa-chrome]].
 - Palette and luminosity are independent. **Amber** (琥珀) is the default and
   persists as `amber`; **Jade** (青玉) is the optional alternative and retains
   the compatibility identifier `teal`. Light, Dark, and System select
