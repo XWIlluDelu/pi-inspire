@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { parseCompactCommand } from "../shared/commands.js";
+import { parseNativeCommand } from "../shared/commands.js";
 import type {
   ActiveSnapshot,
   BranchForkRequest,
@@ -819,7 +819,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const active = this.requireSession(request.sessionId);
     // Same prompt boundary as the real host: a bare /compact compacts.
     if (
-      parseCompactCommand(request.message) &&
+      parseNativeCommand(request.message)?.name === "compact" &&
       !request.attachmentIds?.length &&
       !request.historyArtifacts &&
       !request.projectFiles?.length
