@@ -240,6 +240,10 @@ const fileListSchema = z.object({
   refresh: z.literal("1").optional(),
 });
 const hostDirsSchema = z.object({
+  showHidden: z
+    .enum(["0", "1"])
+    .default("0")
+    .transform((value) => value === "1"),
   path: z
     .string()
     .min(1)
@@ -1310,9 +1314,9 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/host/dirs", async (request, response) => {
-    const { path } = hostDirsSchema.parse(request.query);
+    const { path, showHidden } = hostDirsSchema.parse(request.query);
     try {
-      response.json(await listHostDirectories(path));
+      response.json(await listHostDirectories(path, showHidden));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       if (code === "ENOENT" || code === "ENOTDIR")

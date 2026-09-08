@@ -1457,6 +1457,40 @@ describe("local host API", () => {
       .expect(404);
   });
 
+  it("requires authentication and an explicit validated flag to reveal hidden host directories", async () => {
+    await mkdir(join(temporary, ".hidden-project"));
+    const url = `/api/host/dirs?path=${encodeURIComponent(temporary)}`;
+    await request(application.server).get(`${url}&showHidden=1`).expect(401);
+    for (const suffix of ["", "&showHidden=0"]) {
+      const listing = await request(application.server)
+        .get(`${url}${suffix}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(
+        listing.body.dirs.map((entry: { name: string }) => entry.name),
+      ).not.toContain(".hidden-project");
+    }
+    const listing = await request(application.server)
+      .get(`${url}&showHidden=1`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(listing.body.dirs).toContainEqual({
+      name: ".hidden-project",
+      path: join(listing.body.path, ".hidden-project"),
+    });
+    for (const suffix of [
+      "&showHidden=true",
+      "&showHidden=false",
+      "&showHidden=",
+      "&showHidden=1&showHidden=0",
+    ]) {
+      await request(application.server)
+        .get(`${url}${suffix}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(400);
+    }
+  });
+
   it("stores curated navigation identities as preferences and returns their summaries by id", async () => {
     // Pins, folder pins, and hidden sessions are navigation metadata: one
     // field-scoped patch, no Pi history touched.
