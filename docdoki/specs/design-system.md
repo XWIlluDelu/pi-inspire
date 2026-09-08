@@ -23,7 +23,6 @@ covers:
   - tests/web/styles-contract.test.ts
   - tests/web/app.test.tsx
   - tests/web/overlay-and-palette.test.tsx
-  - tests/web/resource-path-label.test.tsx
   - tests/web/theme-init.test.ts
   - tests/browser/workbench.spec.ts
   - tests/browser/loading-states.spec.ts

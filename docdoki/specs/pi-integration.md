@@ -17,7 +17,7 @@ covers:
   - tests/server/**
   - tests/web/app.test.tsx
   - tests/web/events.test.ts
-  - tests/web/store.test.ts
+  - tests/web/store*.test.ts
   - tests/web/transcript-inspection.test.tsx
 ---
 
@@ -27,40 +27,132 @@ covers:
 
 Use Pi as the sole agent runtime while keeping privileged local capabilities out of the browser.
 
+## Contract map
+
+- [[host-lifecycle]] — pairing, installed-runtime distribution, process/service ownership, diagnostics, and build publication.
+- [[session-persistence]] — exact worker-startup and persistence trust boundary.
+- [[session-branches]] — the same-file RPC bridge and processless source-independent fork.
+
 ## Checks
 
-- The local host resolves the user's separately installed `pi` executable, loads the public SDK from that executable's package root, and starts every RPC worker from the same package root. Pi version metadata is reported but does not gate startup; the concrete public APIs INSΠRE calls are the compatibility boundary. The INSΠRE checkout's development dependency is never a production runtime fallback.
-- The normal Pi agent directory and project working directory remain authoritative for settings, credentials, models, extensions, skills, prompts, context files, and sessions.
-- The browser receives model availability and runtime state but never stored credential values. Its Settings surface can change Pi's auto-compaction, auto-retry, steering-delivery, and follow-up-delivery settings through typed authenticated controls; the worker and Pi `SettingsManager` remain the authorities. Optimistic changes have per-field request ownership scoped to the current browser selection and transport; an older failure cannot roll back a newer request even when their values match, and a current failure reconciles with Pi rather than trusting an optimistic predecessor.
-- Pi RPC `get_commands` enumerates extension, prompt, and skill resources but not Pi's interactive built-ins. A shared explicit registry therefore classifies built-ins as browser-native, bounded Host/RPC operations, informational, or terminal-only; where no Pi runtime resource owns the same name, the Host independently rejects built-in or unknown command-shaped text and shell syntax at the ordinary prompt boundary so a stale or non-browser client cannot send it to the model accidentally. Pi runtime-resource precedence is retained, except that `/compact` is always Host-owned.
-- Manual compaction is a standalone host operation with Pi's three-minute command allowance rather than the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC, cancelling a standalone compaction stops only its owning worker, classifies the interrupted compact request as cancelled rather than outcome-unknown, and starts a fresh worker on demand while the JSONL projection remains authoritative. HTML export and resource reload use the same serialized writer authority; reload invalidates resource/model inventories before worker replacement.
-- Project terminals remain outside Pi's runtime and session history: a separate terminal daemon owns their PTYs, metadata, and optional history, the Host is only their authenticated gateway, and no Pi prompt or Extension receives implicit authority to read or write a human terminal.
-- Local-file preview requests are authenticated and bound to the selected Pi session. A path requires either an exact reference in that session's authoritative message projection or membership in its workspace index, and relative paths resolve against the session’s project directory.
-- Pi message, tool, queue, retry, compaction, session, extension-interaction, and persistent `entry_appended` events cross a typed, validated host interface. Every entry that Pi reports as persisted contributes an exact expectation, including extension `custom` entries; if disk observation wins that event race, a bounded worker `get_entries` delta may attest only when the entire observed append is an exact persisted-JSON prefix of the worker's contiguous chain from the trusted leaf. Worker-only trailing entries remain unaccepted until disk observation, and claims arriving during the lookup are consumed only through the observed prefix. Privacy-safe diagnostics record the observed and worker counts, immutable leaves, and worker-ahead delta without entry payloads. RPC JSONL input is line-bounded and assembled without repeated prefix copying: a child emitting an oversized unterminated line loses only its own worker instead of growing or stalling the long-lived host without limit.
-- On POSIX, each Pi worker and the tools it launches share an isolated process group; eviction, protocol-boundary failure, and shutdown signal the whole group so tool descendants cannot outlive their worker. Windows terminates the worker's descendant tree through `taskkill /T`, escalating with `/F` only for the existing hard-kill boundary and falling back to Node's direct child signal only when the operating-system tree command cannot complete.
-- The Pi RPC stream accepts only bounded valid-UTF-8 JSON object frames. A correlated response must carry the pending request id, exact command, and explicit success value; malformed, mismatched, oversized, or unexpectedly closed streams retire the whole worker instead of dropping a frame and continuing with ambiguous ordering. Startup, stdin delivery, and response waits are bounded. Once a mutating frame enters Node's write buffer, write failure, timeout, or child loss is reported as acceptance-unknown and exposes the worker-stop promise to recovery; a failed read-only request is not mislabeled as a mutation conflict, but still retires the unusable protocol stream.
-- Pending supports the public `queue_update` text arrays and explicit confirmed `clear_queue`, not a separately negotiated structured management protocol. Unsupported pause/resume, per-item deletion/conversion, text-fetch RPCs, and startup capability probes are absent from the production contract and its Fake RPC fixtures. A clear receipt does not claim that a racing already-consumed entry was retracted; authoritative queue events own the resulting display.
-- The host rebinds event subscriptions and extension interaction after any Pi operation that replaces the active session runtime.
-- Worker startup establishes a trusted projection tail (or trusted empty baseline), constructs the process, then immediately reconciles again before `rpc.start()` and requires identity/stat version, revision, tail, fingerprint, and committed bytes to be unchanged. Projection readers remain serialized behind the boundary. A response-bearing `extension_ui_request` observed before Pi RPC startup completes is an unsupported `session_start` boundary: the host stops and cleans that child immediately and returns the attributable `PI_STARTUP_RESPONSE_UI_UNSUPPORTED` error instead of exposing an unanswerable dialog or waiting for timeout; one-way startup UI remains allowed. After start, the only accepted delta is one strictly bounded, direct, contiguous append composed of installed-extension non-transcript `custom` state plus at most one missing `thinking_level_change`; `get_entries`, `get_state`, and disk must agree on every entry, parent, final leaf, session, path, thinking level, and append lineage before the writer baseline advances. This establishes state equivalence, not causal authorship: stock public RPC cannot distinguish an exactly matching entry from a prohibited concurrent writer in the interval after the second baseline. The one-writer rule remains authoritative, and messages, model changes, compactions, unsupported or oversized mixed deltas, wrong parents or values, path/session mismatch, filesystem-object change, and rewrites stop the worker.
-- Same-file navigation remains on stock Pi RPC through one inspire-owned explicit extension. Each worker receives randomized command, status-key, and worker identities; the host accepts only one bounded nonce-correlated `setStatus` result, awaits both that result and prompt completion, and independently verifies the post-operation leaf and absence of persisted deltas. The internal command is hidden from completion and rejected at the public prompt boundary. Missing, duplicate, malformed, stale, or mismatched results are never retried after possible side effects.
-- Fork never enters the source RPC runtime. The host admits a fresh conflict-free projected prefix and selected user entry, then a bounded one-shot process loads only the installed Pi SDK's `SessionManager` over a private byte-exact snapshot. It constructs no AgentSession or resource loader, so source models, tools, extensions, queues, dialogs, and active work continue unchanged; append-only source progress beyond the admitted prefix is allowed. Pi owns branch ancestry, labels, generated identity, and session metadata. The helper materializes Pi's normally deferred no-assistant destination in a private same-directory container, while preserving the real source path as parent provenance. The host validates that staged projection, reserves the generated id and final path, publishes the complete JSONL atomically without replacement, revalidates it, and attaches a processless destination before ordinary worker warm-up. Concurrent open/create/delete operations share that reservation. Pre-publication failure removes private staging; post-publication failure reports the exact destination as committed and is never retried blindly.
-- Extension dialog responses are non-persisting and use a per-slot FIFO independent of persistence mutations. The host revalidates request id, source session, current process instance, expiry, and conflict state inside that lane, sends once, then removes the pending request. Fork leaves this lane and every unresolved source request attached to the source worker.
-- The installed-Pi boundary is executable without paid model inference: an isolated test proves byte-preserving read-only preview plus real RPC state—including text-only Pending queue events and the real public `clear_queue` operation—bounded incremental entries, tree, model selection, commands, statistics, all dialog and fire-and-forget extension UI methods, extension-supplied offline compaction, session-directory replacement, switch, and Pi's native fork capability. Runtime tests independently prove same-file navigation and isolated SessionManager fork while a source worker remains active.
-- Dialog-style extension interaction has a web-native presentation or a clear fallback. Generic persisted extension content uses available extension attribution as its normal-font title, falls back to the neutral label `Extension`, and keeps raw method/type and payload inside the inspectable body instead of presenting `custom` as product language.
-- Short keyed Pi status values are bounded before Host retention, restored by authoritative snapshots after browser reconnect, deterministically ordered in quiet desktop top-bar text, and cleared with the owning worker rather than surviving as browser-only state.
-- Pi RPC string-array widgets retain their stable key, update/clear lifecycle, and `aboveEditor`/`belowEditor` placement in a bounded, native surface immediately around the Composer. Oversized keys are rejected rather than truncated into a colliding identity. Terminal control sequences are display-cleaned rather than interpreted. Component factories remain terminal-only; malformed, oversized, and explicitly one-way unknown display events use the bounded attributable raw fallback.
-- Terminal-only extension components do not prevent the underlying tool or command from working when a generic web presentation is possible. INSΠRE does not identify third-party Extension packages or expose arbitrary browser code/style injection; the public adaptation guide explains the exact RPC compatibility boundary, semantic and visual placement rules, source-level seams, and representative Todo, usage, and custom-Tool recipes.
-- Extension failures remain attributable to their originating lifecycle and operation; the host does not silently suppress, retry, or reinterpret them through extension-specific catch-all behavior.
-- Projection and RPC diagnostics are durable enough to explain an ownership rejection after the fact. A private rotated JSONL log correlates host id, slot incarnation, session/worker/PID, RPC id/type/timing, projection revision/fingerprint/identity/bytes, persistence expectation transitions, ownership-decision reason, and an opaque incident id shown in conflict UI. Logging is metadata-only: prompts, message text, tool results, extension payloads, credentials, tokens, absolute working directories, and raw child stderr are excluded. POSIX directories/files are `0700`/`0600`; Windows uses the current user-profile ACL boundary. A configured path is accepted only inside an existing private current-user directory.
-- INSΠRE targets the latest Pi release. Pi's coding-agent and TUI packages are pinned exactly as deterministic development witnesses for type-checking, browser bundling, and installed-Pi integration suites; that checkout copy does not become a production runtime authority. Older Pi versions may remain incidentally usable but are neither tested nor supported, and no compatibility branch is added solely for them. Optional capabilities beyond the current public protocol remain inactive unless explicitly negotiated; absence follows current public behavior rather than version guessing. The production dependency tree resolves with zero `npm audit --omit=dev` advisories; no root override or downgrade is used to manufacture that result.
-- The npm release is a standalone cross-platform CLI/application package, not a Pi resource package: it intentionally declares no `pi` manifest or `pi-package` keyword and contains no Pi runtime dependency. `prepack` produces the Vite client and compiled Node host; the verifier requires canonical npm bin metadata, accepts the exact tarball through `npm publish --dry-run` without metadata correction, excludes tests and TypeScript source, proves Pi is absent after a production-only install, and then proves that installation can start, report status, serve authenticated mock health, stop, and create a real session using one explicitly supplied external Pi package for both SDK and RPC. The project is MIT-licensed, and every Vite build derives `dist/THIRD_PARTY_NOTICES.txt` from the actual bundled module graph; missing third-party license text fails the build, while locally bundled fonts retain their separate SIL OFL texts.
-- Pi’s saved project-trust policy remains authoritative; the host does not load project resources through a separate bypass path.
-- Browser authentication is a one-time pairing, not an absent loopback boundary. Without an explicit `INSPIRE_TOKEN`, the host creates one 64-character base64url token (48 cryptographic random bytes) keyed by checkout/host/port under the user state directory, requires its containing directory and file to be current-user private (`0700`/`0600`), and reuses it across ordinary host and machine restarts. Prior generated token lengths rotate on the next host start. A direct loopback launcher URL or the Pair form proves that token once and receives an origin-scoped `HttpOnly; SameSite=Strict` cookie; a trusted loopback HTTPS proxy strips token URLs without pairing, emits `Secure` cookies through Pair, and authenticates WebSockets only by that cookie. A forwarded query token neither authenticates the socket nor vetoes an independently valid cookie. The bootstrap bearer is removed from browser history, retired from browser memory after it establishes the cookie, and never enters durable JavaScript storage. APIs require the cookie or an explicit bearer; WebSockets permit an explicit query bearer only on direct loopback, and all browser requests retain the exact-origin check. An invalid cookie is expired only for that Host origin so a rotated token returns to Pair without requiring broad browser-data deletion. A noninteractive host service suppresses token-bearing startup output so it is not written to the service journal. A missing or rotated token returns to the pairing surface rather than retrying as a connectivity failure.
-- Browser pairing cookies are qualified by the normalized request host and port. Multiple Inspire hosts on one browser hostname therefore keep independent credentials instead of overwriting one shared cookie name; cookie lookup accepts only that origin-specific name.
-- Preference read/merge/rename writes are serialized both within one Host and across independent Host processes through the same bounded lock abstraction used by single-instance launch. Linux uses kernel `flock`; macOS and Windows use an atomically published ticket queue whose owner records include the process birth identity and are reclaimed only after that exact process is gone. Field-scoped patches from different processes therefore cannot silently restore stale values for unrelated fields.
-- The host binds only to loopback and does not directly expose unrestricted Pi control to another machine. Automatic desktop-browser opening is best-effort: a missing or failed OS opener is diagnosed but never terminates the already-listening Host. Optional [[connection-modules]] own only their local companion-process lifecycle and ingress path; they never become Pi/data authority or own host shutdown. Forwarded protocol is trusted only from a loopback hop. Production launch is single-instance and idempotent per checkout/host/port: reuse and ordinary shutdown require the matching private state plus an authenticated Host response; Linux alone may fall back for an unhealthy Host after `/proc` verifies the exact process start, working directory, and command line. A stop racing dependency installation or build cancels that pending start, macOS and Windows fail closed when authenticated shutdown is unavailable, and an unknown port occupant is never killed automatically. A source build and the launcher share one hash of browser-build inputs: an ordinary successful `build:web` writes a source-checkout stamp, a changed input forces exactly one replacement build, and a current stamp avoids redundant rebuilding before startup. The stamp is excluded from the npm distribution, whose launcher uses its packaged build directly. Launcher lock ownership is explicit and scoped: `restart` retains exactly one lock from its stop boundary through the replacement start, including when no managed instance existed, while standalone `stop` releases any lock before every return. Each browser-bound runtime event has an encoded-size ceiling, a joining WebSocket has a bounded pre-snapshot event backlog, and an established slow client is closed once its outbound buffer crosses the host limit; reconnecting obtains a fresh authoritative snapshot instead of retaining unbounded deltas.
-- A matching installed `inspire-host.service` is the lifecycle authority for that checkout: ordinary `./inspire`, `status`, `stop`, and `restart` delegate only after its fragment path, working directory, `ExecStart`, and authenticated readiness hook identify the same root. Service activation completes only after that hook reaches the Host health endpoint, and ordinary status additionally requires the live authenticated Host rather than treating an active process as availability. The unit's own `ExecStart` bypasses delegation so it cannot recurse; explicit alternate-instance inputs and checkouts without the unit retain direct-launcher behavior. Installing the host also installs its attached 04:00 user timer, and enabling/disabling the host enables/disables that timer in the same command. The timer never fetches updates: it restarts only if the installed external Pi version or a clean source revision differs from the running identity, every runtime slot has no active run/dialog/queue, and the host atomically grants a 30-second no-new-work lease. A busy, dirty, indeterminate, or old host is skipped without force or same-day retry.
-- The mock host is a deterministic presentation fixture, not a second Pi implementation or runtime-conformance oracle; security and lifecycle guarantees are witnessed against `RuntimeController` and `PiRpcProcess` directly. Browser acceptance pins a bounded mock stream cadence and one worker so delivery controls are observed without overlapping prompts through the shared mock projection.
+### Installed runtime and typed controls
+
+- The local host resolves the user's separately installed `pi` executable, loads the public SDK from
+  that executable's package root, and starts every RPC worker from the same package root. Pi version
+  metadata is reported but does not gate startup; the concrete public APIs INSΠRE calls are the
+  compatibility boundary. The INSΠRE checkout's development dependency is never a production runtime
+  fallback.
+
+- The normal Pi agent directory and project working directory remain authoritative for settings,
+  credentials, models, extensions, skills, prompts, context files, and sessions.
+
+- The browser receives model availability and runtime state but never stored credential values. Its
+  Settings surface can change Pi's auto-compaction, auto-retry, steering-delivery, and
+  follow-up-delivery settings through typed authenticated controls; the worker and Pi
+  `SettingsManager` remain the authorities. Optimistic changes have per-field request ownership
+  scoped to the current browser selection and transport; an older failure cannot roll back a newer
+  request even when their values match, and a current failure reconciles with Pi rather than
+  trusting an optimistic predecessor.
+
+- Pi RPC `get_commands` enumerates extension, prompt, and skill resources but not Pi's interactive
+  built-ins. A shared explicit registry therefore classifies built-ins as browser-native, bounded
+  Host/RPC operations, informational, or terminal-only; where no Pi runtime resource owns the same
+  name, the Host independently rejects built-in or unknown command-shaped text and shell syntax at
+  the ordinary prompt boundary so a stale or non-browser client cannot send it to the model
+  accidentally. Pi runtime-resource precedence is retained, except that `/compact` is always
+  Host-owned.
+
+- Manual compaction is a standalone host operation with Pi's three-minute command allowance rather
+  than the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,
+  cancelling a standalone compaction stops only its owning worker, classifies the interrupted
+  compact request as cancelled rather than outcome-unknown, and starts a fresh worker on demand
+  while the JSONL projection remains authoritative. HTML export and resource reload use the same
+  serialized writer authority; reload invalidates resource/model inventories before worker
+  replacement.
+
+- Project terminals remain outside Pi's runtime and session history: a separate terminal daemon owns
+  their PTYs, metadata, and optional history, the Host is only their authenticated gateway, and no
+  Pi prompt or Extension receives implicit authority to read or write a human terminal.
+
+- Local-file preview requests are authenticated and bound to the addressed open Pi session and its
+  projection view, independently of the Host's default selection or another browser's navigation. A
+  path requires either an exact reference in that session's authoritative message projection or
+  membership in its workspace index, and relative paths resolve against the session’s project
+  directory.
+
+### RPC delivery and ownership
+
+- Pi message, tool, queue, retry, compaction, session, extension-interaction, and persistent
+  `entry_appended` events cross a typed, validated host interface. Every entry that Pi reports as
+  persisted contributes an exact expectation, including extension `custom` entries; if disk
+  observation wins that event race, a bounded worker `get_entries` delta may attest only when the
+  entire observed append is an exact persisted-JSON prefix of the worker's contiguous chain from the
+  trusted leaf. Worker-only trailing entries remain unaccepted until disk observation, and claims
+  arriving during the lookup are consumed only through the observed prefix. Privacy-safe diagnostics
+  record the observed and worker counts, immutable leaves, and worker-ahead delta without entry
+  payloads.
+
+  RPC JSONL input is line-bounded and assembled without repeated prefix copying: a child emitting an
+  oversized unterminated line loses only its own worker instead of growing or stalling the
+  long-lived host without limit.
+
+- The Pi RPC stream accepts only bounded valid-UTF-8 JSON object frames. A correlated response must
+  carry the pending request id, exact command, and explicit success value; malformed, mismatched,
+  oversized, or unexpectedly closed streams retire the whole worker instead of dropping a frame and
+  continuing with ambiguous ordering. Startup, stdin delivery, and response waits are bounded. Once
+  a mutating frame enters Node's write buffer, write failure, timeout, or child loss is reported as
+  acceptance-unknown and exposes the worker-stop promise to recovery; a failed read-only request is
+  not mislabeled as a mutation conflict, but still retires the unusable protocol stream.
+
+- Pending supports the public `queue_update` text arrays and explicit confirmed `clear_queue`, not a
+  separately negotiated structured management protocol. Unsupported pause/resume, per-item
+  deletion/conversion, text-fetch RPCs, and startup capability probes are absent from the production
+  contract and its Fake RPC fixtures. A clear receipt does not claim that a racing already-consumed
+  entry was retracted; authoritative queue events own the resulting display.
+
+- Worker replacement retires its event ownership and outstanding extension requests. A new-session
+  worker keeps its existing provisional slot while its public session identity is finalized; an
+  independent fork never transfers subscriptions or dialogs from the source worker.
+
+- Extension dialog responses are non-persisting and use a per-slot FIFO independent of persistence
+  mutations. The host revalidates request id, source session, current process instance, expiry, and
+  conflict state inside that lane, sends once, then removes the pending request. Fork leaves this
+  lane and every unresolved source request attached to the source worker.
+
+- The installed-Pi boundary is executable without paid model inference: an isolated test proves
+  byte-preserving read-only preview plus real RPC state—including text-only Pending queue events and
+  the real public `clear_queue` operation—bounded incremental entries, tree, model selection,
+  commands, statistics, all dialog and fire-and-forget extension UI methods, extension-supplied
+  offline compaction, session-directory replacement, switch, and Pi's native fork capability.
+  Runtime tests independently prove same-file navigation and isolated SessionManager fork while a
+  source worker remains active.
+
+### Extension presentation
+
+- Dialog-style extension interaction has a web-native presentation or a clear fallback. Generic
+  persisted extension content uses available extension attribution as its normal-font title, falls
+  back to the neutral label `Extension`, and keeps raw method/type and payload inside the
+  inspectable body instead of presenting `custom` as product language.
+
+- Short keyed Pi status values are bounded before Host retention, restored by authoritative
+  snapshots after browser reconnect, deterministically ordered in quiet desktop top-bar text, and
+  cleared with the owning worker rather than surviving as browser-only state.
+
+- Pi RPC string-array widgets retain their stable key, update/clear lifecycle, and
+  `aboveEditor`/`belowEditor` placement in a bounded, native surface immediately around the
+  Composer. Oversized keys are rejected rather than truncated into a colliding identity. Terminal
+  control sequences are display-cleaned rather than interpreted. Component factories remain
+  terminal-only; malformed, oversized, and explicitly one-way unknown display events use the bounded
+  attributable raw fallback.
+
+- Terminal-only extension components do not prevent the underlying tool or command from working when
+  a generic web presentation is possible. INSΠRE does not identify third-party Extension packages or
+  expose arbitrary browser code/style injection; the public adaptation guide explains the exact RPC
+  compatibility boundary, semantic and visual placement rules, source-level seams, and
+  representative Todo, usage, and custom-Tool recipes.
+
+- Extension failures remain attributable to their originating lifecycle and operation; the host does
+  not silently suppress, retry, or reinterpret them through extension-specific catch-all behavior.
 
 ## Non-goals
 
