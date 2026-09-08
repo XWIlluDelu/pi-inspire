@@ -328,6 +328,10 @@ export class RuntimePersistenceOwnershipController {
     slot: RuntimeSlot,
     appendedEntries: readonly SessionEntry[] = [],
   ): void {
+    if (slot.overlay.length === 0) {
+      recountOverlay(slot);
+      return;
+    }
     const persisted = slot.projection?.messages ?? [];
     const remaining = new Map<string, number>();
     const customCandidates = appendedEntries.filter(
@@ -410,7 +414,7 @@ export class RuntimePersistenceOwnershipController {
     return true;
   }
 
-  private consumeWitnessedExpectationPrefix(
+  private consumeExpectationPrefix(
     slot: RuntimeSlot,
     appendedEntries: readonly SessionEntry[],
     previouslyMatched: readonly PersistenceExpectation[],
@@ -488,7 +492,7 @@ export class RuntimePersistenceOwnershipController {
           };
         }
       }
-      const expectationsConsumed = this.consumeWitnessedExpectationPrefix(
+      const expectationsConsumed = this.consumeExpectationPrefix(
         slot,
         appendedEntries,
         matchedExpectations,
@@ -514,6 +518,9 @@ export class RuntimePersistenceOwnershipController {
     result: ProjectionReconcileResult,
   ): Promise<OwnershipDecision> {
     const projection = slot.projection;
+    const rpc = slot.process;
+    const stillCurrent = () =>
+      slot.projection === projection && slot.process === rpc;
     const initialMaterialization = result.initialMaterialization;
     if (!projection) return { owned: false, reason: "projection-unavailable" };
     if (result.kind !== "append") return { owned: false, reason: "not-append" };
@@ -537,10 +544,11 @@ export class RuntimePersistenceOwnershipController {
     }
 
     if (initialMaterialization) {
-      const rpc = slot.process;
       if (!rpc) return { owned: false, reason: "worker-unavailable" };
       try {
         const workerEntries = await this.host.readNewSessionEntries(slot, rpc);
+        if (!stillCurrent())
+          return { owned: false, reason: "worker-unavailable" };
         if (
           projection.attestInitialMaterialization(workerEntries) === "mismatch"
         ) {
@@ -575,12 +583,20 @@ export class RuntimePersistenceOwnershipController {
       if (!expectation)
         return this.workerAppendWitness(slot, result, matchedExpectations);
       await expectation.ready;
+      if (!stillCurrent())
+        return { owned: false, reason: "worker-unavailable" };
       if (expectation.matcher?.(entry) !== true)
         return this.workerAppendWitness(slot, result, matchedExpectations);
       matchedExpectations.push(expectation);
     }
 
-    slot.persistenceExpectations.splice(0, matchedExpectations.length);
+    // Earlier matched claims may have been cancelled while a later one awaited
+    // its receipt. Retire their identities, never that many current queue heads.
+    this.consumeExpectationPrefix(
+      slot,
+      result.appendedEntries,
+      matchedExpectations,
+    );
     if (slot.navigationLease) slot.navigationLease = null;
     return {
       owned: true,
