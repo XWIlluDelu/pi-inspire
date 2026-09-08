@@ -103,33 +103,15 @@ function ImageLightbox({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="image-lightbox__toolbar">
-          <div
-            className="image-lightbox__backgrounds"
-            role="group"
-            aria-label="Image background"
-          >
-            {IMAGE_BACKGROUNDS.map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={background === option}
-                onClick={() => setBackground(option)}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="image-lightbox__close"
-            onClick={onClose}
-            aria-label="Close image preview"
-            title="Close"
-          >
-            <X size={18} aria-hidden />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="image-lightbox__close"
+          onClick={onClose}
+          aria-label="Close image preview"
+          title="Close"
+        >
+          <X size={18} aria-hidden />
+        </button>
         <button
           ref={canvasRef}
           type="button"
@@ -190,6 +172,22 @@ function ImageLightbox({
             onDragStart={(event) => event.preventDefault()}
           />
         </button>
+        <div
+          className="image-lightbox__backgrounds"
+          role="group"
+          aria-label="Image background"
+        >
+          {IMAGE_BACKGROUNDS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={background === option}
+              onClick={() => setBackground(option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
       </div>
     </div>,
     document.body,
