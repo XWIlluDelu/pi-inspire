@@ -14,6 +14,7 @@ import {
   MAX_EXTENSION_WIDGET_LINES,
   type ProjectionConflict,
   parsePendingExtensionUiRequest,
+  parseRetryInfo,
 } from "../shared/contracts.js";
 import {
   messageFallbackCorrelation,
@@ -448,6 +449,12 @@ export class RuntimeEventController {
       }
       case "auto_retry_start":
         slot.runState = "retrying";
+        slot.retry = parseRetryInfo({
+          attempt: record.attempt,
+          maxAttempts: record.maxAttempts,
+          message: record.errorMessage,
+        });
+        forwardedEvent = { ...record, errorMessage: slot.retry?.message ?? "" };
         break;
       case "auto_retry_end":
         slot.runState = record.success === false ? "failed" : "running";
@@ -493,6 +500,7 @@ export class RuntimeEventController {
         break;
       }
     }
+    if (slot.runState !== "retrying") slot.retry = null;
     this.host.emitSlotEvent(slot, forwardedEvent);
   }
 
