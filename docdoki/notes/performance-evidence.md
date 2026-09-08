@@ -1,5 +1,5 @@
 ---
-purpose: Frozen long-session evaluator, activation thresholds, and current evidence for evidence-gated maintenance.
+purpose: Historical long-session measurements and reproducibility, plus scoped evidence for current performance work.
 ---
 
 # Performance evidence
@@ -33,17 +33,24 @@ The review of `0c7b390` identified two concrete costs outside the older evaluato
 
 `tests/server/runtime-stream-budget.test.ts` drives the real event reducer and overlay owner with alternating 32-character text/thinking fragments. With incremental accounting disabled, 1,000/2,000 updates serialize cumulative assistant messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON. The incremental path produces identical overlays while serializing only 34/68 KB of fragment JSON and no cumulative assistant messages in that hot path. It also checks escaped characters, split surrogates, revision growth, string/item/overlay limits, structural fallback, and final/snapshot validation. These are serialization-work counters, not network, memory-peak, event-loop-delay, or remote-latency measurements.
 
-## Reproducible evaluator
+## Historical evaluator (retired 2026-09-08)
 
-Run from the repository root with its isolated loopback ports free (defaults: host 14587, web 15173), with no build, check, test, or other intentional CPU workload running concurrently. Override them with `INSPIRE_BENCHMARK_HOST_PORT` and `INSPIRE_BENCHMARK_WEB_PORT` when needed:
+The evaluator and its App-only Profiler branches are no longer part of the current tree. It was an opt-in experiment, not a CI regression gate. Review found five TypeScript diagnostics against today's session/runtime/Git contracts (including eleven missing runtime methods), and its production verifier rejected ordinary formatted direct-element branches. Its exact legacy HTTP/frame counts also predate current interest-scoped and batched event delivery. Keeping the old fake runtime alive would require maintaining another protocol implementation, not merely preserving a measurement tool.
+
+The results and methodology below remain historical evidence, not a current performance baseline. Reproduce them with the corresponding application **and** evaluator revision from the table below, in a separate checkout; for example:
 
 ```sh
+git worktree add --detach /tmp/inspire-performance-history 11d4bc2ad1487512060a7997d14c8acd9818effb
+cd /tmp/inspire-performance-history
+npm ci
 INSPIRE_BENCHMARK_ISOLATED=1 npx tsx tests/benchmarks/evidence-gated-maintenance.ts
 ```
 
-The environment flag is an explicit assertion that this isolation precondition has been met; without it the evaluator refuses to start. Run `npm run check` and `npm run build` only after all benchmark batches finish.
+Use the recorded runtime/browser versions for meaningful historical comparison. Keep the isolated loopback ports free (defaults: host 14587, web 15173; overrides: `INSPIRE_BENCHMARK_HOST_PORT` and `INSPIRE_BENCHMARK_WEB_PORT`) and run no intentional CPU workload concurrently. The environment flag acknowledges that precondition; checks/builds run only afterward. This review verified that the referenced Git object retains both evaluator files and the profiler source; it did not rerun historical timing measurements.
 
-The executable evaluator creates and removes its own temporary Pi session, workspace, preferences, Chrome profile, Vite proxy configuration, and host, then writes the complete machine-readable result to stdout without retaining a profiling artifact. It discovers `CHROME_PATH`, system Chromium/Chrome, or the newest Playwright Chromium cache entry instead of hard-coding one browser release; teardown terminates Chrome before removing its profile. The browser viewport is fixed at 1440×900 so desktop-surface performance is not reinterpreted by responsive drawer behavior. The fixture persists 11,830,406 bytes of valid Pi JSONL, with a large abandoned branch and a bounded 100-message active projection. It keeps Files, Changes, and History available, session and transcript search populated, pending steer/follow-up queues visible, and branch navigation controls present while delivering 36 text deltas, a tool lifecycle, and four background settlements.
+Future performance work needs a current representative scenario and before/after measurements. The maintained `runtime-stream-budget` tests, browser network ledgers, and `transport-performance` counters remain available; no latency improvement is claimed by retiring the old experiment.
+
+The historical executable evaluator creates and removes its own temporary Pi session, workspace, preferences, Chrome profile, Vite proxy configuration, and host, then writes the complete machine-readable result to stdout without retaining a profiling artifact. It discovers `CHROME_PATH`, system Chromium/Chrome, or the newest Playwright Chromium cache entry instead of hard-coding one browser release; teardown terminates Chrome before removing its profile. The browser viewport is fixed at 1440×900 so desktop-surface performance is not reinterpreted by responsive drawer behavior. The fixture persists 11,830,406 bytes of valid Pi JSONL, with a large abandoned branch and a bounded 100-message active projection. It keeps Files, Changes, and History available, session and transcript search populated, pending steer/follow-up queues visible, and branch navigation controls present while delivering 36 text deltas, a tool lifecycle, and four background settlements.
 
 Twenty-one accepted fresh browser samples characterize frontend noise; 21 fresh opens or forced reads characterize each host operation. With 21 samples, nearest-rank p95 is the second-highest sample rather than the maximum. The observation window starts before Changes: every iteration selects the concrete changed row, then observes the explicit refresh button/loading cycle, a changed rendered Git-status revision, a changed selected-diff revision, the settled controls, and retained selection before stopping that interaction timer. It then opens four real branch rows, proves current/edit/fork/refresh control state, executes edit-from-here and observes the composer prefill, returns to referenced Files, and runs text/tool streaming with pending queues and four background settlements. Settlement success is derived from the four rendered Completed session rows after the authoritative snapshot resync, not from fixture intent. The evaluator records these end-to-end Changes/History durations, React Profiler commits and actual durations by navigation/transcript/composer/resources surface, Long Task and Event Timing observations, wheel-to-animation-frame delay, exact CDP request/WebSocket accounting, and real `SessionProjection`, `SessionCatalog`, and `GitInspectionService` timings.
 
@@ -157,14 +164,14 @@ Explicitly unactivated suspects:
 - visible mention checks: the bounded 100-message resource surface remained below threshold;
 - revision/generation guard changes: no stale-result or output-equivalence failure occurred in the frozen scenario.
 
-These remain hypotheses, not authorized optimization work. Re-run the same evaluator before activating one coherent change, then require the same assertions and output/frame/request accounting to remain equivalent after it.
+These were unactivated hypotheses at the recorded baseline, not present-day diagnoses. For a newly selected optimization, establish a current scenario first and preserve its asserted output and operation semantics across the before/after comparison; do not reuse obsolete exact frame counts as a current contract.
 
-## Production instrumentation witness
+## Historical production instrumentation witness
 
-The evaluator uses compile-time `import.meta.env.MODE` branches directly at each App call site. A normal production build selects the direct Nav, Transcript, Composer, and Resources elements; it does not render a benchmark component or Fragment fiber. After `npm run build`, run:
+The historical evaluator used compile-time `import.meta.env.MODE` branches at App call sites, with direct elements in production. Both the branches and their dedicated verifier have been removed from the current tree. In the historical checkout only, after `npm run build`, run:
 
 ```sh
 npx tsx tests/benchmarks/verify-production-bundle.ts
 ```
 
-The witness scans every production HTML/JS/CSS/source-map artifact and fails on the benchmark component name, callback, global sink, mode constant/string, or module identity. The 2026-08-01 production build scanned four artifacts (no source maps were emitted), found zero benchmark symbols, confirmed all four direct-element production fallbacks, and reported zero wrapper fibers in those production branches.
+That witness scanned production HTML/JS/CSS/source-map artifacts for the benchmark component name, callback, global sink, mode constant/string, and module identity. Its additional source-text checks were tied to the exact historical App layout and formatting. The 2026-08-01 production build scanned four artifacts (no source maps were emitted), found zero benchmark symbols, confirmed all four direct-element production fallbacks, and reported zero wrapper fibers in those production branches.
