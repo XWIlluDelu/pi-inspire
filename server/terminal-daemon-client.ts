@@ -6,6 +6,8 @@ import {
   type TerminalClientControlMessage,
   type TerminalCreateRequest,
   type TerminalDescriptor,
+  type TerminalMutationMethod,
+  type TerminalOperationIdentity,
   type TerminalRemoveResponse,
   type TerminalRenameRequest,
   type TerminalServerControlMessage,
@@ -32,7 +34,7 @@ import type {
   TerminalAttachment,
   TerminalAttachmentSink,
   TerminalAttachOptions,
-  TerminalService,
+  TerminalOperationService,
 } from "./terminal-service.js";
 import { TerminalServiceError } from "./terminal-service.js";
 
@@ -116,7 +118,7 @@ class DaemonAttachment implements TerminalAttachment {
   }
 }
 
-export class TerminalDaemonClient implements TerminalService {
+export class TerminalDaemonClient implements TerminalOperationService {
   private readonly attachments = new Set<DaemonAttachment>();
   private closed = false;
 
@@ -127,6 +129,29 @@ export class TerminalDaemonClient implements TerminalService {
 
   async probe(): Promise<void> {
     await this.rpc("ping", {});
+  }
+
+  async operationEpoch(): Promise<string> {
+    const result = await this.rpc<{ operationEpoch: string }>("ping", {});
+    return result.operationEpoch;
+  }
+
+  operate<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+    operation: TerminalOperationIdentity,
+  ): Promise<Result> {
+    return this.rpc(method, params, operation);
+  }
+
+  private async mutation<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+  ): Promise<Result> {
+    // Compatibility callers create a new intent on each method invocation.
+    // Browser retries instead pass their retained identity to operate().
+    const epoch = await this.operationEpoch();
+    return this.operate(method, params, { id: randomUUID(), epoch });
   }
 
   /** Ask an authenticated older daemon to leave its IPC address so this
@@ -185,26 +210,26 @@ export class TerminalDaemonClient implements TerminalService {
   }
 
   create(request: TerminalCreateRequest): Promise<TerminalDescriptor> {
-    return this.rpc("create", { request });
+    return this.mutation("create", { request });
   }
 
   rename(
     id: string,
     request: TerminalRenameRequest,
   ): Promise<TerminalDescriptor> {
-    return this.rpc("rename", { id, title: request.title });
+    return this.mutation("rename", { id, title: request.title });
   }
 
   reorder(projectCwd: string, ids: string[]): Promise<TerminalCatalogResponse> {
-    return this.rpc("reorder", { projectCwd, ids });
+    return this.mutation("reorder", { projectCwd, ids });
   }
 
   restart(id: string): Promise<TerminalDescriptor> {
-    return this.rpc("restart", { id });
+    return this.mutation("restart", { id });
   }
 
   remove(id: string, force: boolean): Promise<TerminalRemoveResponse> {
-    return this.rpc("remove", { id, force });
+    return this.mutation("remove", { id, force });
   }
 
   getSettings(): Promise<TerminalServiceSettings> {
@@ -214,11 +239,11 @@ export class TerminalDaemonClient implements TerminalService {
   updateSettings(
     patch: TerminalServiceSettingsPatch,
   ): Promise<TerminalServiceSettings> {
-    return this.rpc("updateSettings", { patch });
+    return this.mutation("updateSettings", { patch });
   }
 
   async clearHistory(): Promise<void> {
-    await this.rpc("clearHistory", {});
+    await this.mutation("clearHistory", {});
   }
 
   attach(
@@ -400,6 +425,7 @@ export class TerminalDaemonClient implements TerminalService {
   private rpc<Result>(
     method: TerminalDaemonRpcMethod,
     params: unknown,
+    operation?: TerminalOperationIdentity,
   ): Promise<Result> {
     if (this.closed)
       return Promise.reject(
@@ -412,7 +438,7 @@ export class TerminalDaemonClient implements TerminalService {
     return new Promise<Result>((resolvePromise, rejectPromise) => {
       const socket = createConnection(this.address);
       const decoder = new TerminalIpcDecoder();
-      const requestId = randomUUID();
+      const requestId = operation?.id ?? randomUUID();
       let settled = false;
       const timeout = setTimeout(
         () => {
@@ -448,6 +474,7 @@ export class TerminalDaemonClient implements TerminalService {
             requestId,
             method,
             params,
+            ...(operation ? { operation } : {}),
           }),
         );
       });

@@ -24,12 +24,17 @@ import {
   type TerminalCatalogResponse,
   type TerminalCreateRequest,
   type TerminalDescriptor,
+  type TerminalMutationMethod,
+  type TerminalOperationIdentity,
   type TerminalRemoveResponse,
   type TerminalRenameRequest,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
   type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
+import { signalProcessTree } from "./process-tree.mjs";
+import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
+import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import {
   discoverTerminalProfiles,
   publicTerminalProfiles,
@@ -40,10 +45,9 @@ import {
   type TerminalAttachment,
   type TerminalAttachmentSink,
   type TerminalAttachOptions,
-  type TerminalService,
+  type TerminalOperationService,
   TerminalServiceError,
 } from "./terminal-service.js";
-import { signalProcessTree } from "./process-tree.mjs";
 import { integratedTerminalLaunch } from "./terminal-shell-integration.js";
 
 const require = createRequire(import.meta.url);
@@ -424,7 +428,8 @@ class SessionAttachment implements TerminalAttachment {
   }
 }
 
-export class TerminalSessionManager implements TerminalService {
+export class TerminalSessionManager implements TerminalOperationService {
+  private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
   private readonly lifecycleMutations = new Set<string>();
   private readonly orderByProject = new Map<string, string[]>();
@@ -465,6 +470,22 @@ export class TerminalSessionManager implements TerminalService {
       persistOutput: options.settings?.persistOutput ?? false,
       historyRetentionDays: options.settings?.historyRetentionDays ?? 30,
     };
+  }
+
+  async operationEpoch(): Promise<string> {
+    return this.operations.getEpoch();
+  }
+
+  operate<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+    operation: TerminalOperationIdentity,
+  ): Promise<Result> {
+    // In-process Hosts own the PTYs and their receipts for the same lifetime.
+    // The daemon uses its own receipt owner around these ordinary methods.
+    return this.operations.run(operation, method, params, () =>
+      dispatchTerminalMutation(this, method, params),
+    ) as Promise<Result>;
   }
 
   list(cwd?: string): TerminalCatalogResponse {

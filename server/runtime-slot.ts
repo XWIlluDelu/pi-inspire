@@ -131,6 +131,8 @@ export interface RuntimeSlot {
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
   stopping: Promise<void> | null;
+  /** Worker owning a prompt whose Pi receipt is still pending. */
+  pendingPrompt: PiRpcProcess | null;
   ready: boolean;
   preview: ActiveSessionSnapshot | null;
   projection: SessionProjectionView | null;
@@ -215,6 +217,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     startupError: null,
     startupStop: null,
     stopping: null,
+    pendingPrompt: null,
     ready: false,
     runState: "idle",
     compactionReturnState: null,

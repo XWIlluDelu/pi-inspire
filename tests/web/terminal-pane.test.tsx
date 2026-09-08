@@ -14,6 +14,7 @@ import type {
 } from "../../shared/terminal-contracts";
 import { TerminalCatalogController } from "../../src/terminal-catalog";
 import { TerminalPane } from "../../src/components/TerminalPane";
+import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
@@ -22,6 +23,7 @@ const api = vi.hoisted(() => ({
   removeTerminal: vi.fn(),
   restartTerminal: vi.fn(),
   reorderTerminals: vi.fn(),
+  retryTerminalOperation: vi.fn(),
 }));
 vi.mock("../../src/api", () => ({ createApi: () => api }));
 vi.mock("../../src/components/TerminalView", () => ({
@@ -119,9 +121,72 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("terminal project ownership", () => {
+  it("references a terminal panel only after its lazy view exists", async () => {
+    render(<TerminalPane cwd="/A" />);
+    const unopened = await screen.findByRole("button", {
+      name: "A second",
+      pressed: false,
+    });
+    expect(unopened).not.toHaveAttribute("aria-controls");
+    fireEvent.click(unopened);
+    const panel = await screen.findByRole("region", {
+      name: "A second terminal",
+    });
+    expect(unopened).toHaveAttribute("aria-controls", panel.id);
+  });
+
+  it("keeps an uncertain control visible across project generations and explicitly checks the same identity", async () => {
+    const identities: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === "/api/terminal-operations")
+          return Response.json({ epoch: "synthetic-epoch" });
+        const identity = JSON.parse(
+          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
+        ) as { id: string };
+        identities.push(identity.id);
+        if (identities.length === 1)
+          throw new Error("Synthetic lost response after commit");
+        return Response.json(terminal("created"), {
+          headers: {
+            "X-Terminal-Operation": identity.id,
+            "X-Terminal-Outcome": "completed",
+          },
+        });
+      }),
+    );
+    api.createTerminal.mockImplementation((body) =>
+      terminalOperations.run(null, "/api/terminals", "POST", body),
+    );
+    api.retryTerminalOperation.mockImplementation((key) =>
+      terminalOperations.retry(null, key),
+    );
+    const view = render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await screen.findByText("Outcome unknown");
+    expect(screen.getByText("Create terminal · /A")).toBeVisible();
+    view.rerender(<TerminalPane cwd="/B" />);
+    await screen.findByRole("button", { name: "B shell", pressed: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry same operation" }),
+    );
+    await act(async () => {
+      await api.retryTerminalOperation.mock.results[0]!.value;
+    });
+    expect(identities).toHaveLength(2);
+    expect(identities[0]).toBe(identities[1]);
+    expect(screen.queryByText("Outcome unknown")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "B shell", pressed: true }),
+    ).toBeTruthy();
+  });
+
   it.each([
     "create",
     "duplicate",

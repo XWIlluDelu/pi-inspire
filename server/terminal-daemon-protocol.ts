@@ -1,11 +1,12 @@
 import { join } from "node:path";
+import type { TerminalOperationIdentity } from "../shared/terminal-contracts.js";
 import { installationKey } from "./installation-key.js";
 import {
   inspireRuntimeDirectory,
   inspireStateDirectory,
 } from "./platform-paths.mjs";
 
-export const TERMINAL_DAEMON_PROTOCOL_VERSION = 1;
+export const TERMINAL_DAEMON_PROTOCOL_VERSION = 2;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
 export const TERMINAL_DAEMON_REPLACING_TYPE = "terminal_daemon_replacing";
 
@@ -29,6 +30,7 @@ export interface TerminalDaemonRpcRequest {
   requestId: string;
   method: TerminalDaemonRpcMethod;
   params: unknown;
+  operation?: TerminalOperationIdentity;
 }
 
 export interface TerminalDaemonAttachRequest {

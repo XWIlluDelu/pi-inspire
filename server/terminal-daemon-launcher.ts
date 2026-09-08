@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolveAccessToken } from "./access-token.js";
 import { installationKey } from "./installation-key.js";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
+import { TerminalServiceError } from "./terminal-service.js";
 import {
   defaultTerminalDaemonAddress,
   defaultTerminalDaemonStatePath,
@@ -113,15 +114,16 @@ export async function launchTerminalDaemon(
     // Start a private daemon below and wait for its authenticated IPC socket.
   }
 
-  if (await client.requestProtocolReplacement()) {
-    const replacementDeadline = Date.now() + START_TIMEOUT_MS;
-    while (
-      Date.now() < replacementDeadline &&
-      (await addressAcceptsConnections(address))
-    )
-      await delay(75);
-    if (await addressAcceptsConnections(address))
-      throw new Error("The incompatible terminal service did not stop");
+  // A failed probe does not grant authority to stop an independently owned
+  // daemon and its PTYs. In particular, an old protocol's replace handshake
+  // can terminate active shells. Leave a listening owner untouched.
+  if (await addressAcceptsConnections(address)) {
+    await client.close();
+    throw new TerminalServiceError(
+      "terminal_service_restart_required",
+      503,
+      "The running terminal service is incompatible or unavailable. Stop terminal work and explicitly restart the terminal service to upgrade it.",
+    );
   }
 
   const executable = daemonCommand();

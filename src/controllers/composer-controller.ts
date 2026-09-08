@@ -86,6 +86,7 @@ interface ComposerControllerHost {
  */
 export class ComposerController {
   private readonly composers = new Map<string, ComposerPartition>();
+  private readonly confirmations = new Map<string, AbortController>();
   private requestEpoch = 0;
 
   constructor(private readonly host: ComposerControllerHost) {}
@@ -103,6 +104,9 @@ export class ComposerController {
 
   invalidateForTransportReplacement(): void {
     this.requestEpoch += 1;
+    for (const confirmation of this.confirmations.values())
+      confirmation.abort();
+    this.confirmations.clear();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
       deliveryOutcomeUnknown ||= composer.sending;
@@ -135,6 +139,8 @@ export class ComposerController {
   }
 
   discard(sessionId: string): void {
+    this.confirmations.get(sessionId)?.abort();
+    this.confirmations.delete(sessionId);
     const composer = this.composers.get(sessionId);
     if (composer) {
       this.releaseAttachments(composer.attachments);
@@ -167,7 +173,8 @@ export class ComposerController {
     const ownsTransport = (): boolean =>
       this.host.api() === api &&
       this.host.transportGeneration() === generation &&
-      this.requestEpoch === requestEpoch;
+      this.requestEpoch === requestEpoch &&
+      this.composers.get(sessionId) === composer;
     const composer = this.forSession(sessionId);
     if (composer.sending) return false;
     if (composer.attachments.some((item) => item.status === "uploading")) {
@@ -289,8 +296,10 @@ export class ComposerController {
     composer.pendingDelivery = delivery;
     composer.sending = true;
     this.publish(sessionId);
+    const confirmation = new AbortController();
+    this.confirmations.set(sessionId, confirmation);
     try {
-      const response = await api.prompt(delivery.request);
+      const response = await api.prompt(delivery.request, confirmation.signal);
       if (!ownsTransport()) return false;
       // Accepted: clear exactly what was delivered, from the owner session's
       // partition — never from whichever session is visible by now.
@@ -321,11 +330,16 @@ export class ComposerController {
       const acceptanceUnknown =
         !(error instanceof ApiError) ||
         error.edge === "ssh-reverse" ||
+        error.outcomeUnknown ||
+        error.code === "PI_RPC_OUTCOME_UNKNOWN" ||
+        error.code === "PROMPT_OPERATION_RESULT_RETIRED" ||
+        error.code === "PROMPT_OPERATION_NOT_FOUND" ||
+        error.code === "HOST_AUTHORITY_CHANGED" ||
         ((error.status === 408 || error.status >= 500) &&
           error.authorityId !== authorityId);
       if (error instanceof ApiError && !acceptanceUnknown) {
-        // An application response is a definitive refusal. Reusing its
-        // operation is unnecessary; a changed Host also cannot resolve it.
+        // Only a definitive refusal releases this delivery identity. A Host
+        // can authoritatively report uncertainty; provenance is not outcome.
         composer.pendingDelivery = null;
         if (error.status === 401) {
           composer.sending = false;
@@ -346,6 +360,8 @@ export class ComposerController {
       );
       return false;
     } finally {
+      if (this.confirmations.get(sessionId) === confirmation)
+        this.confirmations.delete(sessionId);
       if (ownsTransport()) {
         composer.sending = false;
         this.prune(sessionId, composer);

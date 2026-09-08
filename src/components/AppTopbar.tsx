@@ -406,6 +406,7 @@ export const AppTopbar = memo(function AppTopbar({
           className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}
           onClick={onToggleResources}
           aria-label="Toggle resources panel"
+          data-terminal-focus-trigger
           aria-expanded={state.resourcesOpen}
           title="Toggle resources panel (Ctrl+.)"
         >

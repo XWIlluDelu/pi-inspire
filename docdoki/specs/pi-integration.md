@@ -62,8 +62,8 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   accidentally. Pi runtime-resource precedence is retained, except that `/compact` is always
   Host-owned.
 
-- Manual compaction is a standalone host operation with Pi's three-minute command allowance rather
-  than the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,
+- Manual compaction is a standalone Host operation whose completion belongs to Pi, not a fixed
+  three-minute allowance or the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,
   cancelling a standalone compaction stops only its owning worker, classifies the interrupted
   compact request as cancelled rather than outcome-unknown, and starts a fresh worker on demand
   while the JSONL projection remains authoritative. HTML export and resource reload use the same
@@ -99,10 +99,26 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
 - The Pi RPC stream accepts only bounded valid-UTF-8 JSON object frames. A correlated response must
   carry the pending request id, exact command, and explicit success value; malformed, mismatched,
   oversized, or unexpectedly closed streams retire the whole worker instead of dropping a frame and
-  continuing with ambiguous ordering. Startup, stdin delivery, and response waits are bounded. Once
-  a mutating frame enters Node's write buffer, write failure, timeout, or child loss is reported as
-  acceptance-unknown and exposes the worker-stop promise to recovery; a failed read-only request is
-  not mislabeled as a mutation conflict, but still retires the unusable protocol stream.
+  continuing with ambiguous ordering. Startup and stdin delivery retain bounded admission/transport
+  checks; a response-wait deadline is not proof that the stream failed. Pi-owned mutations have no
+  generic response deadline: prompt preflight may include automatic compaction, authentication, and
+  extension hooks/dialogs; compaction, export, and branch handlers likewise finish according to Pi.
+  Explicit Stop remains independent of the blocked persistence lane and can retire a preflight
+  worker even when Pi's ordinary abort cannot interrupt its hook. A prompt stopped before its receipt
+  remains acceptance-unknown, rather than claiming that no side effects occurred.
+
+  Read-only responses default to a 30-second observation window. A timeout retires only that caller;
+  its exact id/command remains tracked for a valid late response. All tracked requests, including
+  retired observers, share a 256-entry admission cap and are never evicted to make a late result
+  appear new. An explicitly bounded mutation wait also reports unknown without implicitly stopping
+  its worker. Actual stdin/stream failure or child loss retires the worker and exposes a real stop
+  fence; neither a null fence nor a rejected wait proves exit.
+
+  Stop signals, escalation timers, and watchdogs are requests/observations, not death certificates.
+  Only confirmed leader exit (or proven spawn failure) plus completion of process-tree signaling
+  releases the writer barrier. Failed or indefinitely delayed termination keeps replacement and
+  recovery writes fenced; metadata-only watchdogs report that state without inventing completion.
+  Coarse diagnostic phase labels never become execution authority. Evidence: [[operation-lifecycle-ownership]].
 
 - Pending supports the public `queue_update` text arrays and explicit confirmed `clear_queue`, not a
   separately negotiated structured management protocol. Unsupported pause/resume, per-item

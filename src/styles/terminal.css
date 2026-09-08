@@ -763,6 +763,53 @@
   color: var(--faint);
 }
 
+.terminal-pending {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 180px;
+  overflow: auto;
+  border-top: 1px solid var(--hairline-strong);
+  padding: 8px;
+  background: var(--bg-raised);
+}
+
+.terminal-pending__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--muted);
+  font: var(--text-xs)/1.5 var(--font-sans);
+}
+
+.terminal-pending__description {
+  flex: 1 1 100px;
+  min-width: 0;
+}
+
+.terminal-pending__label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--body);
+}
+
+.terminal-pending__row > button {
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+
+.terminal-pending + .terminal-pane__error {
+  position: static;
+  flex: 0 0 auto;
+  align-self: stretch;
+  max-width: none;
+  margin: 0 8px 8px;
+  color: color-mix(in srgb, var(--error) 70%, var(--body));
+}
+
 .terminal-undo {
   position: absolute;
   z-index: 16;
@@ -965,6 +1012,10 @@
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 720px) {
+  .terminal-pending__row > button {
+    min-height: 44px;
+  }
+
   .terminal-settings {
     width: calc(100vw - 16px);
     max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
