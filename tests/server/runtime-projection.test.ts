@@ -1759,6 +1759,16 @@ describe("RuntimeController projection ownership gate", () => {
   it.each([
     { content: [] },
     { content: [{ type: "text", text: "partial output" }] },
+    {
+      content: [
+        {
+          type: "toolCall",
+          id: "interrupted-write",
+          name: "write",
+          arguments: { path: "src/partial.ts", content: "unfinished" },
+        },
+      ],
+    },
   ])(
     "preserves Pi failure details across live events, reconnect snapshots, and persistence (%j)",
     async ({ content }) => {
@@ -1893,8 +1903,7 @@ describe("RuntimeController projection ownership gate", () => {
           delta: "live answer",
         },
       });
-      // Pi's public start/delta protocol does not expose tool identity/name or
-      // typed arguments until toolcall_end.
+      // Legacy Pi <0.84.3 starts lacked identity/name; retain end-only support.
       workers[0]!.emit("event", {
         type: "message_update",
         assistantMessageEvent: {
@@ -1926,13 +1935,17 @@ describe("RuntimeController projection ownership gate", () => {
 
       const snapshot = await runtime.snapshot();
       expect(forwarded).toHaveLength(5);
-      expect(forwarded.every((event) => event.streamDelta === true)).toBe(true);
       expect(
-        new Set(forwarded.map((event) => event.streamMessageKey)),
+        forwarded.slice(0, 4).every((event) => event.streamDelta === true),
+      ).toBe(true);
+      expect(forwarded.at(-1)).not.toHaveProperty("assistantMessageEvent");
+      expect(forwarded.at(-1)).not.toHaveProperty("streamDelta");
+      expect(
+        new Set(forwarded.slice(0, 4).map((event) => event.streamMessageKey)),
       ).toHaveLength(1);
-      expect(forwarded.map((event) => event.streamTextLength)).toEqual([
-        0, 12, 12, 23, 23,
-      ]);
+      expect(
+        forwarded.slice(0, 4).map((event) => event.streamTextLength),
+      ).toEqual([0, 12, 12, 23]);
       expect(forwarded.map((event) => event.streamRevision)).toEqual([
         1, 2, 3, 4, 5,
       ]);

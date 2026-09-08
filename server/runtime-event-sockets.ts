@@ -10,6 +10,7 @@ import {
 } from "../shared/contracts.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { UpdateCoordinatorLike } from "./update-coordinator.js";
+import { compactToolArgumentEvents } from "./tool-argument-batches.js";
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
@@ -191,7 +192,8 @@ export function createRuntimeEventSockets({
     delete batch.assistantMessageEvent;
     delete batch.streamDelta;
     batch.type = "message_update_batch";
-    batch.assistantMessageEvents = pending.events;
+    batch.assistantMessageEvents = compactToolArgumentEvents(pending.events);
+    batch.sourceEventCount = pending.events.length;
     const destinations = {
       joining: false,
       established: true,
