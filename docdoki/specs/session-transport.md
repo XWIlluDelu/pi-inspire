@@ -31,6 +31,13 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   message/tool/queue/dialog bodies. The Host filters before encoding those bodies and preserves its
   bounded joining backlog and event-batch ordering for interested clients.
 
+- Foreground run state and navigation status adopt the Host's explicit `sessionStatus`, not an
+  independently inferred event-name transition. Inferred transitions are a fallback only for
+  unannotated events; failed messages and settlement cannot briefly become running/idle merely
+  because the corrective snapshot has not arrived. Retry details are bounded Host-owned current
+  metadata carried in addressed snapshots as well as live events; non-retry phases retire those
+  details. Missing or malformed details do not hide a valid `retrying` state or invent attempt counts.
+
 - Refreshing or reconnecting reconciles live events against an authoritative Pi snapshot without
   duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap
   and the WebSocket's first snapshot carry one process-lifetime Host authority plus a SHA-256

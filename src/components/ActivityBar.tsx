@@ -1,27 +1,43 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { shallowEqual, useAppState } from "../store";
 
 /**
- * Quiet composer-adjacent status for automatic retries and a concise Pending
- * count. Tool execution remains in its chronological Transcript cards instead
+ * Current Pi phase, independent of the trigger or this browser's command receipts.
+ * Optional event/snapshot details enrich a state; they never gate its visibility.
+ * Tool execution remains in its chronological Transcript cards instead
  * of being duplicated here.
  */
 export const ActivityBar = memo(function ActivityBar() {
   const state = useAppState(
     (source) => ({
+      runState: source.runState,
       retry: source.retry,
       queue: source.queue,
     }),
     shallowEqual,
   );
   const pending = state.queue.totalCount;
+  const compacting = state.runState === "compacting";
+  const retrying = state.runState === "retrying";
 
-  if (!state.retry && pending === 0) return null;
+  if (!compacting && !retrying && pending === 0) return null;
 
   return (
     <div className="activity">
-      {state.retry ? (
+      {compacting ? (
+        <div
+          className="activity__live"
+          role="status"
+          aria-label="Context compaction status"
+        >
+          <span className="chip chip--info chip--live">
+            <Loader2 size={12} className="spin" aria-hidden />
+            Compacting context
+          </span>
+        </div>
+      ) : null}
+      {retrying ? (
         <div
           className="activity__live"
           role="status"
@@ -30,8 +46,10 @@ export const ActivityBar = memo(function ActivityBar() {
         >
           <span className="chip chip--warning chip--live">
             <AlertTriangle size={12} aria-hidden />
-            Retry {state.retry.attempt}/{state.retry.maxAttempts}
-            {state.retry.message ? ` — ${state.retry.message}` : ""}
+            {state.retry
+              ? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
+              : "Retrying"}
+            {state.retry?.message ? ` — ${state.retry.message}` : ""}
           </span>
         </div>
       ) : null}

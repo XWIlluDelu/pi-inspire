@@ -259,11 +259,13 @@ function UpdateCheckButton({
   label,
   checked,
   checking,
+  requestPending,
   onClick,
 }: {
   label: string;
   checked: boolean;
   checking: boolean;
+  requestPending: boolean;
   onClick: () => void;
 }) {
   return (
@@ -271,15 +273,21 @@ function UpdateCheckButton({
       type="button"
       className="settings__update-check"
       aria-label={label}
-      disabled={checking}
+      disabled={checking || requestPending}
       onClick={onClick}
     >
       <RefreshCw
         size={13}
-        className={checking ? "spin" : undefined}
+        className={checking || requestPending ? "spin" : undefined}
         aria-hidden
       />
-      {checking ? "Checking" : checked ? "Check again" : "Check now"}
+      {checking
+        ? "Checking"
+        : requestPending
+          ? "Pending"
+          : checked
+            ? "Check again"
+            : "Check now"}
     </button>
   );
 }
@@ -421,6 +429,7 @@ function UpdateEntry({
   title,
   checked,
   checking,
+  requestPending,
   checkLabel,
   onCheck,
   children,
@@ -428,6 +437,7 @@ function UpdateEntry({
   title: string;
   checked: boolean;
   checking: boolean;
+  requestPending: boolean;
   checkLabel: string;
   onCheck: () => void;
   children: ReactNode;
@@ -440,6 +450,7 @@ function UpdateEntry({
           label={checkLabel}
           checked={checked}
           checking={checking}
+          requestPending={requestPending}
           onClick={onCheck}
         />
       </div>
@@ -460,9 +471,11 @@ export const SettingsContent = memo(function SettingsContent({
       prefs: source.prefs,
       piUpdateCheck: source.piUpdateCheck,
       piUpdateChecking: source.piUpdateChecking,
+      piUpdateRequestPending: source.piUpdateRequestPending,
       piVersion: source.piVersion,
       inspireUpdateCheck: source.inspireUpdateCheck,
       inspireUpdateChecking: source.inspireUpdateChecking,
+      inspireUpdateRequestPending: source.inspireUpdateRequestPending,
       version: source.version,
       sessionId: source.sessionId,
       runtimeSettings: source.runtimeSettings,
@@ -886,6 +899,7 @@ export const SettingsContent = memo(function SettingsContent({
               title="Pi & Extensions"
               checked={state.piUpdateCheck !== null}
               checking={state.piUpdateChecking}
+              requestPending={state.piUpdateRequestPending}
               checkLabel="Check Pi and extension updates"
               onCheck={store.checkPiUpdate}
             >
@@ -900,6 +914,7 @@ export const SettingsContent = memo(function SettingsContent({
               title="INSΠRE"
               checked={state.inspireUpdateCheck !== null}
               checking={state.inspireUpdateChecking}
+              requestPending={state.inspireUpdateRequestPending}
               checkLabel="Check INSΠRE updates"
               onCheck={store.checkInspireUpdate}
             >

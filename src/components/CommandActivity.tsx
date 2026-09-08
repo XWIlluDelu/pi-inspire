@@ -32,11 +32,17 @@ export const CommandActivity = memo(function CommandActivity() {
     }),
     shallowEqual,
   );
-  if (!state.sessionId || state.activities.length === 0) return null;
+  // A /compact request owns its eventual receipt, never the runtime's progress.
+  // ActivityBar presents that phase for every trigger and every observer.
+  const activities = state.activities.filter(
+    (activity) =>
+      activity.command !== "compact" || activity.status !== "running",
+  );
+  if (!state.sessionId || activities.length === 0) return null;
 
   return (
     <section className="command-activity" aria-label="Command activity">
-      {state.activities.map((activity) => (
+      {activities.map((activity) => (
         <article
           key={activity.id}
           className={`command-activity__item command-activity__item--${activity.status}`}

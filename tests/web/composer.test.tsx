@@ -616,6 +616,12 @@ describe("composer-adjacent status and queued controls", () => {
     expect(
       screen.getByRole("button", { name: "Cancel context compaction" }),
     ).toBeInTheDocument();
+    const meter = screen.getByRole("meter");
+    expect(meter).toHaveAttribute(
+      "title",
+      expect.stringContaining("context compaction in progress"),
+    );
+    expect(meter.getAttribute("title")).not.toContain("type /compact");
 
     typeDraft("send after the checkpoint");
     fireEvent.keyDown(textarea, { key: "Enter" });
