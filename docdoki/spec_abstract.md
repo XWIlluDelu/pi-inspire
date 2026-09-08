@@ -4,20 +4,22 @@
 
 | Area | Spec | Design |
 |---|---|---|
-| Product shell | [[workbench]] | A three-region workbench keeps collapsible, curated project navigation at the left — globally pinned sessions, pinned folders, and a reversible Hidden group — conversation dominant in the center, and contextual work available on demand at the right. |
+| Product shell | [[workbench]], [[workspace-layout]], [[interface-preferences]] | A three-region workbench keeps collapsible, curated project navigation at the left — globally pinned sessions, pinned folders, and a reversible Hidden group — conversation dominant in the center, and contextual work available on demand at the right. |
 | Project terminal | [[terminal]] | An independent local daemon owns ordered project-scoped PTYs while paired browsers provide detachable xterm views with one explicit writer, exact reconnect, and no terminal splits. |
 | Resource preview | [[resource-preview]] | Transcript references and workspace-indexed files open in a session-bound, defensive preview surface rather than an unrestricted browser file client. |
 | Visual language | [[visual-language]] | An original scientific-workbench character: reference grammar without reference identity, Amber/Jade palettes tuned independently per light/dark theme plus semantic annotation hues, one type voice per role. |
 | Design tokens & components | [[design-system]] | The concrete contract — palette roles per theme, type scale, spacing, radii, elevation, motion, and per-component anatomy — that `src/styles.css` implements. |
-| Conversation | [[conversation]] | Compact user bubbles alternate with assistant answers presented as an open document flow containing typed Pi text and activity blocks. |
+| Conversation | [[conversation]], [[activity-presentation]] | Compact user bubbles alternate with assistant answers presented as an open document flow containing typed Pi text and activity blocks. |
 | Rich content | [[rich-rendering]] | One defensive Markdown pipeline owns both settled and streaming text, including mathematical notation. |
 | Activity presentation | [[tool-presentations]] | Validated local declarations project known Pi calls and optional Thinking text into bounded summaries and typed Web blocks while their native card shells remain fixed. |
-| Session continuity | [[session-continuity]] | Pi’s JSONL session tree remains canonical while the browser holds only a reloadable, virtualized projection. |
-| Pi integration | [[pi-integration]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported Extension dialogs and text widgets natively without coupling the product to particular Extensions. |
+| Session continuity | [[session-continuity]] | Pi’s JSONL remains canonical; [[session-persistence]], [[session-transport]], [[session-branches]], and [[session-deletion]] detail the independent ownership boundaries. |
+| Pi integration | [[pi-integration]], [[host-lifecycle]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported Extension dialogs and text widgets natively without coupling the product to particular Extensions. |
 | Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 
 ## Implemented capability
+
+[[simplification-review]] records removal of obsolete adapters/benchmarks, explicit deletion validation, terminal spawn cleanup, separated Host socket ownership, responsibility-scoped store tests and contracts, and StrictMode focus restoration. Its isolated Node 22 and Chromium verification excludes the concurrently developed tool-argument streaming slice.
 
 The New session directory picker has a default-off Show hidden folders checkbox, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
 

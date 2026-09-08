@@ -30,7 +30,7 @@ covers:
   - server/session-projection.ts
   - tests/web/ansi.test.tsx
   - tests/web/events.test.ts
-  - tests/web/store.test.ts
+  - tests/web/store*.test.ts
   - tests/web/branch-store.test.ts
   - tests/web/transcript-inspection.test.tsx
   - tests/web/assistant-error.test.tsx
@@ -51,36 +51,248 @@ covers:
 
 Make the browser a complete, calm, and truthful presentation of an active Pi conversation.
 
+## Contract map
+
+[[activity-presentation]] owns activity bands, independent Thinking/tool density,
+deferred materialization, and Adaptive lifecycle. Assistant outcomes and displayed
+custom messages remain independent readable boundaries in this contract.
+
 ## Checks
 
-- User and assistant messages appear in source order without duplicate or missing settled content after reconnecting. A keyed message updates only its own key; if an earlier turn lacks its end event, the next keyed assistant turn appends rather than overwriting it.
-- Markdown math accepts `$…$`, `$$…$$`, `\\(…\\)`, and `\\[…\\]` through token-aware parsing. Inline/fenced code and escapes stay code/text; valid same-line, multiline, and newline-adjacent displays remain distinct math blocks; first-line display content is never misclassified as metadata; and any unclosed opener remains exact readable source while a response streams. Untrusted Markdown is sanitized before trust-disabled KaTeX generates its complete HTML, MathML, and SVG output, preserving extensible glyph geometry and accessibility metadata without enabling trust-only commands.
-- Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source projection. Formula bodies use canonical `$…$` inline or `$$…$$` display delimiters, including partial selections whose original formula wrapper determines display identity; surrounding selected text and multiple formulas are preserved. Every user turn has a message-level action that copies its exact source. Every assistant response has an action at the end of the response that concatenates only its response text blocks and excludes thinking, tool, custom, and generic activity payloads. Each Thinking, tool, generic activity block, and displayed custom message independently copies its complete source projection; tool copies include the name, full arguments, and untruncated result, while custom copies include the type, content, and details.
-- View-local search performs case-insensitive literal matching over settled conversation text and can scope results to all searchable turns, user input only, or model output only. It wraps previous/next navigation and jumps by transcript row through virtualization. The streaming tail and hidden thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow across prepends and live appends until search is cleared or the user explicitly jumps to latest. On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared backdrop that floats over Transcript without reserving layout height; activating it replaces the launchers with the complete search row on a surface background and focuses the input, while Close, Escape, outside dismissal, or a view change clears the hidden search ownership before restoring the launchers.
-- The Prompt Map is a read-only outline of every visible user turn on the current branch. Its branch-bound, bounded index is independent of loaded Transcript pages and History's raw-entry window; one shared projection derives its Unicode-safe snippets and image counts consistently for loaded, preview, and indexed turns, and selecting an unloaded prompt seeks directly to that turn without sequentially scanning older pages or materializing folded activity. At desktop rest it is only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent current mark: no full-height border, background, icon, or boundary buttons. Its minimum left reading gutter is derived from the actual center pane rather than the browser viewport, and its resting position follows side-pane, reading-measure, and window geometry before paint, so resizing in either direction cannot leave the rail over content or at stale coordinates. Up to 12 prompts map one-to-one; beyond that, the marks are a stable consecutive window that moves only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping Previous and Next controls; leaving the surface collapses it automatically, while touch uses tap and outside dismissal. Native disabled semantics and subdued token colors distinguish unavailable directions. The expanded list initially follows a changed current turn, then yields scroll ownership while the user browses it; disclosure preserves keyboard focus, and only one seek may own navigation until it succeeds or exposes an exact-target retry. At the authoritative Transcript latest boundary, the current mark is the final prompt even when a tall viewport leaves that prompt below the ordinary reading line. On a narrow workbench, the desktop vertical rail is removed: a 44px launcher joins Search in the backdrop-free idle top-right control floating over Transcript, and activation replaces those launchers on a shared surface in the same floating zone with the desktop navigator rotated 90 degrees—Previous at left, at most 12 fixed-spacing vertical prompt marks in the center, and Next at right. The same local-window and disabled-boundary semantics remain; selecting the center marks opens the complete independently scrollable virtual directory as a bounded sheet, and outside dismissal restores the two Search and Prompt Map launchers. Search and Prompt Map modes are mutually exclusive. While either local tool owns focus or its narrow mode, Escape resolves that tool before the global run-abort shortcut. Sparse seek windows remain explicitly separated in Transcript, while same-branch pagination, append snapshots, branch rewrites, search ownership, and latest-follow preserve their existing authorities.
-- User turns appear as compact bubbles while assistant answers use an open, left-aligned document flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken links and file references wrap only when needed and remain inside the reading measure at narrow widths.
-- Composer project-file selections are display handles, not durable filesystem authority. At prompt delivery the Host invalidates the short-lived project index, resolves the workspace and each candidate through real paths, and accepts only files present in that fresh bounded index; symlink retargets and newly ignored paths therefore fail closed. File references added to the prompt are JSON string literals under an explicit context heading, so filename newlines or list markers cannot create new prompt instructions. A transport replacement invalidates in-flight prompt/upload ownership; stale completions cannot clear current composer state, and uploaded bytes completed on the old transport are reclaimed.
-- Every maximal run of visible non-response activity before, between, or after assistant response passages is projected into one full-width band bounded by two quiet horizontal rails, even when the run crosses assistant-message boundaries. Expanded preserves the existing Thinking, tool, generic, and tool-only round-lead presentation unchanged inside the rails. Displayed custom messages are independent content boundaries outside activity folds. Compact preserves the latest 24 cards in source order; with at most 24 it is presentation-equivalent to Expanded, while a longer run hides only its earlier prefix behind a top `···` control that expands the complete run. Collapsed is the most compressed state: it retains any materialized source and card state while showing only centered `···` between the rails. Manual disclosure follows one setting-independent density ladder: a Collapsed middle or rail opens Compact, Compact's prefix `···` opens Expanded, and either rail reduces Expanded to Compact and Compact to Collapsed. At both boundaries the glyph points in the next spatial direction—toward the activity when an open band can contract and away from it when a Collapsed band can expand—and the adjacent telemetry edges run parallel to the glyph sides. When Compact and Expanded are equivalent, collapse skips the invisible intermediate state. Expanded, Compact, and Collapsed preferences choose the initial state rather than disabling any manual transition; fold-local choice is retained by the branch view across pagination, virtual unmounting, pairing changes, and activity-range materialization and overrides its default. Older pagination leaves activity-only persisted messages behind an opaque, view-bound range instead of transferring them merely to hide them. Expanded automatically materializes every bounded page; Compact materializes newest-first pages only until 24 cards are available or the range is exhausted; Collapsed remains unloaded. The same minimal prefix `···` represents loaded or deferred omission, loading, and retry without a separate on-demand text card; selecting it requests complete Expanded materialization. A changed projection invalidates the request, every inserted page is scroll-anchored, and already-materialized children remain mounted across later presentation changes. The independent default is Adaptive (persisted as `dynamic`): historical runs start Collapsed, live runs start Compact—therefore matching Expanded for ordinary runs of at most 24 cards—and then close only after both 2.4 seconds from opening and 800 ms from the next response or authoritative runtime state proving that no further activity can arrive. Manual disclosure halts that automatic transition. Retry remains live, transport loss alone proves nothing, and worker failure clears browser-only streaming/tool liveness so a terminal tail cannot remain open forever.
-- An activity band's existing omission marker uses three 2px square dots, retaining the original monospaced ellipsis cells and 0.25em tracking. It indicates live work by alternating them between tool/thinking/tool and thinking/tool/thinking theme colors once per second. Both the collapsed summary and any visible omission control share this local CSS feedback; it adds no polling or runtime messages and does not create a control where none is needed. Settled bands remain still, loading errors retain their error color, and reduced motion keeps a static color pattern.
-- Assistant text streams smoothly without visually rebuilding the entire transcript for every fragment. Pi 0.84 JSON/RPC `message_update` frames intentionally carry only `assistantMessageEvent`; the host reconstructs the active assistant from those typed thinking/text/tool-call deltas for both live events and reconnect snapshots, while the browser uses the same pure reducer only as a compatibility path and resyncs rather than guessing against settled history. Pi may emit an empty assistant `message_start` before the provider yields its first visible thinking, text, or tool delta; that truthful waiting state renders a quiet `Working…` indicator and replaces it immediately when content arrives. A settled empty assistant without an error allocates no Divider-only transcript row; failed replies instead retain their visible error outcome as specified below. While latest-follow remains active, the viewport follows actual rendered-content and scrollport geometry—not only message-count or ordinary-text changes—so thinking/tool deltas, Markdown reflow, card transitions, virtual-row measurement, and a mobile keyboard resizing the scrollport cannot strand new content below the fold. Only an explicit wheel, touch, or keyboard gesture releases latest-follow outright. A fold disclosure gesture owns its layout mutation before resizing and keeps the selected upper, lower, or middle anchor fixed through ordinary and virtualized history; it retains latest-follow afterward only when the anchored result remains at the exact latest boundary. Input owns the viewport before its deferred scroll event, and once released, Markdown reflow, virtual-row measurement, scrollport resize, and other programmatic scroll events cannot silently reacquire follow; only the user reaching the latest boundary or choosing Jump to latest does so. Transcript search retains its separate viewport lock.
-- Thinking appears separately from answer text and follows the user’s independent Adaptive, Expanded, Collapsed, or Hidden preference. Adaptive keeps every Thinking block from the current LLM call expanded through its tool batch, then requests collapse when the next assistant message starts or the agent settles; collapse waits for both 1.8 seconds of expanded residency and 600 ms after that boundary. Historical loading starts collapsed and never replays lifecycle motion. Terminal-only control formatting is dropped at the display boundary without rewriting Pi history.
-- Every Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a persistent plain-text error block after that reply's existing content. Empty and thinking-only failed replies remain visible boundaries rather than deferred activity, and activity visibility or assistant-round styling cannot hide the error. Short errors are immediately readable; long or multiline details have an explicit expand/collapse control and an independent copy action for the entire available error text, not its collapsed preview. Existing Host projection bounds still apply and visibly mark truncated source. A missing detail retains a truthful no-details fallback. Live message completion, reload, reopening, and older-history pagination all derive the outcome from the same Pi message, without a second error-history store or a retry/diagnostic subsystem.
-- Each tool call is correlated with its live status, partial output, final result, and failure state.
-- Assistant round boundaries have two presentation-only styles: Divider replaces the existing Pi/model/time/stop-reason row with a quiet neutral rule centered in the ordinary inter-turn gap, while Details preserves that row unchanged. A message carrying response text places this one boundary with its first response passage rather than inside preceding collapsible activity; a tool-only message retains it with its first activity. Divider color never implies hidden status.
-- Tool activity supports Adaptive, Expanded, Compact, Collapsed, and Hidden defaults in decreasing information density. Adaptive treats every assistant message’s tool calls as one Pi batch: each call requests Compact at its own `tool_execution_end`, independent of its peers and of success or failure; the entire batch requests Collapsed together only when the next assistant message starts or the agent settles. A call remains Expanded until both 1.5 seconds from opening and 500 ms from its own completion have elapsed; after the 180 ms body-close transition the Compact cards remain visible for at least 800 ms before the batch collapses. A settled historical batch loads directly as Collapsed. Compact keeps every ordinary card visible with its body closed. Collapsed turns each adjacent call into a tool/status glyph pair in a wrapping horizontal strip without reordering across other content; selecting one reveals its complete card downward beneath the strip, with animated open, close, and selection changes. Both ordinary and Collapsed-strip activity headers provide an explicit local disclosure control, while every non-interactive part of the header invokes the same expand/Compact action. Copy and resource-preview controls remain independent: only the visible resource reference opens that resource, and neither control also changes disclosure state.
-- A displayed Pi custom message is extension-authored context, not a tool execution or user-authored turn. It uses a quiet, neutral message surface with an information-blue left edge, package glyph, readable type-derived title, and the available `customType`, distinct from user input and Pi assistant authorship. Its body renders through the shared defensive Markdown pipeline, supports text/image blocks, and stays directly readable regardless of Thinking, tool, or activity-fold preferences. Optional non-null `details` gets a separate, initially closed disclosure; absence creates no empty entry, and expanded details mount only on demand. There is no invented execution status or Adaptive lifecycle. One semantic message keeps one presentation owner as it crosses Pi’s live lifecycle and durable `custom_message` entry: because Pi assigns those forms separate timestamps, the host pairs their exact persisted payloads one-to-one in event order, retains legitimately repeated equal payloads as separate entries, and replaces rather than appends the linked overlay during snapshots. Timestamp adoption and prepends preserve the message's Details state. Older-history and Prompt Map paging treat displayed custom messages as visible content boundaries, never deferred tool activity. Settled content is searchable in All without being attributed to User or Model. `display:false` custom context remains absent from the browser. This presentation does not change Pi delivery, model-context conversion, or the existing PI error surface.
-- Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed context-summary cards with retained token counts and searchable Markdown bodies. They are not hidden behind a generic-message raw JSON fallback and remain distinct rows at their context boundaries.
-- Pi lifecycle events determine when Adaptive mode may advance; monotonic dwell deadlines only keep very fast states perceptible and never infer lifecycle. The browser retains the current assistant-message identity from `message_start` through its tool batch, replaces it at the next LLM call, clears it on settlement, and restores it from an active snapshot after refresh/reconnect. Each completed tool becomes Compact independently after its minimum Expanded residency. Once every card is Compact and the batch has met its minimum Compact residency, the full-size cards fade in place and Collapsed tiles enter with a restrained 4px upward fade—there is no cross-node geometry flight. Reduced motion switches immediately. Manually expanding a completed full-size tool pauses that batch’s collapse until the user closes it; a Collapsed tile remains directly inspectable through its downward detail reveal.
-- Known Pi-native tools resolve through the shared tool-presentation registry while retaining the ordinary card shell and lifecycle. `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` render typed file, code, patch, terminal, match, and listing blocks; a successful edit uses Pi's persisted authoritative patch and never recomputes workspace state. Rule bodies remain lazy, and a missing, failing, malformed, or shape-incompatible selected rule returns directly to the generic raw card. Complete copy actions continue to project the original arguments and result.
-- A tool result recognized as a unified diff renders as typed, tinted lines (added, removed, context, hunk, file markers) instead of a raw dump, and is never truncated; recognition is strict enough that prose with leading `-`/`+` characters is never recolored.
-- Structured file paths and explicit local file references in conversation content remain distinguishable from external web links and can open the owning session’s resource preview.
-- The contextual History mode shows the bounded Pi conversation tree, active path, and effective leaf; it is unrelated to Git branch selection. Branch switching, edit-from-here, and fork are explicit confirmed actions; edit and fork copy the original user text into the destination composer without auto-submitting it, and unsupported root-user edit is visibly unavailable. A settled user turn exposes a direct fork shortcut keyed by its opaque Pi entry id; the browser refreshes the authoritative tree and reuses the same revision-checked fork operation rather than implementing a second branch path. A known branch load or action failure remains actionable inside this pane and does not duplicate itself into the global error banner.
-- Unknown tools and noninteractive extension display messages receive a generic, attributable, inspectable fallback instead of disappearing. Available extension name or attribution is the primary normal-font title; generic implementation labels such as `custom` and `Extension content` are suppressed, with `Extension` as the neutral fallback. Raw method/type and payload remain inside the expanded body, subject to host redaction and transport bounds; unsupported future response-bearing methods enter the same cancellable dialog model rather than being dropped.
-- Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry timers; expiry, settle, abort, worker replacement/exit, and close remove stale requests, and snapshots restore only live requests.
-- The user can send steering input during work and queue follow-up input for after completion. Pending is a quiet, bounded, text-only projection of public Pi `queue_update` events with separate Steer/Queue FIFO order and omission markers; its local row keys are not authoritative Pi item IDs. Complete visible text may be copied, but a truncated or omitted preview cannot be copied as full text. Explicitly confirmed Clear all invokes Pi's public `clear_queue` for whatever remains at the operation boundary; it is not a fallback for pause or an implicit side effect of Abort/Escape. There is no pause/resume, per-item mutation, conversion, second editor, or browser-owned pending queue. The composer-adjacent surface is limited to automatic retry plus a concise `N Pending` count; running and failed tools remain in their chronological cards.
-- Running, retrying, compacting, queued, user-stopped, failed, and settled states remain distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.
-- When earlier history exists, each upward return to the transcript's near-top boundary automatically requests the next signed, view-bound cursor page; pagination counts visible user/response boundaries while representing intervening activity-only message ranges with lazy descriptors, so a collapsed run cannot force repeated background pages or transfer its hidden body. A short visible page that leaves the viewport inside that boundary continues filling until the boundary moves away or history ends. The existing scroll surface owns this one proximity check, so loading-state rerenders cannot consume the next trigger, and one automatic fill presents one continuous loading state across its bounded page requests. Coalesce an in-flight request, prepend only while the session generation, view, incarnation, revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore the same visible message at the same viewport offset through virtualization. Same-view append snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed older cursor, while a rewrite or view change cancels and replaces them. Ordinary page failure pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the authoritative snapshot. Deferred range pages retain the same per-message and per-page transport bounds and accept an append-only continuation of their owning branch without accepting a sibling view. The browser explicitly opts into deferred older pages; a tab running the previous bundle across a Host restart keeps the complete legacy page response rather than silently dropping activity descriptors it cannot interpret.
-- Refreshing the browser reconstructs settled conversation state from Pi and then resumes live updates. `Transcript` composes canonical rows with bounded collaborators: activity timing owns no transcript data, the viewport owns only DOM geometry/cursor loads/follow intent, search owns only view-local settled-text state, rows compose turns, and cards render activity variants. No transcript collaborator retains a second message projection or changes host pagination authority.
+### Source order, rich text, and copy
+
+- User and assistant messages appear in source order without duplicate or missing settled content
+  after reconnecting. A keyed message updates only its own key; if an earlier turn lacks its end
+  event, the next keyed assistant turn appends rather than overwriting it.
+
+- Markdown math accepts `$…$`, `$$…$$`, `\\(…\\)`, and `\\[…\\]` through token-aware parsing.
+  Inline/fenced code and escapes stay code/text; valid same-line, multiline, and newline-adjacent
+  displays remain distinct math blocks; first-line display content is never misclassified as
+  metadata; and any unclosed opener remains exact readable source while a response streams.
+  Untrusted Markdown is sanitized before trust-disabled KaTeX generates its complete HTML, MathML,
+  and SVG output, preserving extensible glyph geometry and accessibility metadata without enabling
+  trust-only commands.
+
+- Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source
+  projection. Formula bodies use canonical `$…$` inline or `$$…$$` display delimiters, including
+  partial selections whose original formula wrapper determines display identity; surrounding
+  selected text and multiple formulas are preserved. Every user turn has a message-level action that
+  copies its exact source. Every assistant response has an action at the end of the response that
+  concatenates only its response text blocks and excludes thinking, tool, custom, and generic
+  activity payloads.
+
+  Each Thinking, tool, generic activity block, and displayed custom message independently
+  copies its complete source projection; tool copies include the name, full arguments, and
+  untruncated result, while custom copies include the type, content, and details.
+
+- User turns appear as compact bubbles while assistant answers use an open, left-aligned document
+  flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken
+  links and file references wrap only when needed and remain inside the reading measure at narrow
+  widths.
+
+- Composer project-file selections are display handles, not durable filesystem authority. At prompt
+  delivery the Host invalidates the short-lived project index, resolves the workspace and each
+  candidate through real paths, and accepts only files present in that fresh bounded index; symlink
+  retargets and newly ignored paths therefore fail closed. File references added to the prompt are
+  JSON string literals under an explicit context heading, so filename newlines or list markers
+  cannot create new prompt instructions. A transport replacement invalidates in-flight prompt/upload
+  ownership; stale completions cannot clear current composer state, and uploaded bytes completed on
+  the old transport are reclaimed.
+
+### View-local search and Prompt Map
+
+- View-local search performs case-insensitive literal matching over settled conversation text and
+  can scope results to all searchable turns, user input only, or model output only. It wraps
+  previous/next navigation and jumps by transcript row through virtualization. The streaming tail
+  and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
+  latest-follow across prepends and live appends until search is cleared or the user explicitly
+  jumps to latest.
+
+  On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
+  backdrop that floats over Transcript without reserving layout height; activating it replaces the
+  launchers with the complete search row on a surface background and focuses the input, while Close,
+  Escape, outside dismissal, or a view change clears the hidden search ownership before restoring
+  the launchers.
+
+- The Prompt Map is a read-only outline of every visible user turn on the current branch. Its
+  branch-bound, bounded index is independent of loaded Transcript pages and History's raw-entry
+  window; one shared projection derives its Unicode-safe snippets and image counts consistently for
+  loaded, preview, and indexed turns, and selecting an unloaded prompt seeks directly to that turn
+  without sequentially scanning older pages or materializing folded activity. At desktop rest it is
+  only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent
+  current mark: no full-height border, background, icon, or boundary buttons.
+
+  Its minimum left reading gutter is derived from the actual center pane rather than the browser
+  viewport, and its resting position follows side-pane, reading-measure, and window geometry before
+  paint, so resizing in either direction cannot leave the rail over content or at stale coordinates.
+  Up to 12 prompts map one-to-one; beyond that, the marks are a stable consecutive window that moves
+  only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
+  expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
+  Previous and Next controls; leaving the surface collapses it automatically, while touch uses tap
+  and outside dismissal. Native disabled semantics and subdued token colors distinguish unavailable
+  directions.
+
+  The expanded list initially follows a changed current turn, then yields scroll ownership while the
+  user browses it; disclosure preserves keyboard focus, and only one seek may own navigation until
+  it succeeds or exposes an exact-target retry. At the authoritative Transcript latest boundary, the
+  current mark is the final prompt even when a tall viewport leaves that prompt below the ordinary
+  reading line. On a narrow workbench, the desktop vertical rail is removed: a 44px launcher joins
+  Search in the backdrop-free idle top-right control floating over Transcript, and activation
+  replaces those launchers on a shared surface in the same floating zone with the desktop navigator
+  rotated 90 degrees—Previous at left, at most 12 fixed-spacing vertical prompt marks in the center,
+  and Next at right.
+
+  The same local-window and disabled-boundary semantics remain; selecting the center marks opens the
+  complete independently scrollable virtual directory as a bounded sheet, and outside dismissal
+  restores the two Search and Prompt Map launchers. Search and Prompt Map modes are mutually
+  exclusive. While either local tool owns focus or its narrow mode, Escape resolves that tool before
+  the global run-abort shortcut. Sparse seek windows remain explicitly separated in Transcript,
+  while same-branch pagination, append snapshots, branch rewrites, search ownership, and
+  latest-follow preserve their existing authorities.
+
+### Response streaming and message-owned outcomes
+
+- Assistant text streams smoothly without visually rebuilding the entire transcript for every
+  fragment. Pi 0.84 JSON/RPC `message_update` frames intentionally carry only
+  `assistantMessageEvent`; the Host reconstructs the active assistant from typed
+  thinking/text/tool-call deltas for both live events and reconnect snapshots. Both projections
+  use the same pure reducer, with ordered batching governed by [[session-transport]], and
+  resync rather than guessing against settled history.
+  Pi may emit an empty assistant `message_start` before the provider yields its
+  first visible thinking, text, or tool delta; that truthful waiting state renders a quiet
+  `Working…` indicator and replaces it immediately when content arrives.
+
+  A settled empty assistant without an error allocates no Divider-only transcript row; failed
+  replies instead retain their visible error outcome as specified below. While latest-follow remains
+  active, the viewport follows actual rendered-content and scrollport geometry—not only
+  message-count or ordinary-text changes—so thinking/tool deltas, Markdown reflow, card transitions,
+  virtual-row measurement, and a mobile keyboard resizing the scrollport cannot strand new content
+  below the fold. Only an explicit wheel, touch, or keyboard gesture releases latest-follow
+  outright.
+
+  A fold disclosure gesture owns its layout mutation before resizing and keeps the selected upper,
+  lower, or middle anchor fixed through ordinary and virtualized history; it retains latest-follow
+  afterward only when the anchored result remains at the exact latest boundary. Input owns the
+  viewport before its deferred scroll event, and once released, Markdown reflow, virtual-row
+  measurement, scrollport resize, and other programmatic scroll events cannot silently reacquire
+  follow; only the user reaching the latest boundary or choosing Jump to latest does so. Transcript
+  search retains its separate viewport lock.
+
+- Every Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a persistent
+  plain-text error block after that reply's existing content. Empty and thinking-only failed replies
+  remain visible boundaries rather than deferred activity, and activity visibility or
+  assistant-round styling cannot hide the error. Short errors are immediately readable; long or
+  multiline details have an explicit expand/collapse control and an independent copy action for the
+  entire available error text, not its collapsed preview. Existing Host projection bounds still
+  apply and visibly mark truncated source. A missing detail retains a truthful no-details fallback.
+
+  Live message completion, reload, reopening, and older-history pagination all derive the outcome
+  from the same Pi message, without a second error-history store or a retry/diagnostic subsystem.
+
+- Assistant round boundaries have two presentation-only styles: Divider replaces the existing
+  Pi/model/time/stop-reason row with a quiet neutral rule centered in the ordinary inter-turn gap,
+  while Details preserves that row unchanged. A message carrying response text places this one
+  boundary with its first response passage rather than inside preceding collapsible activity; a
+  tool-only message retains it with its first activity. Divider color never implies hidden status.
+
+- A displayed Pi custom message is extension-authored context, not a tool execution or user-authored
+  turn. It uses a quiet, neutral message surface with an information-blue left edge, package glyph,
+  readable type-derived title, and the available `customType`, distinct from user input and Pi
+  assistant authorship. Its body renders through the shared defensive Markdown pipeline, supports
+  text/image blocks, and stays directly readable regardless of Thinking, tool, or activity-fold
+  preferences. Optional non-null `details` gets a separate, initially closed disclosure; absence
+  creates no empty entry, and expanded details mount only on demand. There is no invented execution
+  status or Adaptive lifecycle.
+
+  One semantic message keeps one presentation owner as it crosses Pi’s live lifecycle and durable
+  `custom_message` entry: because Pi assigns those forms separate timestamps, the host pairs their
+  exact persisted payloads one-to-one in event order, retains legitimately repeated equal payloads
+  as separate entries, and replaces rather than appends the linked overlay during snapshots.
+  Timestamp adoption and prepends preserve the message's Details state. Older-history and Prompt Map
+  paging treat displayed custom messages as visible content boundaries, never deferred tool
+  activity. Settled content is searchable in All without being attributed to User or Model.
+  `display:false` custom context remains absent from the browser.
+
+  This presentation does not change Pi delivery, model-context conversion, or the existing PI error
+  surface.
+
+- Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
+  context-summary cards with retained token counts and searchable Markdown bodies. They are not
+  hidden behind a generic-message raw JSON fallback and remain distinct rows at their context
+  boundaries.
+
+- Structured file paths and explicit local file references in conversation content remain
+  distinguishable from external web links and can open the owning session’s resource preview.
+
+### History, extension interaction, and Pending
+
+- The contextual History mode shows the bounded Pi conversation tree, active path, and effective
+  leaf; it is unrelated to Git branch selection. Branch switching, edit-from-here, and fork are
+  explicit confirmed actions; edit and fork copy the original user text into the destination
+  composer without auto-submitting it, and unsupported root-user edit is visibly unavailable. A
+  settled user turn exposes a direct fork shortcut keyed by its opaque Pi entry id; the browser
+  refreshes the authoritative tree and reuses the same revision-checked fork operation rather than
+  implementing a second branch path. A known branch load or action failure remains actionable inside
+  this pane and does not duplicate itself into the global error banner.
+
+- Unknown tools and noninteractive extension display messages receive a generic, attributable,
+  inspectable fallback instead of disappearing. Available extension name or attribution is the
+  primary normal-font title; generic implementation labels such as `custom` and `Extension content`
+  are suppressed, with `Extension` as the neutral fallback. Raw method/type and payload remain
+  inside the expanded body, subject to host redaction and transport bounds; unsupported future
+  response-bearing methods enter the same cancellable dialog model rather than being dropped.
+
+- Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is
+  modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and
+  remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry
+  timers; expiry, settle, abort, worker replacement/exit, and close remove stale requests, and
+  snapshots restore only live requests.
+
+- The user can send steering input during work and queue follow-up input for after completion.
+  Pending is a quiet, bounded, text-only projection of public Pi `queue_update` events with separate
+  Steer/Queue FIFO order and omission markers; its local row keys are not authoritative Pi item IDs.
+  Complete visible text may be copied, but a truncated or omitted preview cannot be copied as full
+  text. Explicitly confirmed Clear all invokes Pi's public `clear_queue` for whatever remains at the
+  operation boundary; it is not a fallback for pause or an implicit side effect of Abort/Escape.
+  There is no pause/resume, per-item mutation, conversion, second editor, or browser-owned pending
+  queue.
+
+  The composer-adjacent surface is limited to automatic retry plus a concise `N Pending` count;
+  running and failed tools remain in their chronological cards.
+
+- Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
+  distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.
+
+### Pagination and presentation ownership
+
+- When earlier history exists, each upward return to the transcript's near-top boundary
+  automatically requests the next signed, view-bound cursor page; pagination counts visible
+  user/response boundaries while representing intervening activity-only message ranges with lazy
+  descriptors, so a collapsed run cannot force repeated background pages or transfer its hidden
+  body. A short visible page that leaves the viewport inside that boundary continues filling until
+  the boundary moves away or history ends. The existing scroll surface owns this one proximity
+  check, so loading-state rerenders cannot consume the next trigger, and one automatic fill presents
+  one continuous loading state across its bounded page requests.
+
+  Coalesce an in-flight request, prepend only while the session generation, view, incarnation,
+  revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore
+  the same visible message at the same viewport offset through virtualization. Same-view append
+  snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed
+  older cursor, while a rewrite or view change cancels and replaces them. Ordinary page failure
+  pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the
+  authoritative snapshot. Deferred range pages retain the same per-message and per-page transport
+  bounds and accept an append-only continuation of their owning branch without accepting a sibling
+  view.
+
+  The browser explicitly opts into deferred older pages; a tab running the previous bundle across a
+  Host restart keeps the complete legacy page response rather than silently dropping activity
+  descriptors it cannot interpret.
+
+- Refreshing the browser reconstructs settled conversation state from Pi and then resumes live
+  updates. `Transcript` composes canonical rows with bounded collaborators: activity timing owns no
+  transcript data, the viewport owns only DOM geometry/cursor loads/follow intent, search owns only
+  view-local settled-text state, rows compose turns, and cards render activity variants. No
+  transcript collaborator retains a second message projection or changes host pagination authority.
 
 ## Non-goals
 
