@@ -32,6 +32,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 const ContextMeter = memo(function ContextMeter() {
   const usage = useAppState((state) => state.contextUsage);
+  const compacting = useAppState((state) => state.runState === "compacting");
   if (!usage || usage.percent === null) return null;
   const percent = Math.max(0, Math.min(100, usage.percent));
   const tone =
@@ -47,7 +48,7 @@ const ContextMeter = memo(function ContextMeter() {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(percent)}
-      title={`Context ${Math.round(percent)}% full (${tokens}) — type /compact to summarize`}
+      title={`Context ${Math.round(percent)}% full (${tokens}) — ${compacting ? "context compaction in progress" : "type /compact to summarize"}`}
       aria-label={`Context ${Math.round(percent)} percent full`}
     >
       <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>

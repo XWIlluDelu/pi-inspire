@@ -1127,6 +1127,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.process = null;
     slot.ready = false;
     slot.compactionReturnState = null;
+    slot.retry = null;
     slot.activeAssistantCorrelation = null;
     this.projectionCoordinator.clearWriterBaseline(slot);
     slot.bridge = null;
@@ -1305,6 +1306,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
+      retry: slot.runState === "retrying" ? slot.retry : null,
       sessionStatuses,
       pendingExtensionUiRequests: this.extensionUi.pendingRequests(slot),
       pendingQueues: slot.pendingQueues,
@@ -3144,6 +3146,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           commands,
         },
         runState: slot.runState,
+        retry: slot.runState === "retrying" ? slot.retry : null,
         sessionStatuses: this.sessionStatuses(),
         pendingExtensionUiRequests: this.extensionUi.pendingRequests(slot),
         pendingQueues: slot.pendingQueues,
