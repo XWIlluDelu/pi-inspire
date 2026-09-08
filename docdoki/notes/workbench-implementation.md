@@ -15,6 +15,24 @@ The previous tool-style card, custom activity tiles, and automatic tool-density 
 - `server/session-projection.ts` treats displayed custom messages as visible boundaries in older-history and user-turn navigation. Merely changing the browser renderer would otherwise leave older custom content hidden in deferred activity ranges. Hidden context-only messages remain invisible.
 - Settled custom content participates in All search, but not User or Model scopes. Source/type labels do not claim user or Pi authorship.
 
+## Hidden project directories
+
+### Behavior and reason
+
+The New session picker previously skipped every dot-prefixed name unconditionally in `server/host-dirs.ts`, on all host platforms. That made hidden projects unreachable through browsing even though typing their absolute path already worked. Windows Hidden attributes and macOS UF_HIDDEN were not inspected.
+
+Under [[workbench]], a local-to-the-open-picker Show hidden folders checkbox now opts into all immediate directories through the authenticated, session-independent `GET /api/host/dirs?showHidden=1`. Omission or `0` retains filtering; other values are rejected. No preference or filesystem attribute is changed. The checkbox is retained through navigation and resets on reopening. Browser paths remain verbatim Host paths, including drive and UNC forms.
+
+### Native inspection boundary
+
+`server/host-hidden-dirs.ts` handles attributes Node's Dirent/Stats do not expose:
+
+- Linux and other POSIX hosts need no subprocess for the common dot-name rule.
+- Windows runs one bounded Windows PowerShell command per directory level. `Get-ChildItem -LiteralPath … -Force -Hidden` returns names as an explicit UTF-8 JSON array, including zero/singleton cases. The path travels through an environment value, never script interpolation, and no shell/profile runs.
+- macOS runs `/usr/bin/find` with `-mindepth 1 -maxdepth 1 -flags +hidden -print0`. NUL delimiters preserve spaces and newlines; the scan never descends into children. The [macOS find manual](https://keith.github.io/xcode-man-pages/find.1.html) defines these primaries; [chflags](https://keith.github.io/xcode-man-pages/chflags.1.html) defines `hidden` as hiding an item from the GUI.
+
+Native queries have a ten-second timeout and 8 MiB output bound. Failures remain visible rather than silently changing the filter. Explicit show-hidden listing bypasses native inspection, so unavailable tooling does not make all browsing impossible. These flags supplement dot-name filtering; the picker does not emulate every file manager's private visibility metadata.
+
 ## Image preview backgrounds
 
 ### Separation of responsibilities

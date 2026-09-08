@@ -24,6 +24,7 @@ export function DirectoryPicker({
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showHidden, setShowHidden] = useState(false);
   const dialogRef = useModalFocus<HTMLDivElement>(
     true,
     "directory-picker",
@@ -32,27 +33,43 @@ export function DirectoryPicker({
   // Only the newest request may write state — rapid navigation must not
   // let a slow earlier level overwrite a later one.
   const ticket = useRef(0);
+  const requested = useRef<{
+    path?: string;
+    fallbackHome?: boolean;
+    discoverRoots?: boolean;
+  }>({});
 
   const load = (
     path?: string,
     {
       fallbackHome = false,
       discoverRoots = false,
-    }: { fallbackHome?: boolean; discoverRoots?: boolean } = {},
+      hidden = showHidden,
+    }: {
+      fallbackHome?: boolean;
+      discoverRoots?: boolean;
+      hidden?: boolean;
+    } = {},
   ) => {
     const mine = ++ticket.current;
+    requested.current = { path, fallbackHome, discoverRoots };
     setLoading(true);
     setError(null);
-    const listing = store.browseHostDirs(path).catch((cause: unknown) => {
-      if (fallbackHome && path) return store.browseHostDirs();
-      throw cause;
-    });
+    const listing = store
+      .browseHostDirs(path, hidden)
+      .catch((cause: unknown) => {
+        if (ticket.current !== mine) throw cause;
+        if (fallbackHome && path)
+          return store.browseHostDirs(undefined, hidden);
+        throw cause;
+      });
     const availableRoots = discoverRoots
       ? store.browseHostRoots()
       : Promise.resolve(null);
     void Promise.all([listing, availableRoots])
       .then(([result, rootResult]) => {
         if (ticket.current !== mine) return;
+        requested.current = { path: result.path };
         setListing(result);
         if (rootResult) setRoots(rootResult.roots);
       })
@@ -75,6 +92,9 @@ export function DirectoryPicker({
       fallbackHome: true,
       discoverRoots: true,
     });
+    return () => {
+      ticket.current += 1;
+    };
   }, []);
 
   return (
@@ -110,11 +130,25 @@ export function DirectoryPicker({
             ))}
           </div>
         ) : null}
-        <div className="dirpicker__list">
+        <label className="dirpicker__hidden">
+          <input
+            type="checkbox"
+            checked={showHidden}
+            onChange={(event) => {
+              const hidden = event.target.checked;
+              setShowHidden(hidden);
+              const { path, ...options } = requested.current;
+              load(path, { ...options, hidden });
+            }}
+          />
+          <span>Show hidden folders</span>
+        </label>
+        <div className="dirpicker__list" aria-busy={loading}>
           {listing?.parent ? (
             <button
               type="button"
               className="dirpicker__row"
+              disabled={loading}
               onClick={() => load(listing.parent ?? undefined)}
             >
               <CornerLeftUp size={13} aria-hidden />
@@ -126,6 +160,7 @@ export function DirectoryPicker({
               key={entry.path}
               type="button"
               className="dirpicker__row"
+              disabled={loading}
               onClick={() => load(entry.path)}
             >
               <Folder size={13} aria-hidden />
@@ -133,7 +168,7 @@ export function DirectoryPicker({
             </button>
           ))}
           {loading ? (
-            <div className="dirpicker__note">
+            <div className="dirpicker__note" role="status">
               <Loader2 size={12} className="spin" aria-hidden /> Loading…
             </div>
           ) : error ? (
@@ -154,7 +189,7 @@ export function DirectoryPicker({
           <button
             type="button"
             className="button button--primary"
-            disabled={!listing}
+            disabled={!listing || loading || !!error}
             onClick={() => listing && onPick(listing.path)}
           >
             Use this directory
