@@ -8,7 +8,7 @@ purpose: Hidden-folder visibility in the host-side project picker, its native at
 
 The New session picker previously skipped every dot-prefixed name unconditionally in `server/host-dirs.ts`, on all host platforms. That made hidden projects unreachable through browsing even though typing their absolute path already worked. Windows Hidden attributes and macOS UF_HIDDEN were not inspected.
 
-Under [[workbench]], a local-to-the-open-picker Show hidden folders checkbox now opts into all immediate directories through the authenticated, session-independent `GET /api/host/dirs?showHidden=1`. Omission or `0` retains filtering; other values are rejected. No preference or filesystem attribute is changed. The checkbox is retained through navigation and resets on reopening. Browser paths remain verbatim Host paths, including drive and UNC forms.
+Under [[workbench]], a local-to-the-open-picker Show hidden folders eye-icon toggle immediately after the heading opts into all immediate directories through the authenticated, session-independent `GET /api/host/dirs?showHidden=1`. It replaces the separate checkbox row at the user's request, uses a stable accessible label and `aria-pressed`, and changes its icon and action tooltip with visibility. Omission or `0` retains filtering; other values are rejected. No preference or filesystem attribute is changed. The toggle is retained through navigation and resets on reopening. Browser paths remain verbatim Host paths, including drive and UNC forms.
 
 ## Native inspection boundary
 
@@ -21,6 +21,10 @@ Under [[workbench]], a local-to-the-open-picker Show hidden folders checkbox now
 Native queries have a ten-second timeout and 8 MiB output bound. Failures remain visible rather than silently changing the filter. Explicit show-hidden listing bypasses native inspection, so unavailable tooling does not make all browsing impossible. These flags supplement dot-name filtering; the picker does not emulate every file manager's private visibility metadata.
 
 ## Verification
+
+The subsequent header-icon refinement passed all ten picker tests on Node 22.19.0, including header placement, pressed state, tooltip, Space/Enter, and the existing navigation/race cases. Typecheck, lint, and the production web build passed. An isolated mock Host was reviewed in Chromium at 1280×900 light and 375×812 dark; hidden entries appeared through the icon and narrow layout had no horizontal dialog overflow. Screenshots are local ignored artifacts at `output/playwright/picker-icon-{desktop,narrow}.png`. No daily-use Host restart was performed.
+
+### Original hidden-directory implementation
 
 On Linux with Node 22.19.0, the six targeted suites passed 113 tests; the native Windows/macOS integration test was conditionally skipped. Coverage lives in:
 

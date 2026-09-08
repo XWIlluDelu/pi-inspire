@@ -4,8 +4,8 @@
   <rect width="512" height="512" fill="#14171A"/>
   <!-- Opposing frame brackets in titanium white -->
   <path d="M306 136h70v74M206 376h-70v-74" fill="none" stroke="#F4F6F8" stroke-width="28" stroke-linecap="square" stroke-linejoin="miter"/>
-  <!-- Detached datum ticks in Signal Orange -->
-  <path d="M256 105v50M256 357v50M105 256h50M357 256h50" fill="none" stroke="#FF8330" stroke-width="28" stroke-linecap="square"/>
+  <!-- Detached datum ticks in neutral silver -->
+  <path d="M256 105v50M256 357v50M105 256h50M357 256h50" fill="none" stroke="#B9C0C7" stroke-width="28" stroke-linecap="square"/>
   <!-- Center precision aperture -->
-  <rect x="233" y="233" width="46" height="46" fill="#FF8330"/>
+  <rect x="233" y="233" width="46" height="46" fill="#B9C0C7"/>
 </svg>

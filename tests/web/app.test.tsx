@@ -1042,6 +1042,9 @@ describe("folder grouping and settings page", () => {
   });
 
   it("keeps command-palette preference actions working after the move", async () => {
+    const themeColor = document.createElement("meta");
+    themeColor.name = "theme-color";
+    document.head.append(themeColor);
     render(<App />);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(
@@ -1058,11 +1061,14 @@ describe("folder grouping and settings page", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: /Theme: Dark/ }));
     expect(store.getState().prefs.theme).toBe("dark");
+    expect(themeColor.content).toBe("#14171A");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     fireEvent.click(
       await screen.findByRole("option", { name: /Theme: System/ }),
     );
     expect(store.getState().prefs.theme).toBe("system");
+    expect(themeColor.content).toBe("#F4F5F6");
+    themeColor.remove();
     expect(
       screen.queryByRole("dialog", { name: "Command palette" }),
     ).not.toBeInTheDocument();

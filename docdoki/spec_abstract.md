@@ -19,11 +19,13 @@
 
 ## Implemented capability
 
+PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark. [[neutral-pwa-chrome]] records the checks and browser/OS update limits.
+
 Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. [[streaming-tool-arguments]] records limits, linear-path traffic measurements, and the final Pi 0.85.1 / Node 22 / Chromium verification.
 
 [[simplification-review]] records removal of obsolete adapters/benchmarks, explicit deletion validation, terminal spawn cleanup, separated Host socket ownership, responsibility-scoped store tests and contracts, and StrictMode focus restoration. Its isolated Node 22 and Chromium verification excludes the concurrently developed tool-argument streaming slice.
 
-The New session directory picker has a default-off Show hidden folders checkbox, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
+The New session directory picker has a default-off Show hidden folders eye-icon toggle beside its heading, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
 
 Resource reads are independently session-addressed across browsers, and terminal catalog writebacks are project-generation-bound. Preview content reuses the short-lived workspace index while retaining per-request path/object checks; Windows VS Code file URIs use native path conversion. [[review-resource-terminal-ownership]] records the review repairs, cache tradeoff, and verification limits.
 

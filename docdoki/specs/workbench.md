@@ -194,7 +194,9 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
   semantics and real recovery buttons on failure. Before React bootstraps, a validated browser-local
   cache may apply only the saved theme, palette, content text size, and reading width to prevent a
   wrong first paint; host preferences remain authoritative and immediately replace stale cache
-  state. The production origin is installable as a standalone PWA: its service worker caches only
+  state. PWA title-bar metadata follows resolved light/dark mode using the palette-independent
+  neutrals in [[design-system]], and installed icons use a fixed neutral mark rather than a
+  runtime palette. The production origin is installable as a standalone PWA: its service worker caches only
   the versioned application shell and same-origin static assets, never API, event, attachment, or
   resource responses.
 
@@ -217,8 +219,10 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
   drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent.
   A missing or relative starting point falls back to the host home.
 
-- The directory picker exposes a labelled, keyboard-operable `Show hidden folders` checkbox, off on
-  each opening and retained while navigating directories or drive roots. The Host excludes
+- The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
+  the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
+  state. It is keyboard-operable, off on each opening, and retained while navigating directories
+  or drive roots. The Host excludes
   dot-prefixed names on every platform, plus Windows Hidden attributes and macOS UF_HIDDEN flags,
   unless `showHidden=1` is explicitly requested. This is a visibility filter, not access control: a
   typed hidden path remains usable, and readable directory links remain navigable. Native attribute
