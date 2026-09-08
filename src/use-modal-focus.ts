@@ -43,20 +43,29 @@ export function useModalFocus<T extends HTMLElement>(
   onEscape?: (event: KeyboardEvent) => boolean | void,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
+  const previousEntryRef = useRef<ModalEntry | null>(null);
   const onEscapeRef = useRef(onEscape);
   onEscapeRef.current = onEscape;
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
     if (!active || !dialog) return;
+    const focused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const previous = previousEntryRef.current;
     const entry: ModalEntry = {
       dialog,
+      // StrictMode replays layout effects after focus has entered this same
+      // dialog. Preserve its outside opener, not the now-focused close button.
       restore:
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null,
+        previous?.dialog === dialog && dialog.contains(focused)
+          ? previous.restore
+          : focused,
       onEscape: (event) => onEscapeRef.current?.(event),
     };
+    previousEntryRef.current = entry;
     modalStack.push(entry);
 
     if (!dialog.contains(document.activeElement)) {

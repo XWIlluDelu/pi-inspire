@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { describe, expect, it } from "vitest";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
@@ -38,6 +38,27 @@ describe("modal focus ownership", () => {
     view.unmount();
     await Promise.resolve();
     expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("preserves the opener across StrictMode effect replay", async () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const view = render(
+      <StrictMode>
+        <SettingsDialog onClose={() => undefined}>
+          <button type="button">Inside</button>
+        </SettingsDialog>
+      </StrictMode>,
+    );
+    await Promise.resolve();
+    expect(
+      screen.getByRole("button", { name: "Close settings" }),
+    ).toHaveFocus();
+    view.unmount();
+    await Promise.resolve();
+    expect(opener).toHaveFocus();
     opener.remove();
   });
 
