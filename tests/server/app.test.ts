@@ -26,6 +26,11 @@ import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
+import { ToolArgumentStream } from "../../server/tool-argument-stream.js";
+import {
+  applyAssistantMessageDelta,
+  assistantStreamTextLength,
+} from "../../shared/assistant-stream.js";
 import {
   type ActiveSnapshot,
   type SessionRuntimeStatus,
@@ -1853,6 +1858,160 @@ describe("local host API", () => {
       });
     } finally {
       socket.close();
+    }
+  });
+
+  it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
+    await runtime.openSession("mock-active");
+    const detail = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+    );
+    const background = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
+    );
+    const frames: Array<Record<string, unknown> & { type: string }> = [];
+    const backgroundFrames: Array<Record<string, unknown> & { type: string }> =
+      [];
+    detail.on("message", (data) => frames.push(JSON.parse(data.toString())));
+    background.on("message", (data) =>
+      backgroundFrames.push(JSON.parse(data.toString())),
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(frames[0]?.type).toBe("snapshot");
+        expect(backgroundFrames[0]?.type).toBe("snapshot");
+      });
+      let message: unknown = {
+        role: "assistant",
+        timestamp: 20,
+        content: [],
+        __inspireLiveId: "wire-write",
+        __inspireStreamRevision: 0,
+      };
+      let revision = 0;
+      let cumulativeBytes = 0;
+      const emit = (event: unknown) =>
+        runtime.emit("event", {
+          sessionId: "mock-active",
+          ...(event as Record<string, unknown>),
+        });
+      emit({ type: "message_start", message });
+      const project = (assistantMessageEvent: Record<string, unknown>) => {
+        message = {
+          ...applyAssistantMessageDelta(message, assistantMessageEvent),
+          __inspireStreamRevision: ++revision,
+        };
+        const event = {
+          type: "message_update",
+          streamDelta: true,
+          streamMessageKey: "live:wire-write",
+          streamRevision: revision,
+          streamTextLength: assistantStreamTextLength(message),
+          assistantMessageEvent,
+          message,
+        };
+        cumulativeBytes += Buffer.byteLength(JSON.stringify(event));
+        emit(event);
+      };
+      project({
+        type: "toolcall_start",
+        contentIndex: 0,
+        id: "write-1",
+        toolName: "write",
+      });
+      const parser = new ToolArgumentStream();
+      const source = JSON.stringify({
+        path: "src/large.ts",
+        content: Array.from(
+          { length: 5000 },
+          (_, n) => `export const value${n} = ${n};`,
+        ).join("\n"),
+      });
+      for (let offset = 0; offset < source.length; offset += 128) {
+        const before = parser.truncated;
+        const argumentUpdates = parser.feed(source.slice(offset, offset + 128));
+        if (argumentUpdates.length || parser.truncated !== before)
+          project({
+            type: "toolcall_delta",
+            contentIndex: 0,
+            argumentUpdates,
+            argumentChars: parser.characters,
+            argumentsTruncated: parser.truncated,
+          });
+        if (offset % 2048 === 0 && !parser.truncated)
+          await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      // A following ordinary event flushes all pending deltas in order.
+      emit({
+        type: "tool_execution_start",
+        toolCallId: "write-1",
+        toolName: "write",
+        args: {},
+      });
+      await vi.waitFor(() =>
+        expect(frames.at(-1)?.type).toBe("tool_execution_start"),
+      );
+      const batches = frames.filter(
+        (frame) => frame.type === "message_update_batch",
+      );
+      expect(batches.length).toBeGreaterThan(1);
+      expect(batches.every((frame) => frame.message === undefined)).toBe(true);
+      expect(
+        batches.some(
+          (frame) =>
+            Number(frame.sourceEventCount) >
+            (frame.assistantMessageEvents as unknown[]).length,
+        ),
+      ).toBe(true);
+      let reconstructed: unknown;
+      let previousRevision = 0;
+      for (const frame of frames.filter((frame) =>
+        frame.type.startsWith("message_"),
+      )) {
+        if (frame.type === "message_start") reconstructed = frame.message;
+        else {
+          expect(frame.streamRevision).toBe(
+            previousRevision + Number(frame.sourceEventCount),
+          );
+          previousRevision = Number(frame.streamRevision);
+          for (const delta of frame.assistantMessageEvents as unknown[])
+            reconstructed = applyAssistantMessageDelta(reconstructed, delta);
+          expect(assistantStreamTextLength(reconstructed)).toBe(
+            frame.streamTextLength,
+          );
+          reconstructed = {
+            ...(reconstructed as Record<string, unknown>),
+            __inspireStreamRevision: frame.streamRevision,
+          };
+        }
+      }
+      expect(reconstructed).toEqual(message);
+      expect(
+        backgroundFrames.filter(
+          (frame) =>
+            frame.type.startsWith("message_") ||
+            frame.type.startsWith("tool_execution"),
+        ),
+      ).toEqual([]);
+      const deltaBytes = batches.reduce(
+        (sum, frame) => sum + Buffer.byteLength(JSON.stringify(frame)),
+        0,
+      );
+      expect(deltaBytes).toBeLessThan(48_000);
+      expect(cumulativeBytes).toBeGreaterThan(deltaBytes * 30);
+      console.info(
+        "Large-write WebSocket JSON bytes (before optional compression):",
+        {
+          sourceBytes: Buffer.byteLength(source),
+          previewCharacters: parser.characters,
+          batches: batches.length,
+          deltaBytes,
+          cumulativeBytes,
+        },
+      );
+    } finally {
+      detail.close();
+      background.close();
     }
   });
 

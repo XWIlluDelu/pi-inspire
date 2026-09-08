@@ -37,6 +37,135 @@ function card(
 }
 
 describe("native Pi tool cards", () => {
+  it("shows the write shell early, streams its code in place, then distinguishes waiting, execution and success", () => {
+    const initial: ToolCallContent = {
+      ...call("write", {}),
+      __inspireToolCall: {
+        phase: "streaming",
+        characters: 0,
+        truncated: false,
+      },
+    };
+    const view = (
+      toolCall: ToolCallContent,
+      activity?: { id: string; name: string; phase: "running" | "done" },
+      toolResult?: ChatMessage,
+    ) => (
+      <ToolCard
+        call={toolCall}
+        result={toolResult}
+        activity={activity}
+        live
+        visibility="expanded"
+      />
+    );
+    const { container, rerender } = render(view(initial));
+    const shell = container.querySelector(".card");
+    expect(
+      container.querySelector('[data-tool-rule="inspire.pi.write"]'),
+    ).not.toBeNull();
+    expect(screen.getByText("Generating arguments…")).toBeInTheDocument();
+    expect(screen.queryByText("No result recorded")).not.toBeInTheDocument();
+    const partial = {
+      ...initial,
+      arguments: { path: "src/new.ts", content: "const first = 1;" },
+    };
+    rerender(view(partial));
+    expect(container.querySelector(".card")).toBe(shell);
+    expect(screen.getByText("const first = 1;")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "src/new.ts" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy write argument preview" }),
+    ).toBeInTheDocument();
+    const complete = call("write", {
+      path: "src/new.ts",
+      content: "const first = 1;\nconst second = 2;",
+    });
+    rerender(view(complete));
+    expect(screen.getByText("Waiting to execute…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "src/new.ts" }),
+    ).toBeInTheDocument();
+    rerender(
+      view(complete, { id: complete.id, name: "write", phase: "running" }),
+    );
+    expect(screen.getByText("Running…")).toBeInTheDocument();
+    rerender(
+      view(
+        complete,
+        { id: complete.id, name: "write", phase: "done" },
+        result("Successfully wrote file"),
+      ),
+    );
+    expect(screen.getByLabelText("finished")).toBeInTheDocument();
+    expect(screen.queryByText("Generating arguments…")).not.toBeInTheDocument();
+    expect(container.querySelector(".card")).toBe(shell);
+  });
+
+  it("keeps large argument previews bounded and interrupted previews unexecuted", () => {
+    const partial: ToolCallContent = {
+      ...call("write", { path: "src/new.ts", content: "line\n".repeat(1_000) }),
+      __inspireToolCall: {
+        phase: "streaming",
+        characters: 5_000,
+        truncated: true,
+      },
+    };
+    const { container, rerender } = render(
+      <ToolCard
+        call={partial}
+        result={undefined}
+        activity={undefined}
+        live
+        visibility="expanded"
+      />,
+    );
+    expect(container.querySelectorAll(".tool-code__line")).toHaveLength(400);
+    expect(screen.getByText("Argument preview truncated")).toBeInTheDocument();
+    expect(screen.getByText("Showing first 400 lines")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Show all/ }),
+    ).not.toBeInTheDocument();
+    rerender(
+      <ToolCard
+        call={partial}
+        result={undefined}
+        activity={undefined}
+        live={false}
+        visibility="expanded"
+      />,
+    );
+    expect(screen.getByText("Not executed")).toBeInTheDocument();
+    expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy write argument preview" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not materialize a growing code body while collapsed", () => {
+    const partial: ToolCallContent = {
+      ...call("write", { path: "src/new.ts", content: "line\n".repeat(1_000) }),
+      __inspireToolCall: {
+        phase: "streaming",
+        characters: 5_000,
+        truncated: false,
+      },
+    };
+    const { container } = render(
+      <ToolCard
+        call={partial}
+        result={undefined}
+        activity={undefined}
+        live
+        visibility="collapsed"
+      />,
+    );
+    expect(container.querySelector(".tool-code")).toBeNull();
+    expect(container.querySelector(".card__body")).toBeNull();
+    expect(screen.getByLabelText("generating arguments")).toBeInTheDocument();
+  });
   it("renders a native read as a file view while an unknown tool stays raw", () => {
     const { container } = render(
       <>

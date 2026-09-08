@@ -4,7 +4,8 @@ covers:
   - server/app.ts
   - server/runtime-event-sockets.ts
   - server/runtime.ts
-  - shared/{contracts,assistant-stream}.ts
+  - shared/{contracts,assistant-stream,tool-argument-updates}.ts
+  - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
   - tests/server/app.test.ts
@@ -47,8 +48,11 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   receive ordered Host-coalesced assistant deltas rather than repeated cumulative messages, while a
   socket joining behind snapshot synchronization receives complete idempotent message replacements.
   The Host flushes a same-message batch after 16ms or before a lifecycle/identity boundary; the
-  browser reduces that ordered batch and adapts visual commits from 16ms to 50ms as the
-  streamed text grows.
+  browser reduces that ordered batch and adapts visual commits from 16ms to 50ms as the streamed
+  text/argument preview grows. Adjacent updates to one tool are coalesced inside that window;
+  `sourceEventCount` retains the original revision span even when several argument fragments
+  become one update. Browser render-window batching preserves that count and the 2,048-source-event
+  ceiling.
 
   Invalid identity, reconstructed length, serialization, or size state fails to an authoritative
   snapshot instead of guessing across a sequence gap. Bootstrap itself is latest-wins: each request
@@ -94,8 +98,31 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   continuation does not. Older-page cursors bind both view and effective-leaf lineage, and the
   browser aborts/discards a page that completes after a branch boundary.
 
-- Assistant overlay text/thinking deltas produced by the trusted reducer account for appended
-  JSON bytes and stream-revision growth without serializing cumulative messages. Escaping,
-  UTF-8, split surrogates, per-string caps, per-item caps, and the total overlay budget remain
-  enforced. Structural changes, authoritative message completion, and snapshots retain full
-  projection validation.
+- Assistant overlay text/thinking and tool-argument string appends produced by the trusted reducer
+  account for appended JSON bytes, preview metadata, and stream-revision growth without serializing
+  cumulative messages. Escaping, UTF-8, split surrogates, per-string caps, per-item caps, and the total
+  overlay budget remain enforced. Structural changes, authoritative message completion, and
+  snapshots retain full projection validation. If an item limit requires a reduced or omitted
+  projection, publish that bounded replacement rather than replaying the pre-clipping argument
+  patch against a browser that still holds the larger tree.
+
+- Each active tool's Host-only parser consumes public Pi argument JSON once, emits immutable
+  path-based display updates, and retains no cumulative raw JSON. Sensitive keyed values use the
+  same redaction policy as ordinary projections; escaped keys and nested secret containers cannot
+  leak through an earlier fragment. Neither raw JSON fragments nor the unbounded final tool-call
+  object bypass the browser projection. `toolcall_end` uses one bounded complete assistant
+  replacement rather than duplicating its raw ToolCall inside a delta envelope.
+
+  Each tool preview permits 32,000 decoded string characters, 256 argument nodes, eight nested path
+  segments, 256-character keys, and 256,000 inspected source characters. Primitive tokens are
+  separately bounded. A limit or malformed partial source freezes the readable prefix with an
+  explicit truncation indication; later fragments emit no repeated preview updates. This is a
+  presentation bound, not an execution or file-size limit: the authoritative completed call and
+  `message_end` retain normal Pi ownership and existing transcript bounds. Parser ownership is
+  scoped to the worker and current assistant message, survives interleaved extension messages and
+  peer calls, and is retired on call/message completion or worker replacement.
+
+  Reconnect snapshots contain the bounded typed call, its argument preview, and stream revision,
+  not private parser state. Subsequent structured updates apply to that same identity without
+  requiring the browser to reparse old JSON or recreate the card. Older public Pi starts without
+  identity/name continue to publish only the completed call.

@@ -9,7 +9,7 @@ interface ProjectionLimits {
   objectEntries?: number;
 }
 
-function isSensitiveProjectionKey(key: string): boolean {
+export function isSensitiveProjectionKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
 }
 

@@ -19,6 +19,8 @@
 
 ## Implemented capability
 
+Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. [[streaming-tool-arguments]] records limits, linear-path traffic measurements, and the final Pi 0.85.1 / Node 22 / Chromium verification.
+
 [[simplification-review]] records removal of obsolete adapters/benchmarks, explicit deletion validation, terminal spawn cleanup, separated Host socket ownership, responsibility-scoped store tests and contracts, and StrictMode focus restoration. Its isolated Node 22 and Chromium verification excludes the concurrently developed tool-argument streaming slice.
 
 The New session directory picker has a default-off Show hidden folders checkbox, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
