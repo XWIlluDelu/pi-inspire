@@ -27,13 +27,6 @@ import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { WorkspaceTree } from "./WorkspaceBrowser";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
-export {
-  compactAge,
-  groupSessionsByCwd,
-  type NavCuration,
-  splitNavSections,
-} from "./nav-model";
-
 /** Compact quick navigation over the shared workspace projection. The right
  * Files pane consumes the same expansion, search, identity, selection, and
  * disclosure state so narrow drawer remounts do not reset it. */
