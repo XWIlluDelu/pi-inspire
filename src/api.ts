@@ -25,6 +25,7 @@ import type {
   ProjectDirEntry,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
+  PromptDeliveryResponse,
   ResourceDescriptor,
   ResourceProbeResponse,
   SessionDeleteResponse,
@@ -47,6 +48,7 @@ import type {
   TerminalServiceSettings,
   TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts";
+import { terminalOperations } from "./controllers/terminal-operation-controller";
 import { withTransportMeasure } from "./transport-performance";
 
 export interface ProjectFileResult {
@@ -84,6 +86,10 @@ export class ApiError extends Error {
     public edge?: string,
     /** Host process that authored this application response, when present. */
     public authorityId?: string,
+    /** The Host can authoritatively report that the operation outcome is unknown. */
+    public outcomeUnknown = false,
+    /** A refusal of this operation, not just failure to observe its receipt. */
+    public promptReceipt?: { operationId: string; outcome: string },
   ) {
     super(message);
     this.name = "ApiError";
@@ -139,15 +145,18 @@ async function ensureOk(response: Response): Promise<void> {
   let message = `Request failed (${response.status})`;
   let matches: string[] | undefined;
   let code: string | undefined;
+  let outcomeUnknown = false;
   try {
     const body = (await response.json()) as {
       error?: string;
       matches?: unknown;
       code?: unknown;
+      outcomeUnknown?: unknown;
     };
     if (body.error) message = body.error;
     if (Array.isArray(body.matches)) matches = body.matches.map(String);
     if (typeof body.code === "string") code = body.code;
+    outcomeUnknown = body.outcomeUnknown === true;
   } catch {
     // keep status-based message
   }
@@ -158,6 +167,13 @@ async function ensureOk(response: Response): Promise<void> {
     code,
     response.headers.get("X-Inspire-Edge") ?? undefined,
     response.headers.get("X-Inspire-Authority") ?? undefined,
+    outcomeUnknown,
+    response.headers.has("X-Inspire-Prompt-Operation")
+      ? {
+          operationId: response.headers.get("X-Inspire-Prompt-Operation")!,
+          outcome: response.headers.get("X-Inspire-Prompt-Outcome") ?? "",
+        }
+      : undefined,
   );
 }
 
@@ -183,22 +199,6 @@ async function request<T>(
   });
   await ensureOk(response);
   return responseJson<T>(response);
-}
-
-async function requestEmpty(
-  token: string | null,
-  path: string,
-  init: RequestInit = {},
-): Promise<void> {
-  const response = await applicationFetch(path, {
-    ...init,
-    credentials: "same-origin",
-    headers: {
-      ...authorizationHeader(token),
-      ...init.headers,
-    },
-  });
-  await ensureOk(response);
 }
 
 interface ResourceContentOptions {
@@ -296,27 +296,90 @@ function post<T>(
   });
 }
 
-async function deliverPrompt(
+async function observePrompt(
   token: string | null,
-  body: PromptDeliveryRequest,
-): Promise<PromptAcceptedResponse> {
+  path: string,
+  body: PromptDeliveryRequest | undefined,
+  signal?: AbortSignal,
+): Promise<PromptDeliveryResponse> {
+  if (signal?.aborted) throw new ApiTransportError("request");
   const controller = new AbortController();
-  const timer = window.setTimeout(
-    () => controller.abort(),
-    PROMPT_CONFIRMATION_TIMEOUT_MS,
-  );
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
+  const timer = window.setTimeout(cancel, PROMPT_CONFIRMATION_TIMEOUT_MS);
   try {
-    return await post<PromptAcceptedResponse>(token, "/api/prompt", body, {
-      signal: controller.signal,
-    });
+    const init = { signal: controller.signal };
+    return await (body
+      ? post<PromptDeliveryResponse>(token, path, body, init)
+      : request<PromptDeliveryResponse>(token, path, init));
   } catch (error) {
-    // Prompt acceptance may already have crossed the public edge. Convert only
-    // this owned timeout into an unknown transport outcome so Composer retains
-    // and safely reuses the operation identity.
+    // This ends only one browser observation, not the Host/Pi operation.
     if (aborted(error)) throw new ApiTransportError("request");
     throw error;
   } finally {
     window.clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
+function waitForPromptPoll(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      if (signal?.aborted) reject(new ApiTransportError("request"));
+      else resolve();
+    };
+    const timer = window.setTimeout(finish, 250);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
+  });
+}
+
+async function deliverPrompt(
+  token: string | null,
+  body: PromptDeliveryRequest,
+  signal?: AbortSignal,
+): Promise<PromptAcceptedResponse> {
+  let first = true;
+  for (;;) {
+    let response: PromptDeliveryResponse;
+    try {
+      response = await observePrompt(
+        token,
+        first
+          ? "/api/prompt"
+          : `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`,
+        first ? body : undefined,
+        signal,
+      );
+    } catch (error) {
+      // Even an authenticated 401/404/500 can refuse the observation without
+      // saying anything about an earlier dispatch. Only the retained operation
+      // receipt may declare that same operation rejected.
+      if (
+        error instanceof ApiError &&
+        !(
+          error.authorityId === body.authorityId &&
+          error.promptReceipt?.operationId === body.operationId &&
+          error.promptReceipt.outcome === "rejected"
+        )
+      )
+        error.outcomeUnknown = true;
+      throw error;
+    }
+    if (response?.accepted === true) return response;
+    if (
+      !response ||
+      response.pending !== true ||
+      response.operationId !== body.operationId ||
+      response.authorityId !== body.authorityId
+    )
+      throw new ApiTransportError("response");
+    // Poll the receipt, not another delivery of potentially large attachments.
+    // Pi may still be compacting, running an input hook, or awaiting a dialog.
+    first = false;
+    await waitForPromptPoll(signal);
   }
 }
 
@@ -464,26 +527,40 @@ export function createApi(token: string | null = null) {
           ? `/api/terminals?cwd=${encodeURIComponent(cwd)}`
           : "/api/terminals",
       ),
+    retryTerminalOperation: (key: string) =>
+      terminalOperations.retry(token, key),
     createTerminal: (body: TerminalCreateRequest) =>
-      post<TerminalDescriptor>(token, "/api/terminals", body),
+      terminalOperations.run<TerminalDescriptor>(
+        token,
+        "/api/terminals",
+        "POST",
+        body,
+      ),
     renameTerminal: (id: string, body: TerminalRenameRequest) =>
-      request<TerminalDescriptor>(
+      terminalOperations.run<TerminalDescriptor>(
         token,
         `/api/terminals/${encodeURIComponent(id)}`,
-        { method: "PATCH", body: JSON.stringify(body) },
+        "PATCH",
+        body,
       ),
     reorderTerminals: (body: TerminalReorderRequest) =>
-      post<TerminalCatalogResponse>(token, "/api/terminals/reorder", body),
+      terminalOperations.run<TerminalCatalogResponse>(
+        token,
+        "/api/terminals/reorder",
+        "POST",
+        body,
+      ),
     restartTerminal: (id: string) =>
-      post<TerminalDescriptor>(
+      terminalOperations.run<TerminalDescriptor>(
         token,
         `/api/terminals/${encodeURIComponent(id)}/restart`,
+        "POST",
       ),
     removeTerminal: (id: string, force = false) =>
-      request<TerminalRemoveResponse>(
+      terminalOperations.run<TerminalRemoveResponse>(
         token,
         `/api/terminals/${encodeURIComponent(id)}${force ? "?force=1" : ""}`,
-        { method: "DELETE" },
+        "DELETE",
       ),
     terminalAttachTicket: (id: string, signal?: AbortSignal) =>
       post<TerminalAttachTicketResponse>(
@@ -495,15 +572,17 @@ export function createApi(token: string | null = null) {
     terminalSettings: () =>
       request<TerminalServiceSettings>(token, "/api/terminal-settings"),
     updateTerminalSettings: (body: TerminalServiceSettingsPatch) =>
-      request<TerminalServiceSettings>(token, "/api/terminal-settings", {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
+      terminalOperations.run<TerminalServiceSettings>(
+        token,
+        "/api/terminal-settings",
+        "PATCH",
+        body,
+      ),
     clearTerminalHistory: () =>
-      requestEmpty(token, "/api/terminal-history", { method: "DELETE" }),
-    prompt: (body: PromptDeliveryRequest) =>
+      terminalOperations.run<void>(token, "/api/terminal-history", "DELETE"),
+    prompt: (body: PromptDeliveryRequest, signal?: AbortSignal) =>
       withTransportMeasure("prompt-confirmation", () =>
-        deliverPrompt(token, body),
+        deliverPrompt(token, body, signal),
       ),
     nativeCommand: (body: HostNativeCommandRequest) =>
       post<HostNativeCommandResponse>(

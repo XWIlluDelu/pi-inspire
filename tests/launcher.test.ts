@@ -210,6 +210,120 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
+  linuxIt.each(["committed", "expired", "legacy"])(
+    "maintenance launcher uses the fenced handoff (%s)",
+    async (outcome) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-maintenance-launcher-"),
+      );
+      temporaryDirectories.push(directory);
+      const environment = await serviceLauncherEnv(directory);
+      const statePath = join(directory, "synthetic-host-state.json");
+      const leaseId = "a".repeat(43);
+      const calls: Array<{
+        path: string;
+        authorization: string | undefined;
+        body: string;
+      }> = [];
+      const server = createServer(async (incoming, response) => {
+        let body = "";
+        for await (const chunk of incoming) body += String(chunk);
+        calls.push({
+          path: incoming.url!,
+          authorization: incoming.headers.authorization,
+          body,
+        });
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify(
+            incoming.url?.endsWith("/commit")
+              ? outcome === "committed"
+                ? { kind: "committed", leaseId }
+                : { kind: "skipped", reason: "lease-invalid" }
+              : incoming.url?.endsWith("/release")
+                ? { kind: "skipped", reason: "lease-invalid" }
+                : {
+                    kind: "ready",
+                    expiresAt: Date.now() + 30_000,
+                    ...(outcome === "legacy" ? {} : { leaseId }),
+                  },
+          ),
+        );
+      });
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Expected fixture port");
+      await writeFile(
+        statePath,
+        JSON.stringify({
+          root,
+          host: "127.0.0.1",
+          port: address.port,
+          token: "synthetic-token",
+        }),
+      );
+      try {
+        const child = spawn(
+          process.execPath,
+          [launcher, "maintenance-restart"],
+          {
+            cwd: root,
+            env: { ...environment, INSPIRE_STATE_PATH: statePath },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        children.push(child);
+        let output = "";
+        child.stdout!.on("data", (chunk) => {
+          output += String(chunk);
+        });
+        child.stderr!.on("data", (chunk) => {
+          output += String(chunk);
+        });
+        const code = await new Promise((done, reject) => {
+          child.once("error", reject);
+          child.once("exit", done);
+        });
+        expect(code, output).toBe(0);
+        expect(calls.map((call) => call.path)).toEqual(
+          outcome === "legacy"
+            ? ["/api/maintenance/restart"]
+            : outcome === "committed"
+              ? ["/api/maintenance/restart", "/api/maintenance/restart/commit"]
+              : [
+                  "/api/maintenance/restart",
+                  "/api/maintenance/restart/commit",
+                  "/api/maintenance/restart/release",
+                ],
+        );
+        expect(
+          calls.every(
+            (call) => call.authorization === "Bearer synthetic-token",
+          ),
+        ).toBe(true);
+        expect(
+          calls
+            .slice(1)
+            .every((call) => JSON.parse(call.body).leaseId === leaseId),
+        ).toBe(true);
+        const commands = await readFile(
+          environment.FAKE_SYSTEMD_LOG!,
+          "utf8",
+        ).catch(() => "");
+        expect(commands.includes("--user restart inspire-host.service")).toBe(
+          outcome === "committed",
+        );
+        expect(output).not.toContain(leaseId);
+        expect(output).not.toContain("synthetic-token");
+      } finally {
+        await new Promise<void>((done, reject) =>
+          server.close((error) => (error ? reject(error) : done())),
+        );
+      }
+    },
+  );
+
   linuxIt(
     "delegates a matching installed host service through systemd",
     async () => {

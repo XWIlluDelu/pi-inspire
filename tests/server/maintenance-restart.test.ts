@@ -12,18 +12,33 @@ function controller(options: {
   runningSource?: InspireSourceIdentity;
   inspectedPiVersion?: string;
   inspectedSource?: InspireSourceIdentity;
+  inspectSource?: () => Promise<InspireSourceIdentity>;
   reserve?: () =>
-    | { kind: "ready"; expiresAt: number }
+    | { kind: "ready"; leaseId: string; expiresAt: number }
     | { kind: "busy"; reason: "active-work" | "in-flight-operation" };
 }) {
   const reserve = vi.fn(
-    options.reserve ?? (() => ({ kind: "ready" as const, expiresAt: 123_456 })),
+    options.reserve ??
+      (() => ({
+        kind: "ready" as const,
+        leaseId: "a".repeat(43),
+        expiresAt: 123_456,
+      })),
   );
+  const commit = vi.fn((leaseId: string) => ({
+    kind: "committed" as const,
+    leaseId,
+  }));
+  const release = vi.fn(() => ({ kind: "released" as const }));
   const runtime = {
     reserveMaintenanceRestart: reserve,
+    commitMaintenanceRestart: commit,
+    releaseMaintenanceRestart: release,
   } as unknown as RuntimeLike;
   return {
     reserve,
+    commit,
+    release,
     subject: new MaintenanceRestartController({
       runtime,
       root: "/workspace/inspire",
@@ -34,16 +49,43 @@ function controller(options: {
       },
       diagnostics: nullDiagnosticLogger(),
       inspectPiVersion: async () => options.inspectedPiVersion ?? "0.84.2",
-      inspectSource: async () =>
-        options.inspectedSource ?? {
-          kind: "source",
-          revision: "old-revision",
-        },
+      inspectSource:
+        options.inspectSource ??
+        (async () =>
+          options.inspectedSource ?? {
+            kind: "source",
+            revision: "old-revision",
+          }),
     }),
   };
 }
 
 describe("idle maintenance restart", () => {
+  it("does not authorize restart when source inspection throws", async () => {
+    const { subject, reserve } = controller({
+      inspectedPiVersion: "0.85.0",
+      inspectSource: async () => {
+        throw new Error("unavailable");
+      },
+    });
+    await expect(subject.reserve()).resolves.toEqual({
+      kind: "skipped",
+      reason: "inspire-identity-unavailable",
+    });
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("passes the exact owner identity to authoritative commit and release", () => {
+    const { subject, commit, release } = controller({});
+    expect(subject.commit("owner")).toEqual({
+      kind: "committed",
+      leaseId: "owner",
+    });
+    expect(subject.release("owner")).toEqual({ kind: "released" });
+    expect(commit).toHaveBeenCalledWith("owner");
+    expect(release).toHaveBeenCalledWith("owner");
+  });
+
   it("does nothing when neither installed identity changed", async () => {
     const { subject, reserve } = controller({});
 
@@ -62,6 +104,7 @@ describe("idle maintenance restart", () => {
 
     await expect(subject.reserve()).resolves.toEqual({
       kind: "ready",
+      leaseId: "a".repeat(43),
       expiresAt: 123_456,
       updates: ["pi", "inspire"],
     } satisfies MaintenanceRestartOutcome);
@@ -102,6 +145,7 @@ describe("idle maintenance restart", () => {
 
     await expect(subject.reserve()).resolves.toEqual({
       kind: "ready",
+      leaseId: "a".repeat(43),
       expiresAt: 123_456,
       updates: ["inspire"],
     } satisfies MaintenanceRestartOutcome);

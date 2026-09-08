@@ -57,7 +57,8 @@
       "scripts/start-browser-test-host.mjs",
       "public/service-worker.js",
       "docs/redesign/prototype/app.js",
-      "tests/**/*.{test,spec}.{ts,tsx}"
+      "tests/**/*.{test,spec}.{ts,tsx}",
+      "tests/fixtures/pi-operation-lifecycle-extension.ts"
     ],
     "ignore": [
       "server/instance-state.d.mts",

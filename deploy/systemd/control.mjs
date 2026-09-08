@@ -44,7 +44,12 @@ function runSystemctl(arguments_, environment = process.env) {
     child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
     child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
     child.once("error", (error) =>
-      resolveRun({ code: 1, stdout, stderr: `${stderr}${error.message}` }),
+      resolveRun({
+        code: 1,
+        issued: false,
+        stdout,
+        stderr: `${stderr}${error.message}`,
+      }),
     );
     child.once("exit", (code) =>
       resolveRun({ code: code ?? 1, stdout, stderr }),
@@ -251,6 +256,48 @@ async function manageHostService(root, action, options) {
     return { kind: "control-failed", action, detail: serviceStatusLine(settled) };
   }
   return { kind: "controlled", action, service: settled };
+}
+
+/** Scheduled restarts have a separate entry point: ordinary/manual restart
+ * remains explicit, but maintenance can never bypass the Host's final fence.
+ * The handoff callbacks belong to one lease owner and must not retry commit. */
+export async function restartIdleHost(root, handoff, options = {}) {
+  const cancel = async (reason) => {
+    try {
+      if (await handoff.release()) return { kind: "skipped", reason };
+    } catch {
+      // A lost release response is not evidence that admission reopened.
+    }
+    return { kind: "recovery-required", reason: "release-unconfirmed" };
+  };
+
+  let service;
+  try {
+    service = await inspectHostService(root, options);
+    if (service.kind !== "managed") return cancel(service.kind);
+    // This is deliberately AFTER every potentially slow systemctl inspection.
+    // Only the Host can atomically validate the lease and commit its drain.
+    if (!(await handoff.commit())) return cancel("commit-not-authorized");
+  } catch {
+    // No restart was issued. Release also invalidates a late HTTP commit.
+    return cancel("pre-restart-failed");
+  }
+
+  let result;
+  try {
+    result = await (options.run ?? runSystemctl)(
+      ["--user", "restart", HOST_SERVICE_NAME],
+      options.environment,
+    );
+  } catch {
+    return { kind: "recovery-required", reason: "restart-outcome-unknown" };
+  }
+  // Only failure to spawn proves systemctl could not submit a restart. Nonzero
+  // exit, signal, or transport failure can follow submission: never reopen then.
+  if (result.issued === false) return cancel("restart-not-issued");
+  if (result.code !== 0)
+    return { kind: "recovery-required", reason: "restart-outcome-unknown" };
+  return { kind: "restarted" };
 }
 
 function unavailableMessage(service) {
