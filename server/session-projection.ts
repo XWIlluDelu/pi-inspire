@@ -28,6 +28,7 @@ import {
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import { userTurnSummary } from "../shared/user-turns.js";
+import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -487,7 +488,10 @@ function boundedTranscriptItem(
   value: unknown,
   persistedIndex?: number,
 ): BoundedTranscriptItem {
-  const browserValue = withoutPersistedImageData(value, persistedIndex);
+  const browserValue = withoutPersistedImageData(
+    interruptAssistantToolCalls(value),
+    persistedIndex,
+  );
   const sourceRecord =
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -527,6 +531,11 @@ function boundedTranscriptItem(
       ? {
           ...(projected as Record<string, unknown>),
           ...identityMetadata,
+          // Reduced item projections are replacements, not valid bases for
+          // replaying the original un-clipped argument patch on a browser.
+          ...(stringChars === 2_000
+            ? { __inspireProjectionReduced: true }
+            : {}),
           // Error outcomes remain inspectable even when large content forces
           // the reduced or omitted projection. Keep the same string budget.
           ...(sourceRecord?.role === "assistant" &&

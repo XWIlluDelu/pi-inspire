@@ -24,6 +24,7 @@ import { parseBridgeResult } from "./runtime-branch-bridge.js";
 import { pendingQueuesFromTexts } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
+import { ToolArgumentStream } from "./tool-argument-stream.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -89,6 +90,10 @@ export class RuntimeEventController {
    * events for that slot must retain wire order until the reconciliation
    * boundary drains. */
   private readonly orderedSlots = new WeakSet<RuntimeSlot>();
+  private readonly argumentStreams = new WeakMap<
+    PiRpcProcess,
+    Map<number, ToolArgumentStream>
+  >();
 
   constructor(private readonly host: RuntimeEventControllerHost) {}
 
@@ -225,10 +230,17 @@ export class RuntimeEventController {
     event: unknown,
     rpc: PiRpcProcess,
   ): void {
-    const record =
+    let record =
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
+    if (
+      record.type === "agent_settled" ||
+      ((record.type === "message_start" || record.type === "message_end") &&
+        (record.message as Record<string, unknown> | undefined)?.role ===
+          "assistant")
+    )
+      this.argumentStreams.delete(rpc);
     let forwardedEvent: unknown = event;
     if (
       record.type === "message_start" ||
@@ -243,10 +255,44 @@ export class RuntimeEventController {
       const previousMessage = this.host.activeAssistantOverlayMessage(slot);
       let message = record.message;
       if (record.type === "message_update" && !suppliedCompleteMessage) {
+        const delta = record.assistantMessageEvent as
+          | Record<string, unknown>
+          | undefined;
+        if (delta?.type === "toolcall_delta") {
+          const stream = this.argumentStreams
+            .get(rpc)
+            ?.get(Number(delta.contentIndex));
+          if (!stream || typeof delta.delta !== "string") return;
+          const wasTruncated = stream.truncated;
+          const updates = stream.feed(delta.delta);
+          if (updates.length === 0 && stream.truncated === wasTruncated) return;
+          record = {
+            ...record,
+            assistantMessageEvent: {
+              type: "toolcall_delta",
+              contentIndex: delta.contentIndex,
+              argumentUpdates: updates,
+              argumentChars: stream.characters,
+              argumentsTruncated: stream.truncated,
+            },
+          };
+        }
         message = applyAssistantMessageDelta(
           previousMessage,
           record.assistantMessageEvent,
         );
+        // Suppressed/private/capped fragments and older identity-less starts
+        // do not consume a browser revision or cross the transport boundary.
+        if (!message) return;
+        if (delta?.type === "toolcall_start") {
+          const streams =
+            this.argumentStreams.get(rpc) ??
+            new Map<number, ToolArgumentStream>();
+          streams.set(Number(delta.contentIndex), new ToolArgumentStream());
+          this.argumentStreams.set(rpc, streams);
+        } else if (delta?.type === "toolcall_end") {
+          this.argumentStreams.get(rpc)?.delete(Number(delta.contentIndex));
+        }
       }
       if (message && typeof message === "object" && !Array.isArray(message)) {
         const phase =
@@ -291,13 +337,30 @@ export class RuntimeEventController {
           slot.activeAssistantCorrelation =
             messageFallbackCorrelation(projectedMessage);
         const streamMessageKey = structuralMessageIdentity(projectedMessage);
+        const delta = record.assistantMessageEvent as
+          | Record<string, unknown>
+          | undefined;
+        // A total/item-budget fallback may have clipped other argument paths.
+        // Publish that replacement, never replay the pre-clipping patch against
+        // a browser that still has the larger tree (length alone cannot detect it).
+        const incremental =
+          record.type === "message_update" &&
+          !suppliedCompleteMessage &&
+          delta?.type !== "toolcall_end" &&
+          !(projectedMessage as Record<string, unknown> | null)
+            ?.__inspireProjectionReduced;
+        // The authoritative tool end can be large and needs normal redaction /
+        // projection bounds. Send its one complete replacement, not the raw
+        // ToolCall duplicated inside an AssistantMessageEvent.
+        const { assistantMessageEvent: _rawDelta, ...metadata } = record;
         forwardedEvent = {
-          ...record,
+          ...metadata,
+          ...(incremental
+            ? { assistantMessageEvent: record.assistantMessageEvent }
+            : {}),
           message: projectedMessage,
           ...(streamRevision === null ? {} : { streamRevision }),
-          ...(record.type === "message_update" &&
-          !suppliedCompleteMessage &&
-          streamMessageKey
+          ...(incremental && streamMessageKey
             ? {
                 streamDelta: true,
                 streamMessageKey,
@@ -307,23 +370,6 @@ export class RuntimeEventController {
         };
       }
     }
-    // Pi's public tool-call start has no identity/name and its deltas expose
-    // only argument-string fragments; only the terminal event has a typed
-    // ToolCall. The first two intentionally do not mutate either projection,
-    // so do not spend transport bandwidth on browser no-ops.
-    if (
-      record.type === "message_update" &&
-      (!record.message ||
-        typeof record.message !== "object" ||
-        Array.isArray(record.message)) &&
-      record.assistantMessageEvent &&
-      typeof record.assistantMessageEvent === "object" &&
-      !Array.isArray(record.assistantMessageEvent) &&
-      ["toolcall_start", "toolcall_delta"].includes(
-        String((record.assistantMessageEvent as Record<string, unknown>).type),
-      )
-    )
-      return;
     switch (record.type) {
       case "extension_ui_request": {
         const owned = { ...record, sessionId: slot.id };

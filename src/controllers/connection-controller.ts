@@ -1,4 +1,7 @@
-import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
+import {
+  assistantStreamTextLength,
+  MAX_ASSISTANT_STREAM_BATCH_EVENTS,
+} from "../../shared/assistant-stream";
 import {
   isRunState,
   isSessionRuntimeStatus,
@@ -44,25 +47,7 @@ function streamMessageUpdate(
   const message = event.message as Record<string, unknown>;
   const identity = structuralMessageIdentity(message);
   if (!identity) return null;
-  const content = message.content;
-  const textLength =
-    typeof content === "string"
-      ? content.length
-      : Array.isArray(content)
-        ? content.reduce((total, part) => {
-            if (typeof part === "string") return total + part.length;
-            if (!part || typeof part !== "object" || Array.isArray(part))
-              return total;
-            const record = part as Record<string, unknown>;
-            const text =
-              typeof record.text === "string"
-                ? record.text
-                : typeof record.thinking === "string"
-                  ? record.thinking
-                  : "";
-            return total + text.length;
-          }, 0)
-        : 0;
+  const textLength = assistantStreamTextLength(message);
   return {
     event,
     key: `${typeof event.sessionId === "string" ? event.sessionId : ""}\0${identity}`,
@@ -512,10 +497,12 @@ export class ConnectionController {
       const previousEvents = this.pendingStreamUpdate.event
         .assistantMessageEvents as unknown[];
       const nextEvents = update.event.assistantMessageEvents as unknown[];
-      if (
-        previousEvents.length + nextEvents.length >
-        MAX_ASSISTANT_STREAM_BATCH_EVENTS
-      ) {
+      const sourceEventCount =
+        Number(
+          this.pendingStreamUpdate.event.sourceEventCount ??
+            previousEvents.length,
+        ) + Number(update.event.sourceEventCount ?? nextEvents.length);
+      if (sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS) {
         if (!this.flushStreamUpdate(socket)) return;
         this.pendingStreamUpdate = {
           socket,
@@ -526,6 +513,7 @@ export class ConnectionController {
         this.pendingStreamUpdate.event = {
           ...update.event,
           assistantMessageEvents: [...previousEvents, ...nextEvents],
+          sourceEventCount,
         };
       }
     } else if (
