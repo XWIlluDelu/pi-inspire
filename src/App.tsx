@@ -38,7 +38,10 @@ import type { Notice } from "./events";
 import { shallowEqual, store, useAppState } from "./store";
 import { type AvailableUpdates, availableUpdates } from "./update-availability";
 import { hasActiveModal, useModalFocus } from "./use-modal-focus";
-import { cacheVisualPreferences } from "./visual-preferences";
+import {
+  applyBrowserTheme,
+  cacheVisualPreferences,
+} from "./visual-preferences";
 
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
@@ -813,10 +816,7 @@ export function App() {
     if (!state.bootstrapped) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.dataset.theme = resolveTheme(
-        state.prefs.theme,
-        media.matches,
-      );
+      applyBrowserTheme(resolveTheme(state.prefs.theme, media.matches));
       document.documentElement.dataset.palette = state.prefs.palette;
       document.documentElement.dataset.contentTextSize =
         state.prefs.contentTextSize;
