@@ -28,6 +28,7 @@ import {
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   parsePendingQueues,
+  parseRetryInfo,
   projectionConflictSeverity,
   type ReadingWidthPreference,
   type SessionDeleteDisposition,
@@ -896,7 +897,10 @@ export class AppStore {
       // extension dialogs are restored in Pi request order when their owning
       // session is viewed.
       tools: {},
-      retry: null,
+      retry:
+        snapshot.runState === "retrying"
+          ? parseRetryInfo(snapshot.retry)
+          : null,
       queue: pendingQueues,
       extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
         ? snapshot.pendingExtensionUiRequests
