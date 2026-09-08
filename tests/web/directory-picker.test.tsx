@@ -48,7 +48,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 const toggle = () =>
-  screen.getByRole("checkbox", { name: "Show hidden folders" });
+  screen.getByRole("button", { name: "Show hidden folders" });
 const confirm = () =>
   screen.getByRole("button", { name: "Use this directory" });
 
@@ -83,14 +83,19 @@ describe("hidden project directories", () => {
         <DirectoryPicker initial={root} onCancel={vi.fn()} onPick={onPick} />,
       );
       await screen.findByText("No subdirectories");
-      expect(toggle()).not.toBeChecked();
+      expect(toggle()).toHaveAttribute("aria-pressed", "false");
+      expect(toggle().parentElement).toContainElement(
+        screen.getByRole("heading", { name: "Choose project directory" }),
+      );
+      expect(toggle()).toHaveAttribute("title", "Show hidden folders");
       expect(
         screen.queryByRole("button", { name: ".hidden" }),
       ).not.toBeInTheDocument();
       fireEvent.click(toggle());
       fireEvent.click(await screen.findByRole("button", { name: ".hidden" }));
       await waitFor(() => expect(confirm()).toBeEnabled());
-      expect(toggle()).toBeChecked();
+      expect(toggle()).toHaveAttribute("aria-pressed", "true");
+      expect(toggle()).toHaveAttribute("title", "Hide hidden folders");
       expect(browse).toHaveBeenLastCalledWith(child, true);
       fireEvent.click(confirm());
       expect(onPick).toHaveBeenCalledWith(child);
@@ -122,7 +127,7 @@ describe("hidden project directories", () => {
     fireEvent.click(screen.getByRole("button", { name: "D:" }));
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith("D:\\", true));
     await waitFor(() => expect(confirm()).toBeEnabled());
-    expect(toggle()).toBeChecked();
+    expect(toggle()).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(toggle());
     await screen.findByText("No subdirectories");
     expect(browse).toHaveBeenLastCalledWith("D:\\", false);
@@ -131,7 +136,7 @@ describe("hidden project directories", () => {
     unmount();
     render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
     await screen.findByText("No subdirectories");
-    expect(toggle()).not.toBeChecked();
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
   });
 
   it("retains the destination when toggled during navigation and ignores the superseded response", async () => {
@@ -174,7 +179,7 @@ describe("hidden project directories", () => {
     await waitFor(() => expect(confirm()).toBeEnabled());
     await act(async () => older.reject(new Error("stale error")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(toggle()).not.toBeChecked();
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
     expect(
       screen.queryByRole("button", { name: ".hidden" }),
     ).not.toBeInTheDocument();
@@ -232,6 +237,12 @@ describe("hidden project directories", () => {
     await user.keyboard(" ");
     await screen.findByRole("button", { name: ".hidden" });
     expect(toggle()).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("button", { name: ".hidden" }),
+    ).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledOnce();
   });
