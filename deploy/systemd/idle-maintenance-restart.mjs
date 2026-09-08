@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REQUEST_TIMEOUT_MS = 6_000;
 
@@ -30,6 +29,7 @@ function stateForRoot(value, root) {
   return Boolean(
     value &&
       typeof value === "object" &&
+      typeof value.root === "string" &&
       resolve(value.root) === root &&
       ["127.0.0.1", "::1", "localhost"].includes(value.host) &&
       Number.isInteger(value.port) &&
@@ -44,40 +44,68 @@ function displayHost(host) {
   return host === "::1" ? "[::1]" : host;
 }
 
-async function requestLease(state) {
+export async function requestMaintenance(state, action = "", leaseId) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(
-      `http://${displayHost(state.host)}:${state.port}/api/maintenance/restart`,
+      `http://${displayHost(state.host)}:${state.port}/api/maintenance/restart${action ? `/${action}` : ""}`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${state.token}` },
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          "Content-Type": "application/json",
+        },
+        body: leaseId === undefined ? undefined : JSON.stringify({ leaseId }),
         signal: controller.signal,
       },
     );
-    if (!response.ok) return false;
-    const body = await response.json().catch(() => null);
-    return Boolean(
-      body &&
-        body.kind === "ready" &&
-        Number.isInteger(body.expiresAt) &&
-        body.expiresAt > Date.now() + 1_000,
-    );
+    if (!response.ok) return null;
+    return await response.json();
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function restartManagedHost(root, controller) {
-  return new Promise((resolveResult) => {
-    const child = spawn(process.execPath, [controller, "--root", root, "restart"], {
-      stdio: "inherit",
-    });
-    child.once("error", () => resolveResult(1));
-    child.once("exit", (code) => resolveResult(code ?? 1));
+/** No cached boolean authorization and no commit retries. A timed-out commit
+ * is cancellation, never permission to execute its possibly delayed response. */
+export async function runIdleMaintenanceRestart(
+  state,
+  root,
+  restart,
+  request = requestMaintenance,
+) {
+  let lease;
+  try {
+    lease = await request(state);
+  } catch {
+    return { kind: "skipped", reason: "host-unavailable" };
+  }
+  if (
+    !lease ||
+    lease.kind !== "ready" ||
+    typeof lease.leaseId !== "string" ||
+    !/^[A-Za-z0-9_-]{43}$/u.test(lease.leaseId) ||
+    !Number.isInteger(lease.expiresAt)
+  )
+    return { kind: "skipped", reason: "not-prepared" };
+
+  // The identity is never printed or persisted by the runner. It is the release
+  // capability as well as the fence, scoped to this Host incarnation and owner.
+  return restart(root, {
+    commit: async () => {
+      const result = await request(state, "commit", lease.leaseId);
+      return result?.kind === "committed" && result.leaseId === lease.leaseId;
+    },
+    release: async () => {
+      const result = await request(state, "release", lease.leaseId);
+      return (
+        result?.kind === "released" ||
+        (result?.kind === "skipped" && result.reason === "lease-invalid")
+      );
+    },
   });
 }
 
@@ -102,14 +130,28 @@ async function main() {
     );
     return;
   }
-  if (!(await requestLease(state))) {
-    console.log("INSΠRE idle maintenance restart skipped.");
+  const { restartIdleHost } = await import(
+    pathToFileURL(resolve(arguments_.controller)).href
+  );
+  if (typeof restartIdleHost !== "function") {
+    console.log("INSΠRE idle maintenance restart skipped: controller unsupported.");
+    return;
+  }
+  const result = await runIdleMaintenanceRestart(state, root, restartIdleHost);
+  if (result.kind === "recovery-required") {
+    console.error(
+      "INSΠRE maintenance restart outcome unconfirmed; admission may remain closed. " +
+        "Do not release until the runner and any pending restart are ruled out; " +
+        "see the Host lifecycle maintenance recovery contract.",
+    );
+    process.exitCode = 1;
     return;
   }
   console.log(
-    "INSΠRE idle maintenance restart approved; restarting the managed host.",
+    result.kind === "restarted"
+      ? "INSΠRE idle maintenance restart completed."
+      : "INSΠRE idle maintenance restart skipped.",
   );
-  process.exitCode = await restartManagedHost(root, arguments_.controller);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

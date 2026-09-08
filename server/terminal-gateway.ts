@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import {
@@ -16,12 +16,21 @@ import {
   MIN_TERMINAL_HISTORY_DAYS,
   MIN_TERMINAL_ROWS,
   type TerminalClientControlMessage,
+  type TerminalMutationMethod,
 } from "../shared/terminal-contracts.js";
 import { requestError } from "./request-error.js";
 import type {
   TerminalAttachment,
+  TerminalOperationService,
   TerminalService,
 } from "./terminal-service.js";
+
+const terminalOperationSchema = z
+  .object({
+    id: z.string().uuid(),
+    epoch: z.string().uuid(),
+  })
+  .strict();
 
 const terminalIdSchema = z
   .string()
@@ -135,16 +144,88 @@ export function createTerminalGateway(
       });
     return service;
   };
+  // Schema/auth-independent refusals before dispatch are definite. Once a
+  // mutation reaches the daemon transport, default to unknown until a receipt.
+  app.use(
+    /^\/api\/(?:terminals(?:\/|$)|terminal-settings$|terminal-history$)/u,
+    (request, response, next) => {
+      const header = request.get("X-Terminal-Operation");
+      if (header !== undefined && request.method !== "GET") {
+        if (header.length > 256)
+          throw requestError("Invalid terminal operation", 400);
+        const operation = terminalOperationSchema.parse(JSON.parse(header));
+        response.set("X-Terminal-Operation", operation.id);
+        response.set("X-Terminal-Outcome", "rejected");
+      }
+      next();
+    },
+  );
+  const operationService = (): TerminalOperationService => {
+    const terminal = requireTerminal();
+    if (
+      !("operate" in terminal) ||
+      typeof terminal.operate !== "function" ||
+      !("operationEpoch" in terminal) ||
+      typeof terminal.operationEpoch !== "function"
+    )
+      throw requestError("Terminal operation receipts are unavailable", 503, {
+        code: "terminal_operations_unavailable",
+      });
+    return terminal as TerminalOperationService;
+  };
+  const mutate = async <T>(
+    request: Request,
+    response: Response,
+    method: TerminalMutationMethod,
+    params: unknown,
+    legacy: () => Promise<T>,
+  ): Promise<T> => {
+    const header = request.get("X-Terminal-Operation");
+    if (header === undefined) return legacy();
+    if (header.length > 256)
+      throw requestError("Invalid terminal operation", 400);
+    const operation = terminalOperationSchema.parse(JSON.parse(header));
+    response.set("X-Terminal-Operation", operation.id);
+    response.set("X-Terminal-Outcome", "unknown");
+    try {
+      const result = await operationService().operate<T>(
+        method,
+        params,
+        operation,
+      );
+      response.set("X-Terminal-Outcome", "completed");
+      return result;
+    } catch (error) {
+      const { status, code } = error as { status?: number; code?: string };
+      const unknown = [
+        "terminal_operation_epoch_changed",
+        "terminal_operation_expired",
+        "terminal_operation_mismatch",
+      ].includes(code ?? "");
+      response.set(
+        "X-Terminal-Outcome",
+        !unknown && status && status >= 400 && status < 500
+          ? "rejected"
+          : "unknown",
+      );
+      throw error;
+    }
+  };
+  app.get("/api/terminal-operations", async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    response.json({ epoch: await operationService().operationEpoch() });
+  });
   app.get("/api/terminals", async (request, response) => {
     const { cwd } = terminalListSchema.parse(request.query);
     response.json(await requireTerminal().list(cwd));
   });
   app.post("/api/terminals", async (request, response) => {
+    const body = terminalCreateSchema.parse(request.body);
     response
       .status(201)
       .json(
-        await requireTerminal().create(
-          terminalCreateSchema.parse(request.body),
+        await mutate(request, response, "create", { request: body }, () =>
+          requireTerminal().create(body),
         ),
       );
   });
@@ -152,39 +233,56 @@ export function createTerminalGateway(
     response.json(await requireTerminal().getSettings());
   });
   app.patch("/api/terminal-settings", async (request, response) => {
+    const patch = terminalSettingsPatchSchema.parse(request.body);
     response.json(
-      await requireTerminal().updateSettings(
-        terminalSettingsPatchSchema.parse(request.body),
+      await mutate(request, response, "updateSettings", { patch }, () =>
+        requireTerminal().updateSettings(patch),
       ),
     );
   });
-  app.delete("/api/terminal-history", async (_request, response) => {
-    await requireTerminal().clearHistory();
+  app.delete("/api/terminal-history", async (request, response) => {
+    await mutate(request, response, "clearHistory", {}, () =>
+      requireTerminal().clearHistory(),
+    );
     response.status(204).end();
   });
   app.patch("/api/terminals/:id", async (request, response) => {
+    const id = terminalIdSchema.parse(request.params.id);
+    const body = terminalRenameSchema.parse(request.body);
     response.json(
-      await requireTerminal().rename(
-        terminalIdSchema.parse(request.params.id),
-        terminalRenameSchema.parse(request.body),
+      await mutate(request, response, "rename", { id, title: body.title }, () =>
+        requireTerminal().rename(id, body),
       ),
     );
   });
   app.post("/api/terminals/reorder", async (request, response) => {
     const { cwd, terminalIds } = terminalReorderSchema.parse(request.body);
-    response.json(await requireTerminal().reorder(cwd, terminalIds));
+    response.json(
+      await mutate(
+        request,
+        response,
+        "reorder",
+        { projectCwd: cwd, ids: terminalIds },
+        () => requireTerminal().reorder(cwd, terminalIds),
+      ),
+    );
   });
   app.post("/api/terminals/:id/restart", async (request, response) => {
+    const id = terminalIdSchema.parse(request.params.id);
     response.json(
-      await requireTerminal().restart(
-        terminalIdSchema.parse(request.params.id),
+      await mutate(request, response, "restart", { id }, () =>
+        requireTerminal().restart(id),
       ),
     );
   });
   app.delete("/api/terminals/:id", async (request, response) => {
     const id = terminalIdSchema.parse(request.params.id);
     const force = request.query.force === "1";
-    response.json(await requireTerminal().remove(id, force));
+    response.json(
+      await mutate(request, response, "remove", { id, force }, () =>
+        requireTerminal().remove(id, force),
+      ),
+    );
   });
   app.post("/api/terminals/:id/attach-ticket", async (request, response) => {
     const terminal = requireTerminal();

@@ -250,6 +250,9 @@ export const ContextPane = memo(function ContextPane({
                 type="button"
                 key={mode}
                 aria-pressed={state.contextMode === mode}
+                data-terminal-focus-trigger={
+                  mode === "terminal" ? "" : undefined
+                }
                 onClick={() => store.setContextMode(mode)}
               >
                 {mode === "files"

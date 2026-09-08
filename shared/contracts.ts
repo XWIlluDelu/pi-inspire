@@ -1205,3 +1205,13 @@ export interface PromptAcceptedResponse {
   accepted: true;
   historyEntry: ComposerHistoryEntry | null;
 }
+
+/** Receipt observation only: Pi still owns the in-flight operation. */
+export type PromptDeliveryResponse =
+  | PromptAcceptedResponse
+  | {
+      accepted: false;
+      pending: true;
+      operationId: string;
+      authorityId: string;
+    };
