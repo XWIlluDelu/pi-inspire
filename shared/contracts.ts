@@ -452,7 +452,8 @@ export interface HostDirListing {
   path: string;
   /** Absolute parent, or null at a filesystem root. */
   parent: string | null;
-  /** Immediate subdirectories, sorted by name; dotted names stay hidden. */
+  /** Immediate subdirectories, sorted by name. Unless showHidden is requested,
+   * excludes dot names and Windows Hidden / macOS UF_HIDDEN entries. */
   dirs: HostDirEntry[];
 }
 

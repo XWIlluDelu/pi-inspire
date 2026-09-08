@@ -593,13 +593,15 @@ export function createApi(token: string | null = null) {
         { signal },
       ),
     browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
-    browseHostDirs: (path?: string) =>
-      request<HostDirListing>(
+    browseHostDirs: (path?: string, showHidden = false) => {
+      const query = new URLSearchParams();
+      if (path) query.set("path", path);
+      if (showHidden) query.set("showHidden", "1");
+      return request<HostDirListing>(
         token,
-        path
-          ? `/api/host/dirs?path=${encodeURIComponent(path)}`
-          : "/api/host/dirs",
-      ),
+        `/api/host/dirs${query.size ? `?${query}` : ""}`,
+      );
+    },
     listResources: (
       sessionId: string,
       options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
