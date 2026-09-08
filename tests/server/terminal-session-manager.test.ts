@@ -155,6 +155,46 @@ describe("TerminalSessionManager", () => {
     await manager.close();
   });
 
+  it("disposes the headless terminal when the PTY factory fails", async () => {
+    const { Terminal } = createRequire(import.meta.url)(
+      "@xterm/headless",
+    ) as typeof import("@xterm/headless");
+    const dispose = vi.spyOn(Terminal.prototype, "dispose");
+    let failSpawn = true;
+    const manager = new TerminalSessionManager({
+      profiles: [
+        {
+          id: "test",
+          label: "Test",
+          shell: "test-shell",
+          args: [],
+          available: true,
+          isDefault: true,
+        },
+      ],
+      ptyFactory: () => {
+        if (failSpawn) throw new Error("PTY spawn failed");
+        return new FakePty();
+      },
+    });
+    try {
+      await expect(manager.create({ cwd: process.cwd() })).rejects.toThrow(
+        "PTY spawn failed",
+      );
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(manager.list().terminals).toEqual([]);
+      failSpawn = false;
+      await expect(
+        manager.create({ cwd: process.cwd() }),
+      ).resolves.toMatchObject({
+        status: "running",
+      });
+    } finally {
+      await manager.close();
+      dispose.mockRestore();
+    }
+  });
+
   it("restores terminal tabs as exited metadata after a daemon restart", async () => {
     const first = setup();
     const terminal = await first.manager.create({ cwd: process.cwd() });

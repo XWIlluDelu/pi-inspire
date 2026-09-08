@@ -5,7 +5,7 @@ import {
   groupSessionsByCwd,
   splitNavSections,
   type NavCuration,
-} from "../../src/components/Nav";
+} from "../../src/components/nav-model";
 import { sessionSummary } from "./helpers";
 
 const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
