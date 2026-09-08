@@ -238,12 +238,6 @@ export class GitController {
     if (selection) await this.openResolvedDiff(selection);
   }
 
-  setDiffSide(side: GitDiffSide): void {
-    const state = this.host.state();
-    if (state.selectedGitPathId && side !== state.selectedGitSide)
-      void this.openDiff(state.selectedGitPathId, side);
-  }
-
   /** Keep Changes aligned with a resource selected from either Files surface. */
   selectWorkspacePath(workspacePath: string): void {
     this.selectedWorkspacePath = workspacePath;

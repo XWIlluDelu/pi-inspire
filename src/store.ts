@@ -2241,10 +2241,6 @@ export class AppStore {
   openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
     this.git.openChange(pathId, requestedSide);
 
-  setGitDiffSide = (side: GitDiffSide): void => {
-    this.git.setDiffSide(side);
-  };
-
   cancelResourceProbes = (clearStanding = false): void => {
     this.resources.cancelProbes(clearStanding);
   };
@@ -2255,10 +2251,6 @@ export class AppStore {
 
   probeResources = (references: string[]): Promise<void> =>
     this.resources.probeResources(references);
-
-  clearResourceSelection = (): void => {
-    this.resources.clearSelection();
-  };
 
   loadEmbeddedImage = (
     sessionId: string,

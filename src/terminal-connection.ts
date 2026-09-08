@@ -163,10 +163,6 @@ export class TerminalConnection {
     this.sendControl({ type: "take_control", cols, rows });
   }
 
-  releaseControl(): void {
-    this.sendControl({ type: "release_control" });
-  }
-
   forceSnapshot(): void {
     this.resume = {};
     this.reconnect();
