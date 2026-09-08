@@ -9,7 +9,6 @@ import {
 import {
   lazy,
   memo,
-  Profiler,
   Suspense,
   useCallback,
   useEffect,
@@ -18,7 +17,6 @@ import {
 } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import { ApiError, pairHost } from "./api";
-import { recordBenchmarkCommit } from "./benchmark-profiler";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
@@ -42,9 +40,6 @@ import { type AvailableUpdates, availableUpdates } from "./update-availability";
 import { hasActiveModal, useModalFocus } from "./use-modal-focus";
 import { cacheVisualPreferences } from "./visual-preferences";
 
-// Vite replaces MODE at build time. The production false branches are folded
-// before Rollup, leaving the ordinary elements directly in the component tree.
-const MAINTENANCE_BENCHMARK = import.meta.env.MODE === "maintenance-benchmark";
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
 const DeferredContextSurface = lazy(() =>
@@ -633,20 +628,8 @@ const ConversationStage = memo(function ConversationStage() {
   );
   return (
     <section className="reading-stage">
-      {MAINTENANCE_BENCHMARK ? (
-        <Profiler id="transcript" onRender={recordBenchmarkCommit}>
-          {transcript}
-        </Profiler>
-      ) : (
-        transcript
-      )}
-      {MAINTENANCE_BENCHMARK ? (
-        <Profiler id="composer" onRender={recordBenchmarkCommit}>
-          {composer}
-        </Profiler>
-      ) : (
-        composer
-      )}
+      {transcript}
+      {composer}
     </section>
   );
 });
@@ -965,13 +948,7 @@ export function App() {
           aria-label="Close navigation"
         />
       ) : null}
-      {MAINTENANCE_BENCHMARK ? (
-        <Profiler id="navigation" onRender={recordBenchmarkCommit}>
-          {navigationContent}
-        </Profiler>
-      ) : (
-        navigationContent
-      )}
+      {navigationContent}
       {!narrowViewport && !navCollapsed ? (
         <PaneResizeHandle
           cssVar="--nav-w"
@@ -1075,13 +1052,7 @@ export function App() {
               wheelTargetSelector="#context-pane [data-pane-scroll-active='true']"
             />
           )}
-          {MAINTENANCE_BENCHMARK ? (
-            <Profiler id="resources" onRender={recordBenchmarkCommit}>
-              {resourcesContent}
-            </Profiler>
-          ) : (
-            resourcesContent
-          )}
+          {resourcesContent}
         </>
       ) : null}
       {paletteOpen && !extensionOverlayOpen ? (

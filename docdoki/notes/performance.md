@@ -1,8 +1,35 @@
 # Performance and measurement
 
-## Performance measurement
+## Performance evidence
 
-Compare fixed workloads with the same runtime and fixture configuration. Measure parsing, rendering and transport volume separately.
+### Settings first-open flash
+
+A Chromium production-build probe reproduced two distinct Settings dialog nodes
+and two starts each of `overlay-in` and `pop-in` during the first open: the
+Suspense loading fallback and ready component each mounted their own animated
+shell. Subsequent opens reused the loaded module, explaining the cold-open bias.
+
+The eager `SettingsDialog` now owns the overlay, header, and modal focus while
+only `SettingsContent` is deferred. A fresh browser context with service workers
+blocked and the Settings module response delayed by 600 ms verified the fix at
+1280×720/light and 390×844/dark: one shell, one start per entrance animation,
+and overlay opacity remaining 1 after the initial entrance through readiness.
+An injected module-evaluation failure preserved the same dialog and Reload
+control; Escape closed it and restored the opener. This is transition-correctness
+evidence, not a general startup-latency benchmark.
+
+`tests/web/settings-loading.test.tsx` gates the real lazy import and checks
+loading-state dismissal, stable overlay/dialog/close-button identities, focus
+continuity on readiness, and final opener restoration. Navigation, modal-focus,
+and App integration checks also pass (35 tests across the four targeted files,
+on both Node 26.5.0 and Node 22.23.2). Typecheck, production Web build, formatting,
+lint, and unused-code checks pass.
+
+### Targeted streaming work counters
+
+The review identified two concrete costs outside the older evaluator's limited stream scenario: background body delivery before browser filtering, and cumulative assistant overlay serialization on every valid delta. The user explicitly requested these targeted changes; the historical no-change decisions below do not forbid them or establish their latency benefit.
+
+`tests/server/runtime-stream-budget.test.ts` drives the real event reducer and overlay owner with alternating 32-character text/thinking fragments. With incremental accounting disabled, 1,000/2,000 updates serialize cumulative assistant messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON. The incremental path produces identical overlays while serializing only 34/68 KB of fragment JSON and no cumulative assistant messages in that hot path. It also checks escaped characters, split surrogates, revision growth, string/item/overlay limits, structural fallback, and final/snapshot validation. These are serialization-work counters, not network, memory-peak, event-loop-delay, or remote-latency measurements.
 
 ## Session-scale evidence
 
