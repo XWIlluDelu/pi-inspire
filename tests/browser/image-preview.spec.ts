@@ -38,26 +38,34 @@ async function imagePixels(page: Page, image: Locator) {
   });
 }
 
-async function attachImage(page: Page, opaque = false) {
+async function attachImage(
+  page: Page,
+  opaque = false,
+  dimensions = { width: 1200, height: 800 },
+) {
   // A real PNG with transparent, half-alpha, black, and white regions. Generate
   // it in memory so the test exercises upload/preview without fixture artifacts.
-  const png = await page.evaluate((opaque) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1200;
-    canvas.height = 800;
-    const context = canvas.getContext("2d")!;
-    if (opaque) {
-      context.fillStyle = "#4080c0";
-      context.fillRect(0, 0, 1200, 800);
-    }
-    context.fillStyle = "rgba(255, 0, 0, 0.5)";
-    context.fillRect(400, 0, 400, 800);
-    context.fillStyle = "black";
-    context.fillRect(800, 0, 400, 400);
-    context.fillStyle = "white";
-    context.fillRect(800, 400, 400, 400);
-    return canvas.toDataURL("image/png").split(",")[1]!;
-  }, opaque);
+  const png = await page.evaluate(
+    ({ opaque, dimensions }) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
+      const context = canvas.getContext("2d")!;
+      context.scale(dimensions.width / 1200, dimensions.height / 800);
+      if (opaque) {
+        context.fillStyle = "#4080c0";
+        context.fillRect(0, 0, 1200, 800);
+      }
+      context.fillStyle = "rgba(255, 0, 0, 0.5)";
+      context.fillRect(400, 0, 400, 800);
+      context.fillStyle = "black";
+      context.fillRect(800, 0, 400, 400);
+      context.fillStyle = "white";
+      context.fillRect(800, 400, 400, 400);
+      return canvas.toDataURL("image/png").split(",")[1]!;
+    },
+    { opaque, dimensions },
+  );
   await page
     .locator('input[type="file"][aria-label="Attach files"]')
     .setInputFiles({
@@ -72,7 +80,10 @@ async function attachImage(page: Page, opaque = false) {
   await thumbnail.click();
   const dialog = page.getByRole("dialog", { name: "Image preview" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator("img")).toHaveJSProperty("naturalWidth", 1200);
+  await expect(dialog.locator("img")).toHaveJSProperty(
+    "naturalWidth",
+    dimensions.width,
+  );
   return { thumbnail, dialog, image: dialog.locator("img") };
 }
 
@@ -116,7 +127,39 @@ for (const theme of ["light", "dark"]) {
         standardBackdrop,
       );
 
+      // Controls follow the shell theme; inspection colors deliberately do not.
+      const tokens = await dialog.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          surface: style.getPropertyValue("--bg-raised").trim(),
+          ink: style.getPropertyValue("--ink").trim(),
+        };
+      });
+      const normalized = await page.evaluate((tokens) => {
+        const element = document.createElement("div");
+        document.body.append(element);
+        element.style.color = tokens.surface;
+        const surface = getComputedStyle(element).color;
+        element.style.color = tokens.ink;
+        const ink = getComputedStyle(element).color;
+        element.remove();
+        return { surface, ink };
+      }, tokens);
+      const close = dialog.getByRole("button", { name: "Close image preview" });
+      await expect(close).toHaveCSS("background-color", normalized.surface);
+      await expect(close).toHaveCSS("color", normalized.ink);
+      await expect(backgrounds).toHaveCSS(
+        "background-color",
+        normalized.surface,
+      );
+      await expect(backgrounds.locator('[aria-pressed="true"]')).toHaveCSS(
+        "background-color",
+        normalized.ink,
+      );
       const checkerboard = await imagePixels(page, image);
+      await page.screenshot({
+        path: test.info().outputPath(`${palette}-${theme}.png`),
+      });
       // Shell content must not bleed through any alpha pixel.
       await page.locator(".image-lightbox").evaluate((element) => {
         element.style.backgroundColor = "rgb(0, 255, 0)";
@@ -187,7 +230,7 @@ test("narrow image controls preserve zoom, pan, focus, and dismissal", async ({
   await page.setViewportSize({ width: 320, height: 640 });
   const { thumbnail, dialog, image } = await attachImage(page);
   for (const button of await dialog
-    .locator(".image-lightbox__toolbar button")
+    .locator(".image-lightbox__backgrounds button, .image-lightbox__close")
     .all()) {
     const bounds = (await button.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(0);
@@ -216,6 +259,14 @@ test("narrow image controls preserve zoom, pan, focus, and dismissal", async ({
   ).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(canvas).toBeFocused();
+  const close = dialog.getByRole("button", { name: "Close image preview" });
+  await close.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    dialog.getByRole("button", { name: "Black", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(thumbnail).toBeFocused();
@@ -229,3 +280,77 @@ test("narrow image controls preserve zoom, pan, focus, and dismissal", async ({
   await page.locator(".image-lightbox").click({ position: { x: 2, y: 2 } });
   await expect(dialog).not.toBeVisible();
 });
+
+for (const scenario of [
+  {
+    name: "wide screenshot",
+    viewport: { width: 2560, height: 1300 },
+    image: { width: 1008, height: 484 },
+  },
+  {
+    name: "phone",
+    viewport: { width: 320, height: 640 },
+    image: { width: 1200, height: 800 },
+  },
+  {
+    name: "portrait",
+    viewport: { width: 1280, height: 800 },
+    image: { width: 800, height: 1600 },
+  },
+  {
+    name: "landscape phone",
+    viewport: { width: 740, height: 360 },
+    image: { width: 1200, height: 800 },
+  },
+  {
+    name: "small image",
+    viewport: { width: 1280, height: 800 },
+    image: { width: 64, height: 64 },
+  },
+]) {
+  test(`image layout stays centered and grouped: ${scenario.name}`, async ({
+    page,
+  }) => {
+    await pair(page);
+    await page.setViewportSize(scenario.viewport);
+    const { dialog, image } = await attachImage(page, false, scenario.image);
+    await imagePixels(page, image);
+    const imageBox = (await image.boundingBox())!;
+    const backgrounds = (await dialog
+      .getByRole("group", { name: "Image background" })
+      .boundingBox())!;
+    const close = (await dialog
+      .getByRole("button", { name: "Close image preview" })
+      .boundingBox())!;
+    const dialogBox = (await dialog.boundingBox())!;
+    expect(imageBox.x + imageBox.width / 2).toBeCloseTo(
+      scenario.viewport.width / 2,
+      0,
+    );
+    expect(
+      Math.abs(imageBox.y + imageBox.height / 2 - scenario.viewport.height / 2),
+    ).toBeLessThanOrEqual(4);
+    expect(imageBox.width / imageBox.height).toBeCloseTo(
+      scenario.image.width / scenario.image.height,
+      2,
+    );
+    expect(backgrounds.y - imageBox.y - imageBox.height).toBeCloseTo(12, 0);
+    expect(imageBox.y - close.y - close.height).toBeCloseTo(12, 0);
+    expect(backgrounds.x + backgrounds.width / 2).toBeCloseTo(
+      scenario.viewport.width / 2,
+      0,
+    );
+    expect(close.x + close.width).toBeCloseTo(dialogBox.x + dialogBox.width, 0);
+    for (const box of [imageBox, backgrounds, close]) {
+      expect(box.x).toBeGreaterThanOrEqual(16);
+      expect(box.y).toBeGreaterThanOrEqual(16);
+      expect(box.x + box.width).toBeLessThanOrEqual(
+        scenario.viewport.width - 16,
+      );
+      expect(box.y + box.height).toBeLessThanOrEqual(
+        scenario.viewport.height - 16,
+      );
+    }
+    await page.screenshot({ path: test.info().outputPath("layout.png") });
+  });
+}
