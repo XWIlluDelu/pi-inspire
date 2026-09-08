@@ -46,7 +46,7 @@ covers:
   - tests/web/pane-resize.test.tsx
   - tests/web/workspace-controller.test.ts
   - tests/web/rich-text.test.tsx
-  - tests/web/store.test.ts
+  - tests/web/store-resources.test.ts
   - tests/browser/workbench.spec.ts
 ---
 
