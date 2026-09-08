@@ -57,9 +57,7 @@
       "scripts/start-browser-test-host.mjs",
       "public/service-worker.js",
       "docs/redesign/prototype/app.js",
-      "tests/**/*.{test,spec}.{ts,tsx}",
-      "tests/benchmarks/evidence-gated-maintenance.ts",
-      "tests/benchmarks/verify-production-bundle.ts"
+      "tests/**/*.{test,spec}.{ts,tsx}"
     ],
     "ignore": [
       "server/instance-state.d.mts",
