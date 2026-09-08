@@ -2055,9 +2055,12 @@ export class AppStore {
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
-  browseHostDirs = async (path?: string): Promise<HostDirListing> => {
+  browseHostDirs = async (
+    path?: string,
+    showHidden = false,
+  ): Promise<HostDirListing> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.browseHostDirs(path);
+    return this.api.browseHostDirs(path, showHidden);
   };
 
   // --- Extension UI ---
