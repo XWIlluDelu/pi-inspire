@@ -214,8 +214,11 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   authority reports `running`, including while a descendant control retains focus; retrying and
   compacting retain their static semantic halos, and reduced-motion retains a static running halo.
   Conflict recovery remains abortable but is not part of active busy ownership. The
-  composer-adjacent transient surface is reserved for automatic retry and the combined count as `N
-  Pending`, not `queued`; executing and failed tools remain in their chronological Transcript cards
+  composer-adjacent transient surface names `compacting` and `retrying` from the authoritative
+  session run state, independently of manual commands, automatic triggers, or whether this browser
+  saw a start event. Retry attempt/reason details enrich that state when available; missing details
+  still display `Retrying` without invented counters. The same surface shows the combined count as
+  `N Pending`, not `queued`; executing and failed tools remain in their chronological Transcript cards
   instead of being duplicated above the Composer. Bounded host-projected steering and follow-up
   arrays remain in one labelled Pending surface that preserves each array's order, marks rows `S` or
   `Q`, and clearly marks omitted or truncated text.
@@ -235,13 +238,19 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   guidance plus a copyable command. Unknown slash commands and `!` shell syntax never silently
   consume a model turn. Native commands reject attachments and project-file references.
 
-  Host operations acknowledge immediately, retain a named running/result receipt above Composer, and
-  run outside prompt confirmation timeouts. Running receipts use the command and phase without
-  invented explanatory progress messages; compaction and other Host commands do not replace the
+  Host operations acknowledge immediately and run outside prompt confirmation timeouts. Command
+  receipts describe that browser's request/results, not Pi's current phase. `/compact` retains its
+  eventual success/cancel/error receipt; its running phase is shown only by the state-owned activity
+  surface, identical to automatic compaction. A delayed HTTP receipt cannot extend or end that phase.
+  Export and reload retain their named operation receipts. Running receipts use the command and
+  phase without invented explanatory progress messages; compaction and other Host commands do not replace the
   editor placeholder with “keep writing” or “send when finished” guidance. Host-adapter labels and
   results must not be represented as verbatim Pi UI copy. Compact can be cancelled through the
   ordinary abort affordance by stopping only its owning worker. Compaction summaries project as
-  dedicated collapsed transcript cards rather than generic JSON.
+  dedicated collapsed transcript cards rather than generic JSON. Automatic cancellation/failure
+  produces a visible outcome notice without manufacturing a duplicate successful summary. The
+  context meter remains occupancy, never compaction progress, and does not suggest invoking another
+  `/compact` while compaction is active. Review and evidence: [[state-authority-review]].
 
 - `/copy` reads the complete last settled assistant text from the Host's authoritative branch
   projection through an authenticated session/view-bound endpoint. It does not start a worker merely

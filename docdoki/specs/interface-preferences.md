@@ -72,7 +72,11 @@ presentation is detailed in [[activity-presentation]].
   The host checks update sources without sending session data or credentials, coalesces clients,
   caches results for six hours, and leaves local work silent when a source is unavailable. Available
   Pi, extension, and INSΠRE updates share one concise right-corner notice whose action opens
-  Settings at Updates. Update observations and the exact-set 24-hour snooze belong to the stable
+  Settings at Updates. Host-owned checking flags remain separate from browser HTTP request-pending
+  flags: only Host snapshots/status events/results can change execution state. A request failure or
+  transport loss cannot declare a still-running Host check finished; a pending request separately
+  guards duplicate clicks and displays `Pending` until Host execution is observed. Update observations
+  and the exact-set 24-hour snooze belong to the stable
   Host deployment rather than any browser origin: bootstrap and the authenticated event stream
   reconcile every local or forwarded view, closing the notice anywhere hides it everywhere, Host
   restart preserves the remaining interval, and any changed version or extension set bypasses the

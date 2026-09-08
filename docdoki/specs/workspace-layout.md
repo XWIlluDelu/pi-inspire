@@ -71,7 +71,9 @@ independent project shells in [[terminal]].
   visible page, tool completion, and explicit refresh trigger an immediate coalesced observation, so
   a slow repository cannot create a continuous child-process loop. Only projection-conflict/recovery
   and extension status capsules remain in the leading cluster immediately after identity; ordinary
-  running, retrying, compacting, and failed feedback belongs to the composer’s semantic border/halo.
+  running, retrying, compacting, and failed feedback belongs to the composer’s semantic border/halo,
+  with explicit state-owned retry/compaction text in the adjacent activity surface rather than
+  command-owned progress copy.
 
   Actions stay fixed at the right: long status text ellipsizes with its full value available on
   hover, identity yields first, and no supported center width permits the clusters to overlap.

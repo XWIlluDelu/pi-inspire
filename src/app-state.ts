@@ -128,6 +128,9 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
+  /** Browser request confirmation, separate from Host-owned check execution. */
+  inspireUpdateRequestPending: boolean;
+  piUpdateRequestPending: boolean;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
@@ -291,6 +294,8 @@ export function createInitialAppState(): AppState {
     piUpdateCheck: null,
     inspireUpdateChecking: false,
     piUpdateChecking: false,
+    inspireUpdateRequestPending: false,
+    piUpdateRequestPending: false,
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
     prefs: defaultPreferences,

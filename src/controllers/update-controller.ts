@@ -11,6 +11,8 @@ interface UpdateControllerState {
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
   piUpdateChecking: boolean;
+  inspireUpdateRequestPending: boolean;
+  piUpdateRequestPending: boolean;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
@@ -82,13 +84,11 @@ export class UpdateController {
     this.snoozeRequest += 1;
     this.statusRevision = -1;
     this.snoozing = false;
-    const state = this.host.state();
-    if (state.inspireUpdateChecking || state.piUpdateChecking) {
-      this.host.patch({
-        inspireUpdateChecking: false,
-        piUpdateChecking: false,
-      });
-    }
+    // Losing this request's transport cannot declare the Host's work finished.
+    this.host.patch({
+      inspireUpdateRequestPending: false,
+      piUpdateRequestPending: false,
+    });
   }
 
   /** Validates and adopts a new Host authority's bootstrap projection. */
@@ -167,21 +167,22 @@ export class UpdateController {
     perform: (api: UpdateApi) => Promise<{ updateStatus: HostUpdateStatus }>,
   ): void {
     const api = this.host.api();
+    const state = this.host.state();
     const checking =
       kind === "inspire"
-        ? this.host.state().inspireUpdateChecking
-        : this.host.state().piUpdateChecking;
+        ? state.inspireUpdateChecking || state.inspireUpdateRequestPending
+        : state.piUpdateChecking || state.piUpdateRequestPending;
     if (!api || checking) return;
     const request = ++this.checkRequests[kind];
     const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
-    const patchChecking = (value: boolean) =>
+    const patchRequest = (value: boolean) =>
       this.host.patch(
         kind === "inspire"
-          ? { inspireUpdateChecking: value }
-          : { piUpdateChecking: value },
+          ? { inspireUpdateRequestPending: value }
+          : { piUpdateRequestPending: value },
       );
-    patchChecking(true);
+    patchRequest(true);
     void perform(api).then(
       (result) => {
         if (
@@ -189,6 +190,7 @@ export class UpdateController {
           !this.owns(api, requestGeneration, transportGeneration)
         )
           return;
+        patchRequest(false);
         this.applyStatus(checkedStatus(result.updateStatus));
       },
       () => {
@@ -197,7 +199,7 @@ export class UpdateController {
           !this.owns(api, requestGeneration, transportGeneration)
         )
           return;
-        patchChecking(false);
+        patchRequest(false);
       },
     );
   }

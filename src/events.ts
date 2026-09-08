@@ -10,6 +10,7 @@ import {
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
+  isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
@@ -19,6 +20,8 @@ import {
   parseExtensionUiRequest,
   parsePendingExtensionUiRequest,
   parsePendingQueues,
+  parseRetryInfo,
+  type RetryInfo,
   type RunState,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
@@ -139,12 +142,6 @@ export interface ActivityTool {
   name: string;
   phase: "running" | "done" | "error";
   detail?: string;
-}
-
-interface RetryInfo {
-  attempt: number;
-  maxAttempts: number;
-  message: string;
 }
 
 export interface Notice {
@@ -532,6 +529,7 @@ export function reduceEvent(
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
       slice.runState = "running";
+      slice.retry = null;
       changed = true;
       break;
     }
@@ -554,6 +552,29 @@ export function reduceEvent(
       break;
     }
     case "compaction_end": {
+      // Manual commands already have an owned result receipt. Automatic
+      // failures/cancellation previously vanished behind the composer's halo.
+      if (event.reason === "threshold" || event.reason === "overflow") {
+        if (event.aborted === true) {
+          pushNotice(slice, "info", "Automatic context compaction cancelled.");
+        } else if (
+          typeof event.errorMessage === "string" &&
+          event.errorMessage.trim()
+        ) {
+          pushNotice(
+            slice,
+            "error",
+            `Automatic context compaction failed: ${event.errorMessage}`,
+          );
+        } else if (event.result === null || event.result === undefined) {
+          pushNotice(
+            slice,
+            "warning",
+            "Automatic context compaction ended without a result.",
+          );
+        }
+      }
+      // Successful summaries stay in Pi's canonical chronological projection.
       resync = true;
       break;
     }
@@ -603,12 +624,11 @@ export function reduceEvent(
     case "auto_retry_start": {
       slice.runState = "retrying";
       changed = true;
-      slice.retry = {
-        attempt: Number(event.attempt ?? 1),
-        maxAttempts: Number(event.maxAttempts ?? 1),
-        message:
-          typeof event.errorMessage === "string" ? event.errorMessage : "",
-      };
+      slice.retry = parseRetryInfo({
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        message: event.errorMessage,
+      });
       break;
     }
     case "auto_retry_end": {
@@ -753,6 +773,20 @@ export function reduceEvent(
       break;
   }
 
+  // Event kinds carry message/phase detail; the Host's explicit current state
+  // outranks inferred transitions. In particular a failed message/settlement
+  // must not look running/idle until a later snapshot happens to correct it.
+  if (
+    isSessionRuntimeStatus(event.sessionStatus) &&
+    slice.runState !== event.sessionStatus.runState
+  ) {
+    slice.runState = event.sessionStatus.runState;
+    changed = true;
+  }
+  if (slice.runState !== "retrying" && slice.retry !== null) {
+    slice.retry = null;
+    changed = true;
+  }
   return changed || resync
     ? { slice, settle, resync, changed: true }
     : { slice: current, settle, resync, changed: false };
