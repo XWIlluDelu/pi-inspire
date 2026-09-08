@@ -3,6 +3,7 @@ import { opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HostDirListing, HostRootsResponse } from "../shared/contracts.js";
+import { listNativeHiddenNames } from "./host-hidden-dirs.js";
 
 const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 type RootInspector = (path: string) => Promise<Pick<Stats, "isDirectory">>;
@@ -40,16 +41,17 @@ export async function listHostRoots(
  * session-start picker. The host filesystem is the authority — the bearer
  * token already grants session creation at any path, so browsing reveals
  * nothing that power did not. The route schema guarantees an absolute path;
- * none means the host user's home. Dotted names stay hidden; entries that
- * cannot be inspected are skipped; symlinks count when they resolve to
- * directories. */
+ * none means the host user's home. Dot names and native hidden attributes
+ * are filtered unless explicitly requested; unreadable links are skipped;
+ * symlinks count when they resolve to directories. */
 export async function listHostDirectories(
   requested?: string,
+  showHidden = false,
 ): Promise<HostDirListing> {
   const path = await realpath(requested ?? homedir());
   const dirs: HostDirListing["dirs"] = [];
   for await (const entry of await opendir(path)) {
-    if (entry.name.startsWith(".")) continue;
+    if (!showHidden && entry.name.startsWith(".")) continue;
     const absolute = join(path, entry.name);
     if (entry.isDirectory()) {
       dirs.push({ name: entry.name, path: absolute });
@@ -62,7 +64,14 @@ export async function listHostDirectories(
       }
     }
   }
+  const hidden = showHidden
+    ? new Set<string>()
+    : await listNativeHiddenNames(path);
   dirs.sort((a, b) => a.name.localeCompare(b.name));
   const parent = dirname(path);
-  return { path, parent: parent === path ? null : parent, dirs };
+  return {
+    path,
+    parent: parent === path ? null : parent,
+    dirs: dirs.filter((entry) => !hidden.has(entry.name)),
+  };
 }

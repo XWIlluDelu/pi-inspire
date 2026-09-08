@@ -19,6 +19,8 @@
 
 ## Implemented capability
 
+The New session directory picker has a default-off Show hidden folders checkbox, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
+
 Resource reads are independently session-addressed across browsers, and terminal catalog writebacks are project-generation-bound. Preview content reuses the short-lived workspace index while retaining per-request path/object checks; Windows VS Code file URIs use native path conversion. [[review-resource-terminal-ownership]] records the review repairs, cache tradeoff, and verification limits.
 
 Shared image previews separate the standard modal scrim from a neutral transparency checkerboard, with viewer-local White/Black alternatives. [[image-preview-backgrounds]] records the rationale and regression evidence.

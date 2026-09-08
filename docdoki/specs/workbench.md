@@ -95,6 +95,9 @@ covers:
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
   - tests/web/branch-tree.test.tsx
+  - server/host-hidden-dirs.ts
+  - tests/server/host-hidden-dirs.test.ts
+  - tests/web/directory-picker.test.tsx
 ---
 
 # Workbench shell
@@ -137,3 +140,15 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
 
 - The first release does not need to populate every future workbench surface.
 - The interface does not reproduce a terminal layout or an existing reference application pixel for pixel.
+
+## Hidden project directories
+
+- The directory picker exposes a labelled, keyboard-operable `Show hidden folders` checkbox, off on
+  each opening and retained while navigating directories or drive roots. The Host excludes
+  dot-prefixed names on every platform, plus Windows Hidden attributes and macOS UF_HIDDEN flags,
+  unless `showHidden=1` is explicitly requested. This is a visibility filter, not access control: a
+  typed hidden path remains usable, and readable directory links remain navigable. Native attribute
+  inspection is bounded and nonrecursive; failure is reported rather than silently showing hidden
+  entries, while explicit show-hidden browsing bypasses that inspection.
+
+[[hidden-project-directories]] records the hidden-folder rule, native inspection boundary, API/picker regressions, and platform verification limits.
