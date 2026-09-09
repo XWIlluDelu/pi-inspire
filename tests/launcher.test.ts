@@ -100,6 +100,7 @@ case "\${2:-}" in
         "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
         "ExecStartPost=$exec_start_post" \
         'Wants=inspire-terminal.service network-online.target' \\
+        'After=inspire-terminal.service network-online.target' \\
         "UnitFileState=$unit_file_state" \\
         "ActiveState=$active" \\
         "SubState=$substate"
@@ -341,7 +342,7 @@ describe("production launcher", () => {
         /Host is not reachable/u,
       );
       expect(runLauncher(["restart"], environment)).toContain(
-        "Restarted INSΠRE system service.",
+        "Restarted INSΠRE Host. Terminals remain running.",
       );
       expect(runLauncher(["stop"], environment)).toContain(
         "Stopped INSΠRE system service.",
@@ -367,6 +368,9 @@ describe("production launcher", () => {
         "--user disable --now inspire-idle-maintenance-restart.timer",
       );
     },
+    // Restart includes source dependency/build preparation and runtime imports;
+    // a cold preparation can exceed Vitest's five-second unit-test default.
+    60_000,
   );
 
   linuxIt("installs a readiness-gated host unit", async () => {

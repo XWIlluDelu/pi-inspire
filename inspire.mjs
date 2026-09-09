@@ -668,11 +668,38 @@ async function stopHost(allowService = true) {
   return (await stopLocalHost()).code;
 }
 
-async function restartHost() {
-  const service = await manageHostService("restart");
+async function prepareRestart() {
+  await ensureDependencies();
+  await ensureBuild();
+  const entry = join(supportRoot, distribution ? "restart-preflight.js" : "restart-preflight.ts");
+  const args = distribution ? [entry] : [join(root, "node_modules", "tsx", "dist", "cli.mjs"), entry];
+  if (await runInherited(process.execPath, args) !== 0)
+    throw new Error("Restart preparation failed. The running Host was not stopped.");
+}
+
+async function restartHost(all = false) {
+  // Refuse unsupported full restarts before any build or process mutation.
+  const inspected = await manageHostService("status", true);
+  if (all && inspected.code !== 0 && inspected.code !== 5) {
+    console.error(inspected.output || "Full restart requires this installation's Linux systemd services. No service was restarted.");
+    return 1;
+  }
+  if (![0, 3, 5].includes(inspected.code)) {
+    console.error(inspected.output);
+    return inspected.code;
+  }
+  if (all) console.log("Full restart will end all project terminal processes.");
+  console.log("Preparing restart…");
+  await prepareRestart();
+  const service = await manageHostService(all ? "restart-all" : "restart");
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
+  if (all) {
+    console.error("The managed services changed. No local fallback restart was attempted.");
+    return 1;
+  }
 
+  console.log("Restarting INSΠRE Host. Terminals remain running.");
   const stopped = await stopLocalHost(true);
   if (stopped.code !== 0) return stopped.code;
   return startHost(false, false, stopped);
@@ -751,7 +778,7 @@ function requireLinuxService() {
 }
 
 function printHelp() {
-  console.log(`Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         restart the service or local Host\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`);
+  console.log(`Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`);
 }
 
 async function main() {
@@ -766,7 +793,15 @@ async function main() {
     case "stop":
       return stopHost();
     case "restart":
-      return restartHost();
+      if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
+        console.error("Use: inspire restart [--all]");
+        return 64;
+      }
+      return restartHost(args[0] === "--all");
+    case "prepare-restart":
+      if (args.length) return 64;
+      await prepareRestart();
+      return 0;
     case "status":
       return statusHost();
     case "wait-ready":

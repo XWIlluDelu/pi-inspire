@@ -53,6 +53,8 @@ import {
   prepareStaticAssetCache,
 } from "./static-asset-cache.mjs";
 import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
+import { HostRestartController } from "./host-restart.js";
+import { systemdRestartBackend } from "./host-restart-systemd.js";
 import {
   type TerminalService,
   TerminalServiceError,
@@ -303,6 +305,10 @@ const application = createInspireServer({
   version: packageJson.version,
   piVersion: piInstallation.version,
   maintenanceRestart,
+  hostRestart: new HostRestartController(
+    runtime,
+    systemdRestartBackend(root, !mock && host === "127.0.0.1" && port === 4587),
+  ),
   updateCoordinator,
   availableModels: readAvailableModels,
   newSessionDefaults: readNewSessionDefaults,
