@@ -373,9 +373,11 @@ describe("Files pane", () => {
             workspacePath?: string;
           };
           resourceResolveBodies.push(body);
-          const resolvedPath =
-            body.workspacePath ?? stripResourceLocation(body.reference);
-          if (resolvedPath === "./folder")
+          // Match the Host's canonical workspace path, not URL spelling.
+          const resolvedPath = (
+            body.workspacePath ?? stripResourceLocation(body.reference)
+          ).replace(/^\.\//, "");
+          if (resolvedPath === "folder")
             return Response.json(
               { error: "The reference is not a file" },
               { status: 400 },

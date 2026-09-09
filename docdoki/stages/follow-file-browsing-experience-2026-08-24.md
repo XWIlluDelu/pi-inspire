@@ -34,6 +34,8 @@ Make workspace discovery and contextual file inspection feel like one coherent f
 
 The selected functional scope is implemented, stabilized, documented, and release-validated. Its broader visual redesign remains explicitly deferred.
 
+The document-context repair is also complete: Markdown/Notebook images, document-relative links, heading fragments and cell-local attachments now use the scoped reader path. [[document-relative-previews]] records the independent resource-authority boundary, Node 22 regression results and isolated Chromium evidence. This repair does not reopen the deferred visual redesign.
+
 ## Selected functional scope
 
 - One cwd-scoped `WorkspaceController` owns lazy levels, expansion, search, refresh, one-shot selection reveal, request cancellation, and transport/session acceptance. The compact navigation tree and right Files browser consume that same projection.
