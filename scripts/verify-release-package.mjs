@@ -403,6 +403,8 @@ try {
     "build/server/npm-command.mjs",
     "build/server/pi-installation.js",
     "build/server/pi-runtime.js",
+    "build/server/restart-preflight.js",
+    "build/server/host-restart-systemd.js",
     "build/server/platform-paths.mjs",
     "build/server/process-tree.mjs",
     "build/server/static-asset-cache.mjs",
@@ -696,6 +698,17 @@ try {
     // must leave no process behind.
     INSPIRE_TERMINAL_IN_PROCESS: "1",
   };
+  const preparation = await execFile(
+    process.execPath,
+    [bin, "prepare-restart"],
+    {
+      cwd: temporary,
+      env: environment,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  if (!preparation.stdout.includes("Restart preparation passed."))
+    throw new Error("Installed runtime preparation did not complete");
   host = spawn(process.execPath, [bin, "mock"], {
     cwd: temporary,
     env: environment,

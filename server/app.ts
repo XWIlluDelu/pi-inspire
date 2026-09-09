@@ -389,6 +389,7 @@ interface AppDependencies {
   /** Authenticated timer coordination; it detects installed updates and asks
    * the runtime for its short idle fence, never restarts systemd itself. */
   maintenanceRestart?: MaintenanceRestartLike;
+  hostRestart?: import("./host-restart.js").HostRestartController;
   /** Browser-safe configured model metadata, available without a live worker. */
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Cached public-release observation; failures never block local work. */
@@ -773,6 +774,33 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  app.get("/api/host/restart", async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    response.json(
+      deps.hostRestart
+        ? await deps.hostRestart.status()
+        : {
+            hostId: authorityId,
+            available: false,
+            reason: "Page restart is unavailable for this Host.",
+            operation: null,
+          },
+    );
+  });
+  const hostRestartSchema = z
+    .object({
+      hostId: z.string().uuid(),
+      operationId: z.string().uuid(),
+      scope: z.enum(["host", "all"]),
+    })
+    .strict();
+  app.post("/api/host/restart", (request, response) => {
+    const intent = hostRestartSchema.parse(request.body);
+    if (!deps.hostRestart)
+      throw requestError("Page restart is unavailable for this Host.", 503);
+    response.status(202).json(deps.hostRestart.start(intent));
   });
 
   app.post("/api/host/shutdown", (_request, response) => {

@@ -38,6 +38,11 @@ import type {
 } from "../shared/contracts";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import type {
+  HostRestartRequest,
+  HostRestartStatus,
+  HostRestartOperation,
+} from "../shared/host-restart";
+import type {
   TerminalAttachTicketResponse,
   TerminalCatalogResponse,
   TerminalCreateRequest,
@@ -385,6 +390,16 @@ async function deliverPrompt(
 
 export function createApi(token: string | null = null) {
   return {
+    hostRestartStatus: () =>
+      request<HostRestartStatus>(token, "/api/host/restart", {
+        signal: AbortSignal.timeout(10_000),
+      }),
+    restartHost: (intent: HostRestartRequest) =>
+      request<HostRestartOperation>(token, "/api/host/restart", {
+        method: "POST",
+        body: JSON.stringify(intent),
+        signal: AbortSignal.timeout(10_000),
+      }),
     /** A successful bearer-authenticated bootstrap establishes the pairing
      * cookie. Retire the launch credential before any later API or event-stream
      * request so a long-lived page cannot keep replaying it. */

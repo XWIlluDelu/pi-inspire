@@ -50,6 +50,7 @@
     "entry": [
       "server/index.ts",
       "server/terminal-daemon-entry.ts",
+      "server/restart-preflight.ts",
       "deploy/systemd/control.mjs",
       "deploy/systemd/idle-maintenance-restart.mjs",
       "deploy/systemd/install.mjs",

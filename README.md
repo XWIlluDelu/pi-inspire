@@ -58,6 +58,7 @@ The same npm entry works in a source checkout on Linux, macOS, and Windows:
 npm run inspire
 npm run inspire -- status
 npm run inspire -- restart
+npm run inspire -- restart --all  # Installed Linux services; ends terminal processes
 npm run inspire -- stop
 npm run inspire -- mock
 npm run inspire -- dev
@@ -90,7 +91,9 @@ The optional persistent service uses Linux systemd. Core lifecycle commands rema
 ./inspire service enable-host
 ```
 
-Installation writes separate `inspire-host.service` and `inspire-terminal.service` units plus the idle-maintenance timer. After enabling them, the same launcher commands delegate to the matching Host service; ordinary Host restart leaves terminal PTYs running, while explicit stop or disable shuts down both services. No `systemctl` syntax is needed. The services are verified against the current checkout before delegation, and a checkout without them continues to use direct-launcher mode.
+Installation writes separate `inspire-host.service` and `inspire-terminal.service` units plus the idle-maintenance timer. After enabling them, the same launcher commands delegate to the matching Host service. `inspire restart` prepares the next runtime before restarting only the Host, leaving terminal PTYs running. `inspire restart --all` also restarts the terminal service and ends its processes; use it for terminal-service upgrades. Explicit stop or disable also shuts down both services. No `systemctl` syntax is needed. The services are verified against the current checkout before delegation, and a checkout without them continues to use direct-launcher mode (Host-only restart).
+
+**Settings → Updates → Restart** offers the same two scopes for an installed Linux service. Confirmation is followed by build/runtime preparation and a fresh idle check; preparation failure leaves the current Host running. A pending restart is observed rather than automatically resent after a disconnect. These checks reduce restart risk, but are not a guarantee against startup failure or an automatic rollback. The reverse-tunnel service is not restarted.
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 

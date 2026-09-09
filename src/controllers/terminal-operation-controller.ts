@@ -242,10 +242,16 @@ export class TerminalOperationController {
         headers,
         signal: AbortSignal.timeout(10_000),
       });
-      if (!response.ok)
-        throw new Error(
-          "Terminal operation receipts are unavailable. No terminal control was sent.",
-        );
+      if (!response.ok) {
+        const problem = (await response.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        const reason =
+          typeof problem?.error === "string"
+            ? problem.error.slice(0, 1000)
+            : "Terminal operation receipts are unavailable.";
+        throw new Error(`${reason} No terminal control was sent.`);
+      }
       const { epoch } = (await response.json()) as { epoch?: unknown };
       if (typeof epoch !== "string" || !IDENTITY_PART.test(epoch))
         throw new Error(

@@ -35,6 +35,7 @@ function fixture({
         `ExecStart={ path=${root}/inspire ; argv[]=${root}/inspire${terminal ? ` terminal-daemon --root ${root} --host 127.0.0.1 --port 4587` : ""} ; }`,
         `ExecStartPost={ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
         "Wants=inspire-terminal.service",
+        "After=inspire-terminal.service",
         "ActiveState=active",
       ].join("\n"),
     };
