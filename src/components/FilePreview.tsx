@@ -11,12 +11,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import { resourceReferenceLine } from "../../shared/resource-references";
 import { formatBytes } from "../format";
-import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { ImagePreview } from "./ImagePreview";
+import { DocumentPreview } from "./DocumentPreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
@@ -226,34 +226,21 @@ function ReadyResource({
         hint="Open Source to inspect this large notebook."
       />
     ) : (
-      <div
-        className="res__preview-fill"
-        onClick={(event) => {
-          const reference = resourceReferenceFromEventTarget(event.target);
-          if (!reference) return;
-          event.preventDefault();
-          void store.openResource(reference);
-        }}
-      >
+      <DocumentPreview descriptor={descriptor} className="res__preview-fill">
         <NotebookPreview text={preview.text} />
-      </div>
+      </DocumentPreview>
     );
   if (descriptor.kind === "markdown" && preview.text !== undefined)
     return (
       <>
         {preview.truncated ? <TruncatedRenderedNotice /> : null}
-        <div
+        <DocumentPreview
+          descriptor={descriptor}
           className="res__preview-fill res__preview-document"
-          data-pane-scroll-active="true"
-          onClick={(event) => {
-            const reference = resourceReferenceFromEventTarget(event.target);
-            if (!reference) return;
-            event.preventDefault();
-            void store.openResource(reference);
-          }}
+          scrollable
         >
           <RichText text={preview.text} variant="assistant" />
-        </div>
+        </DocumentPreview>
       </>
     );
   if (descriptor.kind === "html" && preview.objectUrl)

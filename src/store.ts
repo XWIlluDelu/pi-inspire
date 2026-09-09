@@ -2256,6 +2256,13 @@ export class AppStore {
   probeResources = (references: string[]): Promise<void> =>
     this.resources.probeResources(references);
 
+  loadDocumentImage = (
+    documentId: string,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<Blob> =>
+    this.resources.loadDocumentImage(documentId, reference, signal);
+
   loadEmbeddedImage = (
     sessionId: string,
     viewId: string,
