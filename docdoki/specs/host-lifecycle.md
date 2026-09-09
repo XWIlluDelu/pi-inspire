@@ -2,10 +2,17 @@
 purpose: "The loopback Host retains authenticated ingress, process and deployment ownership, safe build publication, and externally installed Pi authority across supported platforms."
 covers:
   - inspire
+  - inspire.mjs
   - deploy/systemd/**
   - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output}.mjs
   - server/{app,index,pi-rpc,pi-installation,preferences,access-token}.ts
   - server/runtime-event-sockets.ts
+  - server/{host-restart,host-restart-systemd,restart-preflight}.ts
+  - shared/host-restart.ts
+  - src/controllers/host-restart-controller.ts
+  - src/components/HostRestartSettings.tsx
+  - tests/restart-launcher.test.ts
+  - tests/{server,web}/host-restart*.{ts,tsx}
   - server/{file-lock,static-asset-cache}.mjs
   - server/*diagnostic*.ts
   - tests/launcher.test.ts
@@ -156,6 +163,37 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
   replacement to clear the in-memory drain when the owner identity is lost. Do not replace the Host
   and admit work while an old runner/job can still restart that replacement. This is a bounded
   maintenance handoff, not a durable transaction across independent/manual Host replacements.
+
+### Explicit restart controls
+
+- `inspire restart` prepares required dependencies/client build and imports the next runtime and
+  external Pi SDK before stopping the current Host. Preparation failure leaves that Host running.
+  Ordinary restart preserves the independent terminal daemon and reports that scope explicitly.
+- `inspire restart --all` is an explicit destructive scope for this installation's verified Linux
+  systemd Host and terminal units. Both restart in one systemd transaction with the Host ordered
+  after terminal readiness. Unsupported/foreign services are refused before stopping anything;
+  there is no partial Host-only fallback. Connection services are never included.
+- Page controls live only in Settings → Updates. Both scopes have concise confirmation; full
+  restart states that terminal processes end. No command-palette or always-visible restart action
+  is added. Page control requires the exact running systemd invocation, not merely a matching root.
+- Authenticated page restart requests bind a UUID operation and scope to one Host incarnation.
+  Preparation and outcomes are observable through GET by late/other browsers. Up to 32 operation
+  identities remain for that Host's lifetime; repeated same identities cannot restart twice.
+  A different pending intent is refused, and identities from a previous Host cannot restart its
+  replacement. No HTTP deadline cancels or proves the outcome of a submitted restart.
+- Page preparation does not reserve Pi for the duration of a build. After preparation, the runtime
+  must freshly prove every slot idle and grant its existing exclusive restart lease. The exact
+  current service invocation is inspected again before final non-expiring commit and submission.
+  Busy work or preparation failure prevents restart. A proven failure to issue releases admission;
+  ambiguous submission keeps the committed drain and reports recovery required. Automatic
+  maintenance remains update/idle-gated and Host-only.
+- Browser delivery identities persist before POST in tab-session storage; invalid/unavailable
+  storage blocks writes. Recheck is read-only and explicit retry retains the same request.
+  Reconnection to a new Host is reported as reconnection, not proof that every terminal restarted
+  successfully. Preparation is not a full boot rehearsal or guaranteed rollback: mutable source,
+  service-environment differences, port contention, and runtime startup failures remain possible.
+
+Implementation evidence and limits: [[explicit-restart-controls]].
 
 ### Atomic browser-build publication
 

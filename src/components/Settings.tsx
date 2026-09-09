@@ -44,6 +44,7 @@ import {
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
+import { HostRestartSettings } from "./HostRestartSettings";
 
 interface Choice<T extends string> {
   value: T;
@@ -924,6 +925,7 @@ export const SettingsContent = memo(function SettingsContent({
                 checking={state.inspireUpdateChecking}
               />
             </UpdateEntry>
+            <HostRestartSettings />
           </Section>
         </main>
 
