@@ -89,8 +89,10 @@ custom-message boundaries remain in [[conversation]]; typed tool rules are speci
   failed assistant messages and does not create an additional persisted transcript store.
 
   During argument generation, native write previews use the existing Content/code presentation;
-  unknown or not-yet-shape-compatible tools retain their ordinary named shell and partial argument
-  view. Partial resource paths are not actionable, and copies are explicitly labelled argument
+  native edit previews retain requested-replacement blocks while each array item and old/new field
+  arrives, without bouncing the entire card back to raw JSON. Missing sides are not empty edits.
+  Unknown or genuinely shape-incompatible tools retain their ordinary named shell and partial
+  argument view. Partial resource paths are not actionable, and copies are explicitly labelled argument
   previews. Streaming or interrupted code/replacement previews show at most 400 lines and never
   offer an unbounded expanding view. The Host's argument-preview bounds and redaction are owned by
   [[session-transport]]. A final authoritative call replaces the preview in the same card and

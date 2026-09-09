@@ -1,6 +1,6 @@
 ---
 kind: implementation-evidence
-updated: 2026-09-08
+updated: 2026-09-09
 ---
 
 # Streaming tool argument cards
@@ -107,3 +107,46 @@ Local browser artifacts: `output/playwright/tool-stream-{shell,content-light,
 content-narrow-dark,finished-narrow,interrupted-narrow}.png`. Full check and browser
 logs: `/tmp/inspire-tool-stream-check.log` and
 `/tmp/inspire-tool-stream-browser-suite.log` (local, not committed evidence).
+
+## Follow-up: edit diff fallback during generation
+
+The reported loss of red/green edit formatting was a shape-validation bug, not
+missing CSS. `editReplacements` required every array item to contain both strings;
+the parser's normal next-item `{}` or oldText-only prefix invalidated the entire
+presentation. The completed prefix returned to diff view only after newText began.
+Truncation/interruption at that boundary could leave the raw view indefinitely.
+
+The native edit rule now distinguishes absent preview fields from wrong types.
+It accepts incomplete array items and legacy single replacements only when the
+call has Host-owned preview metadata. Missing old/new sides have no diff rows,
+not fabricated empty-string changes. Numbered preview headings remain stable as
+items arrive, and no final replacement count is claimed during generation.
+Rendering is a pure projection of the current call, not a cached last-good view:
+fresh observers reproduce the same content, and malformed authoritative calls
+still fall back. Resource/copy gating, 400-line preview bounds, selected-rule
+ownership and successful `details.patch` authority are unchanged.
+
+Verification (2026-09-09):
+
+- The initial regression run reproduced six failing cases on the prior renderer.
+  `tests/web/streaming-edit-cards.test.tsx` now covers 22 cases: new array items,
+  missing/empty sides, different field orders, legacy calls, DOM identity,
+  interruption/truncation, fresh-observer reconstruction, wrong types, strict
+  completed calls, and successful/error/incompatible result adoption.
+- Node **22.19.0**: formatting, lint, typecheck, Knip and frontend build passed;
+  full working-tree Vitest (excluding the separately scoped launcher suite)
+  passed **154 files / 1,571 tests**, with **2 skipped**. That run also included
+  the then-uncommitted restart controls. Log:
+  `/tmp/inspire-edit-stream-check.log`.
+- Playwright CLI exercised the actual parser → shared immutable updates → native
+  registry → ToolCard path in an isolated static Vite fixture, with no Host proxy
+  or real sessions. Every character was rendered and asserted to remain typed;
+  starting the next replacement retained earlier DOM rows. 1280px light and 390px
+  dark views retained red/green tint, full scroll-width row backgrounds, no page
+  overflow, and distinct generating/interrupted/waiting/applied states.
+  Screenshots: `output/playwright/edit-stream-{desktop-light,narrow-dark,
+  interrupted-dark,applied-dark}.png`. The fixture's only console error was its
+  missing favicon. These checks do not claim a live model or real file edit.
+
+This follow-up changes only frontend presentation; the frontend was rebuilt and
+no live Host restart is required for this fix (refresh the browser).
