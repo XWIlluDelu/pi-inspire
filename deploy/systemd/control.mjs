@@ -133,6 +133,7 @@ export async function inspectHostService(
       "--property=ExecStart",
       "--property=ExecStartPost",
       "--property=Wants",
+      "--property=After",
       "--property=UnitFileState",
       "--property=ActiveState",
       "--property=SubState",
@@ -156,7 +157,8 @@ export async function inspectHostService(
   }
   if (
     !expectedReadyHook(value.ExecStartPost ?? "", launcher) ||
-    !(value.Wants ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME)
+    !(value.Wants ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME) ||
+    !(value.After ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME)
   ) {
     return { kind: "outdated" };
   }
@@ -203,7 +205,7 @@ function serviceStatusLine(service) {
   return `INSΠRE system service is ${stateDescription(service)} (${service.unitFileState}).`;
 }
 
-async function manageHostService(root, action, options) {
+export async function manageHostService(root, action, options) {
   const service = await inspectHostService(root, options);
   if (service.kind !== "managed") return service;
 
@@ -217,6 +219,9 @@ async function manageHostService(root, action, options) {
       ["stop", TERMINAL_SERVICE_NAME],
     ],
     restart: [["restart", HOST_SERVICE_NAME]],
+    // One systemd transaction honors Host After=terminal: stop Host first,
+    // restart the terminal owner, then start Host after terminal readiness.
+    "restart-all": [["restart", TERMINAL_SERVICE_NAME, HOST_SERVICE_NAME]],
     enable: [
       ["enable", "--now", TERMINAL_SERVICE_NAME],
       ["enable", "--now", HOST_SERVICE_NAME],
@@ -256,6 +261,35 @@ async function manageHostService(root, action, options) {
     return { kind: "control-failed", action, detail: serviceStatusLine(settled) };
   }
   return { kind: "controlled", action, service: settled };
+}
+
+/** Browser controls may act only on the systemd invocation hosting this exact
+ * process, never merely a matching checkout or another local instance. */
+export async function inspectBrowserRestart(root, options = {}) {
+  if (!/^[a-f0-9]{32}$/u.test(options.invocationId ?? ""))
+    return { kind: "unsupported" };
+  const service = await inspectHostService(root, options);
+  if (service.kind !== "managed") return service;
+  const result = await (options.run ?? runSystemctl)(
+    ["--user", "show", HOST_SERVICE_NAME, "--property=InvocationID", "--property=ActiveState"],
+    options.environment,
+  );
+  const value = properties(result.stdout);
+  if (result.code !== 0 || value.InvocationID !== options.invocationId || value.ActiveState !== "active")
+    return { kind: "invocation-changed" };
+  return { kind: "managed" };
+}
+
+export async function requestBrowserRestart(root, all, commit, options = {}) {
+  const service = await inspectBrowserRestart(root, options);
+  if (service.kind !== "managed") return { issued: false, code: 1 };
+  // Final owner commit follows every asynchronous inspection. A committed
+  // runtime drain cannot expire while systemd is processing this transaction.
+  if (!commit()) return { issued: false, code: 1 };
+  return (options.run ?? runSystemctl)(
+    ["--user", "--no-block", "restart", ...(all ? [TERMINAL_SERVICE_NAME] : []), HOST_SERVICE_NAME],
+    options.environment,
+  );
 }
 
 /** Scheduled restarts have a separate entry point: ordinary/manual restart
@@ -318,7 +352,7 @@ function outdatedMessage() {
 
 function usage() {
   console.error(
-    "Use: systemd control --root <path> [status|start|stop|restart|enable|disable]",
+    "Use: systemd control --root <path> [status|start|stop|restart|restart-all|enable|disable]",
   );
 }
 
@@ -356,7 +390,7 @@ async function main() {
     return;
   }
 
-  if (!new Set(["start", "stop", "restart", "enable", "disable"]).has(action)) {
+  if (!new Set(["start", "stop", "restart", "restart-all", "enable", "disable"]).has(action)) {
     usage();
     process.exitCode = 64;
     return;
@@ -395,10 +429,15 @@ async function main() {
     start: "Started",
     stop: "Stopped",
     restart: "Restarted",
+    "restart-all": "Restarted Host and terminal services for",
     enable: "Enabled and started (with daily idle maintenance)",
     disable: "Disabled and stopped (with daily idle maintenance)",
   };
-  console.log(`${verbs[action]} INSΠRE system service.`);
+  console.log(action === "restart"
+    ? "Restarted INSΠRE Host. Terminals remain running."
+    : action === "restart-all"
+      ? "Restarted INSΠRE Host and terminal services."
+      : `${verbs[action]} INSΠRE system service.`);
   console.log(serviceStatusLine(result.service));
 }
 
