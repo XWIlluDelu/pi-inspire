@@ -54,6 +54,13 @@ requiring a full checkpoint whenever the item budget reduces the argument tree.
 The latter also passed the focused Node 22.23.2 projection suites (105/105) before
 the integrated gate.
 
+The 2026-09-09 frontend follow-up corrected incomplete edit-item shape validation. Six initial
+regressions failed; 22 edit-card cases then covered partial growth, interruption, fresh observers,
+wrong types and final result adoption. Node 22.19.0 format/lint/types/Knip/build and the working-tree
+suite passed (154 files, 1,571 passed, two skipped). Character-by-character desktop/narrow fixtures
+verified typed diffs through the parser/shared-updates/registry path without a live model or file edit.
+The reusable explanation is in [[streaming-tool-arguments]].
+
 No implementation or design question remains open for this slice. The original backend delivery
-requires Host restart and browser refresh.
-No running Host was restarted by this task.
+requires Host restart and browser refresh; the edit-shape follow-up changes only frontend presentation.
+No running Host was restarted by either task.

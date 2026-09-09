@@ -365,32 +365,50 @@ function writeRule(): ToolPresentationRule {
 }
 
 interface EditReplacement {
-  oldText: string;
-  newText: string;
+  oldText?: string;
+  newText?: string;
+}
+
+function editReplacement(
+  value: unknown,
+  partial: boolean,
+): EditReplacement | null {
+  const item = record(value);
+  if (!item) return null;
+  const { oldText, newText } = item;
+  // A streaming array starts each new item as {}. Only absent fields are
+  // incomplete: wrong types must still take the selected rule's raw fallback.
+  if (
+    (typeof oldText !== "string" && !(partial && oldText === undefined)) ||
+    (typeof newText !== "string" && !(partial && newText === undefined))
+  )
+    return null;
+  return { oldText, newText };
 }
 
 function editReplacements(
   args: Record<string, unknown>,
+  partial: boolean,
 ): EditReplacement[] | null {
-  if (Array.isArray(args.edits)) {
-    if (args.edits.length === 0) return null;
+  if (args.edits !== undefined) {
+    if (!Array.isArray(args.edits) || (!partial && args.edits.length === 0))
+      return null;
     const replacements: EditReplacement[] = [];
     for (const candidate of args.edits) {
-      const item = record(candidate);
+      const item = editReplacement(candidate, partial);
       if (!item) return null;
-      const oldText = stringValue(item, "oldText");
-      const newText = stringValue(item, "newText");
-      if (oldText === null || newText === null) return null;
-      replacements.push({ oldText, newText });
+      replacements.push(item);
     }
     return replacements;
   }
 
   // Pi normalizes this legacy single-replacement shape before execution, but
   // it remains in older persisted calls and therefore remains renderable.
-  const oldText = stringValue(args, "oldText");
-  const newText = stringValue(args, "newText");
-  return oldText !== null && newText !== null ? [{ oldText, newText }] : null;
+  // Before either shape has arrived, keep just the native named shell.
+  if (partial && args.oldText === undefined && args.newText === undefined)
+    return [];
+  const item = editReplacement(args, partial);
+  return item ? [item] : null;
 }
 
 function editRule(): ToolPresentationRule {
@@ -399,17 +417,27 @@ function editRule(): ToolPresentationRule {
     present(input) {
       const args = record(input.call.arguments);
       if (!args) return null;
-      const path = stringValue(args, "path");
-      const edits = editReplacements(args);
-      if (path === null || path.length === 0 || !edits) return null;
+      const partial = Boolean(input.call.__inspireToolCall);
+      const path =
+        stringValue(args, "path") ??
+        (partial && args.path === undefined ? "" : null);
+      const edits = editReplacements(args, partial);
+      if (path === null || (!partial && path.length === 0) || !edits)
+        return null;
       return presentation(
         summary([
-          { kind: "resource", text: path, reference: path },
-          {
-            kind: "text",
-            text: formatCount(edits.length, "replacement"),
-            separator: "dot",
-          },
+          ...(path
+            ? [{ kind: "resource" as const, text: path, reference: path }]
+            : []),
+          ...(!partial
+            ? [
+                {
+                  kind: "text" as const,
+                  text: formatCount(edits.length, "replacement"),
+                  separator: "dot" as const,
+                },
+              ]
+            : []),
         ]),
         () => {
           if (input.result && !input.result.isError) {
@@ -432,7 +460,7 @@ function editRule(): ToolPresentationRule {
           const blocks: ToolPresentationBlock[] = edits.map((edit, index) => ({
             type: "replacement",
             label:
-              edits.length === 1
+              !partial && edits.length === 1
                 ? "Requested replacement"
                 : `Requested replacement ${index + 1}`,
             path,

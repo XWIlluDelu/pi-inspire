@@ -29,7 +29,7 @@ Compaction and retry presentation now follow authoritative session state indepen
 
 PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark. [[neutral-pwa-chrome]] records the checks and browser/OS update limits.
 
-Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. [[streaming-tool-arguments]] records limits, linear-path traffic measurements, and the final Pi 0.85.1 / Node 22 / Chromium verification.
+Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. Native edit diffs now remain typed as incomplete replacement items arrive instead of bouncing back to JSON. [[streaming-tool-arguments]] records limits, linear-path traffic measurements, and Pi 0.85.1 / Node 22 / Chromium evidence, including the edit-preview regression repair.
 
 [[simplification-review]] records removal of obsolete adapters/benchmarks, explicit deletion validation, terminal spawn cleanup, separated Host socket ownership, responsibility-scoped store tests and contracts, and StrictMode focus restoration. Its isolated Node 22 and Chromium verification excludes the concurrently developed tool-argument streaming slice.
 
