@@ -1,5 +1,28 @@
 /* --- Settings dialog --- */
 
+.host-restart__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.host-restart__actions .button {
+  min-height: 44px;
+}
+
+.host-restart__status {
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.host-restart-confirm {
+  width: min(420px, 92vw);
+}
+
+.host-restart-confirm .host-restart__actions {
+  justify-content: flex-end;
+}
+
 .dialog.settings {
   width: min(820px, 94vw);
   height: min(660px, 88dvh);

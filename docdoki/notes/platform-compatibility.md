@@ -1,5 +1,42 @@
 # Platform compatibility
 
+## Explicit restart controls
+
+### Contract and implementation
+
+[[host-lifecycle]] keeps ordinary and scheduled restart Host-only. Full restart is explicit (`inspire
+restart --all` or Settings → Updates → Restart all), requires installed Linux services, and ends
+terminal processes. Confirmations remain concise, with no always-visible or command-palette control.
+
+`inspire.mjs` runs dependency/client-build preparation and `server/restart-preflight.ts` imports
+runtime modules plus the external Pi SDK before any stop. This probe does not open sessions, run
+extensions, bind a Host, or attach to a terminal. Browser preparation inherits the running Host's
+environment; bounded subprocess diagnostics expose preparation failures without stopping it.
+
+`HostRestartController` owns one active intent and up to 32 retained identities per Host incarnation.
+Preparation precedes a fresh runtime idle reservation. `requestBrowserRestart` rechecks exact unit
+and invocation ownership before committing the existing non-expiring drain. Systemd receives a
+single full-restart transaction, with Host ordered after terminal startup. There is no full-to-Host-only
+fallback and no connection-service restart. Unknown submission retains the drain; it is not a refusal.
+
+The browser persists delivery identity before POST, restores it on reload, rechecks read-only, and
+retries only the same identity explicitly. A new Host retires that old identity without claiming that
+all terminal work restarted successfully. Current authoritative preparation outranks old reconnection
+notices. Concurrent status observers share an in-flight service inspection.
+
+### Limits
+
+No daily service was stopped or restarted, and no real conversation/terminal body was inspected.
+Browser restart outcomes were intercepted synthetic API responses; installed service dispatch was
+verified with fake systemctl, not a live remote restart. Local execution was Linux; Windows/macOS
+page/full restart is deliberately unavailable, not claimed tested here.
+
+Preflight is not a full boot rehearsal, immutable deployment, or rollback mechanism. Source can
+change, CLI/service environments can differ, and ports or runtime startup can fail after preparation.
+The CLI verifies systemd's readiness hook after restart; the browser observes a new Host rather than
+asserting end-to-end tunnel or full-terminal success. A submitted operation that cannot be established
+as unissued retains its drain and requires operator service recovery.
+
 ## Portable file-lock phase races
 
 `server/file-lock.mjs` keeps Linux's established kernel-flock protocol. macOS and Windows instead publish process-birth-bound participants in a Lamport bakery: `choosing-<token>.json` is atomically renamed to `ticket-<number>-<token>.json` before entry to the critical section.

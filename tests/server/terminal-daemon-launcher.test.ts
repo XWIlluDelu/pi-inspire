@@ -65,7 +65,7 @@ it("does not replace a listening incompatible daemon or terminate its independen
           INSPIRE_TERMINAL_STATE_PATH: join(directory, "state.json"),
         },
       }),
-    ).rejects.toThrow("explicitly restart the terminal service");
+    ).rejects.toThrow("inspire restart --all");
     expect(server.listening).toBe(true);
     expect(modes).toEqual(["rpc"]);
     const { spawn } = await import("node:child_process");
