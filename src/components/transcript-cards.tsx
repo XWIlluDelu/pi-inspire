@@ -681,12 +681,12 @@ function ReplacementDiff({
   const [showAll, setShowAll] = useState(false);
   const partial = useContext(ToolArgumentPreviewContext);
   const lines: DiffLine[] = [
-    ...block.oldText
-      .split("\n")
-      .map((text) => ({ type: "del" as const, text: `-${text}` })),
-    ...block.newText
-      .split("\n")
-      .map((text) => ({ type: "add" as const, text: `+${text}` })),
+    ...(block.oldText === undefined ? [] : block.oldText.split("\n")).map(
+      (text) => ({ type: "del" as const, text: `-${text}` }),
+    ),
+    ...(block.newText === undefined ? [] : block.newText.split("\n")).map(
+      (text) => ({ type: "add" as const, text: `+${text}` }),
+    ),
   ];
   const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
   return (

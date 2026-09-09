@@ -98,8 +98,9 @@ export type ToolPresentationBlock =
       type: "replacement";
       label: string;
       path?: string;
-      oldText: string;
-      newText: string;
+      /** Missing only in a Host-marked argument preview; not an empty replacement. */
+      oldText?: string;
+      newText?: string;
     }
   | {
       type: "image";

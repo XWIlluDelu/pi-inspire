@@ -9,6 +9,7 @@ covers:
   - tests/server/app.test.ts
   - tests/server/tool-presentation-config.test.ts
   - tests/web/tool-cards.test.tsx
+  - tests/web/streaming-edit-cards.test.tsx
   - tests/web/tool-presentations.test.ts
   - tests/web/thinking-presentations.test.tsx
 ---
@@ -31,7 +32,7 @@ Make common tool and Thinking activity immediately legible without coupling the 
 - Both activity kinds use the same bounded block vocabulary: properties, text, sanitized Markdown, code, terminal output, unified diff, replacement, list, grouped search, image, and notice.
 - Shipped mappings cover Pi's native `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` tools. They present file/range metadata, numbered source or image previews, requested writes, authoritative applied patches, terminal command/output, grouped matches, and file or directory lists rather than argument JSON. A grouped-search match tint spans the complete horizontal range shared with longer neighboring lines.
 - File-resource actions retain the complete reference for preview and accessibility. A path that fits remains visually complete; actual overflow uses one continuous middle projection that gives the bounded filename tail first claim on available width, then preserves as much leading context as fits. The visible leading and tail text stay adjacent without a breakpoint-only abbreviation or blank spacer. An expanded block keeps its label on one line while the path consumes every remaining pixel in the row.
-- Successful native `edit` cards use Pi's persisted `details.patch`; they never reread the workspace or compute a replacement diff in the browser. Pending or failed edits may show explicitly labelled requested replacements without claiming file coordinates or application success. Every unified-diff row tint spans the complete scrollable width, including the horizontal overflow created by longer neighboring lines.
+- Successful native `edit` cards use Pi's persisted `details.patch`; they never reread the workspace or compute a replacement diff in the browser. Pending or failed edits may show explicitly labelled requested replacements without claiming file coordinates or application success. Host-marked streaming/interrupted edit previews tolerate absent paths and old/new fields, empty edit arrays, and newly started array items without discarding earlier typed replacements. An absent side renders no rows, distinct from an explicitly received empty string; field order does not determine compatibility. Completed calls and wrong field types remain strict, and successful results still require the authoritative patch. Every unified-diff row tint spans the complete scrollable width, including the horizontal overflow created by longer neighboring lines.
 - Native truncation and result-limit metadata becomes a separate notice rather than being mixed into source, terminal, search, or list content. Completed-call copy actions retain the original arguments and result projection under the Host bounds; a generating/interrupted call explicitly copies a partial preview.
 - Unknown tools, malformed calls, unexpected result shapes, absent Thinking configuration, and failed rule execution retain their inspectable native fallback. No selected-rule failure is swallowed or reinterpreted as another tool.
 
