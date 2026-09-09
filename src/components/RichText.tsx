@@ -1,9 +1,10 @@
 import hljs from "highlight.js/lib/common";
+import GithubSlugger from "github-slugger";
 import "katex/dist/katex.min.css";
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import type { Root } from "mdast";
 import { decodeString } from "micromark-util-decode-string";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useContext } from "react";
 import ReactMarkdown, {
   type Components,
   defaultUrlTransform,
@@ -15,6 +16,8 @@ import remarkMath from "remark-math-extended";
 import type { Plugin } from "unified";
 import { isLocalResourceReference } from "../../shared/resource-references";
 import { store } from "../store";
+import { isDocumentFileReference } from "../document-resources";
+import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
 
@@ -38,7 +41,13 @@ const schema = {
   // intercepted, and the rendered anchor has no target/rel).
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    href: [...(defaultSchema.protocols?.href ?? []), "file", "vscode"],
+    src: [
+      ...(defaultSchema.protocols?.src ?? []),
+      "file",
+      "vscode",
+      "attachment",
+    ],
   },
 };
 
@@ -246,6 +255,36 @@ const remarkMathSourceSafety: Plugin<[], Root> =
     };
   };
 
+const remarkDocumentHeadings: Plugin<[], Root> = () => (tree) => {
+  const slugger = new GithubSlugger();
+  const textOf = (node: {
+    type: string;
+    value?: string;
+    alt?: string;
+    children?: unknown[];
+  }): string =>
+    node.children
+      ? node.children.map((child) => textOf(child as typeof node)).join("")
+      : node.type === "image"
+        ? (node.alt ?? "")
+        : (node.value ?? "");
+  const visit = (node: Root | Root["children"][number]) => {
+    if (node.type === "heading") {
+      node.data = {
+        ...node.data,
+        hProperties: {
+          ...node.data?.hProperties,
+          id: slugger.slug(textOf(node)),
+        },
+      };
+    }
+    if ("children" in node)
+      for (const child of node.children)
+        visit(child as Root["children"][number]);
+  };
+  visit(tree);
+};
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -337,8 +376,22 @@ const components: Components = {
     }
     return <CodeBlock language={match[1]!} code={text} />;
   },
-  a: ({ href, children }: { href?: string; children?: ReactNode }) => {
-    if (href && isLocalResourceReference(href)) {
+  a: function ResourceLink({
+    href,
+    children,
+  }: {
+    href?: string;
+    children?: ReactNode;
+  }) {
+    const document = useContext(DocumentResourceContext);
+    if (document && href?.startsWith("#")) return <a href={href}>{children}</a>;
+    if (
+      href &&
+      !/^[\\/]{2}/.test(href) &&
+      (document
+        ? isDocumentFileReference(href)
+        : isLocalResourceReference(href))
+    ) {
       return (
         <a href={href} className="file-ref" data-file-path={href}>
           {children}
@@ -351,8 +404,30 @@ const components: Components = {
       </a>
     );
   },
-  img: ({ src, alt }: { src?: string; alt?: string }) => {
-    if (src && isLocalResourceReference(src)) {
+  img: function ResourceImage({
+    src,
+    alt,
+    title,
+  }: {
+    src?: string;
+    alt?: string;
+    title?: string;
+  }) {
+    const document = useContext(DocumentResourceContext);
+    if (
+      src &&
+      ((document && isDocumentFileReference(src)) ||
+        src.startsWith("attachment:"))
+    )
+      return (
+        <DocumentImage
+          key={`${document?.descriptor.id ?? ""}:${src}`}
+          src={src}
+          alt={alt ?? ""}
+          title={title}
+        />
+      );
+    if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src)) {
       return (
         <button
           type="button"
@@ -368,7 +443,7 @@ const components: Components = {
     // A remote image must not load on render: merely reading a message would
     // fire a GET to an attacker-chosen host. The reference stays reachable as
     // an explicit link the user chooses to open.
-    if (src && /^https?:/i.test(src)) {
+    if (src && /^(?:https?:|\/\/)/i.test(src)) {
       return (
         <a href={src} target="_blank" rel="noreferrer noopener" title={src}>
           <span aria-hidden>▧ </span>
@@ -376,7 +451,9 @@ const components: Components = {
         </a>
       );
     }
-    return <img src={src} alt={alt ?? ""} />;
+    // Unrecognized relative paths and rejected protocols must not silently
+    // become same-origin requests (or automatic remote subresource loads).
+    return <span title="Image unavailable">{alt || "Image unavailable"}</span>;
   },
 };
 
@@ -384,7 +461,7 @@ const components: Components = {
 // URLs so the link renderer can route them to the resource pane (they never
 // navigate). Everything else defers to the default transform.
 function urlTransform(url: string): string {
-  if (/^file:\/\//i.test(url)) return url;
+  if (/^(?:file:\/\/|vscode:\/\/file\/|attachment:)/i.test(url)) return url;
   return defaultUrlTransform(url);
 }
 
@@ -405,12 +482,22 @@ export const RichText = memo(function RichText({
   /** Render paragraph source without the paragraph element, for card headers. */
   inline?: boolean;
 }) {
+  const document = useContext(DocumentResourceContext);
   return (
     <div
       className={`rich-text rich-text--${variant} ${inline ? "rich-text--inline" : ""}`}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkMathSourceSafety]}
+        remarkPlugins={
+          document
+            ? [
+                remarkGfm,
+                remarkMath,
+                remarkMathSourceSafety,
+                remarkDocumentHeadings,
+              ]
+            : [remarkGfm, remarkMath, remarkMathSourceSafety]
+        }
         rehypePlugins={[
           [rehypeSanitize, schema],
           [rehypeKatex, { trust: false, strict: false, throwOnError: false }],

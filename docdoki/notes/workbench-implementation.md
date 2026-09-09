@@ -15,6 +15,24 @@ The previous tool-style card, custom activity tiles, and automatic tool-density 
 - `server/session-projection.ts` treats displayed custom messages as visible boundaries in older-history and user-turn navigation. Merely changing the browser renderer would otherwise leave older custom content hidden in deferred activity ranges. Hidden context-only messages remain invisible.
 - Settled custom content participates in All search, but not User or Model scopes. Source/type labels do not claim user or Pi authorship.
 
+## Document-relative previews
+
+### Failure and repair
+
+`FilePreview` and `NotebookPreview` reused the conversation renderer without a document context. Local Markdown images therefore became file-reference buttons, relative links opened from the session cwd, and Notebook Markdown cell attachments had no resolver. Heading fragments also followed browser navigation instead of the document reader.
+
+`DocumentPreview` now supplies the opened descriptor and a mounted-document image owner to the same sanitized `RichText` pipeline. Links and images use the document's resolved directory; conversation references keep their explicit-open behavior. `github-slugger` generates document heading identities before sanitization, and scoped fragment navigation uses the sanitizer's `user-content-` prefix. Incoming fragments wait for the deferred renderer and image layout: an initial document may be too short to scroll before its images arrive. Wheel, touch, pointer or keyboard interaction cancels this delayed automatic positioning rather than reclaiming the reader. `NotebookPreview` decodes cell-local raster attachment bundles without making `data:` URLs generally acceptable in Markdown.
+
+`documentResourceReference` keeps URL escaping separate from literal workspace paths and prefixes project-relative locations with `./`. That prefix is intentional: a missing sibling image must not silently open an unrelated same-basename file elsewhere. `ResourceController.loadDocumentImage` uses the existing authenticated resolver and content route without changing selected-file or availability state. A document reference is not a new source of filesystem authority.
+
+`DocumentImageResources` owns deduplication, four-way transfer scheduling, a 64-reference/64-MiB retained-image budget, abort and URL revocation. The ordinary 32-MiB per-image cap remains. Late resolve/content results must still belong to the selected document, session, branch view, and browser transport. UI failures retain the authored description and never fall back to a raw URL.
+
+The review also removed the generic `<img src>` fallback for unrecognized conversation paths and classified protocol-relative images as explicit external links. Raw HTML in Markdown, remote image autoloading, and arbitrary subresources in sandboxed HTML remain intentionally unsupported; they were not weakened to make previews look complete.
+
+### Limits
+
+The browser checks used isolated synthetic fixtures, not real Pi conversation content or the user's report. This work does not establish arbitrary image-format support, cross-browser parity, or access to images excluded by workspace/transcript authority. It does not change the HTML iframe sandbox or execute Notebook code. Unrelated in-progress restart controls were preserved.
+
 ## Hidden project directories
 
 ### Behavior and reason
