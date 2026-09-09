@@ -98,3 +98,21 @@ Same-tool fragments coalesce within the existing transport window. `sourceEventC
 revision continuity across batches; background viewers receive no argument bodies. Joining snapshots
 can still serialize cumulative replacements, so established-viewer measurements do not describe that
 handshake. Display truncation and partial-path resource/copy rules remain in the contracts.
+
+### Incomplete edit items are valid generation shapes
+
+A normal next replacement begins as `{}` or oldText-only. Requiring both strings for every item made
+that prefix invalidate the entire diff, hiding previously complete rows. This was shape validation,
+not missing red/green CSS.
+
+The native edit rule accepts absent preview fields only with Host-owned preview metadata; wrong types
+and malformed authoritative calls still use their generic presentation. A missing side contributes
+no rows rather than a fabricated empty-string edit. Rendering derives from the current call, not a
+cached last-good diff, so a fresh observer sees the same prefix. Numbered headings remain stable, and
+no completed replacement count is claimed during generation.
+
+Source: `src/tool-presentations/pi-native.ts` and `tests/web/streaming-edit-cards.test.tsx`. Six initial
+regressions failed before repair. Cases cover field order, next-item growth, legacy replacements,
+interruption, fresh observers, DOM identity and final result adoption. Character-by-character browser
+fixtures exercised the parser → shared updates → registry → ToolCard path at desktop/narrow sizes;
+they did not execute a live model or edit a real file.
