@@ -21,6 +21,11 @@
 
 Markdown and Notebook previews now render authorized local images inline, resolve links from the document directory, navigate heading fragments, and display cell-local Notebook attachments. [[document-relative-previews]] records the shared-renderer repair, bounded image ownership, preserved security restrictions, and Node 22 / Chromium evidence.
 
+Prepared Host-only/full restart controls live in the CLI and Settings → Updates, with concise
+confirmation, idle-gated page execution, and explicit uncertain outcomes. Full/page restart requires
+verified installed Linux services; preparation reduces risk without promising rollback or successful
+boot. Contract: [[host-lifecycle]]. Verification and limits: [[explicit-restart-controls]].
+
 Projection reads, ownership witnesses, and baseline commits now share one FIFO. Complete same-object bytes can survive metadata-only movement only after full revalidation; stale results cannot consume current claims or revive a writer. [[projection-reconciliation-ownership]] records the content-equivalence boundary, preserved startup/partial/replacement checks, and Node 22 / real-Pi / Chromium evidence.
 
 Observation deadlines no longer terminate healthy Pi mutations; prompt receipts preserve one operation, worker retirement requires exit evidence, terminal retries retain owner-side identities, and maintenance restarts consume current owner authority. [[operation-lifecycle-ownership]] records all five repairs, real Pi slow-compaction and browser recovery evidence, and the explicit terminal-service protocol upgrade boundary.

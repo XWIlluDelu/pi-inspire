@@ -122,7 +122,7 @@ export async function launchTerminalDaemon(
     throw new TerminalServiceError(
       "terminal_service_restart_required",
       503,
-      "The running terminal service is incompatible or unavailable. Stop terminal work and explicitly restart the terminal service to upgrade it.",
+      "The terminal service is incompatible or unavailable. Stop terminal work, then use Settings → Updates → Restart all, or run inspire restart --all with installed Linux services.",
     );
   }
 

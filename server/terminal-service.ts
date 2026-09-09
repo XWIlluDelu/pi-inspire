@@ -74,8 +74,16 @@ export interface TerminalOperationService extends TerminalService {
   ): Promise<Result>;
 }
 
-export class UnavailableTerminalService implements TerminalService {
+export class UnavailableTerminalService implements TerminalOperationService {
   constructor(private readonly reason: string) {}
+
+  operationEpoch(): Promise<string> {
+    return this.unavailable();
+  }
+
+  operate<Result>(): Promise<Result> {
+    return this.unavailable();
+  }
 
   list(): Promise<TerminalCatalogResponse> {
     return this.unavailable();
