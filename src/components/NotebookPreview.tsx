@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
+import { MarkdownAttachmentsContext } from "./DocumentPreview";
 
 const MAX_NOTEBOOK_CELLS = 200;
 const MAX_NOTEBOOK_OUTPUTS = 400;
@@ -11,6 +12,7 @@ interface NotebookCell {
   source: string;
   executionCount: string | null;
   outputs: NotebookOutput[];
+  attachments: ReadonlyMap<string, string>;
 }
 
 type NotebookOutput =
@@ -42,9 +44,11 @@ function cleanTerminalText(value: string): string {
   return value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-function outputFromBundle(value: unknown): NotebookOutput {
+function imageFromBundle(
+  value: unknown,
+): Extract<NotebookOutput, { kind: "image" }> | null {
   const bundle = record(value);
-  if (!bundle) return { kind: "unsupported" };
+  if (!bundle) return null;
   for (const mimeType of [
     "image/png",
     "image/jpeg",
@@ -56,10 +60,38 @@ function outputFromBundle(value: unknown): NotebookOutput {
     const base64 = encoded.replace(/\s+/g, "");
     if (
       base64.length <= MAX_INLINE_IMAGE_BASE64 &&
+      base64.length % 4 === 0 &&
       /^[A-Za-z0-9+/]*={0,2}$/.test(base64)
-    )
-      return { kind: "image", mimeType, base64 };
+    ) {
+      try {
+        if (btoa(atob(base64)) === base64)
+          return { kind: "image", mimeType, base64 };
+      } catch {
+        /* Malformed bundles remain unavailable. */
+      }
+    }
   }
+  return null;
+}
+
+function cellAttachments(value: unknown): ReadonlyMap<string, string> {
+  const attachments = new Map<string, string>();
+  for (const [name, bundle] of Object.entries(record(value) ?? {}).slice(
+    0,
+    64,
+  )) {
+    const image = imageFromBundle(bundle);
+    if (image)
+      attachments.set(name, `data:${image.mimeType};base64,${image.base64}`);
+  }
+  return attachments;
+}
+
+function outputFromBundle(value: unknown): NotebookOutput {
+  const bundle = record(value);
+  if (!bundle) return { kind: "unsupported" };
+  const image = imageFromBundle(bundle);
+  if (image) return image;
   const markdown = joinedText(bundle["text/markdown"]);
   if (markdown !== null) return { kind: "markdown", text: markdown };
   const plain = joinedText(bundle["text/plain"]);
@@ -159,6 +191,8 @@ function parseNotebook(text: string): NotebookDocument | null {
       source: takeText(source),
       executionCount,
       outputs,
+      attachments:
+        cellType === "markdown" ? cellAttachments(cell.attachments) : new Map(),
     });
     if (remainingText === 0) break;
   }
@@ -245,7 +279,9 @@ export function NotebookPreview({ text }: { text: string }) {
           </div>
           <div className="notebook-preview__cell-body">
             {cell.kind === "markdown" ? (
-              <RichText text={cell.source} variant="assistant" />
+              <MarkdownAttachmentsContext.Provider value={cell.attachments}>
+                <RichText text={cell.source} variant="assistant" />
+              </MarkdownAttachmentsContext.Provider>
             ) : (
               <pre>
                 <code className={`language-${notebook.language}`}>
