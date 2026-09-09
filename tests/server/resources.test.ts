@@ -155,6 +155,52 @@ describe("ResourceStore", () => {
     });
   });
 
+  it("authorizes document images independently without following arbitrary document citations or recovering a different basename", async () => {
+    const { root, project } = await workspace();
+    await mkdir(join(project, "reports"));
+    await mkdir(join(project, "other"));
+    await mkdir(join(project, "node_modules"));
+    await writeFile(
+      join(project, "reports", "README.md"),
+      "![Outside](../../outside.png) ![Ignored](../node_modules/hidden.png)",
+    );
+    await writeFile(join(project, "reports", "curve.png"), "indexed image");
+    await writeFile(join(project, "other", "missing.png"), "wrong image");
+    await writeFile(
+      join(project, "node_modules", "hidden.png"),
+      "ignored image",
+    );
+    await writeFile(join(root, "outside.png"), "outside image");
+    const context = {
+      ...resourceIdentity(),
+      cwd: project,
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "[Report](reports/README.md)" }],
+        },
+      ],
+    };
+    await expect(
+      resources.resolve(context, "reports/README.md"),
+    ).resolves.toMatchObject({ kind: "markdown" });
+    await expect(
+      resources.resolve(context, "./reports/curve.png"),
+    ).resolves.toMatchObject({
+      workspacePath: "reports/curve.png",
+      kind: "image",
+    });
+    for (const reference of [
+      "./reports/../../outside.png",
+      "./reports/../node_modules/hidden.png",
+      "./reports/missing.png",
+      "./missing.png",
+    ])
+      await expect(resources.resolve(context, reference)).rejects.toMatchObject(
+        { status: 403 },
+      );
+  });
+
   it("opens project-local files without granting a different session the handle", async () => {
     const { project } = await workspace();
     await writeFile(join(project, "report.md"), "# Result\n");

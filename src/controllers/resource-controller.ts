@@ -81,6 +81,7 @@ interface ResourceControllerHost {
 export class ResourceController {
   private previewObjectUrl: string | null = null;
   private resourceRequest: AbortController | null = null;
+  private documentImageRequests = new Set<AbortController>();
   private resourceProbeRequest: AbortController | null = null;
   private resourceProbeKey: string | null = null;
   private resourceProbedReferences = new Set<string>();
@@ -91,6 +92,8 @@ export class ResourceController {
   cancelRequest(): void {
     this.resourceRequest?.abort();
     this.resourceRequest = null;
+    for (const request of this.documentImageRequests) request.abort();
+    this.documentImageRequests.clear();
   }
 
   cancelProbes(clearStanding = false): void {
@@ -430,6 +433,88 @@ export class ResourceController {
       }
       if (stale()) throw staleError();
       throw error;
+    }
+  }
+
+  /** A document image is independently authorized by the ordinary resource
+   * resolver. Reading a document grants no authority over its linked files. */
+  async loadDocumentImage(
+    documentId: string,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<Blob> {
+    const api = this.host.api();
+    const generation = this.host.transportGeneration();
+    const { sessionId, transcriptViewId: viewId } = this.host.state();
+    const request = new AbortController();
+    const abort = () => request.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) request.abort();
+    this.documentImageRequests.add(request);
+    const checkCurrent = () => {
+      const state = this.host.state();
+      if (
+        !api ||
+        !sessionId ||
+        !viewId ||
+        request.signal.aborted ||
+        !this.ownsTransport(api, generation) ||
+        state.sessionId !== sessionId ||
+        state.transcriptViewId !== viewId ||
+        !state.resourcesOpen ||
+        state.contextMode !== "files" ||
+        state.fileBrowserView !== "preview" ||
+        state.resourcePreview?.status !== "ready" ||
+        state.resourcePreview.descriptor.id !== documentId
+      )
+        throw Object.assign(
+          new Error("The document preview is no longer current"),
+          { name: "AbortError" },
+        );
+    };
+    try {
+      checkCurrent();
+      const descriptor = await api!.resolveResource(
+        sessionId!,
+        reference,
+        request.signal,
+      );
+      checkCurrent();
+      if (
+        descriptor.sessionId !== sessionId ||
+        descriptor.viewId !== viewId ||
+        descriptor.kind !== "image" ||
+        !/^image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml)$/.test(
+          descriptor.mimeType,
+        )
+      )
+        throw new Error("The reference is not a previewable image");
+      if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+        throw new Error("The image is too large to preview");
+      const content = await api!.resourceContent(descriptor.id, sessionId!, {
+        byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
+        signal: request.signal,
+      });
+      checkCurrent();
+      if (
+        content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
+        content.blob.size > MAX_MEDIA_PREVIEW_BYTES
+      )
+        throw new Error("The image is too large to preview");
+      if (
+        content.blob.size !== content.totalSize ||
+        content.blob.type !== descriptor.mimeType
+      )
+        throw new Error("The image content is unavailable");
+      return content.blob;
+    } catch (error) {
+      checkCurrent();
+      if (error instanceof ApiError && error.status === 401)
+        this.host.handleAuthFailure();
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      this.documentImageRequests.delete(request);
     }
   }
 

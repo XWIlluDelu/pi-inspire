@@ -1137,6 +1137,22 @@ button.res__more:hover {
   padding: var(--space-2);
 }
 
+.document-image {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.document-image__status {
+  display: inline-block;
+  padding: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .notebook-preview {
   flex: 1;
   min-height: 0;
