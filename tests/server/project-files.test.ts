@@ -36,7 +36,9 @@ afterEach(async () => {
 });
 
 describe("filesystem discovery, independent of Git", () => {
-  it.runIf(process.platform !== "win32")(
+  // APFS and Windows cannot create this raw-byte filename. Keep the real
+  // filesystem regression on Linux instead of failing during fixture setup.
+  it.runIf(process.platform === "linux")(
     "does not alias non-UTF-8 filenames to real replacement-character filenames",
     async () => {
       const root = await scratch();

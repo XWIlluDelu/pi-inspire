@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 // Isolated mock Host and in-process PTYs from playwright.config.ts, never the daily Host.
 test.use({ serviceWorkers: "block" });
@@ -86,7 +87,7 @@ for (const viewport of [
         timeout: 10_000,
       });
       const beforeReload = await page.request.get(
-        `/api/terminals?cwd=${encodeURIComponent(process.cwd())}`,
+        `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
       );
       const before = await beforeReload.json();
       expect(
@@ -118,7 +119,7 @@ for (const viewport of [
       expect(identities).toHaveLength(2);
       expect(identities[1]).toBe(identities[0]);
       const afterReload = await page.request.get(
-        `/api/terminals?cwd=${encodeURIComponent(process.cwd())}`,
+        `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
       );
       const after = await afterReload.json();
       expect(after.terminals.map((entry: { id: string }) => entry.id)).toEqual(

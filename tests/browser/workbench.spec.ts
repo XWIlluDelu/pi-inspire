@@ -1,9 +1,10 @@
 import { basename } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 const token = "inspire-browser-test-token";
-const mockWorkspaceName = basename(process.cwd());
+const mockWorkspaceName = basename(browserWorkspace);
 
 async function pairedPage(page: import("@playwright/test").Page) {
   await page.goto("/");
@@ -39,7 +40,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
   await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
   const readTerminals = async () => {
     const response = await page.request.get(
-      `/api/terminals?cwd=${encodeURIComponent(process.cwd())}`,
+      `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
     );
     expect(response.ok()).toBe(true);
     return response.json() as Promise<{
@@ -146,7 +147,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   const created = await page.request.post("/api/terminals", {
-    data: { cwd: process.cwd() },
+    data: { cwd: browserWorkspace },
   });
   expect(created.ok()).toBe(true);
   const terminal = (await created.json()) as { id: string };
