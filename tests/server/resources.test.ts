@@ -17,6 +17,7 @@ import {
   listProjectDirectory,
 } from "../../server/project-files.js";
 import * as gitRunner from "../../server/git-runner.js";
+import * as projectFiles from "../../server/project-files.js";
 import {
   openCanonicalResourceFile,
   ResourceStore,
@@ -833,25 +834,31 @@ describe("ResourceStore", () => {
     ).resolves.toMatchObject({ workspacePath: "secret.txt" });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "refuses to infer uniqueness from incomplete discovery without blocking an exact path",
-    async () => {
-      const { project } = await workspace();
-      await mkdir(join(project, "docs"));
-      await writeFile(join(project, "docs", "report.txt"), "synthetic report");
-      await writeFile(
-        Buffer.concat([Buffer.from(`${project}/`), Buffer.from([255])]),
-        "unrepresentable filename fixture",
-      );
-      const context = { ...resourceIdentity(), cwd: project, messages: [] };
-      await expect(
-        resources.resolve(context, "report.txt"),
-      ).rejects.toMatchObject({ status: 409, matches: ["docs/report.txt"] });
-      await expect(
-        resources.resolve(context, "docs/report.txt"),
-      ).resolves.toMatchObject({ workspacePath: "docs/report.txt" });
-    },
-  );
+  it("refuses to infer uniqueness from incomplete discovery without blocking an exact path", async () => {
+    const { project } = await workspace();
+    await mkdir(join(project, "docs"));
+    await writeFile(join(project, "docs", "report.txt"), "synthetic report");
+    // The resolver cares about scan completeness, not why the scanner stopped.
+    // Raw non-UTF-8 filenames are covered by the filesystem scanner's own test.
+    const discover = vi
+      .spyOn(projectFiles, "workspaceBasenameMatches")
+      .mockResolvedValue({ matches: ["docs/report.txt"], truncated: true });
+    const context = { ...resourceIdentity(), cwd: project, messages: [] };
+    await expect(
+      resources.resolve(context, "report.txt"),
+    ).rejects.toMatchObject({
+      status: 409,
+      matches: ["docs/report.txt"],
+    });
+    expect(discover).toHaveBeenCalledWith(project, "report.txt");
+    discover.mockClear();
+    await expect(
+      resources.resolve(context, "docs/report.txt"),
+    ).resolves.toMatchObject({
+      workspacePath: "docs/report.txt",
+    });
+    expect(discover).not.toHaveBeenCalled();
+  });
 
   it("recovers a bare mention when exactly one discovered file carries that name", async () => {
     const { project } = await workspace();
