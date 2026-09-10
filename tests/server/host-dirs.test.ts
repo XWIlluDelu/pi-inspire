@@ -128,7 +128,7 @@ describe("listHostDirectories", () => {
       const path = join(root, "hidden by OS & 中文 [1]");
       await mkdir(path);
       const command =
-        process.platform === "win32" ? "attrib.exe" : "/bin/chflags";
+        process.platform === "win32" ? "attrib.exe" : "/usr/bin/chflags";
       const set = process.platform === "win32" ? "+H" : "hidden";
       const clear = process.platform === "win32" ? "-H" : "nohidden";
       await execFile(command, [set, path]);
