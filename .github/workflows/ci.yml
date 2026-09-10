@@ -119,3 +119,80 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:verify
+
+  cleanup-review:
+    name: One-time review cleanup
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Delete only the verified temporary branch and its review runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          repo = 'XWIlluDelu/pi-inspire'
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          root = f'repos/{repo}'
+          branches = {
+              'ci-diagnosis-20260910',
+              'ci-portability-20260910',
+              'ci-portability-candidate-20260910',
+          }
+          runs = {
+              34486993313: 'ci-diagnosis-20260910',
+              34489680976: 'ci-diagnosis-20260910',
+              34489822972: 'ci-diagnosis-20260910',
+              34495643807: 'ci-portability-20260910',
+              34497207095: 'ci-portability-20260910',
+          }
+          def api(path, method='GET'):
+              result = subprocess.run(
+                  ['gh', 'api', '--method', method, f'{root}/{path}'],
+                  check=True, capture_output=True, text=True,
+              )
+              return json.loads(result.stdout) if result.stdout.strip() else None
+
+          comparison = api('compare/58f1f3f77b527bff37844cc4efd7f31ef66c3331...main')
+          assert comparison['status'] in ('ahead', 'identical')
+          existing = {}
+          for branch in sorted(branches):
+              data = api(f'actions/runs?branch={branch}&per_page=100')
+              assert data['total_count'] == len(data['workflow_runs'])
+              for run in data['workflow_runs']:
+                  assert run['id'] in runs and runs[run['id']] == branch
+                  assert run['head_branch'] == branch
+                  assert run['repository']['full_name'] == repo
+                  assert run['status'] == 'completed'
+                  existing[run['id']] = run
+          expected_sha = '4167c13798689e339e2e00945180eabf19d66de5'
+          ref = 'refs/heads/ci-diagnosis-20260910'
+          remote = subprocess.check_output(
+              ['git', 'ls-remote', '--heads', 'origin', ref], text=True,
+          ).strip()
+          if remote:
+              assert remote.split()[0] == expected_sha
+              subprocess.run([
+                  'git', 'push', f'--force-with-lease={ref}:{expected_sha}',
+                  'origin', f':{ref}',
+              ], check=True)
+              print(f'Deleted {ref}', flush=True)
+          for run_id in sorted(existing):
+              api(f'actions/runs/{run_id}', 'DELETE')
+              print(f'Deleted run {run_id}: {runs[run_id]}', flush=True)
+          for branch in sorted(branches):
+              assert api(f'actions/runs?branch={branch}&per_page=1')['total_count'] == 0
+              assert not subprocess.check_output(
+                  ['git', 'ls-remote', '--heads', 'origin', f'refs/heads/{branch}'],
+                  text=True,
+              ).strip()
+          print(f'Cleanup verified: {len(existing)} runs deleted; no review branches remain.')
+          PY
