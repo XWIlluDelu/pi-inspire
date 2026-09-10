@@ -4,6 +4,8 @@ purpose: Explain document-scoped Markdown resources, related Notebook repairs, a
 
 # Document-relative previews
 
+2026-09-10 follow-up: [[filesystem-git-separation]] supersedes the ignored-file refusal in this original verification record. Document images/links still require independent authorization, now from workspace realpath containment or an exact citation, not Git index membership. Outside-target, view/object, remote-load and sandbox checks remain.
+
 ## Failure and repair
 
 `FilePreview` and `NotebookPreview` reused the conversation renderer without a document context. Local Markdown images therefore became file-reference buttons, relative links opened from the session cwd, and Notebook Markdown cell attachments had no resolver. Heading fragments also followed browser navigation instead of the document reader.

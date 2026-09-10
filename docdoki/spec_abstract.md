@@ -6,7 +6,7 @@
 |---|---|---|
 | Product shell | [[workbench]], [[workspace-layout]], [[interface-preferences]] | A three-region workbench keeps collapsible, curated project navigation at the left — globally pinned sessions, pinned folders, and a reversible Hidden group — conversation dominant in the center, and contextual work available on demand at the right. |
 | Project terminal | [[terminal]] | An independent local daemon owns ordered project-scoped PTYs while paired browsers provide detachable xterm views with one explicit writer, exact reconnect, and no terminal splits. |
-| Resource preview | [[resource-preview]] | Transcript references and workspace-indexed files open in a session-bound, defensive preview surface rather than an unrestricted browser file client. |
+| Resource preview | [[resource-preview]] | Filesystem discovery and hidden visibility are independent of Git; transcript references and realpath-contained workspace files open through separate session-bound authorization. |
 | Visual language | [[visual-language]] | An original scientific-workbench character: reference grammar without reference identity, Amber/Jade palettes tuned independently per light/dark theme plus semantic annotation hues, one type voice per role. |
 | Design tokens & components | [[design-system]] | The concrete contract — palette roles per theme, type scale, spacing, radii, elevation, motion, and per-component anatomy — that `src/styles.css` implements. |
 | Conversation | [[conversation]], [[activity-presentation]] | Compact user bubbles alternate with assistant answers presented as an open document flow containing typed Pi text and activity blocks. |
@@ -18,6 +18,8 @@
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 
 ## Implemented capability
+
+Files, file search, composer references and resource authorization no longer depend on Git tracking or ignore rules. Lazy directory listing includes empty and ignored directories; hidden controls follow filesystem names/attributes, and incomplete discovery is explicit. Changes no longer treats a missing status entry as a zero-change comparison. [[filesystem-git-separation]] records implementation, preserved containment/object boundaries, and verification.
 
 Markdown and Notebook previews now render authorized local images inline, resolve links from the document directory, navigate heading fragments, and display cell-local Notebook attachments. [[document-relative-previews]] records the shared-renderer repair, bounded image ownership, preserved security restrictions, and Node 22 / Chromium evidence.
 
@@ -40,7 +42,7 @@ Named tool cards appear before argument completion and stream bounded, redacted 
 
 The New session directory picker has a default-off Show hidden folders eye-icon toggle beside its heading, with Host-owned dot-name and Windows/macOS hidden-attribute filtering. [[hidden-project-directories]] records behavior and verification limits.
 
-Resource reads are independently session-addressed across browsers, and terminal catalog writebacks are project-generation-bound. Preview content reuses the short-lived workspace index while retaining per-request path/object checks; Windows VS Code file URIs use native path conversion. [[review-resource-terminal-ownership]] records the review repairs, cache tradeoff, and verification limits.
+Resource reads are independently session-addressed across browsers, and terminal catalog writebacks are project-generation-bound. Windows VS Code file URIs use native path conversion. [[review-resource-terminal-ownership]] records the original review repairs and verification limits; [[filesystem-git-separation]] supersedes its preview-index authority/cache tradeoff with direct per-request path/object checks.
 
 Shared image previews center the fitted image with a nearby upper-right close button and theme-aware background controls directly below; the standard modal scrim remains separate from a neutral transparency checkerboard and viewer-local White/Black alternatives. [[image-preview-backgrounds]] records the rationale and regression evidence.
 

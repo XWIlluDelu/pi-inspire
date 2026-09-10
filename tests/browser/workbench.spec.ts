@@ -551,12 +551,14 @@ test("new-session completion opens below its caret line inside the viewport", as
     const input = document.querySelector<HTMLTextAreaElement>(
       ".welcome__composer .composer__input",
     );
-    if (!welcome || !input) throw new Error("Missing start surface");
-    const menuBox = element.getBoundingClientRect();
+    const surface = element.closest<HTMLElement>(".completion");
+    if (!welcome || !input || !surface)
+      throw new Error("Missing start surface");
+    const menuBox = surface.getBoundingClientRect();
     const welcomeBox = welcome.getBoundingClientRect();
     const inputBox = input.getBoundingClientRect();
     return {
-      placement: element.dataset.placement,
+      placement: surface.dataset.placement,
       menuTop: menuBox.top,
       menuBottom: menuBox.bottom,
       welcomeTop: welcomeBox.top,

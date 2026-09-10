@@ -1,5 +1,7 @@
 # Resource and terminal ownership review
 
+2026-09-10 follow-up: [[filesystem-git-separation]] supersedes the preview-index authority and ignore-rule cache tradeoff below. Only discovery is cached; each content read checks current workspace containment and the pinned object directly. The session/terminal ownership repairs remain in force.
+
 ## Scope and decisions
 
 The review of `f37f126de607610a73903858a1a6d5dd9ce15c5a` identified three local defects: resource reads followed global Host selection, terminal mutations could write into another project's pane, and VS Code file URIs retained the URL slash before Windows drive letters. It also identified unconditional preview index rebuilds and the unused terminal `replayModeRef`.
