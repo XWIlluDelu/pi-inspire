@@ -2,6 +2,9 @@ import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError, type ProjectFileResult } from "../api";
 
 export interface WorkspaceBrowserState {
+  workspaceShowHidden: boolean;
+  workspaceTruncatedDirs: Record<string, boolean>;
+  workspaceSearchTruncated: boolean;
   workspaceLevels: Record<string, ProjectDirEntry[]>;
   workspaceExpandedDirs: string[];
   workspaceLoadingDirs: string[];
@@ -16,6 +19,9 @@ export interface WorkspaceBrowserState {
 
 export function emptyWorkspaceBrowserState(): WorkspaceBrowserState {
   return {
+    workspaceShowHidden: false,
+    workspaceTruncatedDirs: {},
+    workspaceSearchTruncated: false,
     workspaceLevels: {},
     workspaceExpandedDirs: [],
     workspaceLoadingDirs: [],
@@ -104,6 +110,9 @@ export class WorkspaceController {
     }
     if (current.cwd) {
       const cached: WorkspaceBrowserState = {
+        workspaceShowHidden: current.workspaceShowHidden,
+        workspaceTruncatedDirs: { ...current.workspaceTruncatedDirs },
+        workspaceSearchTruncated: current.workspaceSearchTruncated,
         workspaceLevels: { ...current.workspaceLevels },
         workspaceExpandedDirs: [...current.workspaceExpandedDirs],
         workspaceLoadingDirs: [],
@@ -189,6 +198,7 @@ export class WorkspaceController {
       const response = await api.listFiles(sessionId, dir, {
         signal: request.signal,
         refresh: options.refresh,
+        showHidden: this.host.state().workspaceShowHidden,
       });
       if (
         this.directoryRequests.get(dir) !== request ||
@@ -201,6 +211,10 @@ export class WorkspaceController {
         workspaceLevels: {
           ...current.workspaceLevels,
           [dir]: response.entries,
+        },
+        workspaceTruncatedDirs: {
+          ...current.workspaceTruncatedDirs,
+          [dir]: Boolean(response.truncated),
         },
         workspaceDirectoryErrors: Object.fromEntries(
           Object.entries(current.workspaceDirectoryErrors).filter(
@@ -272,12 +286,20 @@ export class WorkspaceController {
     return true;
   }
 
+  setShowHidden(showHidden: boolean): void {
+    if (showHidden === this.host.state().workspaceShowHidden) return;
+    this.cancelRequests();
+    this.host.patch({ workspaceShowHidden: showHidden });
+    void this.refresh();
+  }
+
   setQuery(query: string): void {
     this.searchRequest?.abort();
     this.searchRequest = null;
     this.host.patch({
       workspaceQuery: query,
       workspaceMatches: [],
+      workspaceSearchTruncated: false,
       workspaceSearchLoading: Boolean(query.trim()),
       workspaceSearchError: null,
     });
@@ -297,6 +319,7 @@ export class WorkspaceController {
         query,
         100,
         request.signal,
+        this.host.state().workspaceShowHidden,
       );
       const current = this.host.state();
       if (
@@ -308,6 +331,7 @@ export class WorkspaceController {
         return;
       this.host.patch({
         workspaceMatches: response.files,
+        workspaceSearchTruncated: Boolean(response.truncated),
         workspaceSearchLoading: false,
         workspaceSearchError: null,
       });
@@ -342,6 +366,7 @@ export class WorkspaceController {
     const generation = this.refreshGeneration;
     this.host.patch({
       ...emptyWorkspaceBrowserState(),
+      workspaceShowHidden: state.workspaceShowHidden,
       workspaceExpandedDirs: expanded,
       workspaceQuery: query,
       workspaceSearchLoading: Boolean(query.trim()),

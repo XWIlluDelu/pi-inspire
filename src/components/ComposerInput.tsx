@@ -10,7 +10,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ComposerHistoryEntry } from "../../shared/contracts";
-import type { ProjectFileResult } from "../api";
+import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import {
   type CaretCompletion,
   type PiCommand,
@@ -53,6 +54,9 @@ function CompletionMenu({
   items,
   active,
   status,
+  truncated,
+  showHiddenFiles,
+  onShowHiddenFilesChange,
   placement,
   onActive,
   onPick,
@@ -62,6 +66,9 @@ function CompletionMenu({
   items: CompletionItem[];
   active: number;
   status: "loading" | "ready" | "error";
+  truncated: boolean;
+  showHiddenFiles: boolean;
+  onShowHiddenFilesChange?: (value: boolean) => void;
   placement: FloatingMenuPlacement | null;
   onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
@@ -74,7 +81,6 @@ function CompletionMenu({
   return (
     <div
       className="completion"
-      id={id}
       data-placement={placement?.direction}
       style={
         placement
@@ -87,58 +93,81 @@ function CompletionMenu({
             }
           : { visibility: "hidden" }
       }
-      role="listbox"
-      aria-label={
-        token.kind === "file"
-          ? "Project file completions"
-          : "Slash command completions"
-      }
-      aria-busy={status === "loading"}
     >
-      {items.map((item, index) => {
-        const heading = item.group !== previousGroup;
-        previousGroup = item.group;
-        return (
-          <div key={item.key}>
-            {heading ? (
-              <div className="completion__heading" aria-hidden>
-                {item.group}
-              </div>
-            ) : null}
-            <div
-              ref={(element) => {
-                refs.current[index] = element;
-              }}
-              id={`${id}-option-${index}`}
-              role="option"
-              aria-selected={index === active}
-              className={`completion__option ${index === active ? "completion__option--active" : ""}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => onActive(index)}
-              onClick={() => onPick(item)}
-            >
-              <span className="completion__title">{item.title}</span>
-              {item.hint ? (
-                <span className="completion__hint">{item.hint}</span>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-      {items.length === 0 ? (
+      {token.kind === "file" && onShowHiddenFilesChange ? (
         <div
-          className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`}
-          role="status"
+          className="file-search-controls"
+          onMouseDown={(event) => event.preventDefault()}
         >
-          {status === "loading"
-            ? "Searching project files…"
-            : status === "error"
-              ? "Project file search failed"
-              : token.kind === "file"
-                ? "No matching project files"
-                : "No matching commands"}
+          <span className="completion__heading">Project files</span>
+          <HiddenFilesToggle
+            showHidden={showHiddenFiles}
+            onChange={onShowHiddenFilesChange}
+          />
         </div>
       ) : null}
+      <div
+        id={id}
+        role="listbox"
+        aria-label={
+          token.kind === "file"
+            ? "Project file completions"
+            : "Slash command completions"
+        }
+        aria-busy={status === "loading"}
+      >
+        {items.map((item, index) => {
+          const heading =
+            item.group !== previousGroup &&
+            !(token.kind === "file" && onShowHiddenFilesChange);
+          previousGroup = item.group;
+          return (
+            <div key={item.key}>
+              {heading ? (
+                <div className="completion__heading" aria-hidden>
+                  {item.group}
+                </div>
+              ) : null}
+              <div
+                ref={(element) => {
+                  refs.current[index] = element;
+                }}
+                id={`${id}-option-${index}`}
+                role="option"
+                aria-selected={index === active}
+                className={`completion__option ${index === active ? "completion__option--active" : ""}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => onActive(index)}
+                onClick={() => onPick(item)}
+              >
+                <span className="completion__title">{item.title}</span>
+                {item.hint ? (
+                  <span className="completion__hint">{item.hint}</span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+        {truncated ? (
+          <div className="completion__empty" role="status">
+            Partial search results
+          </div>
+        ) : null}
+        {items.length === 0 ? (
+          <div
+            className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`}
+            role="status"
+          >
+            {status === "loading"
+              ? "Searching project files…"
+              : status === "error"
+                ? "Project file search failed"
+                : token.kind === "file"
+                  ? "No matching project files"
+                  : "No matching commands"}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -156,6 +185,8 @@ export function ComposerInput({
   disabled = false,
   completionScope,
   searchProjectFiles,
+  showHiddenFiles = false,
+  onShowHiddenFilesChange,
   onPickProjectFile,
   rows = 1,
   maxHeightRatio = 0.4,
@@ -180,8 +211,10 @@ export function ComposerInput({
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
-  searchProjectFiles?: (query: string) => Promise<ProjectFileResult[]>;
+  searchProjectFiles?: (query: string) => Promise<ProjectFileSearchResult>;
   onPickProjectFile?: (file: ProjectFileResult) => void;
+  showHiddenFiles?: boolean;
+  onShowHiddenFilesChange?: (value: boolean) => void;
   rows?: number;
   maxHeightRatio?: number;
   placeholder: string;
@@ -192,6 +225,7 @@ export function ComposerInput({
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
 }) {
   const completionId = useId();
+  const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
   const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
     [],
@@ -304,12 +338,16 @@ export function ComposerInput({
     }
     let cancelled = false;
     setCompletionFiles([]);
+    setCompletionTruncated(false);
     setCompletionStatus("loading");
     const timer = setTimeout(() => {
       searchProjectFiles(completion.query).then(
-        (files) => {
+        (result) => {
           if (!cancelled) {
-            setCompletionFiles(rankProjectFiles(files, completion.query));
+            setCompletionFiles(
+              rankProjectFiles(result.files, completion.query),
+            );
+            setCompletionTruncated(Boolean(result.truncated));
             setCompletionStatus("ready");
           }
         },
@@ -322,7 +360,7 @@ export function ComposerInput({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [completion, completionScope, searchProjectFiles]);
+  }, [completion, completionScope, searchProjectFiles, showHiddenFiles]);
 
   const completionItems = useMemo<CompletionItem[]>(() => {
     if (!completion) return [];
@@ -634,6 +672,16 @@ export function ComposerInput({
               items={completionItems}
               active={activeIndex}
               status={completion.kind === "file" ? completionStatus : "ready"}
+              truncated={completion.kind === "file" && completionTruncated}
+              showHiddenFiles={showHiddenFiles}
+              onShowHiddenFilesChange={
+                onShowHiddenFilesChange
+                  ? (value) => {
+                      onShowHiddenFilesChange(value);
+                      textareaRef.current?.focus();
+                    }
+                  : undefined
+              }
               placement={completionPlacement}
               onActive={setCompletionActive}
               onPick={pickCompletion}

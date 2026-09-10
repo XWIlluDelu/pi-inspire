@@ -79,6 +79,7 @@ export const Composer = memo(function Composer() {
       editorText: source.editorText,
       attachments: source.attachments,
       projectFiles: source.projectFiles,
+      workspaceShowHidden: source.workspaceShowHidden,
       sending: source.sending,
       model: source.model,
       availableModels: source.availableModels,
@@ -377,6 +378,8 @@ export const Composer = memo(function Composer() {
         completionDisabled={state.sending || sessionOpening}
         disabled={sessionOpening}
         completionScope={historyKey}
+        showHiddenFiles={state.workspaceShowHidden}
+        onShowHiddenFilesChange={store.setWorkspaceShowHidden}
         searchProjectFiles={store.searchProjectFiles}
         onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={
@@ -538,6 +541,8 @@ export const Composer = memo(function Composer() {
       {pickerOpen && sessionId ? (
         <ProjectFilePicker
           scope={sessionId}
+          showHidden={state.workspaceShowHidden}
+          onShowHiddenChange={store.setWorkspaceShowHidden}
           selected={state.projectFiles}
           disabled={state.sending || sessionOpening}
           search={store.searchProjectFiles}

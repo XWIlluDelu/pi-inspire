@@ -98,7 +98,7 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   coordinates until the Host resolves the current projection again: it rehydrates embedded image
   bytes; accepts an ordinary file only while its canonical regular path remains owned by the current
   Host's in-flight or consumed attachment lifecycle, never from persisted path text alone; and
-  revalidates project files against the current project index again after worker startup,
+  revalidates regular project files against the current workspace realpath boundary again after worker startup,
   immediately before delivery. Missing or changed files fail visibly and remain removable from the
   recalled draft.
 
@@ -107,15 +107,19 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
 ### Project files and command completion
 
-- Project files can be found through the project index, either in the explicit picker or from the
+- Project files can be found through bounded filesystem search, either in the explicit picker or from the
   textarea’s active caret token. An established composer addresses the immutable workspace owned by
   its session; the start surface uses the typed path (or inherited current path) as a read-only
   prospective workspace and binds selected results to its canonical root. Changing that path clears
   staged references, and creation uses the bound canonical root so a symlink retarget cannot
   reinterpret a selected relative file.
 
+  Picker and `@` search expose a default-off Show hidden files control covering dot names and native hidden attributes, not Git ignore rules. Both established and prospective-workspace searches report incomplete scans; Git failure never blocks them.
+
   Neither search path authorizes prompt access: the prompt boundary revalidates every staged path
-  against the created session’s index. `@` completion never treats other mentions as file authority:
+  as a regular file contained by the created session’s current canonical workspace, independently of
+  search results, hidden visibility, tracking or ignore rules. Selected canonical targets are checked
+  again before delivery; a symlink retarget cannot reinterpret a selected reference. `@` completion never treats other mentions as file authority:
   choosing a returned canonical path removes only the active token, preserves the surrounding draft
   and caret, and stages one deduplicated removable file-reference chip.
 

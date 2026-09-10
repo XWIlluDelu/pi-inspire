@@ -148,6 +148,14 @@ function GitResultState({
   state: ContextPaneView;
   result: GitDiffResponse;
 }) {
+  if (result.kind === "empty")
+    return (
+      <ContextPaneState
+        icon={<History size={17} aria-hidden />}
+        title="No diff available"
+        hint="Git no longer reports this comparison. Refresh Changes to check its current state."
+      />
+    );
   if (result.kind === "binary")
     return (
       <ContextPaneState
@@ -408,6 +416,15 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
     [textResult],
   );
   const preview = state.resourcePreview;
+  const noComparison = !change
+    ? state.gitStatusError || !state.gitStatus
+      ? "Git status unavailable"
+      : state.gitStatus.kind !== "repository"
+        ? "Not in a Git repository"
+        : state.gitStatus.truncated
+          ? "Git status incomplete"
+          : "No Git comparison"
+    : null;
   const path =
     result?.path.workspacePath ??
     result?.path.utf8Path ??
@@ -505,12 +522,17 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
         <div className="file-detail-header__path">
           {path ? <PathCopyButton path={path} /> : <span>Source</span>}
         </div>
-        <div className="changes__stats" title="Line changes">
-          <span className="changes__additions">
-            +{textResult?.additions ?? (change ? "—" : 0)}
+        <div
+          className="changes__stats"
+          role="group"
+          title={noComparison ?? "Line changes"}
+          aria-label={noComparison ?? "Line changes"}
+        >
+          <span className={textResult ? "changes__additions" : undefined}>
+            {textResult ? `+${textResult.additions}` : "—"}
           </span>
-          <span className="changes__deletions">
-            −{textResult?.deletions ?? (change ? "—" : 0)}
+          <span className={textResult ? "changes__deletions" : undefined}>
+            {textResult ? `−${textResult.deletions}` : "—"}
           </span>
         </div>
         <div

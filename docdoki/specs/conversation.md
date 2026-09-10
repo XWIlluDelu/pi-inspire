@@ -92,9 +92,10 @@ custom messages remain independent readable boundaries in this contract.
   widths.
 
 - Composer project-file selections are display handles, not durable filesystem authority. At prompt
-  delivery the Host invalidates the short-lived project index, resolves the workspace and each
-  candidate through real paths, and accepts only files present in that fresh bounded index; symlink
-  retargets and newly ignored paths therefore fail closed. File references added to the prompt are
+  delivery the Host resolves the workspace and each candidate through real paths and accepts only
+  regular files contained by the current canonical workspace. Discovery membership, hidden visibility
+  and Git ignore rules do not authorize references. Symlink retargets fail closed; becoming ignored
+  does not revoke a still-valid selected file. File references added to the prompt are
   JSON string literals under an explicit context heading, so filename newlines or list markers
   cannot create new prompt instructions. A transport replacement invalidates in-flight prompt/upload
   ownership; stale completions cannot clear current composer state, and uploaded bytes completed on
