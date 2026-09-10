@@ -46,10 +46,28 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Static, build, unit, and lifecycle checks
-        run: npm run check
-      - run: npx playwright install chromium
-      - run: npm run test:browser:chromium
+      # Format, lint, types and unused-code checks run once in quality.
+      # Keep OS-dependent build and behavior checks here, collecting every
+      # runnable phase even after a test failure without ignoring that failure.
+      - name: Build browser app
+        id: web
+        run: npm run build:web
+      - name: Portable filesystem and process checks
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: npm run test:portable
+      - name: Unit and integration tests
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: npm test
+      - name: Launcher lifecycle tests
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: npm run test:launcher
+      - name: Install Chromium
+        id: chromium
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: npx playwright install chromium
+      - name: Browser behavior tests
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
+        run: npm run test:browser:chromium
       - if: always()
         uses: actions/upload-artifact@v7
         with:

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
 
 const [portText] = process.argv.slice(2);
 const port = Number(portText);
@@ -30,6 +31,23 @@ await Promise.all([
   rm(diagnosticsPath, { force: true }),
 ]);
 
+// UI acceptance needs real files, not a search of node_modules, build output,
+// and prior test artifacts. That search is intentionally bounded and can be
+// incomplete on slower hosts. Scanner budget/partial-result tests live below
+// this layer; these fixtures keep layout, preview and navigation deterministic.
+await rm(browserWorkspace, { recursive: true, force: true });
+for (const path of [
+  "README.md",
+  "src/components/FilePreview.tsx",
+  "src/components/WorkspaceBrowser.tsx",
+  "src/components/TerminalSettingsDialog.tsx",
+  "tests/browser/fixtures/file-previews",
+]) {
+  const target = resolve(browserWorkspace, path);
+  await mkdir(dirname(target), { recursive: true });
+  await cp(resolve(path), target, { recursive: true });
+}
+
 const piCommand = resolve(
   "node_modules",
   ".bin",
@@ -55,7 +73,7 @@ const child = spawn(
       INSPIRE_TOKEN: "inspire-browser-test-token",
       INSPIRE_PI_COMMAND: piCommand,
       INSPIRE_MOCK: "1",
-      INSPIRE_MOCK_WORKSPACE: resolve("."),
+      INSPIRE_MOCK_WORKSPACE: browserWorkspace,
       INSPIRE_MOCK_STREAM_INTERVAL_MS: "250",
       INSPIRE_PREFERENCES_PATH: preferencesPath,
       INSPIRE_STATE_PATH: instanceStatePath,
