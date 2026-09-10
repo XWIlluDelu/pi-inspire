@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  invalidateProjectIndex,
+  invalidateProjectFiles,
   listProjectDirectory,
 } from "../../server/project-files.js";
 import * as gitRunner from "../../server/git-runner.js";
@@ -190,14 +190,18 @@ describe("ResourceStore", () => {
       workspacePath: "reports/curve.png",
       kind: "image",
     });
-    for (const reference of [
-      "./reports/../../outside.png",
-      "./reports/../node_modules/hidden.png",
-      "./reports/missing.png",
-      "./missing.png",
-    ])
+    await expect(
+      resources.resolve(context, "./reports/../node_modules/hidden.png"),
+    ).resolves.toMatchObject({
+      workspacePath: "node_modules/hidden.png",
+      kind: "image",
+    });
+    await expect(
+      resources.resolve(context, "./reports/../../outside.png"),
+    ).rejects.toMatchObject({ status: 403 });
+    for (const reference of ["./reports/missing.png", "./missing.png"])
       await expect(resources.resolve(context, reference)).rejects.toMatchObject(
-        { status: 403 },
+        { status: 404 },
       );
   });
 
@@ -303,27 +307,18 @@ describe("ResourceStore", () => {
   });
 
   it("binds citation handles to one branch view while allowing same-view append revalidation", async () => {
-    const { project } = await workspace();
-    await mkdir(join(project, "node_modules"));
-    await writeFile(
-      join(project, "node_modules", "branch-only.txt"),
-      "branch A\n",
-    );
+    const { root, project } = await workspace();
+    await writeFile(join(root, "branch-only.txt"), "branch A\n");
     const citation = {
       role: "assistant",
-      content: [
-        { type: "text", text: "[branch](node_modules/branch-only.txt)" },
-      ],
+      content: [{ type: "text", text: "[branch](../branch-only.txt)" }],
     };
     const contextA = {
       ...resourceIdentity("view-a"),
       cwd: project,
       messages: [citation],
     };
-    const descriptor = await resources.resolve(
-      contextA,
-      "node_modules/branch-only.txt",
-    );
+    const descriptor = await resources.resolve(contextA, "../branch-only.txt");
     const resource = resources.get(descriptor.id, "s1", "view-a");
 
     await expect(
@@ -368,6 +363,8 @@ describe("ResourceStore", () => {
       "visible.md",
       "missing.md",
       "node_modules/hidden.md",
+      "../outside-a.md",
+      "../outside-b.md",
       "file://%",
     ]);
 
@@ -384,10 +381,15 @@ describe("ResourceStore", () => {
       },
       {
         reference: "node_modules/hidden.md",
+        availability: "available",
+        workspacePath: "node_modules/hidden.md",
+      },
+      ...["../outside-a.md", "../outside-b.md"].map((reference) => ({
+        reference,
         availability: "unavailable",
         message:
           "The file is not part of this session's workspace or transcript",
-      },
+      })),
       {
         reference: "file://%",
         availability: "invalid",
@@ -734,7 +736,7 @@ describe("ResourceStore", () => {
   );
 
   it.each(["expiry", "refresh"])(
-    "shares the preview index until %s revokes newly ignored content",
+    "retains workspace access after %s and Git ignore changes",
     async (mode) => {
       const { project } = await workspace();
       const { execFile } = await import("node:child_process");
@@ -747,26 +749,20 @@ describe("ResourceStore", () => {
       try {
         const descriptor = await resources.resolve(context, "draft.txt");
         const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-        expect(
-          git.mock.calls.filter(([args]) => args.includes("ls-files")),
-        ).toHaveLength(2);
         await writeFile(join(project, ".gitignore"), "draft.txt\n");
-        await Promise.all(
-          Array.from({ length: 3 }, () =>
-            resources.revalidate(resource, context),
-          ),
-        );
-        expect(
-          git.mock.calls.filter(([args]) => args.includes("ls-files")),
-        ).toHaveLength(2);
-        if (mode === "refresh") invalidateProjectIndex(project);
+        await writeFile(join(project, ".git", "index"), "corrupt index");
+        if (mode === "refresh") invalidateProjectFiles(project);
         else clock.mockReturnValue(Date.now() + 5_001);
         await expect(
           resources.revalidate(resource, context),
-        ).rejects.toMatchObject({ status: 403 });
-        expect(
-          git.mock.calls.filter(([args]) => args.includes("ls-files")),
-        ).toHaveLength(4);
+        ).resolves.toBeUndefined();
+        const opened = await resources.openForServing(resource);
+        try {
+          expect(await opened.handle.readFile("utf8")).toBe("draft\n");
+        } finally {
+          await opened.handle.close();
+        }
+        expect(git).not.toHaveBeenCalled();
       } finally {
         git.mockRestore();
         clock.mockRestore();
@@ -785,10 +781,13 @@ describe("ResourceStore", () => {
     await expect(resources.openForServing(resource)).rejects.toMatchObject({
       status: 404,
     });
-    await expect(listProjectDirectory(project)).resolves.toEqual([]);
+    await expect(listProjectDirectory(project)).resolves.toEqual({
+      entries: [],
+      truncated: false,
+    });
   });
 
-  it("retains an explicit citation after workspace index authority is removed", async () => {
+  it("retains workspace access when a cited file is newly Git-ignored", async () => {
     const { project } = await workspace();
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
@@ -803,14 +802,14 @@ describe("ResourceStore", () => {
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
 
     await writeFile(join(project, ".gitignore"), "draft.txt\n");
-    invalidateProjectIndex(project);
+    invalidateProjectFiles(project);
 
     await expect(
       resources.revalidate(resource, context),
     ).resolves.toBeUndefined();
   });
 
-  it("does not let an indexed symlink promote an ignored in-workspace target", async () => {
+  it("allows a symlink to an ignored regular file inside the workspace", async () => {
     const { project } = await workspace();
     await writeFile(join(project, ".gitignore"), "secret.txt\n");
     await writeFile(join(project, "secret.txt"), "secret\n");
@@ -831,10 +830,30 @@ describe("ResourceStore", () => {
         { ...resourceIdentity(), cwd: project, messages: [] },
         "linked.txt",
       ),
-    ).rejects.toMatchObject({ status: 403 });
+    ).resolves.toMatchObject({ workspacePath: "secret.txt" });
   });
 
-  it("recovers a bare mention when exactly one indexed file carries that name", async () => {
+  it.runIf(process.platform !== "win32")(
+    "refuses to infer uniqueness from incomplete discovery without blocking an exact path",
+    async () => {
+      const { project } = await workspace();
+      await mkdir(join(project, "docs"));
+      await writeFile(join(project, "docs", "report.txt"), "synthetic report");
+      await writeFile(
+        Buffer.concat([Buffer.from(`${project}/`), Buffer.from([255])]),
+        "unrepresentable filename fixture",
+      );
+      const context = { ...resourceIdentity(), cwd: project, messages: [] };
+      await expect(
+        resources.resolve(context, "report.txt"),
+      ).rejects.toMatchObject({ status: 409, matches: ["docs/report.txt"] });
+      await expect(
+        resources.resolve(context, "docs/report.txt"),
+      ).resolves.toMatchObject({ workspacePath: "docs/report.txt" });
+    },
+  );
+
+  it("recovers a bare mention when exactly one discovered file carries that name", async () => {
     const { project } = await workspace();
     await mkdir(join(project, "src"));
     await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
@@ -859,7 +878,7 @@ describe("ResourceStore", () => {
     );
   });
 
-  it("treats a workspace selection as an exact indexed path", async () => {
+  it("treats a workspace selection as an exact filesystem path", async () => {
     const { project } = await workspace();
     const names = [
       "@literal",
@@ -885,7 +904,7 @@ describe("ResourceStore", () => {
     }
   });
 
-  it("does not reinterpret an exact workspace name as citation syntax", async () => {
+  it("keeps an exact workspace filename literal after Git ignore changes", async () => {
     const { project } = await workspace();
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
@@ -908,11 +927,17 @@ describe("ResourceStore", () => {
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
 
     await writeFile(join(project, ".gitignore"), "secret#L12\n");
-    invalidateProjectIndex(project);
+    invalidateProjectFiles(project);
 
-    await expect(resources.revalidate(resource, context)).rejects.toMatchObject(
-      { status: 403 },
-    );
+    await expect(
+      resources.revalidate(resource, context),
+    ).resolves.toBeUndefined();
+    const opened = await resources.openForServing(resource);
+    try {
+      expect(await opened.handle.readFile("utf8")).toBe("selected\n");
+    } finally {
+      await opened.handle.close();
+    }
   });
 
   it("does not recover another basename for a missing exact workspace path", async () => {
@@ -927,7 +952,7 @@ describe("ResourceStore", () => {
         true,
         "kernel.py",
       ),
-    ).rejects.toMatchObject({ status: 403 });
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("refuses to guess between duplicate basenames and offers the candidates", async () => {
@@ -990,7 +1015,7 @@ describe("ResourceStore", () => {
     await git("add", "-A");
     // Warm the index while both files exist.
     expect(
-      (await listProjectDirectory(project)).map((entry) => entry.name),
+      (await listProjectDirectory(project)).entries.map((entry) => entry.name),
     ).toEqual(["gone.txt", "kept.txt"]);
 
     const { rm } = await import("node:fs/promises");
@@ -1011,7 +1036,7 @@ describe("ResourceStore", () => {
     // The failed preview invalidated the cached index; the rescan subtracts
     // the tracked-but-deleted path instead of offering it again.
     expect(
-      (await listProjectDirectory(project)).map((entry) => entry.name),
+      (await listProjectDirectory(project)).entries.map((entry) => entry.name),
     ).toEqual(["kept.txt"]);
   });
 });

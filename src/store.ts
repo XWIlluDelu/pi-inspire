@@ -42,7 +42,7 @@ import {
   ApiError,
   ApiTransportError,
   createApi,
-  type ProjectFileResult,
+  type ProjectFileSearchResult,
 } from "./api";
 import {
   type ActivityMaterializationMode,
@@ -2000,12 +2000,22 @@ export class AppStore {
   removeProjectFile = (path: string): void =>
     this.composer.removeProjectFile(path);
 
-  searchProjectFiles = async (query: string): Promise<ProjectFileResult[]> => {
+  searchProjectFiles = async (
+    query: string,
+  ): Promise<ProjectFileSearchResult> => {
     const sessionId = this.state.sessionId;
-    if (!this.api || !sessionId) return [];
-    const result = await this.api.searchFiles(sessionId, query);
-    return result.files;
+    if (!this.api || !sessionId) return { files: [] };
+    return this.api.searchFiles(
+      sessionId,
+      query,
+      50,
+      undefined,
+      this.state.workspaceShowHidden,
+    );
   };
+
+  setWorkspaceShowHidden = (value: boolean): void =>
+    this.workspace.setShowHidden(value);
 
   resolveNewSessionDefaults = async (
     cwd: string,
@@ -2017,10 +2027,22 @@ export class AppStore {
   searchNewSessionProjectFiles = async (
     cwd: string,
     query: string,
-  ): Promise<ProjectFileResult[]> => {
-    if (!this.api) return [];
-    const result = await this.api.searchNewSessionFiles(cwd, query);
-    return result.files.map((file) => ({ ...file, workspaceCwd: result.cwd }));
+    showHidden = false,
+  ): Promise<ProjectFileSearchResult> => {
+    if (!this.api) return { files: [] };
+    const result = await this.api.searchNewSessionFiles(
+      cwd,
+      query,
+      50,
+      showHidden,
+    );
+    return {
+      ...result,
+      files: result.files.map((file) => ({
+        ...file,
+        workspaceCwd: result.cwd,
+      })),
+    };
   };
 
   loadWorkspaceDirectory = (dir: string): Promise<void> =>

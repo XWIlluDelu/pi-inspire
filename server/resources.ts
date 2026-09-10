@@ -34,9 +34,8 @@ import {
 } from "./image-content.js";
 import { escapesBase } from "./paths.js";
 import {
-  indexedBasenameMatches,
-  invalidateProjectIndex,
-  isIndexedProjectFile,
+  workspaceBasenameMatches,
+  invalidateProjectFiles,
 } from "./project-files.js";
 
 interface ResourceContextIdentity {
@@ -134,7 +133,7 @@ interface ResolvedResource {
    * server shutdown. A separately opened serving handle can still observe a
    * legitimate in-place rewrite of this same filesystem object. */
   anchor?: FileHandle;
-  authority: "embedded" | "workspace" | "index" | "citation";
+  authority: "embedded" | "workspace" | "filesystem" | "citation";
 }
 
 const MAX_HANDLES = 256;
@@ -655,19 +654,18 @@ export class ResourceStore {
       throw requestError("The file reference is not valid", 400);
     }
 
-    // Previewable set: files the transcript references, plus files the
-    // project index contains (the same authority behind @-search and the
-    // workspace explorer). Ignored trees stay out of reach either way
-    // unless the session itself cited them. Citation is the costlier
-    // authority — it scans the whole transcript — so it is consulted
-    // lazily; the cached project index answers the common explorer path.
+    // Workspace access is independent of bounded discovery and Git. Check
+    // lexical containment before touching a path, then canonical containment
+    // after resolution. Explicit citations remain a separate outside-workspace
+    // authority and are loaded only when that authority is needed.
     let cited: Promise<boolean> | null = null;
     const isCited = () =>
       (cited ??= getIndex().then((index) =>
         referencedByIndex(index, context, reference),
       ));
-    const indexed = await isIndexedProjectFile(context.cwd, lexicalPath);
-    if (!indexed && (exactWorkspaceSelection || !(await isCited()))) {
+    const lexicalWithin = relative(resolve(context.cwd), lexicalPath);
+    const lexicalInside = Boolean(lexicalWithin) && !escapesBase(lexicalWithin);
+    if (!lexicalInside && (exactWorkspaceSelection || !(await isCited()))) {
       throw requestError(
         "The file is not part of this session's workspace or transcript",
         403,
@@ -675,23 +673,25 @@ export class ResourceStore {
     }
 
     let path = await realpath(lexicalPath).catch(() => null);
-    // A resolved location the index believed in is gone: rescan, so neither
-    // the explorer nor search keeps offering it.
-    if (path === null && indexed) invalidateProjectIndex(context.cwd);
-    // A bare textual mention is shorthand, not a location claim: recover it
-    // from the index when exactly one indexed file carries that name, and
-    // refuse to guess when several do.
+    if (path === null && lexicalInside) invalidateProjectFiles(context.cwd);
+    // Recover shorthand only when a complete filesystem search proves
+    // uniqueness. A bounded/failed subtree cannot establish absence.
     const name =
       path === null && !exactWorkspaceSelection ? bareName(reference) : null;
-    const matches = name ? await indexedBasenameMatches(context.cwd, name) : [];
-    const recovered = matches.length === 1 ? matches[0]! : null;
-    if (path === null && matches.length > 1) {
+    const search = name
+      ? await workspaceBasenameMatches(context.cwd, name)
+      : { matches: [], truncated: false };
+    const { matches } = search;
+    if (path === null && (matches.length > 1 || search.truncated)) {
       throw requestError(
-        `"${name}" names ${matches.length} files in this workspace`,
+        search.truncated
+          ? `Cannot establish a unique location for "${name}"; use its full workspace path`
+          : `"${name}" names ${matches.length} files in this workspace`,
         409,
         { matches },
       );
     }
+    const recovered = matches.length === 1 ? matches[0]! : null;
     const selectedPath = recovered
       ? resolve(context.cwd, recovered)
       : lexicalPath;
@@ -701,24 +701,15 @@ export class ResourceStore {
       throw requestError("The referenced file was not found", 404);
     }
 
-    // Index authority ends at the workspace boundary: a project symlink
-    // never opens an outside file the way an explicit citation can, and a
-    // recovered name answers with an indexed file only — never on the
-    // strength of a citation that named something else.
+    // A workspace symlink and a recovered shorthand never borrow citation
+    // authority to leave the workspace.
     const workspaceRoot = await realpath(context.cwd).catch(() => null);
     const within =
       workspaceRoot === null ? ".." : relative(workspaceRoot, path);
     const insideWorkspace = !escapesBase(within);
-    const canonicalIndexed =
-      insideWorkspace &&
-      workspaceRoot !== null &&
-      (await isIndexedProjectFile(workspaceRoot, path));
-    // Indexing a symlink authorizes that directory entry, not an ignored or
-    // otherwise unindexed target reached through it. An explicit branch
-    // citation remains an independent authority for the resolved file.
     if (
-      (recovered !== null && !canonicalIndexed) ||
-      (!canonicalIndexed && (exactWorkspaceSelection || !(await isCited())))
+      !insideWorkspace &&
+      (recovered !== null || exactWorkspaceSelection || !(await isCited()))
     ) {
       throw requestError(
         "The file is not part of this session's workspace or transcript",
@@ -759,17 +750,17 @@ export class ResourceStore {
         size: Number(details.size),
         kind: kindFor(mimeType),
       };
-      const authority: ResolvedResource["authority"] = canonicalIndexed
+      const authority: ResolvedResource["authority"] = insideWorkspace
         ? exactWorkspaceSelection
           ? "workspace"
-          : "index"
+          : "filesystem"
         : "citation";
       if (retainHandle) {
         this.remember({
           descriptor,
           selectedPath,
           path,
-          ...(canonicalIndexed && workspaceRoot ? { workspaceRoot } : {}),
+          ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
           fileId: fileIdentity(details),
           anchor,
           authority,
@@ -826,7 +817,7 @@ export class ResourceStore {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         if (resource.workspaceRoot)
-          invalidateProjectIndex(resource.workspaceRoot);
+          invalidateProjectFiles(resource.workspaceRoot);
         throw requestError("The referenced file was not found", 404);
       }
       if (
@@ -922,24 +913,27 @@ export class ResourceStore {
     // embeddedContent revalidates an embedded reference against the same message
     // load from which it reads bytes, avoiding a second full transcript load.
     if (resource.authority === "embedded") return;
-    if (resource.authority === "workspace" || resource.authority === "index") {
+    if (
+      resource.authority === "workspace" ||
+      resource.authority === "filesystem"
+    ) {
       const workspaceRoot = await realpath(context.cwd).catch(() => null);
       const within =
         workspaceRoot && resource.path
           ? relative(workspaceRoot, resource.path)
           : "..";
-      if (workspaceRoot && resource.path && !escapesBase(within)) {
-        // Share the short-lived explorer index, including an in-flight scan.
-        // Ignore-rule changes take effect on expiry or explicit Files refresh;
-        // path, branch, and pinned file-object checks remain per request.
-        if (await isIndexedProjectFile(workspaceRoot, resource.path)) return;
-      }
-      // An exact Files/Changes selection is index-only: reference syntax must
-      // never reinterpret a literal workspace filename as a citation after
-      // index membership is revoked. A textual reference that originally had
-      // both authorities may still retain its independent exact citation.
+      if (
+        workspaceRoot &&
+        workspaceRoot === resource.workspaceRoot &&
+        resource.path &&
+        within &&
+        !escapesBase(within)
+      )
+        return;
+      // Exact selections are literal paths, never reinterpreted as citations.
+      // Serving additionally checks the original pinned filesystem object.
       if (resource.authority === "workspace") {
-        throw requestError("The file is no longer in the workspace index", 403);
+        throw requestError("The file is no longer inside this workspace", 403);
       }
     }
     const index = await this.citationIndex(context);

@@ -200,6 +200,8 @@ pre-existing bounded new-file materialization handling is not broadened into a p
 
 ## Resource and terminal ownership review
 
+ follow-up: [[workbench-implementation]] supersedes the preview-index authority and ignore-rule cache tradeoff below. Only discovery is cached; each content read checks current workspace containment and the pinned object directly. The session/terminal ownership repairs remain in force.
+
 ### Scope and decisions
 
 The review identified three local defects: resource reads followed global Host selection, terminal mutations could write into another project's pane, and VS Code file URIs retained the URL slash before Windows drive letters. It also identified unconditional preview index rebuilds and the unused terminal `replayModeRef`.

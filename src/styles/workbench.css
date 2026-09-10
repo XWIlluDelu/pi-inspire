@@ -249,6 +249,25 @@ body.pane-resizing--vertical .nav {
   overflow: hidden;
 }
 
+.file-search-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+.file-search-controls > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.file-search-controls > .icon-button {
+  flex: 0 0 auto;
+  margin-right: 4px;
+}
+.file-search-controls > .icon-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--bg-inset);
+}
+
 .files-browser__search {
   height: auto;
   box-sizing: border-box;
