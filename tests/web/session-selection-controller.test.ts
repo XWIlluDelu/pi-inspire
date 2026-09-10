@@ -20,6 +20,7 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     sessionId: "visible",
     cwd: "/workspace",
     openingSessionId: null,
+    sessionSelectionPending: false,
     ...initial,
   };
   let selectionRequest = 0;
@@ -43,13 +44,21 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     beginOpening: (sessionId) => {
       const ticket = ++selectionRequest;
       openingOwner = ticket;
-      state = { ...state, openingSessionId: sessionId };
+      state = {
+        ...state,
+        openingSessionId: sessionId,
+        sessionSelectionPending: true,
+      };
       return ticket;
     },
     invalidateOpening: () => {
       selectionRequest += 1;
       openingOwner = null;
-      state = { ...state, openingSessionId: null };
+      state = {
+        ...state,
+        openingSessionId: null,
+        sessionSelectionPending: false,
+      };
     },
     ownsOpening: (ticket, api, generation) =>
       ticket === selectionRequest &&
@@ -59,7 +68,11 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     releaseOpening: (ticket) => {
       if (openingOwner !== ticket) return;
       openingOwner = null;
-      state = { ...state, openingSessionId: null };
+      state = {
+        ...state,
+        openingSessionId: null,
+        sessionSelectionPending: false,
+      };
     },
     applySnapshot,
     ensureSessionVisible,
@@ -95,6 +108,62 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
 }
 
 describe("SessionSelectionController", () => {
+  it.each(["create", "deselect"] as const)(
+    "lets reselecting the visible session supersede a pending %s",
+    async (operation) => {
+      const pending = deferred<ActiveSnapshot>();
+      const reopening = deferred<ActiveSnapshot>();
+      const harness = createHarness();
+      harness.newSession.mockReturnValue(pending.promise);
+      harness.deselectSession.mockReturnValue(pending.promise);
+      harness.openSession.mockReturnValue(reopening.promise);
+
+      const previous =
+        operation === "create"
+          ? harness.controller.create("/workspace")
+          : harness.controller.deselect();
+      expect(harness.state().openingSessionId).toBeNull();
+      expect(harness.state().sessionSelectionPending).toBe(true);
+      const latest = harness.controller.open("visible");
+      expect(harness.openSession).toHaveBeenCalledWith("visible");
+
+      // An older completion must neither publish nor release the newer owner.
+      pending.resolve(snapshot(operation === "create" ? "created" : null));
+      await previous;
+      expect(harness.applySnapshot).not.toHaveBeenCalled();
+      expect(harness.state().openingSessionId).toBe("visible");
+      expect(harness.state().sessionSelectionPending).toBe(true);
+      reopening.resolve(snapshot("visible"));
+      await latest;
+      expect(harness.applySnapshot).toHaveBeenCalledTimes(1);
+      expect(harness.applySnapshot).toHaveBeenCalledWith(snapshot("visible"));
+      expect(harness.state().sessionSelectionPending).toBe(false);
+    },
+  );
+
+  it("keeps reselecting an idle visible session a no-op", async () => {
+    const harness = createHarness();
+
+    await harness.controller.open("visible");
+
+    expect(harness.openSession).not.toHaveBeenCalled();
+    expect(harness.state().sessionSelectionPending).toBe(false);
+  });
+
+  it("does not duplicate an already pending open", async () => {
+    const pending = deferred<ActiveSnapshot>();
+    const harness = createHarness();
+    harness.openSession.mockReturnValue(pending.promise);
+
+    const first = harness.controller.open("other");
+    await harness.controller.open("other");
+    expect(harness.openSession).toHaveBeenCalledTimes(1);
+    expect(harness.state().sessionSelectionPending).toBe(true);
+    pending.resolve(snapshot("other"));
+    await first;
+    expect(harness.state().sessionSelectionPending).toBe(false);
+  });
+
   it("commits only the newest open intent", async () => {
     const first = deferred<ActiveSnapshot>();
     const second = deferred<ActiveSnapshot>();
