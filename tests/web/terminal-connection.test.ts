@@ -109,6 +109,7 @@ function makeReady(
   socket: FakeWebSocket,
   nextInputSequence: number,
   attachedTerminal: TerminalDescriptor = terminal,
+  ownerToken = "owner-token",
 ): void {
   socket.receive(
     JSON.stringify({
@@ -116,7 +117,7 @@ function makeReady(
       terminal: attachedTerminal,
       attachmentId: "attachment-1",
       writable: true,
-      ownerToken: "owner-token",
+      ownerToken,
       nextInputSequence,
       replay: "snapshot",
     }),
@@ -143,6 +144,7 @@ describe("TerminalConnection", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it.each(["ticket", "socket", "attach", "replay", "inactive"] as const)(
@@ -412,42 +414,73 @@ describe("TerminalConnection", () => {
     connection.stop();
   });
 
-  it("resends unacknowledged input when the daemon still expects it", async () => {
-    const api = {
-      terminalAttachTicket: vi
-        .fn()
-        .mockResolvedValue({ ticket: "ticket", expiresAt: "later" }),
-    };
-    const connection = new TerminalConnection(
-      api as never,
-      terminal.id,
-      {
-        dimensions: () => ({ cols: 80, rows: 24 }),
-        data: vi.fn(),
-        control: vi.fn(),
-        status: vi.fn(),
-        error: vi.fn(),
-      },
-      "client-1",
-    );
+  it.each([
+    { ownerToken: "owner-token", storageAvailable: true, shouldReplay: true },
+    {
+      ownerToken: "replacement-token",
+      storageAvailable: true,
+      shouldReplay: false,
+    },
+    { ownerToken: "owner-token", storageAvailable: false, shouldReplay: true },
+    {
+      ownerToken: "replacement-token",
+      storageAvailable: false,
+      shouldReplay: false,
+    },
+  ])(
+    "scopes pending input to $ownerToken with storage=$storageAvailable",
+    async ({ ownerToken, storageAvailable, shouldReplay }) => {
+      if (!storageAvailable) {
+        vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+          throw new Error("Storage is unavailable");
+        });
+        vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+          throw new Error("Storage is unavailable");
+        });
+      }
+      const api = {
+        terminalAttachTicket: vi
+          .fn()
+          .mockResolvedValue({ ticket: "ticket", expiresAt: "later" }),
+      };
+      const connection = new TerminalConnection(
+        api as never,
+        terminal.id,
+        {
+          dimensions: () => ({ cols: 80, rows: 24 }),
+          data: vi.fn(),
+          control: vi.fn(),
+          status: vi.fn(),
+          error: vi.fn(),
+        },
+        "client-1",
+      );
 
-    connection.start();
-    await nextTurn();
-    const first = FakeWebSocket.sockets[0]!;
-    first.open();
-    makeReady(first, 1);
-    connection.sendInput("only once\r");
-    first.disconnect();
+      connection.start();
+      await nextTurn();
+      const first = FakeWebSocket.sockets[0]!;
+      first.open();
+      makeReady(first, 1);
+      connection.sendInput("only once\r");
+      first.disconnect();
 
-    await vi.advanceTimersByTimeAsync(400);
-    await nextTurn();
-    const second = FakeWebSocket.sockets[1]!;
-    second.open();
-    makeReady(second, 1);
-    const resent = second.sent.find((value) => typeof value !== "string");
-    const decoded = decodeTerminalInputFrame(resent as Uint8Array);
-    expect(decoded.sequence).toBe(1);
-    expect(new TextDecoder().decode(decoded.data)).toBe("only once\r");
-    connection.stop();
-  });
+      await vi.advanceTimersByTimeAsync(400);
+      await nextTurn();
+      const second = FakeWebSocket.sockets[1]!;
+      second.open();
+      makeReady(second, 1, terminal, ownerToken);
+      const resent = second.sent.filter((value) => typeof value !== "string");
+      expect(resent).toHaveLength(shouldReplay ? 1 : 0);
+      if (shouldReplay) {
+        const decoded = decodeTerminalInputFrame(resent[0] as Uint8Array);
+        expect(decoded.sequence).toBe(1);
+        expect(new TextDecoder().decode(decoded.data)).toBe("only once\r");
+      }
+      expect(connection.sendInput("new input\r")).toBe(true);
+      expect(
+        decodeTerminalInputFrame(second.sent.at(-1) as Uint8Array).sequence,
+      ).toBe(shouldReplay ? 2 : 1);
+      connection.stop();
+    },
+  );
 });
