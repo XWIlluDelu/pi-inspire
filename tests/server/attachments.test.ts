@@ -198,7 +198,7 @@ describe("attachment consumption lifecycle", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "revalidates project-index authority after a selected symlink is retargeted",
+    "uses filesystem containment, not Git ignore rules, for project references",
     async () => {
       const project = join(root, "project");
       await mkdir(project);
@@ -220,7 +220,16 @@ describe("attachment consumption lifecycle", () => {
       await symlink("secret.txt", join(project, "selected.txt"));
       await expect(
         resolveProjectFiles(project, ["selected.txt"]),
-      ).rejects.toThrow(/no longer in the project index/);
+      ).resolves.toEqual([join(project, "secret.txt")]);
+      await writeFile(join(root, "outside.txt"), "outside\n");
+      await rm(join(project, "selected.txt"));
+      await symlink(join(root, "outside.txt"), join(project, "selected.txt"));
+      await expect(
+        resolveProjectFiles(project, ["selected.txt"]),
+      ).rejects.toThrow(/outside the active project/);
+      await expect(resolveProjectFiles(project, ["."])).rejects.toThrow(
+        /not a regular file/,
+      );
       await expect(
         resolveProjectFiles(project, ["tracked.txt"]),
       ).resolves.toEqual([join(project, "tracked.txt")]);

@@ -56,6 +56,11 @@ import type {
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import { withTransportMeasure } from "./transport-performance";
 
+export interface ProjectFileSearchResult {
+  files: ProjectFileResult[];
+  truncated?: boolean;
+}
+
 export interface ProjectFileResult {
   path: string;
   name: string;
@@ -518,10 +523,15 @@ export function createApi(token: string | null = null) {
         token,
         `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`,
       ),
-    searchNewSessionFiles: (cwd: string, query: string, limit = 50) =>
-      request<{ cwd: string; files: ProjectFileResult[] }>(
+    searchNewSessionFiles: (
+      cwd: string,
+      query: string,
+      limit = 50,
+      showHidden = false,
+    ) =>
+      request<ProjectFileSearchResult & { cwd: string }>(
         token,
-        `/api/new-session/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/api/new-session/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
       ),
     renameSession: (sessionId: string, name: string) =>
       post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
@@ -652,20 +662,25 @@ export function createApi(token: string | null = null) {
       query: string,
       limit = 50,
       signal?: AbortSignal,
+      showHidden = false,
     ) =>
-      request<{ files: ProjectFileResult[] }>(
+      request<ProjectFileSearchResult>(
         token,
-        `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
         { signal },
       ),
     listFiles: (
       sessionId: string,
       dir: string,
-      options: { signal?: AbortSignal; refresh?: boolean } = {},
+      options: {
+        signal?: AbortSignal;
+        refresh?: boolean;
+        showHidden?: boolean;
+      } = {},
     ) =>
-      request<{ entries: ProjectDirEntry[] }>(
+      request<{ entries: ProjectDirEntry[]; truncated?: boolean }>(
         token,
-        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}${options.refresh ? "&refresh=1" : ""}`,
+        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}${options.refresh ? "&refresh=1" : ""}${options.showHidden ? "&showHidden=1" : ""}`,
         { signal: options.signal },
       ),
     gitStatus: (sessionId: string, signal?: AbortSignal) =>

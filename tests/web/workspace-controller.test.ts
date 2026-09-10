@@ -44,6 +44,54 @@ function createHarness() {
 }
 
 describe("WorkspaceController", () => {
+  it("retires directory and search observations when hidden visibility changes", async () => {
+    const harness = createHarness();
+    const oldDirectory = deferred<{
+      entries: Array<{ name: string; type: "file" }>;
+    }>();
+    const oldSearch = deferred<{
+      files: Array<{ name: string; path: string }>;
+    }>();
+    harness.listFiles
+      .mockReturnValueOnce(oldDirectory.promise)
+      .mockResolvedValue({
+        entries: [{ name: ".env", type: "file" }],
+        truncated: true,
+      });
+    harness.searchFiles
+      .mockReturnValueOnce(oldSearch.promise)
+      .mockResolvedValue({
+        files: [{ name: ".env", path: ".env" }],
+        truncated: true,
+      });
+    const first = harness.controller.loadDirectory("");
+    harness.controller.setQuery("env");
+    harness.controller.setShowHidden(true);
+    await vi.waitFor(() =>
+      expect(harness.state().workspaceMatches[0]?.path).toBe(".env"),
+    );
+    expect(harness.listFiles.mock.lastCall?.[2]).toMatchObject({
+      showHidden: true,
+    });
+    expect(harness.searchFiles.mock.lastCall?.[4]).toBe(true);
+    oldDirectory.resolve({ entries: [{ name: "stale", type: "file" }] });
+    oldSearch.resolve({ files: [{ name: "stale", path: "stale" }] });
+    await first;
+    expect(harness.state()).toMatchObject({
+      workspaceShowHidden: true,
+      workspaceTruncatedDirs: { "": true },
+      workspaceSearchTruncated: true,
+      workspaceLevels: { "": [{ name: ".env", type: "file" }] },
+      workspaceMatches: [{ name: ".env", path: ".env" }],
+    });
+    const other = harness.controller.changeOwner("/other");
+    harness.patch({ sessionId: "s2", cwd: "/other", ...other });
+    expect(harness.state().workspaceShowHidden).toBe(false);
+    expect(harness.controller.changeOwner("/project").workspaceShowHidden).toBe(
+      true,
+    );
+  });
+
   it("shares and reuses one directory projection", async () => {
     const harness = createHarness();
     harness.listFiles.mockResolvedValue({
