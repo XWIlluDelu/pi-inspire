@@ -100,6 +100,7 @@ export const Welcome = memo(function Welcome({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [browsing, setBrowsing] = useState(false);
@@ -272,13 +273,18 @@ export const Welcome = memo(function Welcome({
   const searchProjectFiles = useCallback(
     (query: string) =>
       effectiveDirectory
-        ? store.searchNewSessionProjectFiles(effectiveDirectory, query)
-        : Promise.resolve([]),
-    [effectiveDirectory],
+        ? store.searchNewSessionProjectFiles(
+            effectiveDirectory,
+            query,
+            showHiddenFiles,
+          )
+        : Promise.resolve({ files: [] }),
+    [effectiveDirectory, showHiddenFiles],
   );
 
   const changeDirectory = (value: string) => {
     setDirectory(value);
+    setShowHiddenFiles(false);
     setProjectFiles([]);
     setProjectFileRoot(null);
     setPickerOpen(false);
@@ -410,6 +416,8 @@ export const Welcome = memo(function Welcome({
           includeNativeCommands={false}
           completionDisabled={starting}
           completionScope={`new-session:${effectiveDirectory}`}
+          showHiddenFiles={showHiddenFiles}
+          onShowHiddenFilesChange={setShowHiddenFiles}
           searchProjectFiles={
             effectiveDirectory ? searchProjectFiles : undefined
           }
@@ -561,6 +569,8 @@ export const Welcome = memo(function Welcome({
         {pickerOpen && effectiveDirectory ? (
           <ProjectFilePicker
             scope={effectiveDirectory}
+            showHidden={showHiddenFiles}
+            onShowHiddenChange={setShowHiddenFiles}
             selected={projectFiles}
             disabled={starting}
             search={searchProjectFiles}

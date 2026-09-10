@@ -90,6 +90,72 @@ describe("composer-history artifacts", () => {
 });
 
 describe("prompt project-file revalidation", () => {
+  it("accepts hidden and newly ignored project files at delivery and history recall", async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
+    );
+    roots.push(root);
+    await mkdir(join(root, ".settings"));
+    const selected = join(root, ".settings", "config.txt");
+    await writeFile(selected, "synthetic configuration\n");
+    const expected = await resolveProjectFiles(root, [selected]);
+    await writeFile(join(root, ".gitignore"), ".settings/\n");
+    await mkdir(join(root, ".git"));
+    await writeFile(join(root, ".git", "index"), "invalid Git fixture");
+    await expect(
+      revalidateProjectFiles(root, [selected], expected),
+    ).resolves.toEqual(expected);
+    const slot = {
+      cwd: root,
+      viewId: "view-a",
+      navigationLease: null,
+      projection: {
+        incarnation: "incarnation-a",
+        leafId: null,
+        viewMessages: () => [
+          {
+            role: "user",
+            content: addAttachmentContext("Use", [], expected),
+            __inspireMessageIndex: 0,
+          },
+        ],
+      },
+    } as unknown as RuntimeSlot;
+    await expect(
+      resolveComposerHistoryArtifacts(
+        slot,
+        {
+          sessionId: "session-a",
+          message: "Use",
+          historyArtifacts: {
+            viewId: "view-a",
+            incarnation: "incarnation-a",
+            effectiveLeafId: null,
+            imageReferences: [],
+            fileReferences: ["pi-file://0/0"],
+          },
+        },
+        { ownsPromptFile: () => false },
+      ),
+    ).resolves.toMatchObject({ projectFiles: expected });
+  });
+
+  it("still refuses an in-workspace symlink retarget between selection and delivery", async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
+    );
+    roots.push(root);
+    for (const name of ["first.txt", "second.txt"])
+      await writeFile(join(root, name), name);
+    await symlink(join(root, "first.txt"), join(root, "selected.txt"));
+    const expected = await resolveProjectFiles(root, ["selected.txt"]);
+    await rm(join(root, "selected.txt"));
+    await symlink(join(root, "second.txt"), join(root, "selected.txt"));
+    await expect(
+      revalidateProjectFiles(root, ["selected.txt"], expected),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("rejects a selected path replaced by an outside symlink before delivery", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
     roots.push(root);

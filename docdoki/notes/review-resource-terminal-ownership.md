@@ -10,9 +10,10 @@ Global Host selection is not permission to resolve another browser's resource. `
 uses the requested open slot; context reconciliation and lazy message reads retain slot-registration,
 view and revision checks without selecting it globally.
 
-Content requests currently share the project-index discovery cache and in-flight scans.
-Branch, canonical-path and pinned-object checks still belong to each addressed read; a
-missing served file invalidates discovery. Current contract: [[resource-preview]].
+Discovery and read authorization are separate. The former Git preview-index and ignore-rule expiry
+policy was superseded by [[filesystem-git-separation]]: discovery may be cached, but content reads
+check current workspace containment and the pinned object directly. [[resource-preview]] is the
+current contract.
 
 ## Partial terminal receipts are not complete catalogs
 

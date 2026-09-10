@@ -342,6 +342,81 @@ describe("local host API", () => {
     }
   });
 
+  it("keeps file visibility and resource authority independent of Git through the HTTP API", async () => {
+    await mkdir(join(temporary, "dist"));
+    await mkdir(join(temporary, "empty"));
+    await mkdir(join(temporary, ".git"));
+    await writeFile(join(temporary, ".git", "index"), "corrupt Git fixture");
+    await writeFile(join(temporary, ".gitignore"), "dist/\n");
+    await writeFile(join(temporary, "dist", "report.md"), "# Ignored output\n");
+    await writeFile(join(temporary, ".env"), "SYNTHETIC_CONFIG=true\n");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    const listing = await request(application.server)
+      .get("/api/files/list")
+      .query({ sessionId })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(listing.body).toMatchObject({
+      entries: [
+        { name: "dist", type: "dir" },
+        { name: "empty", type: "dir" },
+      ],
+      truncated: false,
+    });
+    const hidden = await request(application.server)
+      .get("/api/files/list")
+      .query({ sessionId, showHidden: "1" })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(hidden.body.entries).toContainEqual({ name: ".env", type: "file" });
+    for (const endpoint of ["/api/files", "/api/new-session/files"]) {
+      const query =
+        endpoint === "/api/files" ? { sessionId } : { cwd: temporary };
+      const visible = await request(application.server)
+        .get(endpoint)
+        .query({ ...query, q: "report" })
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(visible.body.files).toEqual([
+        { name: "report.md", path: "dist/report.md" },
+      ]);
+      const excluded = await request(application.server)
+        .get(endpoint)
+        .query({ ...query, q: ".env" })
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(excluded.body.files).toEqual([]);
+      const included = await request(application.server)
+        .get(endpoint)
+        .query({ ...query, q: ".env", showHidden: "1" })
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(included.body.files).toEqual([{ name: ".env", path: ".env" }]);
+      await request(application.server)
+        .get(endpoint)
+        .query({ ...query, showHidden: "yes" })
+        .set("Authorization", `Bearer ${token}`)
+        .expect(400);
+    }
+    // Visibility is not access control, including when the file was never searched.
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: ".env", workspacePath: ".env" })
+      .expect(200);
+    const downloaded = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content`)
+      .query({ sessionId, download: "1" })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(downloaded.text).toBe("SYNTHETIC_CONFIG=true\n");
+  });
+
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
@@ -368,6 +443,7 @@ describe("local host API", () => {
       .expect(200);
     expect(files.body).toEqual({
       cwd: temporary,
+      truncated: false,
       files: [{ path: "app.ts", name: "app.ts" }],
     });
 
@@ -2592,7 +2668,7 @@ describe("local host API", () => {
       .expect(409);
   });
 
-  it("serves transcript-referenced and workspace-indexed files, nothing else", async () => {
+  it("serves workspace files independently of discovery while keeping session and outside-path boundaries", async () => {
     const quotedName =
       process.platform === "win32" ? "quoted'(x).md" : "quoted'(*).md";
     await writeFile(join(temporary, "preview.md"), "# Host preview\n");
@@ -2653,7 +2729,7 @@ describe("local host API", () => {
       results: [
         { reference: "preview.md", availability: "available" },
         { reference: "missing.md", availability: "missing" },
-        { reference: "node_modules/hidden.txt", availability: "unavailable" },
+        { reference: "node_modules/hidden.txt", availability: "available" },
       ],
     });
 
@@ -2746,16 +2822,21 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "node_modules/mentioned.txt" })
       .expect(200);
-    // Existing inside the cwd is not enough: neither indexed nor mentioned.
+    // Workspace containment, not Git/search membership, authorizes this file.
     await request(application.server)
       .post("/api/resources/resolve")
       .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "node_modules/hidden.txt" })
-      .expect(403);
+      .expect(200);
     await request(application.server)
       .post("/api/resources/resolve")
       .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "unmentioned.txt" })
+      .expect(404);
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "../outside.txt" })
       .expect(403);
 
     // A second browser selecting another session does not revoke this

@@ -1,309 +1,224 @@
-import { opendir, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { TextDecoder } from "node:util";
+import { opendir, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { ProjectDirEntry } from "../shared/contracts.js";
-import { GIT_CONFIG_ARGS, GitInspectionError, spawnGit } from "./git-runner.js";
+import { listNativeHiddenNames } from "./host-hidden-dirs.js";
 import { escapesBase } from "./paths.js";
+import { requestError } from "./request-error.js";
+import { TextDecoder } from "node:util";
 
-const ignored = new Set([
-  ".git",
-  "node_modules",
-  "dist",
-  "coverage",
-  ".cache",
-  ".pi-subagents",
-]);
+const pathDecoder = new TextDecoder("utf-8", { fatal: true });
+
 const CACHE_MS = 5_000;
-const MAX_PROJECT_INDEX_FILES = 20_000;
-const MAX_PROJECT_INDEX_DIRECTORIES = 10_000;
-const PROJECT_INDEX_WALK_MS = 5_000;
-const MAX_PROJECT_INDEX_CACHE_ENTRIES = 8;
-const MAX_PROJECT_INDEX_CACHE_ALIASES = 32;
+const MAX_SEARCH_FILES = 20_000;
+const MAX_SEARCH_DIRECTORIES = 10_000;
+// Allow native Windows/macOS hidden-attribute lookups in small workspaces;
+// this is a cooperative scan budget, not a deadline on a filesystem read.
+const SEARCH_WALK_MS = 5_000;
+const MAX_DIRECTORY_ENTRIES = 10_000;
+const MAX_CACHE_ENTRIES = 8;
 
-interface ProjectIndexCache {
-  expiresAt: number;
-  paths: Promise<string[]>;
-}
-
-const cache = new Map<string, ProjectIndexCache>();
-const cacheAliases = new Map<string, string>();
-
-interface ProjectFileResult {
+interface FileMatch {
   path: string;
   name: string;
 }
-
-function validRelativePath(path: string): boolean {
-  return Boolean(path) && !isAbsolute(path) && !escapesBase(path);
+interface FileScan {
+  paths: string[];
+  truncated: boolean;
 }
-
-/** Project-index paths use Git's platform-independent forward-slash form.
- * Convert only native Windows separators: a backslash is a legal filename
- * character on POSIX and must not be reinterpreted there. */
-function projectIndexPath(path: string): string {
-  return sep === "\\" ? path.split(sep).join("/") : path;
+interface SearchCache {
+  expiresAt: number;
+  scan: Promise<FileScan>;
 }
+const cache = new Map<string, SearchCache>();
 
-async function gitPaths(cwd: string, args: string[]): Promise<string[]> {
-  const { stdout } = await spawnGit([...GIT_CONFIG_ARGS, "-C", cwd, ...args], {
-    stdoutLimit: 4 * 1024 * 1024,
-  });
-  // Git -z emits raw pathname bytes. Node strings cannot represent arbitrary
-  // POSIX byte names without replacement collisions, so reject such an index
-  // instead of granting two byte-distinct files one browser identity.
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const paths: string[] = [];
-  let start = 0;
-  try {
-    for (let index = 0; index <= stdout.length; index += 1) {
-      if (index < stdout.length && stdout[index] !== 0) continue;
-      if (index > start) {
-        const path = decoder.decode(stdout.subarray(start, index));
-        if (validRelativePath(path)) paths.push(projectIndexPath(path));
-      }
-      start = index + 1;
+/** Discovery only. Neither hidden visibility nor inclusion in these bounded
+ * results grants or revokes access to a file. Git is never invoked here. */
+export async function listProjectDirectory(
+  cwd: string,
+  dir = "",
+  showHidden = false,
+): Promise<{ entries: ProjectDirEntry[]; truncated: boolean }> {
+  if (isAbsolute(dir) || escapesBase(dir) || dir.split("/").includes(".."))
+    throw requestError("Directory must stay inside the project", 400);
+  const root = await realpath(cwd);
+  const requested = resolve(root, dir);
+  if (escapesBase(relative(root, requested)))
+    throw requestError("Directory must stay inside the project", 400);
+  const path = await realpath(requested);
+  if (escapesBase(relative(root, path)))
+    throw requestError("Directory is outside the project", 403);
+  const before = await stat(path, { bigint: true });
+  if (!before.isDirectory()) throw requestError("Not a directory", 400);
+  const hidden = showHidden
+    ? new Set<string>()
+    : await listNativeHiddenNames(path);
+  const entries: ProjectDirEntry[] = [];
+  let inspected = 0;
+  let truncated = false;
+  // Latin-1 preserves raw filename bytes bijectively; fatal UTF-8 decoding
+  // avoids replacement-character collisions between distinct POSIX names.
+  for await (const entry of await opendir(path, { encoding: "latin1" })) {
+    if (++inspected > MAX_DIRECTORY_ENTRIES) {
+      truncated = true;
+      break;
     }
-  } catch {
-    throw new Error("Git reported a project path that is not valid UTF-8");
-  }
-  return paths;
-}
-
-async function fromGit(cwd: string): Promise<string[]> {
-  const [listed, deleted] = await Promise.all([
-    gitPaths(cwd, ["ls-files", "-co", "--exclude-standard", "-z"]),
-    // A tracked file stays listed after its worktree copy is removed. Without
-    // subtracting those, the explorer and search keep offering paths whose
-    // preview can only 404.
-    gitPaths(cwd, ["ls-files", "-d", "-z"]),
-  ]);
-  if (deleted.length === 0) return listed;
-  const gone = new Set(deleted);
-  return listed.filter((path) => !gone.has(path));
-}
-
-/** Whether a directory is definitely outside any git work tree (or the host
- * has no git at all). Only then may the filesystem walker run: an
- * operational git failure — timeout, output over the buffer cap — must fail
- * closed instead of widening what the explorer and preview authority see. */
-async function isNonGitDirectory(cwd: string): Promise<boolean> {
-  try {
-    const result = await spawnGit(
-      [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--is-inside-work-tree"],
-      { stdoutLimit: 64 * 1024, acceptedExitCodes: [0, 128] },
-    );
-    if (result.code === 0) {
-      const value = result.stdout.toString("utf8").trim();
-      if (value === "true") return false;
-      if (value === "false") return true;
-      // A successful but incompatible response cannot authorize the wider
-      // filesystem fallback. Let the original index failure remain visible.
-      return false;
-    }
-    return /not a git repository|cannot change to|no such file or directory/i.test(
-      result.stderr.toString("utf8"),
-    );
-  } catch (error) {
-    if (
-      error instanceof GitInspectionError &&
-      error.message === "Git is not available on this host"
-    )
-      return true;
-    return false;
-  }
-}
-
-/** Non-git walker. Without .gitignore semantics available, hidden entries
- * stay out wholesale — they are where credentials live (.env, .ssh, …). */
-async function fromFilesystem(cwd: string): Promise<string[]> {
-  const values: string[] = [];
-  const pending = [cwd];
-  const deadline = Date.now() + PROJECT_INDEX_WALK_MS;
-  let directories = 0;
-  while (
-    pending.length > 0 &&
-    values.length < MAX_PROJECT_INDEX_FILES &&
-    directories < MAX_PROJECT_INDEX_DIRECTORIES &&
-    Date.now() < deadline
-  ) {
-    const directory = pending.pop()!;
-    directories += 1;
-    let entries;
+    let name: string;
     try {
-      entries = await opendir(directory);
-    } catch (error) {
-      if (directory === cwd) throw error;
+      name = pathDecoder.decode(Buffer.from(entry.name, "latin1"));
+    } catch {
+      truncated = true;
       continue;
     }
-    for await (const entry of entries) {
-      if (Date.now() >= deadline) break;
-      if (
-        entry.isSymbolicLink() ||
-        ignored.has(entry.name) ||
-        entry.name.startsWith(".")
-      )
-        continue;
-      const absolute = join(directory, entry.name);
-      if (
-        entry.isDirectory() &&
-        directories + pending.length < MAX_PROJECT_INDEX_DIRECTORIES
-      )
-        pending.push(absolute);
-      else if (entry.isFile())
-        values.push(projectIndexPath(relative(cwd, absolute)));
-      if (values.length >= MAX_PROJECT_INDEX_FILES) break;
+    if (!showHidden && (name.startsWith(".") || hidden.has(name))) continue;
+    if (entry.isDirectory()) entries.push({ name, type: "dir" });
+    else if (entry.isFile()) entries.push({ name, type: "file" });
+    else if (entry.isSymbolicLink()) {
+      // Links are real filesystem entries, but never expose an outside target.
+      const target = await realpath(join(path, name)).catch(() => null);
+      if (!target || escapesBase(relative(root, target))) continue;
+      const details = await stat(target).catch(() => null);
+      if (details?.isDirectory() || details?.isFile())
+        entries.push({
+          name,
+          type: details.isDirectory() ? "dir" : "file",
+        });
     }
   }
-  return values.sort((left, right) => left.localeCompare(right));
+  const [afterPath, after, currentRoot] = await Promise.all([
+    realpath(requested),
+    stat(path, { bigint: true }),
+    realpath(cwd),
+  ]);
+  if (
+    currentRoot !== root ||
+    afterPath !== path ||
+    before.dev !== after.dev ||
+    before.ino !== after.ino
+  )
+    throw requestError("The directory changed while it was being read", 409);
+  entries.sort((a, b) =>
+    a.type === b.type
+      ? a.name.localeCompare(b.name)
+      : a.type === "dir"
+        ? -1
+        : 1,
+  );
+  return { entries, truncated };
 }
 
-function removeCacheEntry(root: string): void {
-  cache.delete(root);
-  for (const [alias, target] of cacheAliases) {
-    if (target === root) cacheAliases.delete(alias);
+async function scanFilesystem(
+  root: string,
+  showHidden: boolean,
+): Promise<FileScan> {
+  const paths: string[] = [];
+  const pending = [""];
+  const visited = new Set<string>();
+  const deadline = Date.now() + SEARCH_WALK_MS;
+  let truncated = false;
+  for (let index = 0; index < pending.length; index++) {
+    if (
+      Date.now() >= deadline ||
+      visited.size >= MAX_SEARCH_DIRECTORIES ||
+      paths.length >= MAX_SEARCH_FILES
+    ) {
+      truncated = true;
+      break;
+    }
+    const dir = pending[index]!;
+    try {
+      const canonical = await realpath(resolve(root, dir));
+      if (escapesBase(relative(root, canonical))) {
+        truncated = true;
+        continue;
+      }
+      if (visited.has(canonical)) continue; // Directory symlink cycles/aliases.
+      visited.add(canonical);
+      const level = await listProjectDirectory(root, dir, showHidden);
+      truncated ||= level.truncated;
+      for (const entry of level.entries) {
+        const path = dir ? `${dir}/${entry.name}` : entry.name;
+        if (entry.type === "dir") {
+          if (pending.length < MAX_SEARCH_DIRECTORIES) pending.push(path);
+          else truncated = true;
+        } else if (paths.length < MAX_SEARCH_FILES) paths.push(path);
+        else truncated = true;
+      }
+    } catch (error) {
+      if (dir === "") throw error;
+      // An unreadable/racing subtree is not evidence of a complete search.
+      truncated = true;
+    }
   }
+  return { paths, truncated };
 }
 
-function rememberCacheAlias(alias: string, root: string): void {
-  cacheAliases.delete(alias);
-  cacheAliases.set(alias, root);
-  while (cacheAliases.size > MAX_PROJECT_INDEX_CACHE_ALIASES) {
-    const oldest = cacheAliases.keys().next().value as string | undefined;
-    if (!oldest) break;
-    cacheAliases.delete(oldest);
-  }
-}
-
-async function projectPaths(cwd: string): Promise<string[]> {
-  const alias = resolve(cwd);
-  const root = await realpath(alias);
-  const existing = cache.get(root);
+async function projectPaths(
+  cwd: string,
+  showHidden: boolean,
+): Promise<FileScan> {
+  const root = await realpath(cwd);
+  const key = JSON.stringify([root, showHidden]);
+  const existing = cache.get(key);
   if (existing && existing.expiresAt > Date.now()) {
-    rememberCacheAlias(alias, root);
-    rememberCacheAlias(root, root);
-    // Map insertion order is the LRU order.
-    cache.delete(root);
-    cache.set(root, existing);
-    return existing.paths;
+    cache.delete(key);
+    cache.set(key, existing);
+    return existing.scan;
   }
-  if (existing) removeCacheEntry(root);
-  rememberCacheAlias(alias, root);
-  rememberCacheAlias(root, root);
-
-  const paths = fromGit(root)
-    .then((values) => values.slice(0, MAX_PROJECT_INDEX_FILES))
-    .catch(async (error) => {
-      if (await isNonGitDirectory(root)) return fromFilesystem(root);
-      throw error;
-    });
-  // Keep one in-flight build shareable, then start the freshness window only
-  // when its result is usable. A slow scan must not expire while it runs.
-  const entry = { expiresAt: Number.POSITIVE_INFINITY, paths };
-  cache.set(root, entry);
-  void paths.then(
+  const entry: SearchCache = {
+    expiresAt: Number.POSITIVE_INFINITY,
+    scan: scanFilesystem(root, showHidden),
+  };
+  cache.set(key, entry);
+  void entry.scan.then(
     () => {
-      if (cache.get(root) === entry) entry.expiresAt = Date.now() + CACHE_MS;
+      if (cache.get(key) === entry) entry.expiresAt = Date.now() + CACHE_MS;
     },
     () => {
-      if (cache.get(root) === entry) removeCacheEntry(root);
+      if (cache.get(key) === entry) cache.delete(key);
     },
   );
-  while (cache.size > MAX_PROJECT_INDEX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next().value as string | undefined;
-    if (!oldest) break;
-    removeCacheEntry(oldest);
-  }
-  return paths;
+  while (cache.size > MAX_CACHE_ENTRIES)
+    cache.delete(cache.keys().next().value!);
+  return entry.scan;
 }
 
 export async function searchProjectFiles(
   cwd: string,
   query = "",
   limit = 50,
-): Promise<ProjectFileResult[]> {
+  showHidden = false,
+): Promise<{ files: FileMatch[]; truncated: boolean }> {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return (await projectPaths(cwd))
-    .filter((path) => words.every((word) => path.toLowerCase().includes(word)))
-    .slice(0, Math.min(100, Math.max(1, limit)))
-    .map((path) => ({ path, name: basename(path) }));
+  const scan = await projectPaths(cwd, showHidden);
+  const matches = scan.paths.filter((path) =>
+    words.every((word) => path.toLowerCase().includes(word)),
+  );
+  const count = Math.min(100, Math.max(1, limit));
+  return {
+    files: matches
+      .slice(0, count)
+      .map((path) => ({ path, name: basename(path) })),
+    truncated: scan.truncated || matches.length > count,
+  };
 }
 
-/** One directory level derived from a flat cwd-relative path list: no
- * filesystem resolution happens against the requested dir, so the explorer
- * can only ever surface what the project index already contains. */
-export function directoryEntries(
-  paths: string[],
-  dir: string,
-): ProjectDirEntry[] {
-  const prefix = dir ? `${dir.replace(/\/+$/, "")}/` : "";
-  const seen = new Map<string, ProjectDirEntry["type"]>();
-  for (const path of paths) {
-    if (!path.startsWith(prefix)) continue;
-    const rest = path.slice(prefix.length);
-    if (!rest) continue;
-    const slash = rest.indexOf("/");
-    if (slash === -1) seen.set(rest, "file");
-    else if (!seen.has(rest.slice(0, slash)))
-      seen.set(rest.slice(0, slash), "dir");
-  }
-  return [...seen.entries()]
-    .map(([name, type]) => ({ name, type }))
-    .sort((a, b) =>
-      a.type === b.type
-        ? a.name.localeCompare(b.name)
-        : a.type === "dir"
-          ? -1
-          : 1,
-    );
-}
-
-export async function listProjectDirectory(
-  cwd: string,
-  dir = "",
-): Promise<ProjectDirEntry[]> {
-  return directoryEntries(await projectPaths(cwd), dir);
-}
-
-/** Whether an absolute path names a file the project index contains. The
- * index — not mere cwd containment — is the authority, so ignored trees
- * (node_modules, .git, …) stay out of reach. */
-export async function isIndexedProjectFile(
-  cwd: string,
-  absolutePath: string,
-): Promise<boolean> {
-  const relativePath = relative(cwd, absolutePath);
-  if (!relativePath || escapesBase(relativePath)) return false;
-  return (await projectPaths(cwd)).includes(projectIndexPath(relativePath));
-}
-
-/** Indexed files whose basename matches, as cwd-relative paths. This is the
- * only recovery route for a bare textual reference, so it stays inside the
- * project index and never searches the filesystem. */
-export async function indexedBasenameMatches(
+/** Bare-name recovery is bounded discovery, not authority. An incomplete scan
+ * can never prove that a name is unique. Hidden files remain eligible here:
+ * an explicit textual reference is not controlled by a browser visibility toggle. */
+export async function workspaceBasenameMatches(
   cwd: string,
   name: string,
-  limit = 12,
-): Promise<string[]> {
-  const matches: string[] = [];
-  for (const path of await projectPaths(cwd)) {
-    if (basename(path) !== name) continue;
-    matches.push(path);
-    if (matches.length >= limit) break;
-  }
-  return matches;
+): Promise<{ matches: string[]; truncated: boolean }> {
+  const scan = await projectPaths(cwd, true);
+  const matches = scan.paths.filter((path) => basename(path) === name);
+  return {
+    matches: matches.slice(0, 12),
+    truncated: scan.truncated || matches.length > 12,
+  };
 }
 
-/** Drop cached index authority before a stale-sensitive operation rescans. */
-export function invalidateProjectIndex(cwd: string): void {
-  const alias = resolve(cwd);
-  const root = cacheAliases.get(alias);
-  if (root || cache.has(alias)) {
-    removeCacheEntry(root ?? alias);
-    return;
-  }
-  // A bounded alias map may have forgotten a symlink spelling for an active
-  // canonical cache entry. Invalidation is an authority refresh boundary, so
-  // an unknown spelling drops every small cache rather than risking staleness.
+/** Invalidate bounded discovery, never access authority. Small global eviction
+ * also covers cwd aliases without retaining another path-identity registry. */
+export function invalidateProjectFiles(_cwd: string): void {
   cache.clear();
-  cacheAliases.clear();
 }

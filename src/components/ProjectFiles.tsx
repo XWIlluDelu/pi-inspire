@@ -1,6 +1,7 @@
 import { FolderSearch, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { ProjectFileResult } from "../api";
+import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { rankProjectFiles } from "../composer-completion";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
@@ -38,6 +39,8 @@ export function ProjectFileChips({
 
 export function ProjectFilePicker({
   scope,
+  showHidden,
+  onShowHiddenChange,
   selected,
   disabled = false,
   search,
@@ -45,13 +48,16 @@ export function ProjectFilePicker({
   onClose,
 }: {
   scope: string;
+  showHidden: boolean;
+  onShowHiddenChange: (value: boolean) => void;
   selected: readonly string[];
   disabled?: boolean;
-  search: (query: string) => Promise<ProjectFileResult[]>;
+  search: (query: string) => Promise<ProjectFileSearchResult>;
   onAdd: (file: ProjectFileResult) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [truncated, setTruncated] = useState(false);
   const [results, setResults] = useState<ProjectFileResult[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -86,13 +92,15 @@ export function ProjectFilePicker({
   useEffect(() => {
     let cancelled = false;
     setResults([]);
+    setTruncated(false);
     setActiveIndex(0);
     setStatus("loading");
     const timer = setTimeout(() => {
       search(query).then(
-        (files) => {
+        (result) => {
           if (!cancelled) {
-            setResults(rankProjectFiles(files, query));
+            setResults(rankProjectFiles(result.files, query));
+            setTruncated(Boolean(result.truncated));
             setActiveIndex(0);
             setStatus("ready");
           }
@@ -109,7 +117,7 @@ export function ProjectFilePicker({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, scope, search]);
+  }, [query, scope, search, showHidden]);
 
   useEffect(() => {
     if (
@@ -128,41 +136,55 @@ export function ProjectFilePicker({
 
   return (
     <div className="picker" role="dialog" aria-label="Add project files">
-      <input
-        className="picker__input"
-        type="search"
-        role="combobox"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-            return;
+      <div className="file-search-controls">
+        <input
+          className="picker__input"
+          type="search"
+          role="combobox"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              onClose();
+              return;
+            }
+            if (
+              event.key === "Enter" ||
+              (event.key === "Tab" && activeOption)
+            ) {
+              event.preventDefault();
+              if (activeOption) onAdd(activeOption);
+              return;
+            }
+            if (availableIndexes.length === 0) return;
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              moveActive(event.key === "ArrowDown" ? 1 : -1);
+              return;
+            }
+          }}
+          placeholder="Search project files…"
+          aria-label="Search project files"
+          aria-autocomplete="list"
+          aria-controls={listId}
+          aria-expanded="true"
+          aria-activedescendant={
+            activeOption ? `${listId}-option-${activeIndex}` : undefined
           }
-          if (event.key === "Enter" || (event.key === "Tab" && activeOption)) {
-            event.preventDefault();
-            if (activeOption) onAdd(activeOption);
-            return;
-          }
-          if (availableIndexes.length === 0) return;
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            moveActive(event.key === "ArrowDown" ? 1 : -1);
-            return;
-          }
-        }}
-        placeholder="Search project files…"
-        aria-label="Search project files"
-        aria-autocomplete="list"
-        aria-controls={listId}
-        aria-expanded="true"
-        aria-activedescendant={
-          activeOption ? `${listId}-option-${activeIndex}` : undefined
-        }
-        autoFocus
-      />
+          autoFocus
+        />
+        <HiddenFilesToggle
+          showHidden={showHidden}
+          onChange={onShowHiddenChange}
+        />
+      </div>
+      {truncated ? (
+        <div className="picker__empty" role="status">
+          Partial search results; browse the folder for more files.
+        </div>
+      ) : null}
       <div
         ref={listRef}
         id={listId}
