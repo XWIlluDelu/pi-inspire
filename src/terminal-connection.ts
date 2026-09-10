@@ -93,6 +93,7 @@ export class TerminalConnection {
   private replayComplete = false;
   private writable = false;
   private nextInputSequence = 1;
+  private inputOwnerToken: string | undefined;
   private readonly pendingInput = new Map<number, Uint8Array>();
   private pendingInputBytes = 0;
   private readonly ownerStorageKey: string;
@@ -349,9 +350,14 @@ export class TerminalConnection {
     nextSequence: number | undefined,
   ): void {
     if (!writable) {
+      this.inputOwnerToken = undefined;
       this.clearPendingInput();
       return;
     }
+    // Sequence numbers belong to a writer lease, not the PTY output epoch.
+    // A new lease cannot deduplicate input already sent under the old token.
+    if (token !== this.inputOwnerToken) this.clearPendingInput();
+    this.inputOwnerToken = token;
     if (token) setSessionValue(this.ownerStorageKey, token);
     if (nextSequence === undefined) return;
     for (const [sequence, data] of this.pendingInput) {
