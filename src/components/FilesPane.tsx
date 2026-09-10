@@ -22,6 +22,7 @@ import {
   WorkspaceFileSearch,
   WorkspaceSearchResults,
   WorkspaceTree,
+  WorkspaceVisibilityToggle,
 } from "./WorkspaceBrowser";
 
 type ResourceStanding = ResourceProbeResult | undefined;
@@ -154,8 +155,9 @@ function FileBrowser({
   const selectedPath = selectedWorkspacePath(state);
   return (
     <div className="files-browser">
-      <div className="files-browser__search">
+      <div className="files-browser__search file-search-controls">
         <WorkspaceFileSearch />
+        <WorkspaceVisibilityToggle />
       </div>
       <div
         className="files-browser__scroll"
@@ -229,16 +231,19 @@ function FileBrowser({
 function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
   const projectLabel = workspaceLabel(state.cwd);
   return (
-    <button
-      type="button"
-      className="res__index-header res__index-header--back"
-      aria-label={`Back to file browser for ${projectLabel}`}
-      title={state.cwd ?? projectLabel}
-      onClick={() => store.showFileBrowser()}
-    >
-      <ArrowLeft size={14} aria-hidden />
-      <span className="res__index-title">{projectLabel}</span>
-    </button>
+    <div className="file-search-controls">
+      <button
+        type="button"
+        className="res__index-header res__index-header--back"
+        aria-label={`Back to file browser for ${projectLabel}`}
+        title={state.cwd ?? projectLabel}
+        onClick={() => store.showFileBrowser()}
+      >
+        <ArrowLeft size={14} aria-hidden />
+        <span className="res__index-title">{projectLabel}</span>
+      </button>
+      <WorkspaceVisibilityToggle />
+    </div>
   );
 }
 

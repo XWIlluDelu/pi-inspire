@@ -41,7 +41,7 @@ import { resolveProjectDirectory } from "./paths.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
-  invalidateProjectIndex,
+  invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
 } from "./project-files.js";
@@ -200,7 +200,12 @@ const sessionQuerySchema = z.object({
     .max(MAX_SESSION_LIST_PAGE_SIZE)
     .default(40),
 });
+const showHiddenField = z
+  .enum(["0", "1"])
+  .default("0")
+  .transform((value) => value === "1");
 const fileQuerySchema = z.object({
+  showHidden: showHiddenField,
   sessionId: sessionIdField,
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -209,11 +214,13 @@ const newSessionDefaultsQuerySchema = z.object({
   cwd: z.string().min(1).max(4_096),
 });
 const newSessionFileQuerySchema = z.object({
+  showHidden: showHiddenField,
   cwd: z.string().min(1).max(4_096),
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 const fileListSchema = z.object({
+  showHidden: showHiddenField,
   sessionId: sessionIdField,
   dir: z
     .string()
@@ -981,11 +988,13 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
   });
   app.get("/api/new-session/files", async (request, response) => {
-    const { cwd, q, limit } = newSessionFileQuerySchema.parse(request.query);
+    const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(
+      request.query,
+    );
     const root = await resolveProjectDirectory(cwd);
     response.json({
       cwd: root,
-      files: await searchProjectFiles(root, q, limit),
+      ...(await searchProjectFiles(root, q, limit, showHidden)),
     });
   });
   app.post("/api/sessions/rename", async (request, response) => {
@@ -1230,15 +1239,19 @@ export function createInspireServer(deps: AppDependencies): {
   };
 
   app.get("/api/files", async (request, response) => {
-    const { sessionId, q, limit } = fileQuerySchema.parse(request.query);
+    const { sessionId, q, limit, showHidden } = fileQuerySchema.parse(
+      request.query,
+    );
     const cwd = openSessionCwd(sessionId);
-    response.json({ files: await searchProjectFiles(cwd, q, limit) });
+    response.json(await searchProjectFiles(cwd, q, limit, showHidden));
   });
   app.get("/api/files/list", async (request, response) => {
-    const { sessionId, dir, refresh } = fileListSchema.parse(request.query);
+    const { sessionId, dir, refresh, showHidden } = fileListSchema.parse(
+      request.query,
+    );
     const cwd = openSessionCwd(sessionId);
-    if (refresh) invalidateProjectIndex(cwd);
-    response.json({ entries: await listProjectDirectory(cwd, dir) });
+    if (refresh) invalidateProjectFiles(cwd);
+    response.json(await listProjectDirectory(cwd, dir, showHidden));
   });
   app.get("/api/git/status", async (request, response) => {
     const { sessionId } = gitStatusSchema.parse(request.query);

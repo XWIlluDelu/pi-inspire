@@ -7,6 +7,7 @@ import {
   readdir,
   readFile,
   realpath,
+  stat,
   rename,
   rm,
   writeFile,
@@ -25,10 +26,6 @@ import {
 } from "../shared/contracts.js";
 import { escapesBase } from "./paths.js";
 import { inspireCacheDirectory } from "./platform-paths.mjs";
-import {
-  invalidateProjectIndex,
-  isIndexedProjectFile,
-} from "./project-files.js";
 
 export interface AttachmentContextFile {
   kind: "image" | "file";
@@ -456,10 +453,8 @@ export async function resolveProjectFiles(
   }
   if (unique.length === 0) return [];
   const root = await realpath(cwd);
-  // Selection and send are separate user actions. Force a fresh authority
-  // check so a path deleted, ignored, or retargeted between them cannot be
-  // promoted into the prompt merely because it was offered earlier.
-  invalidateProjectIndex(root);
+  // Selection and send are separate actions: freshly resolve each target.
+  // Hidden visibility, search budgets and Git rules are not access authority.
   const resolved = await Promise.all(
     unique.map(async (raw) => {
       const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
@@ -467,10 +462,8 @@ export async function resolveProjectFiles(
       if (escapesBase(relative(root, actual))) {
         throw new Error(`Project file is outside the active project: ${raw}`);
       }
-      if (!(await isIndexedProjectFile(root, actual))) {
-        throw new Error(
-          `Project file is no longer in the project index: ${raw}`,
-        );
+      if (!(await stat(actual)).isFile()) {
+        throw new Error(`Project path is not a regular file: ${raw}`);
       }
       return actual;
     }),

@@ -29,6 +29,17 @@ import {
   useAppState,
 } from "../store";
 import { ResourcePathLabel } from "./ResourcePathLabel";
+import { HiddenFilesToggle } from "./HiddenFilesToggle";
+
+export function WorkspaceVisibilityToggle() {
+  const showHidden = useAppState((source) => source.workspaceShowHidden);
+  return (
+    <HiddenFilesToggle
+      showHidden={showHidden}
+      onChange={store.setWorkspaceShowHidden}
+    />
+  );
+}
 
 type WorkspaceSelectionState = Pick<
   ReturnType<typeof store.getState>,
@@ -162,6 +173,7 @@ export function WorkspaceTree({
       workspaceLevels: source.workspaceLevels,
       workspaceLoadingDirs: source.workspaceLoadingDirs,
       workspaceDirectoryErrors: source.workspaceDirectoryErrors,
+      workspaceTruncatedDirs: source.workspaceTruncatedDirs,
       workspaceRevealRequest: source.workspaceRevealRequest,
       selectedResourceReference: source.selectedResourceReference,
       resourcePreview: source.resourcePreview,
@@ -232,66 +244,75 @@ export function WorkspaceTree({
           <Loader2 size={11} className="spin" aria-hidden /> Loading…
         </div>
       );
-    if (entries.length === 0)
+    if (entries.length === 0 && !state.workspaceTruncatedDirs[dir])
       return (
         <div className="workspace-tree__status" style={indent}>
           Empty
         </div>
       );
-    return entries.map((entry) => {
-      const path = dir ? `${dir}/${entry.name}` : entry.name;
-      if (entry.type === "file")
-        return (
-          <WorkspaceFileRow
-            key={path}
-            path={path}
-            name={entry.name}
-            selectedPath={selectedPath}
-            change={gitChangeForWorkspacePath(state.gitStatus, path)}
-            depth={depth}
-          />
-        );
-      const open = expanded.has(path);
-      const rollup = gitDecorationForDirectory(state.gitStatus, path);
-      const rollupLabel = rollup
-        ? rollup === "conflict"
-          ? "Contains conflicts"
-          : `Contains ${rollup} files`
-        : null;
-      return (
-        <Fragment key={path}>
-          <button
-            type="button"
-            className="workspace-tree__row workspace-tree__row--folder"
-            style={indent}
-            aria-expanded={open}
-            title={path}
-            onClick={() => store.toggleWorkspaceDirectory(path)}
-          >
-            <ChevronRight
-              size={11}
-              className={`chev ${open ? "chev--open" : ""}`}
-              aria-hidden
-            />
-            <Folder size={13} aria-hidden />
-            <span
-              className={`workspace-tree__name ${rollup ? `git-deco--${rollup}` : ""}`}
-            >
-              {entry.name}
-            </span>
-            {rollupLabel ? (
-              <span
-                className={`git-rollup git-deco--${rollup}`}
-                role="img"
-                aria-label={rollupLabel}
-                title={rollupLabel}
+    return (
+      <>
+        {state.workspaceTruncatedDirs[dir] ? (
+          <div className="workspace-tree__status" role="status" style={indent}>
+            Directory listing incomplete; showing partial contents.
+          </div>
+        ) : null}
+        {entries.map((entry) => {
+          const path = dir ? `${dir}/${entry.name}` : entry.name;
+          if (entry.type === "file")
+            return (
+              <WorkspaceFileRow
+                key={path}
+                path={path}
+                name={entry.name}
+                selectedPath={selectedPath}
+                change={gitChangeForWorkspacePath(state.gitStatus, path)}
+                depth={depth}
               />
-            ) : null}
-          </button>
-          {open ? renderLevel(path, depth + 1) : null}
-        </Fragment>
-      );
-    });
+            );
+          const open = expanded.has(path);
+          const rollup = gitDecorationForDirectory(state.gitStatus, path);
+          const rollupLabel = rollup
+            ? rollup === "conflict"
+              ? "Contains conflicts"
+              : `Contains ${rollup} files`
+            : null;
+          return (
+            <Fragment key={path}>
+              <button
+                type="button"
+                className="workspace-tree__row workspace-tree__row--folder"
+                style={indent}
+                aria-expanded={open}
+                title={path}
+                onClick={() => store.toggleWorkspaceDirectory(path)}
+              >
+                <ChevronRight
+                  size={11}
+                  className={`chev ${open ? "chev--open" : ""}`}
+                  aria-hidden
+                />
+                <Folder size={13} aria-hidden />
+                <span
+                  className={`workspace-tree__name ${rollup ? `git-deco--${rollup}` : ""}`}
+                >
+                  {entry.name}
+                </span>
+                {rollupLabel ? (
+                  <span
+                    className={`git-rollup git-deco--${rollup}`}
+                    role="img"
+                    aria-label={rollupLabel}
+                    title={rollupLabel}
+                  />
+                ) : null}
+              </button>
+              {open ? renderLevel(path, depth + 1) : null}
+            </Fragment>
+          );
+        })}
+      </>
+    );
   };
 
   return (
@@ -321,6 +342,7 @@ export function WorkspaceSearchResults({
       workspaceSearchError: source.workspaceSearchError,
       workspaceSearchLoading: source.workspaceSearchLoading,
       workspaceMatches: source.workspaceMatches,
+      workspaceSearchTruncated: source.workspaceSearchTruncated,
       selectedResourceReference: source.selectedResourceReference,
       resourcePreview: source.resourcePreview,
       resourceWorkspacePaths: source.resourceWorkspacePaths,
@@ -336,6 +358,11 @@ export function WorkspaceSearchResults({
       role="region"
       aria-label="Workspace search results"
     >
+      {state.workspaceSearchTruncated ? (
+        <div className="workspace-tree__status" role="status">
+          Partial search results; browse the folder for more files.
+        </div>
+      ) : null}
       {state.workspaceSearchError ? (
         <button
           type="button"

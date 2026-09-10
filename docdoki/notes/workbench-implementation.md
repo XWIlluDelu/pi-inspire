@@ -17,6 +17,8 @@ The previous tool-style card, custom activity tiles, and automatic tool-density 
 
 ## Document-relative previews
 
+ follow-up: [[workbench-implementation]] supersedes the ignored-file refusal in this original verification record. Document images/links still require independent authorization, now from workspace realpath containment or an exact citation, not Git index membership. Outside-target, view/object, remote-load and sandbox checks remain.
+
 ### Failure and repair
 
 `FilePreview` and `NotebookPreview` reused the conversation renderer without a document context. Local Markdown images therefore became file-reference buttons, relative links opened from the session cwd, and Notebook Markdown cell attachments had no resolver. Heading fragments also followed browser navigation instead of the document reader.
@@ -32,6 +34,30 @@ The review also removed the generic `<img src>` fallback for unrecognized conver
 ### Limits
 
 The browser checks used isolated synthetic fixtures, not real Pi conversation content or the user's report. This work does not establish arbitrary image-format support, cross-browser parity, or access to images excluded by workspace/transcript authority. It does not change the HTML iframe sandbox or execute Notebook code. Unrelated in-progress restart controls were preserved.
+
+## Filesystem and Git separation
+
+### Decision and repair
+
+The user rejected Git tracking/ignore rules as file-visibility rules: Files represents the project filesystem; Changes represents Git. Hidden visibility covers dot names and native Windows/macOS hidden attributes, not `node_modules`, `dist`, Git ignored files, or tracking state. Visibility, discovery completeness, and permission are independent.
+
+- `server/project-files.ts` no longer invokes Git. Tree levels enumerate real directories on demand, including empty directories, with at most 10,000 inspected entries per response. Search uses bounded breadth-first discovery (20,000 files, 10,000 queued directories, a five-second cooperative walk budget). Directory identity is checked before/after enumeration; contained directory links are navigable and canonical identities stop cycles. Unrepresentable POSIX filenames cannot alias real replacement-character names. Incomplete/capped/unreadable discovery is explicit.
+- The directory tree, search, established composer picker/`@`, and prospective New session search expose filesystem-only hidden visibility. An established workspace shares its cwd-scoped toggle across Files and composer entry points. Visibility changes retire old directory/search work while preserving the query, expansion and selected preview. New session owns its prospective-workspace toggle separately. The completion toolbar stays outside the ARIA listbox and preserves text/caret focus.
+- `server/resources.ts` authorizes contained regular files independently of discovery and Git. Exact transcript references remain a separate authority outside the workspace. Content requests still check the addressed session/view, current canonical workspace, lexical/canonical target witness and pinned object. Missing paths invalidate discovery caches, not permissions. Changing ignore rules or hiding a file cannot revoke an otherwise valid handle. Contained reads do not load conversation content.
+- `server/attachments.ts` and the existing delivery/history revalidation retain canonical-root, regular-file and selected-target checks without index membership. Hidden/ignored files can be sent and recalled; retargeting a selected symlink still fails. JSON-encoded prompt references retain their injection boundary.
+- Document-local links/images, downloads and terminal file links inherit the independent resource authority. Local images in ignored generated-output directories can load; remote/protocol-relative images, outside targets without citations, sandbox content and transfer limits remain unchanged.
+- Changes no longer infers `+0 −0` from an absent status entry. Only a concrete diff supplies line counts; missing/unavailable/incomplete/not-a-repository observations show unavailable counts and disable navigation. An empty selected Git comparison does not substitute working-tree bytes for staged source.
+
+Discovery caching does not grant read authority. [[state-ownership]] explains
+session addressing and pinned-object reads; [[workbench-implementation]] applies the same independent
+authorization to document images. Current contracts: [[resource-preview]], [[composer]], [[conversation]].
+
+### Limits
+
+- This is read-only bounded discovery, not an unrestricted file manager or a complete eager filesystem index. Special nodes and broken/outside symlink targets are not offered or traversed. A truncated scan is not proof of absence or basename uniqueness; exact qualified file reads do not depend on the scan.
+- Search caches have a five-second freshness window, at most eight canonical-root/visibility scopes, and shared in-flight scans. The scan time budget is cooperative between directory reads, not a hard deadline on an individual filesystem/native-attribute operation. Explicit refresh invalidates discovery globally within that small cache.
+- Native Windows/macOS attributes reuse the existing bounded platform helper. Their adapter behavior is covered synthetically here; this Linux run does not establish native Windows/macOS end-to-end performance or behavior.
+- Deployment/service restart is not part of this repair. Running Hosts must load the updated backend before the new Files semantics are available.
 
 ## Hidden project directories
 

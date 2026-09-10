@@ -57,7 +57,7 @@ Treat the Files surfaces as one later, holistic visual-design task rather than c
 
 ## Constraints
 
-- Preserve session-bound realpath/index authorization, bounded directory reads, ignored-path handling, and the existing resource-preview safety limits.
+- Preserve session-bound realpath authorization, bounded filesystem directory reads, hidden visibility independent of Git, and the existing resource-preview safety limits. The filesystem/Git separation follow-up supersedes the former index-membership/ignored-path authorization requirement.
 - Preserve the distinct semantics of conversation references and Git Changes; visual unification must not merge their data authorities.
 - Keep the surface read-only. Editing, file mutation, terminal emulation, and a complete IDE project manager remain out of scope.
 - Do not add a second eager repository index or materialize an unbounded tree in the browser.
