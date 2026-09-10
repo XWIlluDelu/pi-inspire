@@ -9,6 +9,7 @@ export interface SessionSelectionState {
   sessionId: string | null;
   cwd: string | null;
   openingSessionId: string | null;
+  sessionSelectionPending: boolean;
 }
 
 interface SessionSelectionControllerHost {
@@ -51,8 +52,8 @@ export class SessionSelectionController {
     const api = this.host.api();
     if (!api) return;
     // Re-selecting the visible session is a no-op only with no older operation
-    // to supersede. A newer intent must still invalidate a pending open.
-    if (id === state.sessionId && state.openingSessionId === null) return;
+    // to supersede, including create/deselect intents with no target ID yet.
+    if (id === state.sessionId && !state.sessionSelectionPending) return;
     if (id === state.openingSessionId) return;
     await this.runSelection(
       id,
