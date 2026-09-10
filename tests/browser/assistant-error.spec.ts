@@ -37,9 +37,10 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
   await expect(
     error.getByRole("button", { name: "Error message copied" }),
   ).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    fullText,
-  );
+  // The system clipboard may translate LF to CRLF on Windows. Compare all
+  // content, including whitespace, while accepting native line endings.
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied.replace(/\r\n/g, "\n")).toBe(fullText!.replace(/\r\n/g, "\n"));
 
   await page
     .locator(".nav__row-main")

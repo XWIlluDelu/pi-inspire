@@ -41,8 +41,8 @@ import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const now = Date.now();
-// Browser acceptance runs point this at the checkout so resource and project
-// picker fixtures exercise the normal server paths without test-only routes.
+// Browser acceptance runs point this at an isolated workspace so resource and
+// project picker fixtures exercise the normal server paths without test-only routes.
 const mockWorkspace = resolve(
   process.env.INSPIRE_MOCK_WORKSPACE ?? "/home/demo/research",
 );
