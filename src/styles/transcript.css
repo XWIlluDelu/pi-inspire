@@ -957,6 +957,9 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint {
+  position: relative;
+  container: context-checkpoint / inline-size;
+  min-width: 0;
   background: var(--bg-surface);
   border: 1px solid var(--line);
   border-left: var(--witness) solid var(--info);
@@ -966,7 +969,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   animation: card-in var(--dur-standard) var(--ease-standard);
 }
 
-.context-checkpoint > summary {
+.context-checkpoint__disclosure > summary {
   min-height: calc(var(--activity-row-h) - 2px);
   padding: 4px var(--space-2);
   display: flex;
@@ -979,21 +982,26 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint > summary::-webkit-details-marker,
-.context-checkpoint > summary::marker {
+.context-checkpoint__disclosure > summary::-webkit-details-marker,
+.context-checkpoint__disclosure > summary::marker {
   display: none;
 }
 
-.context-checkpoint > summary:hover,
-.context-checkpoint > summary:focus-visible {
+.context-checkpoint__disclosure > summary:hover,
+.context-checkpoint__disclosure > summary:focus-visible {
   background: var(--bg-inset);
   color: var(--ink);
   outline: none;
 }
 
-.context-checkpoint > summary:focus-visible {
+.context-checkpoint__disclosure > summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+.context-checkpoint__disclosure > summary:is(:hover, :focus-visible)
+  :is(.context-checkpoint__metric, .context-checkpoint__time) {
+  color: var(--body);
 }
 
 .context-checkpoint__icon {
@@ -1013,7 +1021,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint__metric {
-  color: var(--faint);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: var(--leading-ui);
@@ -1026,19 +1034,24 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint__time {
-  color: var(--faint);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: var(--leading-ui);
   white-space: nowrap;
 }
 
-.context-checkpoint__action-wrap {
-  display: inline-flex;
-  align-items: center;
+/* Reserve the sibling clipboard control's footprint in the disclosure row. */
+.context-checkpoint__copy-slot {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
 }
 
 .context-checkpoint__copy.icon-button {
+  position: absolute;
+  top: 4px;
+  right: calc(var(--space-2) * 2 + 13px);
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
@@ -1068,7 +1081,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   transition: transform var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint[open] .context-checkpoint__chevron {
+.context-checkpoint__disclosure[open] .context-checkpoint__chevron {
   transform: rotate(90deg);
 }
 
@@ -1080,7 +1093,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 
 .context-checkpoint__body > p {
   margin: 0;
-  color: var(--faint);
+  color: var(--muted);
   font-size: var(--text-sm);
 }
 
@@ -1099,7 +1112,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 @media (pointer: coarse) {
-  .context-checkpoint > summary {
+  .context-checkpoint__disclosure > summary {
     min-height: 38px;
   }
 
@@ -1107,6 +1120,58 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     content: "";
     position: absolute;
     inset: -6px;
+  }
+}
+
+/* Keep the checkpoint controls visible when sidebars or a narrow viewport
+   leave too little room for a single-line heading. */
+@container context-checkpoint (max-width: 480px) {
+  .context-checkpoint__disclosure > summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto 13px;
+    row-gap: 2px;
+  }
+
+  .context-checkpoint__icon {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .context-checkpoint__title {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .context-checkpoint__metric {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .context-checkpoint__spacer {
+    display: none;
+  }
+
+  .context-checkpoint__time {
+    grid-column: 3 / 5;
+    grid-row: 2;
+    justify-self: end;
+  }
+
+  .context-checkpoint__copy-slot {
+    justify-self: end;
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .context-checkpoint__chevron {
+    grid-column: 4;
+    grid-row: 1;
   }
 }
 

@@ -808,7 +808,7 @@ describe("caret completion", () => {
     expect(textarea).toHaveValue("/deploy ");
   });
 
-  it("uses Pi first-dispatch precedence for collisions and then overrides compact locally", async () => {
+  it("reserves built-in names while preserving first-dispatch ownership among runtime resources", async () => {
     clearLeftovers();
     act(() => {
       FakeWebSocket.instances.at(-1)!.emit({
@@ -880,8 +880,14 @@ describe("caret completion", () => {
     ).not.toBeInTheDocument();
     expect(
       within(list).getByRole("option", {
-        name: /\/settings.*Extension settings collision/,
+        name: /\/settings.*Open INSΠRE and Pi runtime settings/,
       }),
+    ).toBeInTheDocument();
+    expect(
+      within(list).queryByText(/settings collision/),
+    ).not.toBeInTheDocument();
+    expect(
+      within(list).getByRole("option", { name: /\/clone.*Terminal only/ }),
     ).toBeInTheDocument();
   });
 

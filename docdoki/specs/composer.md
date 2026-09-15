@@ -128,9 +128,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   across sources; descriptions explain results but never admit unrelated commands, while the
   unfiltered inventory remains grouped by source. The browser build resolves that matcher to Pi
   TUI’s pure fuzzy module rather than bundling its terminal-only dependencies. Pi’s runtime commands
-  retain source attribution and first wire ownership so extension-before-prompt/skill collision
-  behavior matches Pi dispatch; inspire’s explicit built-in registry contributes names absent from
-  that runtime inventory, with `/compact` as the sole deliberate collision override.
+  retain source attribution and first wire ownership within the runtime-resource namespace.
+  INSΠRE's explicit built-in registry owns all native names before resource dispatch, matching
+  Pi's interactive submit handler rather than the lower-level SDK. Namespaced extension commands
+  remain available. Terminal-only entries say so in each option's accessible description; a
+  first-message surface omits native commands it cannot execute instead of exposing a colliding
+  resource under the same name.
 
   Choosing a result inserts the exact command, adds a trailing space only when it accepts an
   argument, and never executes it implicitly.
@@ -246,15 +249,24 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   receipts describe that browser's request/results, not Pi's current phase. `/compact` retains its
   eventual success/cancel/error receipt; its running phase is shown only by the state-owned activity
   surface, identical to automatic compaction. A delayed HTTP receipt cannot extend or end that phase.
+  Receipts show their local request time; a successful compact receipt is retired when subsequent
+  agent work or compaction begins in that session, while its durable checkpoint remains in history.
   Export and reload retain their named operation receipts. Running receipts use the command and
   phase without invented explanatory progress messages; compaction and other Host commands do not replace the
   editor placeholder with “keep writing” or “send when finished” guidance. Host-adapter labels and
   results must not be represented as verbatim Pi UI copy. Compact can be cancelled through the
-  ordinary abort affordance by stopping only its owning worker. Compaction summaries project as
-  dedicated collapsed transcript cards rather than generic JSON. Automatic cancellation/failure
-  produces a visible outcome notice without manufacturing a duplicate successful summary. The
-  context meter remains occupancy, never compaction progress, and does not suggest invoking another
-  `/compact` while compaction is active. Review and evidence: [[state-authority-review]].
+  ordinary abort affordance by stopping only its owning worker; reload likewise reports its worker
+  replacement and reset of worker-local extension state. Compaction summaries project as dedicated
+  collapsed transcript cards at their persisted position between retained prior messages and later
+  messages, including after refresh, repeated compaction, and branch navigation. Model-context
+  ordering and session bytes are unchanged. Manual and automatic cancellation/failure produce
+  visible outcome notices without requiring a local request receipt or manufacturing a duplicate
+  successful summary. Summarization retry wait, attempt counts, and bounded reason are restored from
+  Host snapshots; attempts and completion retire that detail without changing the enclosing
+  compaction's cancellation semantics. The context meter remains occupancy, never compaction
+  progress, and does not suggest invoking another `/compact` while compaction is active. Historical
+  checkpoints show persisted tokens-before; after-token estimates remain explicitly labelled in
+  the operation receipt and are not fabricated after reload. Review: [[native-command-compatibility]].
 
 - `/copy` reads the complete last settled assistant text from the Host's authoritative branch
   projection through an authenticated session/view-bound endpoint. It does not start a worker merely

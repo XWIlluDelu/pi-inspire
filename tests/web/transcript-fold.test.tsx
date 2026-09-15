@@ -93,49 +93,61 @@ describe("response activity folds", () => {
     expect(container.querySelector(".activity-fold__dots")).toBeNull();
   });
 
-  it("renders Pi compaction summaries as dedicated context checkpoints", async () => {
-    const { container } = render(
-      transcript(
-        [
-          {
-            role: "compactionSummary",
-            summary: "## Goal\n\nPreserve the parser decisions.",
-            tokensBefore: 42_500,
-            timestamp: Date.now(),
-          },
-        ],
-        "compact",
-      ),
-    );
+  it.each([
+    ["compactionSummary", "Context compacted", "Copy compaction summary"],
+    ["branchSummary", "Branch context", "Copy branch summary"],
+  ])(
+    "renders %s as an independently accessible context checkpoint",
+    async (role, label, copyLabel) => {
+      const { container } = render(
+        transcript(
+          [
+            {
+              role,
+              summary: "## Goal\n\nPreserve the parser decisions.",
+              tokensBefore: 42_500,
+              timestamp: Date.now(),
+            },
+          ],
+          "compact",
+        ),
+      );
 
-    const title = screen.getByText("Context compacted");
-    const checkpoint = title.closest("details") as HTMLDetailsElement;
-    expect(title).toBeVisible();
-    expect(screen.getByText("42,500 tokens before")).toBeVisible();
-    expect(container.querySelector(".card__generic")).toBeNull();
-    expect(container.querySelector(".context-checkpoint__icon")).not.toBeNull();
-    expect(
-      container.querySelector(".context-checkpoint__chevron"),
-    ).not.toBeNull();
-    expect(checkpoint).not.toHaveAttribute("open");
+      const title = screen.getByText(label);
+      const checkpoint = title.closest("details") as HTMLDetailsElement;
+      expect(title).toBeVisible();
+      expect(screen.getByText("42,500 tokens before")).toBeVisible();
+      expect(container.querySelector(".card__generic")).toBeNull();
+      expect(
+        container.querySelector(".context-checkpoint__icon"),
+      ).not.toBeNull();
+      expect(
+        container.querySelector(".context-checkpoint__chevron"),
+      ).not.toBeNull();
+      expect(checkpoint).not.toHaveAttribute("open");
 
-    const copyBtn = screen.getByRole("button", {
-      name: "Copy compaction summary",
-    });
-    expect(copyBtn).toBeVisible();
-    fireEvent.click(copyBtn);
-    expect(checkpoint).not.toHaveAttribute("open");
+      const copyBtn = screen.getByRole("button", {
+        name: copyLabel,
+      });
+      expect(copyBtn).toBeVisible();
+      expect(copyBtn.closest("details")).toBeNull();
+      expect(checkpoint.closest(".context-checkpoint")).toContainElement(
+        copyBtn,
+      );
+      fireEvent.click(copyBtn);
+      expect(checkpoint).not.toHaveAttribute("open");
 
-    fireEvent.click(title.closest("summary")!);
-    expect(checkpoint).toHaveAttribute("open");
-    expect(
-      await screen.findByText(/Preserve the parser decisions\./),
-    ).toBeVisible();
-    expect(container.textContent).not.toContain('"tokensBefore"');
+      fireEvent.click(title.closest("summary")!);
+      expect(checkpoint).toHaveAttribute("open");
+      expect(
+        await screen.findByText(/Preserve the parser decisions\./),
+      ).toBeVisible();
+      expect(container.textContent).not.toContain('"tokensBefore"');
 
-    fireEvent.click(copyBtn);
-    expect(checkpoint).toHaveAttribute("open");
-  });
+      fireEvent.click(copyBtn);
+      expect(checkpoint).toHaveAttribute("open");
+    },
+  );
 
   it("keeps the unchanged card state between two interactive rails", () => {
     const consoleError = vi
