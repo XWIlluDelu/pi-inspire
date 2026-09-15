@@ -134,11 +134,11 @@ function terminalCommandGuidance(command: string): string {
     case "share":
       return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
     case "trust":
-      return "INSΠRE forwards Pi's project-trust prompt when resources first load. Use Pi in the terminal to change a saved trust decision manually.";
+      return "Project trust is managed by Pi. Use /trust in Pi's terminal to change a saved decision, then /reload here to start a fresh worker.";
     case "import":
       return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
     case "clone":
-      return "Cloning the current branch is not yet safe across INSΠRE's persistent worker boundary. Run /clone inside Pi in the project terminal.";
+      return "Browser cloning is not implemented. /clone requires Pi's terminal in the intended session; opening the project terminal does not resume this session. Never open its JSONL in a second Pi process while INSΠRE owns the worker.";
     case "scoped-models":
       return "INSΠRE's model picker searches every available model. Pi's Ctrl+P model-cycle scope is terminal-specific and remains configurable there.";
     default:
@@ -901,6 +901,9 @@ export class AppStore {
         snapshot.runState === "retrying"
           ? parseRetryInfo(snapshot.retry)
           : null,
+      summarizationRetry: isBusyRunState(snapshot.runState)
+        ? parseRetryInfo(snapshot.summarizationRetry)
+        : null,
       queue: pendingQueues,
       extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
         ? snapshot.pendingExtensionUiRequests
@@ -1085,6 +1088,7 @@ export class AppStore {
             status,
             title: nativeCommandTitle(command),
             message,
+            createdAt: Date.now(),
             ...options,
           },
         ]),

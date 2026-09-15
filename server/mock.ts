@@ -52,6 +52,7 @@ const mockHistoryWorkspace = process.env.INSPIRE_MOCK_WORKSPACE
 const RESOURCE_FIXTURE_SESSION_ID = "mock-resources";
 const PROMPT_MAP_FIXTURE_SESSION_ID = "mock-prompt-map";
 const ERROR_FIXTURE_SESSION_ID = "mock-errors";
+const COMPACTION_FIXTURE_SESSION_ID = "mock-compaction";
 const BRANCH_FIXTURE_SESSION_ID = "mock-branch";
 const BRANCH_EARLIER_LEAF_ID = "mock-branch-earlier";
 const BRANCH_LATEST_LEAF_ID = "mock-branch-latest";
@@ -78,6 +79,15 @@ const baseSummaries: SessionSummary[] = [
 ];
 
 const browserFixtureSummaries: SessionSummary[] = [
+  {
+    id: COMPACTION_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Compaction checkpoint fixture",
+    created: new Date(now - 3_600_000).toISOString(),
+    modified: new Date(now - 50_000).toISOString(),
+    messageCount: 5,
+  },
   {
     id: ERROR_FIXTURE_SESSION_ID,
     cwd: mockWorkspace,
@@ -328,6 +338,36 @@ const resourceFixtureMessages = [
 ];
 
 function messagesForFixture(id: string): unknown[] {
+  if (id === COMPACTION_FIXTURE_SESSION_ID)
+    return [
+      {
+        role: "user",
+        content: "Retained request before compaction",
+        timestamp: now - 90_000,
+      },
+      {
+        role: "assistant",
+        content: "Retained response before compaction",
+        timestamp: now - 80_000,
+      },
+      {
+        role: "compactionSummary",
+        summary:
+          "## Preserved context\n\nKeep the parser decisions and remaining work.",
+        tokensBefore: 42_500,
+        timestamp: now - 70_000,
+      },
+      {
+        role: "user",
+        content: "Next request after compaction",
+        timestamp: now - 60_000,
+      },
+      {
+        role: "assistant",
+        content: "Next response after compaction",
+        timestamp: now - 50_000,
+      },
+    ];
   if (id === ERROR_FIXTURE_SESSION_ID)
     return [
       {
@@ -1032,7 +1072,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       command: "reload",
       outcome: "completed",
       message:
-        "Pi extensions, skills, prompts, context files, and themes were reloaded.",
+        "Pi worker restarted; extensions, skills, prompts, and context files reloaded. Worker-local extension state was reset.",
     };
   }
   async extensionUiResponse(): Promise<void> {}
