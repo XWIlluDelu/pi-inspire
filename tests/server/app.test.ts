@@ -342,6 +342,8 @@ describe("local host API", () => {
     }
   });
 
+  // Multiple HTTP requests run real native hidden-attribute commands on the
+  // host. This checks behavior, not a 5-second budget for the whole scenario.
   it("keeps file visibility and resource authority independent of Git through the HTTP API", async () => {
     await mkdir(join(temporary, "dist"));
     await mkdir(join(temporary, "empty"));
@@ -415,7 +417,7 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(downloaded.text).toBe("SYNTHETIC_CONFIG=true\n");
-  });
+  }, 30_000);
 
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
