@@ -1,0 +1,41 @@
+name: Native command review environment
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/native-command-review.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  environment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/checkout@v7
+        with:
+          repository: earendil-works/pi
+          ref: main
+          path: review-upstream
+          persist-credentials: false
+      - name: Package isolated public source and test dependencies
+        run: |
+          cp "$(command -v node)" review-node
+          git rev-parse HEAD > review-base-sha
+          git -C review-upstream rev-parse HEAD > review-upstream-sha
+          tar --exclude=.git -czf "$RUNNER_TEMP/native-command-review.tar.gz" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-command-review-environment
+          path: ${{ runner.temp }}/native-command-review.tar.gz
+          retention-days: 1
+          compression-level: 0
