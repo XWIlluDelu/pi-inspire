@@ -13,6 +13,7 @@ export const ActivityBar = memo(function ActivityBar() {
     (source) => ({
       runState: source.runState,
       retry: source.retry,
+      summarizationRetry: source.summarizationRetry,
       queue: source.queue,
     }),
     shallowEqual,
@@ -21,7 +22,8 @@ export const ActivityBar = memo(function ActivityBar() {
   const compacting = state.runState === "compacting";
   const retrying = state.runState === "retrying";
 
-  if (!compacting && !retrying && pending === 0) return null;
+  const summaryRetry = state.summarizationRetry;
+  if (!compacting && !retrying && !summaryRetry && pending === 0) return null;
 
   return (
     <div className="activity">
@@ -33,7 +35,23 @@ export const ActivityBar = memo(function ActivityBar() {
         >
           <span className="chip chip--info chip--live">
             <Loader2 size={12} className="spin" aria-hidden />
-            Compacting context
+            {summaryRetry
+              ? `Compaction retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`
+              : "Compacting context"}
+            {summaryRetry?.message ? ` — ${summaryRetry.message}` : ""}
+          </span>
+        </div>
+      ) : null}
+      {!compacting && summaryRetry ? (
+        <div
+          className="activity__live"
+          role="status"
+          aria-label="Summary retry status"
+        >
+          <span className="chip chip--warning chip--live">
+            <AlertTriangle size={12} aria-hidden />
+            {`Summary retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`}
+            {summaryRetry.message ? ` — ${summaryRetry.message}` : ""}
           </span>
         </div>
       ) : null}

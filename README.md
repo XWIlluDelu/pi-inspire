@@ -97,6 +97,38 @@ Installation writes separate `inspire-host.service` and `inspire-terminal.servic
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
+## Pi native commands
+
+Slash completion distinguishes commands adapted for the browser from **Terminal only** entries.
+The installed Pi remains the execution authority; the browser does not send unrecognized slash
+commands to the model.
+
+| Support | Commands and behavior |
+| --- | --- |
+| Host operations | `/compact [instructions]`, `/export [output.html]`, `/reload` |
+| Browser controls | `/model`, `/thinking`, `/name`, `/copy`; `/tree`, `/fork`, `/new`, `/resume`, `/settings` open the corresponding workspace surface |
+| Browser information | `/session`, `/hotkeys`, `/changelog`, `/quit` show session information, browser shortcuts, update details, or how to leave the client |
+| Terminal only | `/scoped-models`, `/import`, `/share`, `/clone`, `/trust`, `/login`, `/logout`, and `.jsonl` export provide guidance rather than claiming to execute in the browser |
+
+Built-ins reserve their names as in Pi's interactive client. Use an extension's namespaced command
+when it collides with a built-in. The Host checks command ownership again after worker replacement,
+so stale completion data cannot silently become an ordinary model prompt.
+
+Compaction checkpoints appear where compaction happened in the retained conversation, not at the
+beginning of the model context. This order survives reopening and repeated compaction without
+rewriting Pi's session file. The activity bar reports compaction and retry waits, including after
+reconnect; failure and cancellation are visible even in a browser that did not start the operation.
+The context meter is occupancy, not compaction progress. Token counts after compaction are estimates
+when supplied by Pi, not reconstructed historical measurements.
+
+Cancelling standalone compaction stops only its owning Pi worker because Pi RPC has no separate
+`abort_compaction` operation. `/reload` also replaces the worker and resets worker-local extension
+state. Neither operation restarts the Host or the project terminal. Opening the project terminal
+**does not transfer ownership of the current Pi session**: never resume the same JSONL file in a
+second writing Pi process while INSΠRE owns it. Pi's `!`/`!!` context-integrated shell mode is not
+implemented in the browser; the project terminal is a separate shell, not an equivalent transcript
+operation.
+
 ## Extensions and light customization
 
 INSΠRE remains neutral toward third-party Pi Extensions: commands, tools, dialogs, notices, statuses, and serializable text widgets use generic Pi RPC projections, while terminal-only component factories do not become Web components. [Adapting Pi Extensions to INSΠRE](docs/extensions.md) provides the compatibility matrix, dual TUI/Web recipes for Todo and usage displays, semantic placement and visual rules, source-level customization boundaries, and a verification checklist.

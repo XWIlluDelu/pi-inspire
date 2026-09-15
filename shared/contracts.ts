@@ -1050,6 +1050,8 @@ export interface ActiveSnapshot {
   pendingQueues?: PendingQueues;
   /** Bounded detail for the currently retrying worker, restored on join/reconnect. */
   retry?: RetryInfo | null;
+  /** Summary backoff does not replace the compaction/branch operation state. */
+  summarizationRetry?: RetryInfo | null;
   extensionDisplays?: ExtensionDisplay[];
   extensionStatuses?: Record<string, string>;
 }

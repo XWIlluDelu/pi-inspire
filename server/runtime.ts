@@ -14,6 +14,7 @@ import {
 import {
   parseCommandInvocation,
   parseNativeCommand,
+  nativeCommand,
 } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
@@ -168,14 +169,11 @@ function runtimeResourceOwnsCommand(
   commandName: string,
   source?: string,
 ): boolean {
-  if (commandName === "compact") return false;
+  if (nativeCommand(commandName)) return false;
   const command = slot.commands?.find((command) => {
     if (!command || typeof command !== "object") return false;
     const name = (command as { name?: unknown }).name;
-    return (
-      typeof name === "string" &&
-      name.replace(/^\/+/, "").toLocaleLowerCase() === commandName
-    );
+    return typeof name === "string" && name === commandName;
   });
   return Boolean(
     command && (!source || (command as { source?: unknown }).source === source),
@@ -1203,6 +1201,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.ready = false;
     slot.compactionReturnState = null;
     slot.retry = null;
+    slot.summarizationRetry = null;
     slot.activeAssistantCorrelation = null;
     this.projectionCoordinator.clearWriterBaseline(slot);
     slot.bridge = null;
@@ -1382,6 +1381,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       },
       runState: slot.runState,
       retry: slot.runState === "retrying" ? slot.retry : null,
+      summarizationRetry: isBusyRunState(slot.runState)
+        ? slot.summarizationRetry
+        : null,
       sessionStatuses,
       pendingExtensionUiRequests: this.extensionUi.pendingRequests(slot),
       pendingQueues: slot.pendingQueues,
@@ -1497,6 +1499,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           : resolve(session.path);
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         current.compactionReturnState = null;
+        current.summarizationRetry = null;
         this.extensionUi.clear(current, "replaced");
         current.pendingQueues = emptyPendingQueues();
         current.extensionDisplays = [];
@@ -1985,7 +1988,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       return await this.mutateSlot(slot, async () => {
         enteredGate = true;
-        const message = entered;
+        // Pi's resource dispatcher splits on a literal space. The Host must
+        // enforce the same normalization as the browser for other API clients.
+        const message = invocation
+          ? `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`
+          : entered;
         let accepted = false;
         let acceptedHistoryEntry: ComposerHistoryEntry | null = null;
         try {
@@ -2000,6 +2007,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             throw requestError("Pi runtime failed to start", 503);
           }
           assertPublicPrompt(readySlot, message);
+          // A preceding reload/worker replacement may have retired the resource
+          // after admission. Never let stale slash text become a model prompt.
+          if (
+            invocation &&
+            !runtimeResourceOwnsCommand(readySlot, invocation.name)
+          ) {
+            throw requestError(
+              `Pi command /${invocation.name} is no longer available; refresh the command inventory`,
+              409,
+            );
+          }
           if (request.historyArtifacts) {
             const refreshed = await resolveComposerHistoryArtifacts(
               slot,
@@ -2965,7 +2983,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         command: "reload",
         outcome: "completed",
         message:
-          "Pi extensions, skills, prompts, context files, and themes were reloaded.",
+          "Pi worker restarted; extensions, skills, prompts, and context files reloaded. Worker-local extension state was reset.",
       };
     });
   }
@@ -3285,6 +3303,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
         runState: slot.runState,
         retry: slot.runState === "retrying" ? slot.retry : null,
+        summarizationRetry: isBusyRunState(slot.runState)
+          ? slot.summarizationRetry
+          : null,
         sessionStatuses: this.sessionStatuses(),
         pendingExtensionUiRequests: this.extensionUi.pendingRequests(slot),
         pendingQueues: slot.pendingQueues,

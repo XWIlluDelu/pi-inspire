@@ -1,5 +1,8 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
-import { PI_NATIVE_COMMANDS } from "../shared/commands";
+import {
+  PI_NATIVE_COMMANDS,
+  type PiNativeCommandExecution,
+} from "../shared/commands";
 import type { ProjectFileResult } from "./api";
 
 export interface PiCommand {
@@ -9,12 +12,15 @@ export interface PiCommand {
    * attributable instead of collapsing or rejecting them. */
   source?: string;
   argumentHint?: string;
+  /** Browser adaptation, not a capability claimed by Pi's runtime inventory. */
+  execution?: PiNativeCommandExecution;
 }
 
 const INSPIRE_COMMANDS: PiCommand[] = PI_NATIVE_COMMANDS.map((command) => ({
   name: command.name,
   description: command.description,
   source: "builtin",
+  execution: command.execution,
   ...("argumentHint" in command ? { argumentHint: command.argumentHint } : {}),
 }));
 
@@ -134,16 +140,20 @@ export function resolveCommandInventory(
   // Host-owned /compact prompt path, but browser-surface commands need
   // an already selected session. Keep that reduced surface truthful.
   if (!includeNativeCommands) {
+    // Do not advertise a colliding resource as runnable when this surface
+    // cannot execute its built-in owner yet.
+    for (const command of INSPIRE_COMMANDS) {
+      if (command.name !== "compact") byName.delete(command.name);
+    }
     const compact = INSPIRE_COMMANDS.find(
       (command) => command.name === "compact",
     )!;
     byName.set(compact.name, compact);
     return [...byName.values()];
   }
-  // Pi dispatches dynamic resources before interactive built-ins. Compact is
-  // the one deliberate exception: INSΠRE owns its RPC lifecycle end to end.
+  // The interactive client handles built-ins before AgentSession.prompt().
+  // RPC's resource dispatcher is a lower layer, not the TUI's precedence rule.
   for (const command of INSPIRE_COMMANDS) {
-    if (command.name !== "compact" && byName.has(command.name)) continue;
     byName.set(command.name, command);
   }
   return [...byName.values()];

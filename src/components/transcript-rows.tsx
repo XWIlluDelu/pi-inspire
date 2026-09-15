@@ -470,54 +470,59 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   const [open, setOpen] = useState(false);
   return (
     <div className="turn turn--checkpoint">
-      <details
-        className="context-checkpoint"
-        onToggle={(event) => {
-          if (event.target === event.currentTarget)
-            setOpen(event.currentTarget.open);
-        }}
-      >
-        <summary>
-          <Archive size={14} className="context-checkpoint__icon" aria-hidden />
-          <span className="context-checkpoint__title">
-            {compacted ? "Context compacted" : "Branch context"}
-          </span>
-          {tokens ? (
-            <span className="context-checkpoint__metric">{tokens}</span>
-          ) : null}
-          <span className="context-checkpoint__spacer" aria-hidden />
-          {timestamp ? (
-            <time className="context-checkpoint__time">{timestamp}</time>
-          ) : null}
-          {summary ? (
-            <span
-              className="context-checkpoint__action-wrap"
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
-              <CopyAction
-                text={summary}
-                label={compacted ? "Compaction summary" : "Branch summary"}
-                className="context-checkpoint__copy"
-              />
+      <div className="context-checkpoint">
+        <details
+          className="context-checkpoint__disclosure"
+          onToggle={(event) => {
+            if (event.target === event.currentTarget)
+              setOpen(event.currentTarget.open);
+          }}
+        >
+          <summary>
+            <Archive
+              size={14}
+              className="context-checkpoint__icon"
+              aria-hidden
+            />
+            <span className="context-checkpoint__title">
+              {compacted ? "Context compacted" : "Branch context"}
             </span>
-          ) : null}
-          <ChevronRight
-            className="context-checkpoint__chevron"
-            size={13}
-            aria-hidden
-          />
-        </summary>
-        {open ? (
-          <div className="context-checkpoint__body">
+            {tokens ? (
+              <span className="context-checkpoint__metric">{tokens}</span>
+            ) : null}
+            <span className="context-checkpoint__spacer" aria-hidden />
+            {timestamp ? (
+              <time className="context-checkpoint__time">{timestamp}</time>
+            ) : null}
             {summary ? (
-              <RichText text={summary} />
-            ) : (
-              <p>No summary was recorded.</p>
-            )}
-          </div>
+              <span className="context-checkpoint__copy-slot" aria-hidden />
+            ) : null}
+            <ChevronRight
+              className="context-checkpoint__chevron"
+              size={13}
+              aria-hidden
+            />
+          </summary>
+          {open ? (
+            <div className="context-checkpoint__body">
+              {summary ? (
+                <RichText text={summary} />
+              ) : (
+                <p>No summary was recorded.</p>
+              )}
+            </div>
+          ) : null}
+        </details>
+        {/* Keep the clipboard control outside the native disclosure so both
+            actions remain independently focusable even while collapsed. */}
+        {summary ? (
+          <CopyAction
+            text={summary}
+            label={compacted ? "Compaction summary" : "Branch summary"}
+            className="context-checkpoint__copy"
+          />
         ) : null}
-      </details>
+      </div>
     </div>
   );
 });

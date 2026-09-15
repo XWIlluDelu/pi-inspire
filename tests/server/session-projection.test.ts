@@ -1507,3 +1507,69 @@ describe("SessionProjection bounded paging", () => {
     }
   });
 });
+
+describe("chronological compaction projection", () => {
+  it("keeps live, reopened, repeated and earlier-branch views in persisted order", async () => {
+    const { path, record, projection } = await fixture([
+      message("u1", null, "user", "old", 1),
+      message("a1", "u1", "assistant", "old answer", 2),
+      message("u2", "a1", "user", "retained", 3),
+      message("a2", "u2", "assistant", "retained answer", 4),
+    ]);
+    const ids = (messages: readonly unknown[]) =>
+      messages.map(
+        (value) => (value as { __inspireEntryId: string }).__inspireEntryId,
+      );
+    const compact = (
+      id: string,
+      parentId: string,
+      firstKeptEntryId: string,
+    ) => ({
+      type: "compaction",
+      id,
+      parentId,
+      firstKeptEntryId,
+      // Deliberately earlier than the retained messages: never sort timestamps.
+      timestamp: new Date(0).toISOString(),
+      summary: id,
+      tokensBefore: 1000,
+    });
+    try {
+      await appendFile(path, JSON.stringify(compact("c1", "a2", "u2")) + "\n");
+      await projection.reconcile(true);
+      expect(ids(projection.messages)).toEqual(["u2", "a2", "c1"]);
+      await appendFile(
+        path,
+        [
+          message("u3", "c1", "user", "after compaction", 5),
+          message("a3", "u3", "assistant", "new answer", 6),
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+      );
+      await projection.reconcile(true);
+      expect(ids(projection.messages)).toEqual(["u2", "a2", "c1", "u3", "a3"]);
+      const bytes = await readFile(path, "utf8");
+      const reopened = await SessionProjection.open(record);
+      try {
+        expect(ids(reopened.messages)).toEqual(ids(projection.messages));
+        expect(await readFile(path, "utf8")).toBe(bytes);
+      } finally {
+        await reopened.close();
+      }
+      await appendFile(path, JSON.stringify(compact("c2", "a3", "u3")) + "\n");
+      await projection.reconcile(true);
+      expect(ids(projection.messages)).toEqual(["u3", "a3", "c2"]);
+      expect(ids(projection.viewMessages("a3"))).toEqual([
+        "u2",
+        "a2",
+        "c1",
+        "u3",
+        "a3",
+      ]);
+      expect(ids(projection.viewMessages("a1"))).toEqual(["u1", "a1"]);
+    } finally {
+      await projection.close();
+    }
+  });
+});

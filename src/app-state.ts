@@ -55,6 +55,7 @@ export interface NativeCommandActivity {
   status: NativeCommandActivityStatus;
   title: string;
   message: string;
+  createdAt?: number;
   details?: Array<{ label: string; value: string }>;
   action?:
     | { kind: "open-terminal"; label: string; value?: string }

@@ -11,6 +11,7 @@ import {
   type ExtensionUiRequest,
   emptyPendingQueues,
   isSessionRuntimeStatus,
+  isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
@@ -161,6 +162,7 @@ export interface EventSlice {
   runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
+  summarizationRetry: RetryInfo | null;
   queue: PendingQueues;
   extensionUiRequests: ExtensionUiRequest[];
   extensionUiRespondingId: string | null;
@@ -180,6 +182,7 @@ export function emptyEventSlice(): EventSlice {
     runState: "idle",
     tools: {},
     retry: null,
+    summarizationRetry: null,
     queue: emptyPendingQueues(),
     extensionUiRequests: [],
     extensionUiRespondingId: null,
@@ -526,6 +529,7 @@ export function reduceEvent(
       break;
     }
     case "agent_start": {
+      slice.summarizationRetry = null;
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
       slice.runState = "running";
@@ -534,6 +538,7 @@ export function reduceEvent(
       break;
     }
     case "agent_settled": {
+      slice.summarizationRetry = null;
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
       if (slice.runState !== "failed" && slice.runState !== "aborted")
@@ -547,35 +552,50 @@ export function reduceEvent(
       break;
     }
     case "compaction_start": {
+      slice.summarizationRetry = null;
       slice.runState = "compacting";
       changed = true;
       break;
     }
     case "compaction_end": {
-      // Manual commands already have an owned result receipt. Automatic
-      // failures/cancellation previously vanished behind the composer's halo.
-      if (event.reason === "threshold" || event.reason === "overflow") {
-        if (event.aborted === true) {
-          pushNotice(slice, "info", "Automatic context compaction cancelled.");
-        } else if (
-          typeof event.errorMessage === "string" &&
-          event.errorMessage.trim()
-        ) {
-          pushNotice(
-            slice,
-            "error",
-            `Automatic context compaction failed: ${event.errorMessage}`,
-          );
-        } else if (event.result === null || event.result === undefined) {
-          pushNotice(
-            slice,
-            "warning",
-            "Automatic context compaction ended without a result.",
-          );
-        }
+      slice.summarizationRetry = null;
+      // Manual is a Pi trigger, not proof that this browser owns an HTTP
+      // receipt. Late joiners and other clients need the same failure detail.
+      const label =
+        event.reason === "threshold" || event.reason === "overflow"
+          ? "Automatic context compaction"
+          : "Context compaction";
+      if (event.aborted === true) {
+        pushNotice(slice, "info", `${label} cancelled.`);
+      } else if (
+        typeof event.errorMessage === "string" &&
+        event.errorMessage.trim()
+      ) {
+        pushNotice(
+          slice,
+          "error",
+          `${label} failed: ${event.errorMessage.slice(0, 4_000)}`,
+        );
+      } else if (event.result === null || event.result === undefined) {
+        pushNotice(slice, "warning", `${label} ended without a result.`);
       }
-      // Successful summaries stay in Pi's canonical chronological projection.
+      // Successful summaries are reconstructed from persisted chronological history.
       resync = true;
+      break;
+    }
+    case "summarization_retry_scheduled": {
+      slice.summarizationRetry = parseRetryInfo({
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        message: event.errorMessage,
+      });
+      changed = true;
+      break;
+    }
+    case "summarization_retry_attempt_start":
+    case "summarization_retry_finished": {
+      slice.summarizationRetry = null;
+      changed = true;
       break;
     }
     case "tool_execution_start":
@@ -781,6 +801,10 @@ export function reduceEvent(
     slice.runState !== event.sessionStatus.runState
   ) {
     slice.runState = event.sessionStatus.runState;
+    changed = true;
+  }
+  if (!isBusyRunState(slice.runState) && slice.summarizationRetry !== null) {
+    slice.summarizationRetry = null;
     changed = true;
   }
   if (slice.runState !== "retrying" && slice.retry !== null) {

@@ -1516,7 +1516,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("preserves Pi resource-command precedence for built-in name collisions", async () => {
+  it("rejects built-in name collisions at the ordinary RPC prompt boundary", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const runtime = new RuntimeController(
@@ -1531,6 +1531,8 @@ describe("RuntimeController concurrent sessions", () => {
               description: "Extension-owned model command",
               source: "extension",
             },
+            { name: "plugin:model", source: "extension" },
+            { name: "CamelCase", source: "extension" },
           ],
         });
         return worker as unknown as PiRpcProcess;
@@ -1544,14 +1546,79 @@ describe("RuntimeController concurrent sessions", () => {
     expect(
       worker.commands.some((command) => command.type === "get_commands"),
     ).toBe(true);
-    await runtime.prompt({ sessionId: "a", message: "/model custom" });
-    expect(
-      worker.commands.find(
-        (command) =>
-          command.type === "prompt" && command.message === "/model custom",
-      ),
-    ).toBeDefined();
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "/model custom" }),
+    ).rejects.toThrow("native command surface");
+    expect(worker.commands.some((command) => command.type === "prompt")).toBe(
+      false,
+    );
+    await runtime.prompt({ sessionId: "a", message: "/plugin:model custom" });
+    expect(worker.commands).toContainEqual(
+      expect.objectContaining({
+        type: "prompt",
+        message: "/plugin:model custom",
+      }),
+    );
     await runtime.close();
+  });
+
+  it("revalidates command ownership after a queued worker reload", async () => {
+    const workers: FakeRpc[] = [];
+    const gate = deferredSignal();
+    const started = deferredSignal();
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        worker.responseOverrides.set("get_commands", {
+          commands:
+            workers.length === 0
+              ? [{ name: "old-command", source: "extension" }]
+              : [],
+        });
+        worker.responseOverrides.set("export_html", () => {
+          started.resolve();
+          return gate.promise.then(() => ({ path: "/tmp/export.html" }));
+        });
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await runtime.setAutoRetry("a", true);
+      expect((await runtime.snapshot("a")).active?.commands).toEqual([
+        expect.objectContaining({ name: "old-command" }),
+      ]);
+      const exporting = runtime.nativeCommand({
+        sessionId: "a",
+        command: "export",
+      });
+      await started.promise;
+      const reloading = runtime.nativeCommand({
+        sessionId: "a",
+        command: "reload",
+      });
+      const prompting = runtime.prompt({
+        sessionId: "a",
+        message: "/old-command",
+      });
+      // Attach the rejection observer before releasing the serialized writer.
+      const rejected = expect(prompting).rejects.toThrow("no longer available");
+      gate.resolve();
+      await exporting;
+      await reloading;
+      await rejected;
+      expect(workers).toHaveLength(2);
+      expect(
+        workers[1]!.commands.some((command) => command.type === "prompt"),
+      ).toBe(false);
+    } finally {
+      gate.resolve();
+      await runtime.close();
+    }
   });
 
   it("exports HTML and reloads a fresh Pi resource inventory", async () => {
@@ -1837,6 +1904,89 @@ describe("RuntimeController concurrent sessions", () => {
       expect(await runtime.snapshot("a")).toMatchObject({
         runState: "idle",
         retry: null,
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("retains bounded summarization retry detail without changing compaction ownership", async () => {
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    try {
+      await runtime.openSession("a");
+      await runtime.setAutoRetry("a", true);
+      worker.emit("event", { type: "compaction_start", reason: "manual" });
+      worker.emit("event", {
+        type: "summarization_retry_scheduled",
+        attempt: 2,
+        maxAttempts: 3,
+        errorMessage: "x".repeat(5000),
+      });
+      await vi.waitFor(() =>
+        expect(
+          events.some(
+            (event) => event.type === "summarization_retry_scheduled",
+          ),
+        ).toBe(true),
+      );
+      expect(
+        events.find((event) => event.type === "summarization_retry_scheduled")
+          ?.errorMessage,
+      ).toHaveLength(4000);
+      const joined = await runtime.snapshot("a");
+      expect(joined).toMatchObject({
+        runState: "compacting",
+        retry: null,
+        summarizationRetry: {
+          attempt: 2,
+          maxAttempts: 3,
+          message: "x".repeat(4000),
+        },
+      });
+      expect((await runtime.snapshot("a")).summarizationRetry).toEqual(
+        joined.summarizationRetry,
+      );
+      for (const type of [
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+      ]) {
+        worker.emit("event", { type });
+        await new Promise<void>((done) => setImmediate(done));
+        expect(await runtime.snapshot("a")).toMatchObject({
+          runState: "compacting",
+          summarizationRetry: null,
+        });
+        worker.emit("event", {
+          type: "summarization_retry_scheduled",
+          attempt: 2,
+          maxAttempts: 3,
+          errorMessage: "retry",
+        });
+      }
+      worker.emit("event", {
+        type: "compaction_end",
+        reason: "manual",
+        aborted: true,
+      });
+      await vi.waitFor(() =>
+        expect(events.some((event) => event.type === "compaction_end")).toBe(
+          true,
+        ),
+      );
+      expect(await runtime.snapshot("a")).toMatchObject({
+        runState: "aborted",
+        summarizationRetry: null,
       });
     } finally {
       await runtime.close();
