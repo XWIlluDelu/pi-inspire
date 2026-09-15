@@ -242,6 +242,7 @@ export class RuntimeEventController {
       runState: s.runState,
       tools: s.tools,
       retry: s.retry,
+      summarizationRetry: s.summarizationRetry,
       queue: s.queue,
       extensionUiRequests: s.extensionUiRequests,
       extensionUiRespondingId: s.extensionUiRespondingId,
@@ -283,6 +284,23 @@ export class RuntimeEventController {
       event.sessionStatus,
     );
     if (eventSessionId) {
+      if (event.type === "agent_start" || event.type === "compaction_start") {
+        // The durable checkpoint remains in history. A successful local compact
+        // receipt must not stay pinned under unrelated subsequent conversation.
+        const activities = this.host.state().commandActivities[eventSessionId];
+        const retained = activities?.filter(
+          (activity) =>
+            activity.command !== "compact" || activity.status !== "success",
+        );
+        if (activities && retained && retained.length !== activities.length) {
+          this.host.patch({
+            commandActivities: {
+              ...this.host.state().commandActivities,
+              [eventSessionId]: retained,
+            },
+          });
+        }
+      }
       if (event.type === "agent_start" || event.type === "auto_retry_start") {
         this.armAttention(eventSessionId, "agent");
       } else if (event.type === "compaction_start") {

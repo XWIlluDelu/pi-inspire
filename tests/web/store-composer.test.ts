@@ -280,7 +280,7 @@ describe("Pi native command dispatch", () => {
     );
   });
 
-  it("preserves Pi's dynamic-command precedence over built-in name collisions", async () => {
+  it("reserves built-in names while retaining namespaced runtime commands", async () => {
     const promptBodies: Record<string, unknown>[] = [];
     let nativeCount = 0;
     installFetch((url, init) => {
@@ -304,21 +304,28 @@ describe("Pi native command dispatch", () => {
             description: "Extension-owned model command",
             source: "extension",
           },
+          { name: "plugin:model", source: "extension" },
         ],
       }),
     });
 
-    expect(store.isNativeCommand("/model custom")).toBe(false);
+    expect(store.isNativeCommand("/model custom")).toBe(true);
     await expect(store.sendPrompt("/model custom")).resolves.toMatchObject({
       accepted: true,
     });
     await expect(store.sendPrompt("/model\tcustom")).resolves.toMatchObject({
       accepted: true,
     });
-    expect(promptBodies).toHaveLength(2);
+    expect(promptBodies).toHaveLength(0);
+    expect(store.getState().nativeCommandUiRequest).toMatchObject({
+      action: "model",
+      query: "custom",
+    });
+    await store.sendPrompt("/plugin:model\tcustom");
+    expect(promptBodies).toHaveLength(1);
     expect(promptBodies.at(-1)).toMatchObject({
       sessionId: "s1",
-      message: "/model custom",
+      message: "/plugin:model custom",
     });
     expect(nativeCount).toBe(0);
   });
