@@ -123,7 +123,17 @@ for (const transitionScan of [1, 2]) {
     );
 
     const realReaddir = fs.readdir;
+    const startedAt = Date.now();
+    const waitMs = 150;
     let scans = 0;
+    // Exercise the phase-change rescan before expiring the lock wait. Real
+    // filesystem latency (especially Windows flushes) must not spend this
+    // regression's deadline before it reaches the race being tested.
+    t.mock.method(
+      Date,
+      "now",
+      () => startedAt + (scans > transitionScan ? waitMs : 0),
+    );
     t.mock.method(crypto, "randomUUID", () => contenderToken);
     t.mock.method(fs, "readdir", async (...args) => {
       const names = await realReaddir(...args);
@@ -146,7 +156,7 @@ for (const transitionScan of [1, 2]) {
       await assert.rejects(
         async () => {
           unexpectedLease = await acquireFileLock(path, {
-            waitMs: 150,
+            waitMs,
             retryMs: 5,
           });
         },
