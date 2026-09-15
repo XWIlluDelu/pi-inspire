@@ -71,11 +71,18 @@ for (const viewport of [
       });
       await expect(before).toBeVisible();
       await expect(after).toBeVisible();
-      const preceding = await before.boundingBox();
-      const current = await checkpoint.boundingBox();
-      const following = await after.boundingBox();
-      expect(preceding!.y).toBeLessThan(current!.y);
-      expect(current!.y).toBeLessThan(following!.y);
+      // Hydration may replace a visible row between separate geometry reads.
+      await expect
+        .poll(async () => {
+          const [preceding, current, following] = await Promise.all([
+            before.boundingBox(),
+            checkpoint.boundingBox(),
+            after.boundingBox(),
+          ]);
+          if (!preceding || !current || !following) return false;
+          return preceding.y < current.y && current.y < following.y;
+        })
+        .toBe(true);
       const disclosure = checkpoint.locator("details");
       const summary = disclosure.locator(":scope > summary");
       const copy = checkpoint.locator(".context-checkpoint__copy");
@@ -97,7 +104,9 @@ for (const viewport of [
         "aria-label",
         "Compaction summary copied",
       );
-      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      // Windows clipboard text uses CRLF; preserve every other character.
+      expect(copied.replace(/\r\n/gu, "\n")).toBe(
         "## Preserved context\n\nKeep the parser decisions and remaining work.",
       );
       await expect(disclosure).not.toHaveAttribute("open");
@@ -112,6 +121,8 @@ for (const viewport of [
           (element) => element.scrollWidth <= element.clientWidth,
         ),
       ).toBe(true);
+      const current = await checkpoint.boundingBox();
+      expect(current).not.toBeNull();
       for (const selector of [
         ".context-checkpoint__title",
         ".context-checkpoint__metric",
