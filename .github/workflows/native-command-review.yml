@@ -1,17 +1,21 @@
-name: Native command review environment
+name: Native command verification
 
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/native-command-review.yml]
+    paths:
+      - .github/workflows/native-command-review.yml
+      - .github/native-command-review-part-*.txt
 
 permissions:
   contents: read
 
 jobs:
-  environment:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -20,22 +24,73 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - uses: actions/checkout@v7
-        with:
-          repository: earendil-works/pi
-          ref: main
-          path: review-upstream
-          persist-credentials: false
-      - name: Package isolated public source and test dependencies
+      - name: Apply reviewed patch and remove temporary verification files
         run: |
-          cp "$(command -v node)" review-node
-          git rev-parse HEAD > review-base-sha
-          git -C review-upstream rev-parse HEAD > review-upstream-sha
-          tar --exclude=.git -czf "$RUNNER_TEMP/native-command-review.tar.gz" .
-      - uses: actions/upload-artifact@v7
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          files = sorted(pathlib.Path('.github').glob('native-command-review-part-*.txt'))
+          patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in files), validate=True))
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == '5b279d481bf0fee1393d4d53dd65b16ad4b69614117edea8fb9365387eb9aacb', digest
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          subprocess.run(['git', 'rm', '.github/workflows/native-command-review.yml', *map(str, files)], check=True)
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          subprocess.run(['git', 'diff', '--cached', '--stat'], check=True)
+          PY
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the complete final tree
+        run: |
+          set -o pipefail
+          npm run ci 2>&1 | tee "$RUNNER_TEMP/native-command-validation.log"
+          git diff --exit-code
+      - name: Prepare verified commit without updating any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, pathlib, subprocess, urllib.request
+          def git(*args):
+              return subprocess.check_output(['git', *args]).decode().strip()
+          def api(endpoint, body):
+              url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/{endpoint}"
+              request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
+                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'Content-Type': 'application/json',
+              }, method='POST')
+              with urllib.request.urlopen(request) as response:
+                  return json.load(response)
+          parent = git('rev-parse', 'HEAD')
+          assert parent == os.environ['GITHUB_SHA']
+          changes = []
+          for line in git('diff', '--cached', '--name-status', '--no-renames').splitlines():
+              status, path = line.split('\t', 1)
+              if status == 'D':
+                  changes.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': None})
+              else:
+                  mode = git('ls-files', '-s', '--', path).split()[0]
+                  blob = api('git/blobs', {'encoding': 'base64', 'content': base64.b64encode(pathlib.Path(path).read_bytes()).decode()})
+                  changes.append({'path': path, 'mode': mode, 'type': 'blob', 'sha': blob['sha']})
+          tree = api('git/trees', {'base_tree': git('rev-parse', 'HEAD^{tree}'), 'tree': changes})
+          assert tree['sha'] == git('write-tree'), 'Published tree differs from the tested index'
+          commit = api('git/commits', {
+              'message': 'fix(pi): align native commands and compaction presentation\n\nRestore chronological compaction checkpoints without changing model context.\nReserve native command names, revalidate resources after reload, and expose\nterminal-only capabilities. Restore summary retry detail from snapshots,\nreport manual outcomes for observers, and retire stale compact receipts.\n\nAdd server, client, installed-Pi inventory, and browser regressions; update\ncompatibility contracts. Remove temporary verification tooling.\n\nVerified with npm run ci on the complete final tree.',
+              'tree': tree['sha'], 'parents': [parent],
+          })
+          result = {'parent': parent, 'sha': commit['sha'], 'tree': tree['sha'], 'url': commit['html_url']}
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'native-command-candidate.json').write_text(json.dumps(result, indent=2))
+          print('VERIFIED_NATIVE_COMMAND_COMMIT=' + commit['sha'])
+          print(json.dumps(result))
+          PY
+      - if: always()
+        uses: actions/upload-artifact@v7
         with:
-          name: native-command-review-environment
-          path: ${{ runner.temp }}/native-command-review.tar.gz
-          retention-days: 1
-          compression-level: 0
+          name: native-command-verification
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/native-command-validation.log
+            ${{ runner.temp }}/native-command-candidate.json
+            output/playwright/
+          if-no-files-found: ignore
