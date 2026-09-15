@@ -8,6 +8,7 @@ import {
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
+  isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
@@ -413,7 +414,23 @@ export class RuntimeEventController {
         };
         this.host.scheduleIdleWorkerEviction();
         break;
+      case "summarization_retry_scheduled":
+        slot.summarizationRetry = parseRetryInfo({
+          attempt: record.attempt,
+          maxAttempts: record.maxAttempts,
+          message: record.errorMessage,
+        });
+        forwardedEvent = {
+          ...record,
+          errorMessage: slot.summarizationRetry?.message ?? "",
+        };
+        break;
+      case "summarization_retry_attempt_start":
+      case "summarization_retry_finished":
+        slot.summarizationRetry = null;
+        break;
       case "agent_start":
+        slot.summarizationRetry = null;
         slot.runState = "running";
         slot.compactionReturnState = null;
         slot.activeAssistantCorrelation = null;
@@ -422,6 +439,7 @@ export class RuntimeEventController {
         slot.attention = null;
         break;
       case "compaction_start":
+        slot.summarizationRetry = null;
         if (
           slot.compactionReturnState === null &&
           slot.runState !== "compacting"
@@ -432,6 +450,7 @@ export class RuntimeEventController {
         slot.attention = null;
         break;
       case "compaction_end": {
+        slot.summarizationRetry = null;
         const returnState =
           slot.compactionReturnState ??
           (record.reason === "manual" ? "idle" : "running");
@@ -469,6 +488,7 @@ export class RuntimeEventController {
         break;
       }
       case "agent_settled": {
+        slot.summarizationRetry = null;
         const outcome =
           slot.runState === "failed" || slot.runState === "conflict"
             ? "failed"
@@ -501,6 +521,7 @@ export class RuntimeEventController {
       }
     }
     if (slot.runState !== "retrying") slot.retry = null;
+    if (!isBusyRunState(slot.runState)) slot.summarizationRetry = null;
     this.host.emitSlotEvent(slot, forwardedEvent);
   }
 

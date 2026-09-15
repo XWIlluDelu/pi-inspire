@@ -56,11 +56,13 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
 
 - Pi RPC `get_commands` enumerates extension, prompt, and skill resources but not Pi's interactive
   built-ins. A shared explicit registry therefore classifies built-ins as browser-native, bounded
-  Host/RPC operations, informational, or terminal-only; where no Pi runtime resource owns the same
-  name, the Host independently rejects built-in or unknown command-shaped text and shell syntax at
-  the ordinary prompt boundary so a stale or non-browser client cannot send it to the model
-  accidentally. Pi runtime-resource precedence is retained, except that `/compact` is always
-  Host-owned.
+  Host/RPC operations, informational, or terminal-only. Like Pi's interactive submit handler,
+  built-ins own their names before SDK resource dispatch; namespaced runtime commands remain
+  available. The Host independently rejects built-in or unknown command-shaped text and shell
+  syntax at the ordinary prompt boundary, normalizes resource-command separators, and revalidates
+  resource ownership after a queued reload or worker replacement. A stale or non-browser client
+  must not accidentally turn a retired command into a model prompt. `/compact` also has a
+  Host-owned first-message prompt path, using the same standalone operation lifecycle.
 
 - Manual compaction is a standalone Host operation whose completion belongs to Pi, not a fixed
   three-minute allowance or the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,

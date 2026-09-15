@@ -54,6 +54,19 @@ export const CommandActivity = memo(function CommandActivity() {
           <div className="command-activity__body">
             <div className="command-activity__heading">
               <code>{activity.title}</code>
+              {activity.createdAt !== undefined &&
+              Number.isFinite(activity.createdAt) ? (
+                <time
+                  className="command-activity__state"
+                  dateTime={new Date(activity.createdAt).toISOString()}
+                  title={new Date(activity.createdAt).toLocaleString()}
+                >
+                  {new Date(activity.createdAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </time>
+              ) : null}
               <span className="command-activity__state">
                 {activity.status === "running"
                   ? "Running"

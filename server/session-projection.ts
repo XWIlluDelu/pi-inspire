@@ -335,7 +335,17 @@ function contextMessages(
   leafId: string | null,
   byId: Map<string, SessionEntry>,
 ): unknown[] {
-  const messages = buildContextEntries(entries, leafId, byId).flatMap((entry) =>
+  const contextEntries = buildContextEntries(entries, leafId, byId);
+  // Pi prepends the latest summary for model consumption. A transcript must
+  // retain the same selected entries, but show the compaction where it happened.
+  // Persisted append order is authoritative even with skewed/equal timestamps;
+  // membership from Pi excludes discarded context and unrelated branches.
+  let transcriptEntries = contextEntries;
+  if (contextEntries[0]?.type === "compaction") {
+    const included = new Set(contextEntries.map((entry) => entry.id));
+    transcriptEntries = entries.filter((entry) => included.has(entry.id));
+  }
+  const messages = transcriptEntries.flatMap((entry) =>
     sessionEntryToContextMessages(entry).map((message, index) => ({
       ...message,
       __inspireMessageId: `${entry.id}:${index}`,

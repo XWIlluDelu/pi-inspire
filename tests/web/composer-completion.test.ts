@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PI_NATIVE_COMMANDS } from "../../shared/commands";
 import {
   parseCaretCompletion,
   rankCommands,
@@ -122,5 +123,36 @@ describe("composer caret completion", () => {
       "loop",
       "review-loop",
     ]);
+  });
+});
+
+describe("Pi interactive command ownership", () => {
+  it.each(PI_NATIVE_COMMANDS)(
+    "reserves /$name ahead of every runtime source",
+    (builtin) => {
+      for (const source of ["extension", "prompt", "skill"]) {
+        const resolved = resolveCommandInventory([
+          { name: builtin.name, source },
+        ]);
+        expect(
+          resolved.filter((command) => command.name === builtin.name),
+        ).toEqual([
+          expect.objectContaining({
+            source: "builtin",
+            execution: builtin.execution,
+          }),
+        ]);
+      }
+    },
+  );
+  it("does not offer unavailable built-in collisions in a first-message composer", () => {
+    const commands = [
+      { name: "model", source: "extension" },
+      { name: "export", source: "prompt" },
+      { name: "plugin:model", source: "extension" },
+    ];
+    expect(
+      resolveCommandInventory(commands, false).map((command) => command.name),
+    ).toEqual(["plugin:model", "compact"]);
   });
 });

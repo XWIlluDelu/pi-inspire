@@ -390,7 +390,10 @@ export function ComposerInput({
     return ranked.map((command) => ({
       key: `${command.source ?? "command"}:${command.name}`,
       title: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""}`,
-      hint: command.description,
+      hint:
+        command.execution === "terminal"
+          ? `Terminal only — ${command.description ?? "Run in Pi's terminal"}`
+          : command.description,
       group:
         command.source === "builtin"
           ? "Pi"

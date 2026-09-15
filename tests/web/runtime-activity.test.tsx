@@ -291,7 +291,7 @@ describe("phase event reduction", () => {
     expect(result.slice.messages).toEqual([]);
   });
 
-  it("does not duplicate manual command error/cancellation results", () => {
+  it("reports manual failures and cancellation without requiring a local receipt", () => {
     for (const outcome of [
       { aborted: true },
       { errorMessage: "manual failure" },
@@ -302,7 +302,14 @@ describe("phase event reduction", () => {
         result: null,
         ...outcome,
       });
-      expect(result.slice.notices).toEqual([]);
+      expect(result.slice.notices).toEqual([
+        expect.objectContaining({
+          kind: "aborted" in outcome ? "info" : "error",
+          text: expect.stringContaining(
+            "aborted" in outcome ? "cancelled" : "manual failure",
+          ),
+        }),
+      ]);
     }
   });
 
@@ -326,5 +333,142 @@ describe("phase event reduction", () => {
     });
     expect(result.slice.runState).toBe("retrying");
     expect(result.slice.retry).toBeNull();
+  });
+});
+
+describe("summary retry and command receipts", () => {
+  it("restores compaction backoff from snapshots and clears it when the next attempt starts", () => {
+    snapshot.runState = "compacting";
+    snapshot.summarizationRetry = retry;
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    const first = renderActivity();
+    expect(progress()).toHaveTextContent(
+      "Compaction retry 2/3 — waiting — Provider overloaded",
+    );
+    expect(store.getState().runState).toBe("compacting");
+    first.unmount();
+    renderActivity();
+    expect(progress()).toHaveTextContent("Compaction retry 2/3");
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_attempt_start",
+        source: "compaction",
+        reason: "manual",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compacting context");
+    expect(progress()).not.toHaveTextContent("waiting");
+    expect(store.getState().summarizationRetry).toBeNull();
+  });
+
+  it("handles live backoff without replacing the enclosing operation state", () => {
+    renderActivity();
+    start("manual");
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_scheduled",
+        attempt: 2,
+        maxAttempts: 3,
+        errorMessage: "Provider overloaded",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compaction retry 2/3");
+    expect(store.getState().retry).toBeNull();
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_finished",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compacting context");
+  });
+
+  it("does not retain backoff in an idle or different session snapshot", () => {
+    snapshot.summarizationRetry = retry;
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    renderActivity();
+    expect(store.getState().summarizationRetry).toBeNull();
+    expect(progress()).not.toBeInTheDocument();
+  });
+
+  it("shows a manual failure after joining an already compacting session", async () => {
+    snapshot.runState = "compacting";
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    renderActivity();
+    expect(
+      store.getState().commandActivities[store.getState().sessionId!],
+    ).toBeUndefined();
+    snapshot.runState = "failed";
+    finish("manual", {
+      errorMessage: "Summary provider unavailable",
+      result: null,
+      sessionStatus: { runState: "failed" },
+    });
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "Summary provider unavailable",
+    );
+    await waitFor(() => expect(store.getState().runState).toBe("failed"));
+  });
+
+  it("timestamps local results and removes successful compact receipts when conversation continues", async () => {
+    renderActivity();
+    act(() => {
+      void store.sendPrompt("/compact");
+    });
+    await act(async () =>
+      nativeResult.resolve({
+        command: "compact",
+        outcome: "completed",
+        message: "Context compacted.",
+      }),
+    );
+    await screen.findByText("Done");
+    const receipt = screen.getByText("/compact").closest("article")!;
+    expect(
+      receipt.querySelector("time")?.getAttribute("datetime"),
+    ).toBeTruthy();
+    act(() =>
+      socket().emit({
+        type: "agent_start",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "running" },
+      }),
+    );
+    expect(screen.queryByText("/compact")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "compaction_start",
+    "compaction_end",
+    "agent_start",
+    "agent_settled",
+    "runtime_error",
+  ])("%s retires summary retry details", (type) => {
+    const result = reduceEvent(
+      {
+        ...emptyEventSlice(),
+        runState: "compacting",
+        summarizationRetry: retry,
+      },
+      new Set(),
+      { type, result: {} },
+    );
+    expect(result.slice.summarizationRetry).toBeNull();
+  });
+
+  it("bounds malformed retry details instead of inventing counters", () => {
+    const prior = { ...emptyEventSlice(), runState: "compacting" as const };
+    const result = reduceEvent(prior, new Set(), {
+      type: "summarization_retry_scheduled",
+      attempt: 99,
+      maxAttempts: 3,
+    });
+    expect(result.slice.runState).toBe("compacting");
+    expect(result.slice.summarizationRetry).toBeNull();
   });
 });

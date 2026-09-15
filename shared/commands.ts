@@ -1,4 +1,4 @@
-type PiNativeCommandExecution =
+export type PiNativeCommandExecution =
   | "host"
   | "client"
   | "surface"
@@ -14,8 +14,8 @@ interface PiNativeCommandDescriptor {
 
 /**
  * Pi's built-in interactive command surface, adapted for a persistent browser
- * client. Runtime resources retain Pi's normal first-dispatch precedence;
- * `/compact` is the sole Host-owned collision exception.
+ * client. Like Pi's interactive submit handler, built-ins own their names
+ * before SDK/RPC resource dispatch. Namespaced runtime commands remain available.
  */
 export const PI_NATIVE_COMMANDS = [
   {
@@ -166,7 +166,9 @@ export function parseCommandInvocation(
   };
 }
 
-function nativeCommand(name: string): PiNativeCommandDescriptor | undefined {
+export function nativeCommand(
+  name: string,
+): PiNativeCommandDescriptor | undefined {
   return nativeByName.get(name);
 }
 
