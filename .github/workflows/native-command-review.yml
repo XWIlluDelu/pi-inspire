@@ -27,23 +27,152 @@ jobs:
       - name: Apply reviewed patch and remove temporary verification files
         run: |
           python3 - <<'PY'
-          import base64, gzip, hashlib, pathlib, subprocess
+          import base64, gzip, hashlib, os, pathlib, subprocess, tarfile
           files = sorted(pathlib.Path('.github').glob('native-command-review-part-*.txt'))
           patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in files), validate=True))
           digest = hashlib.sha256(patch).hexdigest()
           assert digest == '5b279d481bf0fee1393d4d53dd65b16ad4b69614117edea8fb9365387eb9aacb', digest
           subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+
+          path = pathlib.Path('tests/browser/native-commands.spec.ts')
+          text = path.read_text()
+          old = '''  if (!(await row.isVisible()))
+              await page
+                .getByRole("button", { name: "Toggle navigation", exact: true })
+                .click();
+            await row.click();'''
+          new = '''  const toggle = page.getByRole("button", {
+              name: "Toggle navigation",
+              exact: true,
+            });
+            // Session rows arrive asynchronously; inspect navigation state, not whether
+            // the fixture has loaded, before deciding to open the navigation.
+            if (
+              (await toggle.getAttribute("aria-expanded")) === "false" ||
+              (await page.locator(".nav--rail").count()) > 0
+            )
+              await toggle.click();
+            await expect(row).toBeVisible();
+            await row.click();'''
+          assert text.count(old) == 1, 'Navigation helper changed'
+          text = text.replace(old, new)
+          old = '  { name: "narrow", width: 390, height: 844, colorScheme: "dark" as const },'
+          assert text.count(old) == 1, 'Viewport inventory changed'
+          text = text.replace(old, old + '\n  { name: "small", width: 320, height: 844, colorScheme: "light" as const },')
+          old = '''      expect(
+                  (
+                    await new AxeBuilder({ page })'''
+          new = '''      for (const selector of [
+                  ".context-checkpoint__title",
+                  ".context-checkpoint__metric",
+                  ".context-checkpoint__time",
+                  ".context-checkpoint__copy",
+                  ".context-checkpoint__chevron",
+                ]) {
+                  const bounds = await checkpoint.locator(selector).boundingBox();
+                  expect(bounds).not.toBeNull();
+                  expect(bounds!.x).toBeGreaterThanOrEqual(current!.x);
+                  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+                    current!.x + current!.width,
+                  );
+                }
+          ''' + old
+          assert text.count(old) == 1, 'Accessibility assertion changed'
+          path.write_text(text.replace(old, new))
+
+          path = pathlib.Path('src/styles/transcript.css')
+          text = path.read_text()
+          old = '.context-checkpoint {\n'
+          assert text.count(old) == 1, 'Checkpoint rule changed'
+          text = text.replace(old, old + '  container: context-checkpoint / inline-size;\n  min-width: 0;\n')
+          old = '/* One attribution line above the answer carries who, model, and time; the\n'
+          assert text.count(old) == 1, 'Checkpoint section boundary changed'
+          new = '''/* Keep the checkpoint controls visible when sidebars or a narrow viewport
+             leave too little room for a single-line heading. */
+          @container context-checkpoint (max-width: 480px) {
+            .context-checkpoint > summary {
+              display: grid;
+              grid-template-columns: auto minmax(0, 1fr) auto auto;
+              row-gap: 2px;
+            }
+
+            .context-checkpoint__icon {
+              grid-column: 1;
+              grid-row: 1;
+            }
+
+            .context-checkpoint__title {
+              grid-column: 2;
+              grid-row: 1;
+              min-width: 0;
+              white-space: normal;
+              overflow-wrap: anywhere;
+            }
+
+            .context-checkpoint__metric {
+              grid-column: 2;
+              grid-row: 2;
+              min-width: 0;
+              white-space: normal;
+              overflow-wrap: anywhere;
+            }
+
+            .context-checkpoint__spacer {
+              display: none;
+            }
+
+            .context-checkpoint__time {
+              grid-column: 3 / 5;
+              grid-row: 2;
+              justify-self: end;
+            }
+
+            .context-checkpoint__action-wrap {
+              grid-column: 3;
+              grid-row: 1;
+            }
+
+            .context-checkpoint__chevron {
+              grid-column: 4;
+              grid-row: 1;
+            }
+          }
+
+          '''
+          path.write_text(text.replace(old, new + old))
+          subprocess.run(['git', 'add', 'tests/browser/native-commands.spec.ts', 'src/styles/transcript.css'], check=True)
           subprocess.run(['git', 'rm', '.github/workflows/native-command-review.yml', *map(str, files)], check=True)
           subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
           subprocess.run(['git', 'diff', '--cached', '--stat'], check=True)
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          (temp / 'native-command-final.patch').write_bytes(subprocess.check_output(['git', 'diff', '--cached', '--binary']))
+          (temp / 'native-command-tested-tree.txt').write_bytes(subprocess.check_output(['git', 'write-tree']))
+          with tarfile.open(temp / 'native-command-source.tar.gz', 'w:gz') as archive:
+              for raw in subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0'):
+                  if not raw:
+                      continue
+                  source = pathlib.Path(os.fsdecode(raw))
+                  if source.suffix in {'.ts', '.tsx', '.mjs', '.json', '.jsonl', '.md', '.css', '.yml', '.yaml'}:
+                      archive.add(source, arcname=str(source))
           PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-command-source
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/native-command-final.patch
+            ${{ runner.temp }}/native-command-source.tar.gz
+            ${{ runner.temp }}/native-command-tested-tree.txt
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Verify the complete final tree
         run: |
-          set -o pipefail
-          npm run ci 2>&1 | tee "$RUNNER_TEMP/native-command-validation.log"
+          status=0
+          npm run ci > "$RUNNER_TEMP/native-command-validation.log" 2>&1 || status=$?
+          tail -n 70 "$RUNNER_TEMP/native-command-validation.log"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           git diff --exit-code
+          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/native-command-tested-tree.txt")"
       - name: Prepare verified commit without updating any branch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,7 +189,7 @@ jobs:
                   'X-GitHub-Api-Version': '2022-11-28',
                   'Content-Type': 'application/json',
               }, method='POST')
-              with urllib.request.urlopen(request) as response:
+              with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
           parent = git('rev-parse', 'HEAD')
           assert parent == os.environ['GITHUB_SHA']
@@ -75,8 +204,9 @@ jobs:
                   changes.append({'path': path, 'mode': mode, 'type': 'blob', 'sha': blob['sha']})
           tree = api('git/trees', {'base_tree': git('rev-parse', 'HEAD^{tree}'), 'tree': changes})
           assert tree['sha'] == git('write-tree'), 'Published tree differs from the tested index'
+          assert tree['sha'] == pathlib.Path(os.environ['RUNNER_TEMP'], 'native-command-tested-tree.txt').read_text().strip()
           commit = api('git/commits', {
-              'message': 'fix(pi): align native commands and compaction presentation\n\nRestore chronological compaction checkpoints without changing model context.\nReserve native command names, revalidate resources after reload, and expose\nterminal-only capabilities. Restore summary retry detail from snapshots,\nreport manual outcomes for observers, and retire stale compact receipts.\n\nAdd server, client, installed-Pi inventory, and browser regressions; update\ncompatibility contracts. Remove temporary verification tooling.\n\nVerified with npm run ci on the complete final tree.',
+              'message': 'fix(pi): align native commands and compaction presentation\n\nRestore chronological compaction checkpoints without changing model context.\nReserve native command names, revalidate resources after reload, and expose\nterminal-only capabilities. Restore summary retry detail from snapshots,\nreport manual outcomes for observers, and retire stale compact receipts.\n\nKeep checkpoint controls visible in narrow containers and make browser\nfixtures wait for asynchronous session rows without collapsing navigation.\nAdd server, client, installed-Pi inventory, and browser regressions; update\ncompatibility contracts. Remove temporary verification tooling.\n\nVerified with npm run ci on the complete final tree.',
               'tree': tree['sha'], 'parents': [parent],
           })
           result = {'parent': parent, 'sha': commit['sha'], 'tree': tree['sha'], 'url': commit['html_url']}
