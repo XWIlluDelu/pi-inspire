@@ -9,7 +9,7 @@ covers:
   - src/{api,events,store,snapshot-transition,transport-performance}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
   - tests/server/app.test.ts
-  - tests/web/{events,store,store-transcript,store-navigation}.test.ts
+  - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
 
 # Session transport and browser ownership
@@ -72,11 +72,18 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
 
   Browser selection operations carry one explicit owner: the bounded `SessionSelectionController`
   accepts an open/new/deselect response only while its API client, transport generation, and
-  explicit owner still match the `AppStore` facade. A newer open, new-session, authoritative stream
-  snapshot, bootstrap, or transport replacement supersedes the older opener without serializing
-  navigation; a successful new-session selection clears the prior opener, and stale
-  completion/finally paths cannot clear a newer owner. Every open/new endpoint completes all
-  fallible projection and runtime-metadata reads before its selection or identity commit.
+  explicit owner still match the `AppStore` facade. A newer open, new-session, deselection,
+  unaddressed selection push, bootstrap, or transport replacement supersedes the older opener
+  without serializing navigation. An addressed stream snapshot refreshes the existing detail
+  interest; it must not retire a newer explicit selection still awaiting its HTTP response.
+  A successful new-session selection clears the prior opener, and stale completion/finally paths
+  cannot clear a newer owner. Every open/new endpoint completes all fallible projection and
+  runtime-metadata reads before its selection or identity commit.
+
+  HTTP resync failures obey the same session and selection-generation checks as successful reads,
+  including switching away and back or replacing a same-session branch view. An old read must not
+  publish an error over the current selection. A current-API 401 remains transport-wide; an error
+  from a replaced API remains stale. `store-async-ownership.test.ts` covers these boundaries.
 
   Fork validates its private destination before publication; once that complete JSONL is atomically
   published, any later attachment failure reports the exact committed destination and cannot become

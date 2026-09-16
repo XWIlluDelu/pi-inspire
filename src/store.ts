@@ -415,9 +415,9 @@ export class AppStore {
   /** Explicit open, create, and deselect intent. Unlike selectionRequest, this
    * does not advance for authoritative transport snapshots. */
   private selectionIntentGeneration = 0;
-  /** Latest-wins guard for selection intent: openSession/newSession and every
-   * authoritative WebSocket snapshot bump it, so a slower open/new HTTP
-   * response cannot overwrite a newer selection the client already applied. */
+  /** Latest-wins guard for explicit selection and replacement authority.
+   * Addressed detail snapshots only refresh the visible projection; they
+   * must not retire a newer open/new/deselect request. */
   private selectionRequest = 0;
   /** The request that owns the visible opening marker. Stale completions may
    * never clear a newer owner. */
@@ -963,6 +963,13 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
+        // A failed read has the same selection owner as a successful one.
+        // Keep transport-wide authentication handling above this boundary.
+        if (
+          this.state.sessionId !== expectedSessionId ||
+          this.selectionGeneration !== expectedGeneration
+        )
+          return;
         const currentProjectionError = this.state.projectionError;
         this.fail(
           currentProjectionError ??
