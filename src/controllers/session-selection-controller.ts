@@ -41,7 +41,7 @@ interface SessionSelectionControllerHost {
 export class SessionSelectionController {
   constructor(private readonly host: SessionSelectionControllerHost) {}
 
-  /** A replacement bootstrap or authoritative stream snapshot supersedes every
+  /** A replacement bootstrap or unaddressed selection push supersedes every
    * in-flight selection, including one that may never answer on an old client. */
   invalidateForReplacement(): void {
     this.host.invalidateOpening();
