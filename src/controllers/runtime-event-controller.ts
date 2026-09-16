@@ -258,11 +258,11 @@ export class RuntimeEventController {
   apply(event: WireEvent): void {
     if (event.type === "snapshot") {
       if (event.data) {
-        // An authoritative push is the newest selection truth: invalidate any
-        // open/new response still in flight so it cannot overwrite this. The
-        // push also immediately releases the old opening marker; stale
-        // finally blocks are fenced by their operation owner.
-        this.host.invalidateSelection();
+        // Addressed snapshots refresh an existing detail interest, not a new
+        // selection intent. A later open/new/deselect may still be pending.
+        // Bootstrap replacement is fenced by AppStore's transport boundary;
+        // unaddressed selection pushes retain their replacement semantics.
+        if (event.detailRevision === undefined) this.host.invalidateSelection();
         const snapshot = event.data as ActiveSnapshot;
         this.host.applySnapshot(snapshot);
         if (snapshot.active?.sessionId)
