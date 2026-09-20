@@ -666,6 +666,57 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     }
   });
 
+  it("keeps Pi system loadouts out of full, incremental and branch transcript views", async () => {
+    const initial = {
+      ...message("s1", null, "system", "", 1),
+      message: {
+        role: "system",
+        content: "",
+        sections: { preamble: "host-only prompt" },
+        toolsAdded: [{ name: "read", description: "Read", parameters: {} }],
+        timestamp: 1,
+      },
+    };
+    const { path, record, projection } = await fixture([
+      initial,
+      message("u1", "s1", "user", "question", 2),
+      message("a1", "u1", "assistant", "answer", 3),
+    ]);
+    await projection.suspendReconciliation();
+    let reopened: SessionProjection | null = null;
+    try {
+      expect(projection.messages).toHaveLength(2);
+      expect(projection.viewMessages("s1")).toEqual([]);
+      projection.setOwnedAppendWindow(() => true);
+      const update = {
+        ...message("s2", "a1", "system", "host-only update", 4),
+        message: {
+          role: "system",
+          content: "host-only update",
+          sections: { skills: "updated skills" },
+          toolsRemoved: [{ name: "read" }],
+          timestamp: 4,
+        },
+      };
+      await appendFile(path, `${JSON.stringify(update)}\n`);
+      expect(await projection.reconcileSuspended(true)).toMatchObject({
+        kind: "append",
+        messageChange: "none",
+        appendedEntries: [update],
+      });
+      expect(projection.leafId).toBe("s2");
+      expect(projection.entry("s2")).toMatchObject({ role: "system" });
+      expect(projection.viewMessages("s2")).toEqual(projection.messages);
+      expect(projection.latestPage().messages).toHaveLength(2);
+      reopened = await SessionProjection.open(record);
+      expect(reopened.messages).toEqual(projection.messages);
+      expect(await readFile(path, "utf8")).toContain("host-only update");
+    } finally {
+      await reopened?.close();
+      await projection.close();
+    }
+  });
+
   it("retains the last-good projection for duplicate or cyclic entry identity", async () => {
     const { path, projection } = await fixture([
       message("u1", null, "user", "good", 1),
@@ -1533,6 +1584,12 @@ describe("chronological compaction projection", () => {
       timestamp: new Date(0).toISOString(),
       summary: id,
       tokensBefore: 1000,
+      systemMessage: {
+        role: "system",
+        content: "host-only compaction checkpoint",
+        toolsAdded: [],
+        timestamp: 0,
+      },
     });
     try {
       await appendFile(path, JSON.stringify(compact("c1", "a2", "u2")) + "\n");

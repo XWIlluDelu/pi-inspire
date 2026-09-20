@@ -330,6 +330,23 @@ function indexSessionEntries(
   return byId;
 }
 
+/** System prompts/tool declarations remain canonical Pi state, not transcript
+ * rows. Keep the SDK's original per-entry index for stable message identities,
+ * including summaries returned after a compaction's system checkpoint. */
+function transcriptEntryMessages(entry: SessionEntry) {
+  return sessionEntryToContextMessages(entry).flatMap((message, index) =>
+    message.role === "system"
+      ? []
+      : [
+          {
+            ...message,
+            __inspireMessageId: `${entry.id}:${index}`,
+            __inspireEntryId: entry.id,
+          },
+        ],
+  );
+}
+
 function contextMessages(
   entries: SessionEntry[],
   leafId: string | null,
@@ -345,13 +362,7 @@ function contextMessages(
     const included = new Set(contextEntries.map((entry) => entry.id));
     transcriptEntries = entries.filter((entry) => included.has(entry.id));
   }
-  const messages = transcriptEntries.flatMap((entry) =>
-    sessionEntryToContextMessages(entry).map((message, index) => ({
-      ...message,
-      __inspireMessageId: `${entry.id}:${index}`,
-      __inspireEntryId: entry.id,
-    })),
-  );
+  const messages = transcriptEntries.flatMap(transcriptEntryMessages);
   let turnOrdinal = -1;
   let turnId: string | null = null;
   return messages.map((message) => {
@@ -390,26 +401,22 @@ function appendContextMessages(
       break;
     }
   }
-  const appended = entries.flatMap((entry) =>
-    sessionEntryToContextMessages(entry).map((message, index) => {
-      const id = `${entry.id}:${index}`;
-      if (message.role === "user") {
-        turnOrdinal += 1;
-        turnId = id;
-      }
-      return {
-        ...message,
-        __inspireMessageId: id,
-        __inspireEntryId: entry.id,
-        ...(turnId !== null
-          ? {
-              __inspireUserTurnId: turnId,
-              __inspireUserTurnIndex: turnOrdinal,
-            }
-          : {}),
-      };
-    }),
-  );
+  const appended = entries.flatMap(transcriptEntryMessages).map((message) => {
+    const id = message.__inspireMessageId;
+    if (message.role === "user") {
+      turnOrdinal += 1;
+      turnId = id;
+    }
+    return {
+      ...message,
+      ...(turnId !== null
+        ? {
+            __inspireUserTurnId: turnId,
+            __inspireUserTurnIndex: turnOrdinal,
+          }
+        : {}),
+    };
+  });
   return [...previous, ...appended];
 }
 
