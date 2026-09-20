@@ -2,7 +2,6 @@ const BUILD_ID = new URL(self.location.href).searchParams.get("v")?.replace(/[^a
 const CACHE = `inspire-shell-${BUILD_ID}`;
 const SHELL = [
   "/",
-  "/favicon.svg",
   "/theme-init.js",
 ];
 
@@ -34,11 +33,12 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname === "/events") return;
 
-  // PWA metadata and launcher icons are mutable outside Vite's hashed asset
-  // graph. Always retrieve them from the host so installed apps see updates.
+  // Browser/PWA metadata and icons are mutable outside Vite's hashed asset
+  // graph. Fetch from the host so tab and installed icons can receive updates.
   if (
     [
       "/manifest.webmanifest",
+      "/favicon.svg",
       "/app-icon-192.png",
       "/app-icon-512.png",
       "/app-icon-maskable-512.png",
