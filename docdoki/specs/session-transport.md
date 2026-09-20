@@ -123,6 +123,13 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   continuation does not. Older-page cursors bind both view and effective-leaf lineage, and the
   browser aborts/discards a page that completes after a branch boundary.
 
+- Pi system prompt/tool-loadout messages remain host-side canonical state, not browser transcript
+  rows or live overlays. This also applies to system checkpoints returned with a compaction and
+  system messages inside aggregate agent events. Full, incremental, reopened, and branch views
+  share the same filtering while preserving the SDK's per-entry message identities and the
+  chronological compaction summary. Filtering never changes persisted bytes or drops ownership
+  claims.
+
 - Assistant overlay text/thinking and tool-argument string appends produced by the trusted reducer
   account for appended JSON bytes, preview metadata, and stream-revision growth without serializing
   cumulative messages. Escaping, UTF-8, split surrogates, per-string caps, per-item caps, and the total

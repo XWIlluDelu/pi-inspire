@@ -50,7 +50,7 @@ A cross-platform local workbench for [Pi Coding Agent](https://github.com/earend
 
 Requirements: Node.js 22.19 or newer and a separately installed Pi available as `pi` on `PATH` (normally `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`). Inspire loads the public SDK and starts RPC workers from that same Pi package, so Pi and the web workbench use one runtime installation and the same `~/.pi/agent/` state.
 
-Inspire supports the latest Pi release; the exact version pinned in `devDependencies` (currently 0.85.1) is the deterministic witness for that boundary. Older Pi versions may still work but are neither tested nor supported, and Inspire does not carry compatibility branches for them. Startup verifies that the resolved CLI and SDK belong to one external Pi package. Missing runtime capabilities are recorded as `runtime_capability_unavailable` in the private diagnostics log, and unsupported response-bearing extension UI fails explicitly instead of leaving the extension waiting.
+Inspire supports the latest Pi release; the exact version pinned in `devDependencies` (currently 0.86.0) is the deterministic witness for that boundary. Older Pi versions may still work but are neither tested nor supported, and Inspire does not carry compatibility branches for them. Startup verifies that the resolved CLI and SDK belong to one external Pi package. Missing runtime capabilities are recorded as `runtime_capability_unavailable` in the private diagnostics log, and unsupported response-bearing extension UI fails explicitly instead of leaving the extension waiting.
 
 The same npm entry works in a source checkout on Linux, macOS, and Windows:
 
@@ -108,7 +108,7 @@ commands to the model.
 | Host operations | `/compact [instructions]`, `/export [output.html]`, `/reload` |
 | Browser controls | `/model`, `/thinking`, `/name`, `/copy`; `/tree`, `/fork`, `/new`, `/resume`, `/settings` open the corresponding workspace surface |
 | Browser information | `/session`, `/hotkeys`, `/changelog`, `/quit` show session information, browser shortcuts, update details, or how to leave the client |
-| Terminal only | `/scoped-models`, `/import`, `/share`, `/clone`, `/trust`, `/login`, `/logout`, and `.jsonl` export provide guidance rather than claiming to execute in the browser |
+| Terminal only | `/scoped-models`, `/import`, `/share`, `/bug [description]`, `/clone`, `/trust`, `/login`, `/logout`, and `.jsonl` export provide guidance rather than claiming to execute in the browser |
 
 Built-ins reserve their names as in Pi's interactive client. Use an extension's namespaced command
 when it collides with a built-in. The Host checks command ownership again after worker replacement,
