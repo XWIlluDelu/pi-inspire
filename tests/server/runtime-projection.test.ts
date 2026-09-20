@@ -1214,6 +1214,80 @@ describe("RuntimeController projection ownership gate", () => {
     }
   });
 
+  it("attests system and cache-usage entries without adding them to the browser transcript", async () => {
+    const { runtime, workers, path } = await setup();
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    try {
+      const worker = workers[0]!;
+      const system = {
+        type: "message",
+        id: "system-loadout",
+        parentId: "u1",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        message: {
+          role: "system",
+          content: "host-only prompt",
+          sections: { cwd: "/project" },
+          toolsAdded: [],
+          timestamp: 2,
+        },
+      };
+      const usage = {
+        type: "usage",
+        id: "cache-usage",
+        parentId: system.id,
+        timestamp: "2026-08-01T00:00:03.000Z",
+        kind: "cache_warm",
+        provider: "test",
+        model: "test",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 100,
+          cacheWrite: 0,
+          totalTokens: 100,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0.01,
+            cacheWrite: 0,
+            total: 0.01,
+          },
+        },
+      };
+      worker.startupEntries = [system, usage];
+      worker.startupLeafId = usage.id;
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", { type: "message_start", message: system.message });
+      worker.emit("event", { type: "entry_appended", entry: system });
+      worker.emit("event", { type: "message_end", message: system.message });
+      worker.emit("event", { type: "entry_appended", entry: usage });
+      worker.emit("event", { type: "agent_end", messages: [system.message] });
+      await new Promise<void>((done) => setImmediate(done));
+      expect(events.find((event) => event.type === "agent_end")).toMatchObject({
+        messages: [],
+      });
+      expect(JSON.stringify(events)).not.toContain("host-only prompt");
+      expect(
+        JSON.stringify((await runtime.snapshot()).active?.transcriptPage),
+      ).not.toContain("host-only prompt");
+      await appendFile(
+        path,
+        `${[system, usage].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      );
+      await expect(
+        runtime.rename("session-a", "after Pi metadata"),
+      ).resolves.toBeUndefined();
+      const snapshot = await runtime.snapshot();
+      expect(snapshot.active?.projectionConflict).toBeNull();
+      expect(snapshot.active?.transcriptPage.messages).toHaveLength(1);
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("accepts an extension custom entry claimed by the owning worker before reconciliation", async () => {
     const { runtime, workers, path } = await setup();
     try {

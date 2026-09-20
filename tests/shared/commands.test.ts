@@ -18,6 +18,7 @@ describe("Pi native command inventory", () => {
       "export",
       "import",
       "share",
+      "bug",
       "copy",
       "name",
       "session",

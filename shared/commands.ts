@@ -63,6 +63,12 @@ export const PI_NATIVE_COMMANDS = [
     execution: "terminal",
   },
   {
+    name: "bug",
+    description: "Review and report a bug in Pi's terminal flow",
+    argumentHint: "[description]",
+    execution: "terminal",
+  },
+  {
     name: "copy",
     description: "Copy the last assistant response",
     execution: "client",

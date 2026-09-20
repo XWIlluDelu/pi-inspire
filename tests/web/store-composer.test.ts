@@ -207,6 +207,31 @@ describe("Pi native command dispatch", () => {
     expect(promptCount).toBe(0);
   });
 
+  it("routes /bug to explicit terminal guidance without uploading or prompting", async () => {
+    let dispatchCount = 0;
+    installFetch((url, init) => {
+      if (
+        url.startsWith("/api/prompt") ||
+        url.startsWith("/api/control/native-command")
+      )
+        dispatchCount += 1;
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await expect(
+      store.sendPrompt("/bug unexpected response"),
+    ).resolves.toMatchObject({ accepted: true });
+    expect(dispatchCount).toBe(0);
+    expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+      command: "bug",
+      status: "warning",
+      action: {
+        kind: "open-terminal",
+        value: "/bug unexpected response",
+      },
+    });
+  });
+
   it("keeps an RPC acceptance-unknown Host result non-retryable", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/control/native-command"))
