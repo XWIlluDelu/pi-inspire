@@ -45,6 +45,14 @@ const EXTENSION_NON_DISPLAY_UI_METHODS = new Set([
   "setToolsExpanded",
 ]);
 
+function isSystemMessage(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as Record<string, unknown>).role === "system",
+  );
+}
+
 export const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
@@ -243,7 +251,25 @@ export class RuntimeEventController {
           "assistant")
     )
       this.argumentStreams.delete(rpc);
-    let forwardedEvent: unknown = event;
+    // Persistence claims are recorded by dispatchOwnedProcessEvent first.
+    // Pi 0.86 system loadouts/checkpoints stay host-side, including live events
+    // and the aggregate agent_end payload, without becoming overlay messages.
+    if (
+      (record.type === "message_start" ||
+        record.type === "message_update" ||
+        record.type === "message_end") &&
+      isSystemMessage(record.message)
+    )
+      return;
+    let forwardedEvent: unknown =
+      record.type === "agent_end" && Array.isArray(record.messages)
+        ? {
+            ...record,
+            messages: record.messages.filter(
+              (message) => !isSystemMessage(message),
+            ),
+          }
+        : event;
     if (
       record.type === "message_start" ||
       record.type === "message_update" ||

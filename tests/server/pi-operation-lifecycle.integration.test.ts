@@ -673,16 +673,17 @@ describe("installed Pi operation lifecycle", () => {
       .filter((entry): entry is SessionMessageEntry => entry.type === "message")
       .slice(8);
     expect(newMessages.map((entry) => entry.message.role)).toEqual([
+      "system",
       "user",
       "assistant",
       "user",
       "assistant",
     ]);
-    expect(newMessages[0]!.message).toMatchObject({
+    expect(newMessages[1]!.message).toMatchObject({
       role: "user",
       content: [{ type: "text", text: first.message }],
     });
-    expect(newMessages[2]!.message).toMatchObject({
+    expect(newMessages[3]!.message).toMatchObject({
       role: "user",
       content: [{ type: "text", text: second.message }],
     });
@@ -691,7 +692,11 @@ describe("installed Pi operation lifecycle", () => {
     );
     expect(
       written.findIndex((entry) => entry.type === "compaction"),
-    ).toBeLessThan(written.indexOf(newMessages[0]!));
+    ).toBeLessThan(written.indexOf(newMessages[1]!));
+    const snapshot = await f.runtime.snapshot();
+    expect(snapshot.active?.transcriptPage.messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "system" })]),
+    );
   }, 90_000);
 
   it("keeps /await pending until a UI answer and lets explicit Stop interrupt the next preflight outside the writer FIFO", async () => {

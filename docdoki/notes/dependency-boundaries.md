@@ -13,16 +13,44 @@ The npm release therefore has two independent checks:
 
 Pi's own shrinkwrapped dependency tree belongs to the external Pi installation rather than INSΠRE's production dependency graph. INSΠRE does not override, downgrade, or silently substitute that tree.
 
-### Verified baseline: Pi 0.85.1
+### Current baseline: Pi 0.86.0
 
-Validated on Linux with Node 22.19.0 on :
+The [0.86.0 release](https://pi.dev/news/releases/0.86.0) was reviewed against INSΠRE's
+actual SDK/RPC, session projection, extension bridge, and browser fuzzy-search boundaries.
 
-- Both Pi development witnesses are pinned to `0.85.1`; README and lockfile agree. The latest-only support policy and external runtime authority are unchanged.
-- A separate clean install of Pi `0.85.1` imports the public SDK without separately installing `pi-server`. The older `0.85.0` packaging workaround is not needed for this baseline.
-- Pi TUI still omits its license file. Its existing MIT notice was verified against the new published `gitHead`; `scripts/licenses/README.md` records provenance. The build override remains version-specific, while release verification now reads the expected notice version from the manifest rather than duplicating the old pin.
-- The pre-existing vulnerable Browserslist `4.28.6` development dependency was updated to `4.28.9` with its browser-data dependencies. Both `npm audit --include=dev` and `npm audit --omit=dev` reported zero vulnerabilities; no overrides or production Pi dependency were added.
-- A clean `npm ci --include=dev --ignore-scripts` succeeded. The final `npm run ci` passed format, lint, types, unused-code checks, production web build, 17 portable tests, 1,257 main tests (two platform-conditional skips), six launcher tests (one platform-conditional skip), and 34 Chromium cases. This includes the completed tool-argument streaming changes.
-- `npm run release:verify` passed production-only package installation, license/assets checks, real Pi `0.85.1` SDK/RPC startup and session-fork worker, PTY lifecycle, and npm publish dry-run. No package was published and the daily Host was not restarted.
+- The provider `TranscriptContext` migration, JSON-only tool arguments/results, readonly JSON
+  arrays, and fail-closed `user_bash` hooks require no INSΠRE adapter: INSΠRE neither implements
+  a provider stream nor registers `user_bash`, and typechecking passes against the new SDK.
+  This does not establish compatibility for independently installed third-party extensions.
+- Two projection/command gaps were reproduced and repaired. System prompt/tool-loadout messages
+  no longer become unknown conversation rows or live overlays, including aggregate `agent_end`
+  payloads and compaction checkpoints. Original per-entry message indices remain stable. `/bug`
+  is classified as terminal-only, with explicit copy/open guidance and no automatic report upload.
+- Exact persistence claims still include system and usage entries. Real RPC tests verify
+  cache-warming and unknown-kind usage totals, read-only preview bytes, queues, compaction,
+  session replacement, branch navigation, and fork. No real provider inference is needed.
+- Both Pi witnesses, lockfile, README and the version-specific TUI license override now use
+  `0.86.0`. The MIT text is unchanged at npm's published `gitHead`; provenance is recorded in
+  `scripts/licenses/README.md`.
+
+- `npm run ci` passed on Node 26.5.0: format, lint, types, unused-code checks, web build,
+  17 portable tests, 1,645 main tests (two platform-conditional skips), nine launcher tests
+  (one platform-conditional skip), and all 44 Chromium cases.
+- Node 22.19.0 typechecking and 168 targeted tests passed (one platform-conditional skip),
+  including actual Pi RPC, 35-second pre-prompt compaction, worker reuse, and explicit Stop.
+  The lifecycle fixture now expects Pi's new system record on disk while confirming its
+  absence from the browser transcript.
+- `npm run release:verify` passed production-only installation, bundled notices and fonts,
+  external Pi 0.86.0 SDK/RPC startup, the installed fork worker, PTY lifecycle, and npm
+  publish dry-run. No package was published and the daily Host was not restarted.
+- DocDoki's private-boundary check and `git diff --check` passed. These are Linux results,
+  not new macOS or Windows execution evidence.
+
+Separate existing dependency finding: the checkout's `npm audit --omit=dev` reports one
+high-severity package finding for unchanged `multer@2.2.0`, covering four advisories
+including [GHSA-wc9g-mqfw-jrwm](https://github.com/advisories/GHSA-wc9g-mqfw-jrwm).
+The upstream fix is in `2.3.0`; that upload-dependency upgrade remains a separate follow-up,
+not a Pi compatibility failure. This verification does not claim a clean dependency audit.
 
 ### Sources
 

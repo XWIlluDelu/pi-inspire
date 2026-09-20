@@ -63,6 +63,8 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   resource ownership after a queued reload or worker replacement. A stale or non-browser client
   must not accidentally turn a retired command into a model prompt. `/compact` also has a
   Host-owned first-message prompt path, using the same standalone operation lifecycle.
+  `/bug [description]` is terminal-only: INSΠRE offers an explicit terminal/copy action, never
+  invokes Pi's report upload or sends the description as an ordinary model prompt.
 
 - Manual compaction is a standalone Host operation whose completion belongs to Pi, not a fixed
   three-minute allowance or the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,
@@ -92,7 +94,9 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   trusted leaf. Worker-only trailing entries remain unaccepted until disk observation, and claims
   arriving during the lookup are consumed only through the observed prefix. Privacy-safe diagnostics
   record the observed and worker counts, immutable leaves, and worker-ahead delta without entry
-  payloads.
+  payloads. System prompt/tool-loadout messages and standalone `usage` entries participate in
+  this same exact ownership boundary even though they are not conversation rows. Pi's statistics
+  remain authoritative for cache-warming and unknown usage kinds.
 
   RPC JSONL input is line-bounded and assembled without repeated prefix copying: a child emitting an
   oversized unterminated line loses only its own worker instead of growing or stalling the
