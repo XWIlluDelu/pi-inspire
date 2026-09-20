@@ -56,7 +56,10 @@ declaration.
   touch assets use the full-bleed carbon master and rely on the operating
   system's own mask. Installed icons are palette-independent: carbon `#14171A`,
   titanium-white brackets `#F4F6F8`, and silver ticks/aperture `#B9C0C7`.
-  In-app identity and the browser-tab favicon retain their existing accents.
+  The transparent browser-tab favicon is also palette-independent: it keeps its
+  pixel geometry and ink/white brackets, with neutral quartz-gray `#63676C` ticks
+  in light browser chrome and silver `#B9C0C7` ticks in dark browser chrome.
+  It adds no background or opacity change. In-app identity retains its accents.
 - Installed-window chrome uses neutral `#F4F5F6` in light mode and `#14171A`
   in dark mode, identical across Amber and Jade. The page's `theme-color`
   follows resolved luminosity before first paint and after Host bootstrap,

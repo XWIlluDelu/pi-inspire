@@ -49,6 +49,17 @@ Make Pi's built-in command syntax a first-class Web interaction: supported comma
 - Source inspection of the repository's Pi 0.84.4 and locally installed Pi 0.85.1 distinguishes TUI from RPC: interactive input uses `queueCompactionMessage` for steer/follow-up and `flushCompactionQueue` after compaction. `AgentSession.prompt` rejects ordinary input while manual compaction is active. The existing Web send block is an adapter limitation, not upstream UI parity; this review does not implement a new queue.
 - Proposed, not yet decided or implemented: successful compaction should retain only its authoritative chronological context-summary row, without a second persistent Composer result requiring dismissal. Running feedback, command failures, and export paths need their own lifecycle treatment rather than moving every transient notice into durable conversation history. The user requested a transcript inventory before choosing broader visual unification.
 
+## Checkpoint card consistency
+
+Context-summary cards no longer add clock-time metadata to their headers, matching Thinking,
+tool, and extension-message cards. Token counts, Markdown summaries, disclosure, copy, and
+canonical timestamps remain unchanged; the separate assistant-round Details preference is
+unaffected. The obsolete desktop and narrow-layout time styles were removed.
+
+Verification: 64 focused Web/configuration tests, TypeScript, Web build, and six Chromium
+checkpoint cases passed. The browser cases cover light/dark at 1280, 390, and 320 pixels,
+including reload, source order, keyboard disclosure/copy, overflow, and accessibility.
+
 ## Next actions
 
 - [x] Define a shared native-command registry, parser, argument contract, and capability mapping without claiming terminal-only behavior.

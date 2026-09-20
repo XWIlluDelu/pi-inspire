@@ -1000,7 +1000,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .context-checkpoint__disclosure > summary:is(:hover, :focus-visible)
-  :is(.context-checkpoint__metric, .context-checkpoint__time) {
+  .context-checkpoint__metric {
   color: var(--body);
 }
 
@@ -1031,14 +1031,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .context-checkpoint__spacer {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.context-checkpoint__time {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-  white-space: nowrap;
 }
 
 /* Reserve the sibling clipboard control's footprint in the disclosure row. */
@@ -1155,12 +1147,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 
   .context-checkpoint__spacer {
     display: none;
-  }
-
-  .context-checkpoint__time {
-    grid-column: 3 / 5;
-    grid-row: 2;
-    justify-self: end;
   }
 
   .context-checkpoint__copy-slot {
