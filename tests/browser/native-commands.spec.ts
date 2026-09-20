@@ -63,6 +63,10 @@ for (const viewport of [
       await expect(checkpoint).toHaveCount(1);
       await expect(checkpoint).toContainText("Context compacted");
       await expect(checkpoint).toContainText("42,500 tokens before");
+      await expect(checkpoint.locator("time")).toHaveCount(0);
+      await expect(checkpoint.locator("summary")).toHaveText(
+        "Context compacted42,500 tokens before",
+      );
       const before = page.getByText("Retained response before compaction", {
         exact: true,
       });
@@ -126,7 +130,6 @@ for (const viewport of [
       for (const selector of [
         ".context-checkpoint__title",
         ".context-checkpoint__metric",
-        ".context-checkpoint__time",
         ".context-checkpoint__copy",
         ".context-checkpoint__chevron",
       ]) {

@@ -97,7 +97,7 @@ describe("response activity folds", () => {
     ["compactionSummary", "Context compacted", "Copy compaction summary"],
     ["branchSummary", "Branch context", "Copy branch summary"],
   ])(
-    "renders %s as an independently accessible context checkpoint",
+    "renders %s as an independently accessible context checkpoint without a timestamp",
     async (role, label, copyLabel) => {
       const { container } = render(
         transcript(
@@ -117,6 +117,10 @@ describe("response activity folds", () => {
       const checkpoint = title.closest("details") as HTMLDetailsElement;
       expect(title).toBeVisible();
       expect(screen.getByText("42,500 tokens before")).toBeVisible();
+      expect(checkpoint.querySelector("time")).toBeNull();
+      expect(title.closest("summary")?.textContent).toBe(
+        `${label}42,500 tokens before`,
+      );
       expect(container.querySelector(".card__generic")).toBeNull();
       expect(
         container.querySelector(".context-checkpoint__icon"),
