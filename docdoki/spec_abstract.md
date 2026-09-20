@@ -19,6 +19,10 @@
 
 ## Implemented capability
 
+Pi's support baseline is now **0.86.0**. System prompt/tool-loadout records remain canonical
+host-side state without becoming conversation rows, and `/bug` provides terminal-only guidance.
+[[dependency-boundaries]] records the compatibility review, repairs, and verification scope.
+
 Files, file search, composer references and resource authorization no longer depend on Git tracking or ignore rules. Lazy directory listing includes empty and ignored directories; hidden controls follow filesystem names/attributes, and incomplete discovery is explicit. Changes no longer treats a missing status entry as a zero-change comparison. [[filesystem-git-separation]] records implementation, preserved containment/object boundaries, and verification.
 
 Markdown and Notebook previews now render authorized local images inline, resolve links from the document directory, navigate heading fragments, and display cell-local Notebook attachments. [[document-relative-previews]] records the shared-renderer repair, bounded image ownership, preserved security restrictions, and Node 22 / Chromium evidence.

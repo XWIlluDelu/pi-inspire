@@ -63,7 +63,7 @@ afterEach(async () => {
   );
 });
 
-async function fixture() {
+async function fixture(usageKind = "cache_warm") {
   const directory = await mkdtemp(join(tmpdir(), "inspire-pi-compat-"));
   directories.push(directory);
   const sessionDir = join(directory, "sessions");
@@ -71,7 +71,7 @@ async function fixture() {
   const extension = join(directory, "compat-extension.ts");
   const large = "compatibility context ".repeat(8_000);
   const entries = [
-    message("u1", null, "user", "first compatibility question", 1),
+    message("u1", "system-loadout", "user", "first compatibility question", 1),
     message("a1", "u1", "assistant", large, 2),
     message("u2", "a1", "user", "second compatibility question", 3),
     message("a2", "u2", "assistant", large, 4),
@@ -88,7 +88,43 @@ async function fixture() {
         timestamp: "2026-08-01T00:00:00.000Z",
         cwd: directory,
       },
+      {
+        type: "message",
+        id: "system-loadout",
+        parentId: null,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        message: {
+          role: "system",
+          content: "",
+          sections: { preamble: "compatibility system prompt" },
+          toolsAdded: [],
+          timestamp: 0,
+        },
+      },
       ...entries,
+      {
+        type: "usage",
+        id: "usage-entry",
+        parentId: "a3",
+        timestamp: "2026-08-01T00:00:07.000Z",
+        kind: usageKind,
+        provider: "compat",
+        model: "offline",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 1000,
+          cacheWrite: 0,
+          totalTokens: 1000,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0.125,
+            cacheWrite: 0,
+            total: 0.125,
+          },
+        },
+      },
     ]
       .map((entry) => JSON.stringify(entry))
       .join("\n")}\n`,
@@ -193,6 +229,10 @@ describe("installed Pi compatibility boundary", () => {
       searchText: "compatibility",
     });
     expect(preview.sessionId).toBe(SOURCE_ID);
+    expect(preview.transcriptPage.messages).toHaveLength(entries.length);
+    expect(JSON.stringify(preview.transcriptPage)).not.toContain(
+      "compatibility system prompt",
+    );
     expect(await readFile(sessionFile)).toEqual(before);
 
     const rpc = create();
@@ -271,7 +311,9 @@ describe("installed Pi compatibility boundary", () => {
         rpc.request({ type: "get_entries", since: "missing-entry" }),
       ).rejects.toThrow(/not found/i);
 
-      const tree = await rpc.request<{ tree: unknown[] }>({ type: "get_tree" });
+      const tree = await rpc.request<{ tree: unknown[] }>({
+        type: "get_tree",
+      });
       expect(tree.tree).toHaveLength(1);
       const models = await rpc.request<{
         models: Array<Record<string, unknown>>;
@@ -295,6 +337,8 @@ describe("installed Pi compatibility boundary", () => {
         sessionFile: resolve(sessionFile),
         userMessages: 3,
         assistantMessages: 3,
+        tokens: { cacheRead: 1000, total: 1000 },
+        cost: 0.125,
       });
 
       if (!all.leafId) throw new Error("Expected a live worker leaf");
@@ -314,6 +358,22 @@ describe("installed Pi compatibility boundary", () => {
       expect(afterExternalAppend).toEqual({
         entries: [],
         leafId: all.leafId,
+      });
+    } finally {
+      await rpc.stop();
+    }
+  }, 30_000);
+
+  it("retains usage from unknown operation kinds in Pi's totals", async () => {
+    const { create } = await fixture("future-usage-kind");
+    const rpc = create();
+    await rpc.start();
+    try {
+      await expect(
+        rpc.request({ type: "get_session_stats" }),
+      ).resolves.toMatchObject({
+        tokens: { cacheRead: 1000, total: 1000 },
+        cost: 0.125,
       });
     } finally {
       await rpc.stop();
