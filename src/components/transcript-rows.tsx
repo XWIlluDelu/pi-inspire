@@ -466,7 +466,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     Number.isFinite(message.tokensBefore)
       ? `${Math.round(message.tokensBefore).toLocaleString()} tokens before`
       : null;
-  const timestamp = clockTime(message.timestamp);
   const [open, setOpen] = useState(false);
   return (
     <div className="turn turn--checkpoint">
@@ -491,9 +490,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
               <span className="context-checkpoint__metric">{tokens}</span>
             ) : null}
             <span className="context-checkpoint__spacer" aria-hidden />
-            {timestamp ? (
-              <time className="context-checkpoint__time">{timestamp}</time>
-            ) : null}
             {summary ? (
               <span className="context-checkpoint__copy-slot" aria-hidden />
             ) : null}

@@ -2,10 +2,10 @@
   <title id="title">INSΠRE</title>
   <style>
     .bracket { fill: #131517; }
-    .reticle { fill: #D95A00; }
+    .reticle { fill: #63676C; }
     @media (prefers-color-scheme: dark) {
       .bracket { fill: #F4F6F8; }
-      .reticle { fill: #FF8330; }
+      .reticle { fill: #B9C0C7; }
     }
   </style>
   <!-- Pixel-fitted 16px optical master: every clear-space band survives rasterization. -->

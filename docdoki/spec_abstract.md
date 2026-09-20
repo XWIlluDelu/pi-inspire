@@ -36,9 +36,11 @@ Projection reads, ownership witnesses, and baseline commits now share one FIFO. 
 
 Observation deadlines no longer terminate healthy Pi mutations; prompt receipts preserve one operation, worker retirement requires exit evidence, terminal retries retain owner-side identities, and maintenance restarts consume current owner authority. [[operation-lifecycle-ownership]] records all five repairs, real Pi slow-compaction and browser recovery evidence, and the explicit terminal-service protocol upgrade boundary.
 
+Context-summary card headers now omit timestamps like other activity cards, retaining token counts, disclosure, copy, and canonical source data. The display boundary is specified in [[conversation]].
+
 Compaction and retry presentation now follow authoritative session state independently of commands or observed start events; retry details restore from Host snapshots, and update requests no longer overwrite Host checking state. [[state-authority-review]] records four repairs, other inspected boundaries, and verification limits.
 
-PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark. [[neutral-pwa-chrome]] records the checks and browser/OS update limits.
+PWA title-bar metadata follows light/dark mode with palette-independent neutral colors; installed icons use a fixed carbon/silver/white mark, and the transparent tab favicon uses neutral quartz-gray/silver details without changing its geometry or alpha. [[neutral-pwa-chrome]] records the checks and browser/OS update limits.
 
 Named tool cards appear before argument completion and stream bounded, redacted previews through coalesced patches, with truthful execution/interruption states and snapshot continuation. Native edit diffs now remain typed as incomplete replacement items arrive instead of bouncing back to JSON. [[streaming-tool-arguments]] records limits, linear-path traffic measurements, and Pi 0.85.1 / Node 22 / Chromium evidence, including the edit-preview regression repair.
 
