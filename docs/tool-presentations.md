@@ -10,6 +10,26 @@ INSΠRE ships presentation rules for Pi's native tools. A local user can add dat
 
 The host reads the file for every authenticated bootstrap, so save it and refresh the page. Invalid JSON or declarations produce a browser warning and leave only shipped rules active; the file is never rewritten. The validated declarations are sent to the authenticated browser, so the file is private configuration, not a credential store: do not place secrets in literals.
 
+## One codebase, separate personal configuration
+
+Keep native and personal presentations on the same INSΠRE release, not on separate code branches. The default configuration ships only Pi-native rules; unknown extension tools still receive generic cards, and standard extension messages, widgets, and dialogs remain supported.
+
+Version personal presentation files in a separate configuration repository, private when appropriate. Select its file with the existing Host override:
+
+```sh
+export INSPIRE_TOOL_PRESENTATIONS_PATH=/absolute/path/to/config-repo/profiles/personal.json
+```
+
+Set this in the environment that starts the Host. Changing the path requires a Host restart once active work has settled; editing the selected file only requires a browser refresh. On systems with symlinks, the default configuration path can instead link to the externally versioned JSON, preserving the existing launch configuration. Back up an existing file before replacing it with a link.
+
+An explicit native-only presentation profile contains no user rules or mappings:
+
+```json
+{ "version": 1, "rules": {}, "mappings": {} }
+```
+
+Profiles select presentation rules, not which Pi extensions run. Keep the rest of `.inspire/`—runtime state, pairing data, logs, and backups—out of the configuration repository. No profile needs credentials.
+
 ## Resolution
 
 Rules and mappings are separate. A mapping selects exactly one rule:
