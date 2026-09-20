@@ -220,9 +220,10 @@ custom messages remain independent readable boundaries in this contract.
   surface.
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
-  context-summary cards with retained token counts and searchable Markdown bodies. They are not
-  hidden behind a generic-message raw JSON fallback and remain distinct rows at their context
-  boundaries.
+  context-summary cards with retained token counts and searchable Markdown bodies. Like Thinking,
+  tool, and extension-message cards, their headers show no timestamp or elapsed-time metadata.
+  Canonical timestamps and source content remain unchanged. They are not hidden behind a
+  generic-message raw JSON fallback and remain distinct rows at their context boundaries.
 
 - Structured file paths and explicit local file references in conversation content remain
   distinguishable from external web links and can open the owning session’s resource preview.
