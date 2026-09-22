@@ -364,6 +364,8 @@ export class AppStore {
   private authToken: string | null = null;
   private hostAuthorityId: string | null = null;
   private snapshotDigest: string | null = null;
+  /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
+  private snapshotGeneration = 0;
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
   private readonly updates = new UpdateController({
@@ -625,6 +627,8 @@ export class AppStore {
     const ownsBootstrap = (): boolean =>
       generation === this.transportGeneration && this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
+    const snapshotGeneration = this.snapshotGeneration;
+    const autoContinueIntent = this.selectionIntentGeneration;
     try {
       const boot = await api.bootstrap(
         bootstrapRequest.signal,
@@ -672,15 +676,20 @@ export class AppStore {
         connectionProblem: null,
       });
       this.hostAuthorityId = boot.authorityId;
-      this.applySnapshot(boot.snapshot);
-      this.snapshotDigest = boot.snapshotDigest;
+      if (this.snapshotGeneration === snapshotGeneration) {
+        this.applySnapshot(boot.snapshot);
+        this.snapshotDigest = boot.snapshotDigest;
+      } else {
+        // A selection or resync already committed on this API. Bootstrap still
+        // supplies host metadata, but its digest cannot attest that newer view.
+        this.snapshotDigest = null;
+      }
       void this.git.resumeAfterTransportReplacement();
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
       this.connectionController.connect(reconnectToken);
-      const autoContinueIntent = this.selectionIntentGeneration;
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
         // The remembered launch preference applies once per store lifetime so
@@ -741,6 +750,7 @@ export class AppStore {
         ? emptyPendingQueues()
         : parsePendingQueues(snapshot.pendingQueues);
     if (!pendingQueues) throw new Error("Invalid Pending queue snapshot");
+    this.snapshotGeneration += 1;
     // Only a snapshot supplied with its matching wire digest can be confirmed
     // without retransmission. HTTP resyncs and local event reduction invalidate
     // that witness until the next event-stream snapshot.
@@ -932,7 +942,12 @@ export class AppStore {
     preserveAppendHistory = true,
   ): Promise<void> {
     const api = this.api;
-    if (!api) return;
+    if (
+      !api ||
+      this.state.sessionId !== expectedSessionId ||
+      this.selectionGeneration !== expectedGeneration
+    )
+      return;
     const transportGeneration = this.transportGeneration;
     const request = ++this.resyncRequest;
     const ownsTransport = (): boolean =>
@@ -1766,6 +1781,7 @@ export class AppStore {
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return;
@@ -1791,7 +1807,11 @@ export class AppStore {
           this.updateCommandActivity(sessionId, compacting.id, {
             message: `Cancellation was not confirmed: ${message}`,
           });
-        this.fail(message);
+        if (
+          this.state.sessionId === sessionId &&
+          this.selectionGeneration === selectionGeneration
+        )
+          this.fail(message);
       }
     }
   };
@@ -1834,6 +1854,7 @@ export class AppStore {
 
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
@@ -1845,7 +1866,7 @@ export class AppStore {
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
       this.preferences.rememberModel({ provider, id: modelId });
-      await this.resync(sessionId, this.selectionGeneration);
+      await this.resync(sessionId, selectionGeneration);
       return true;
     } catch (error) {
       if (!ownsTransport()) return false;
@@ -1862,6 +1883,7 @@ export class AppStore {
 
   setThinkingLevel = async (level: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
@@ -1884,7 +1906,8 @@ export class AppStore {
       // predecessor was itself only an optimistic request that later failed.
       if (
         request === this.thinkingLevelRequest &&
-        this.state.sessionId === sessionId
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === selectionGeneration
       ) {
         this.set({ thinkingLevel: previous });
         void this.resync();

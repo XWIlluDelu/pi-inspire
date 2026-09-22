@@ -1,5 +1,91 @@
 # State and operation ownership
 
+## Asynchronous ownership review
+
+### Scope
+
+The ownership review examined session selection,
+bootstrap/reconnect, transcript reads, runtime controls, History requests,
+composer/resource/Git ownership, Host projection reconciliation and worker
+reclamation, and terminal transport. It authorized demonstrated correctness and
+implementation-quality repairs, not unapproved product-design changes.
+
+### Reproduced and repaired
+
+The first ten added cases failed against the starting implementation. Thirteen
+new regression cases now cover the repaired boundaries and their related cases:
+
+- **Late bootstrap replaced a newer committed snapshot.** Completing open,
+  create, or deselect while reconnect bootstrap waited caused the old bootstrap
+  selection to win; a same-session resync could also be overwritten. `AppStore`
+  now fences the snapshot portion by the snapshot publication generation.
+  Current Host metadata can still refresh, but an obsolete snapshot digest cannot
+  attest the retained view. Launch continuation uses the intent captured before
+  bootstrap, not an intent captured after it returns.
+- **History remained permanently busy after ordinary append.** A changed
+  effective leaf invalidated a tree/action result without advancing its request
+  id; the old completion also refused to clear its loading/action marker.
+  `BranchController` now separates ownership of the request marker from authority
+  to publish its result. A still-owned request retires its marker and exposes a
+  refreshable stale-history state; invalidated requests cannot clear newer work.
+- **An old model change suppressed a current session refresh.** After selecting B,
+  a completed model request from A started a new A resync and advanced the shared
+  request counter. B's already-running refresh then discarded its valid result.
+  Model changes capture their original selection generation, and `resync` rejects
+  obsolete owners before allocating a request or issuing HTTP.
+- **Thinking-level refusal rolled back a reopened selection.** A delayed failure
+  from before A → B → A restored the old optimistic predecessor into the reopened
+  A. Rollback now also requires the captured selection generation.
+- **An old abort error appeared in the current view.** A delayed abort failure
+  could replace B's error, or the error of a reopened A or a new same-session
+  branch. Visible errors now require the captured selection owner; session-owned
+  command activity remains attributable to its original operation.
+
+Current-API authentication failures retain their transport-wide meaning. The
+repairs neither cancel accepted Host operations nor add replay/retry fallbacks.
+Implementation: `src/store.ts` and `src/controllers/branch-controller.ts`.
+Regression evidence: `tests/web/store-async-ownership.test.ts` and
+`tests/web/branch-store.test.ts`.
+
+### Approved follow-up — session-addressed Fork
+
+The reviewed implementation required `RuntimeController.selectedSessionId === source.id`
+inside `forkBranchInside`, while event subscriptions and snapshots were addressed
+per browser. An isolated runtime probe reproduced this sequence:
+
+1. Open A, then open B as a second browser would.
+2. An addressed snapshot of A succeeds without changing the Host selection.
+3. Fork A refuses with `Fork requires the source session to remain selected`.
+
+The user approved replacing this admission policy with session-addressed Fork.
+`forkBranchInside` now validates the addressed source and its fresh branch
+revision, retaining source identity, conflict, active-path user target,
+committed-prefix, and publication checks. The contract is in [[session-branches]].
+
+Two related lifecycle details matter:
+
+- Capture the automatic-selection fence before entering the source operation
+  lane. Capturing it only after reconciliation lets a queued fork overwrite a
+  newer selection made while it waited.
+- Warm the attached destination independently of global selection, as ordinary
+  `openSession` does. The requesting browser can adopt that addressed preview
+  even while another session remains globally selected; skipping warm-up leaves
+  the destination without runtime metadata and eligible for dormant reclamation.
+
+Four added runtime regression cases failed before this repair. They cover a
+source viewed while another session or no session is globally selected, newer
+selection during a queued fork, and retained source validation. The expanded
+active-source test also checks unchanged source bytes, worker/queue/dialog
+continuity, destination readiness, and no unexpected global selection change.
+
+### Rejected reconnect hypothesis
+
+The initial runtime probe also disproved a suspected reconnect gap: `RuntimeController.snapshot`
+already reconstructs an absent or LRU-reclaimed slot through the catalog and
+`prepareSlot`, without changing global selection or starting a worker. Reading
+only its lower-level `RuntimeReadController` delegate misses that boundary. No
+extra browser reopen fallback was retained.
+
 ## Operation lifecycle ownership
 
 ### Principle

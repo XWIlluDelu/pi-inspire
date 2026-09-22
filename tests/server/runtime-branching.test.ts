@@ -30,6 +30,7 @@ import type {
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_SESSION_ID = "33333333-3333-4333-8333-333333333333";
 const directories: string[] = [];
 const stores: AttachmentStore[] = [];
 
@@ -66,6 +67,7 @@ class BranchRpc extends EventEmitter {
     | "missing"
     | "persist" = "ok";
   treeDialog = false;
+  autoRetryGate: Promise<void> | null = null;
   extensionResponses: Array<Record<string, unknown>> = [];
   private stopped = false;
   private readonly dialogResolvers = new Map<string, () => void>();
@@ -177,7 +179,8 @@ class BranchRpc extends EventEmitter {
         isStreaming: false,
         isCompacting: false,
       };
-    } else if (command.type === "get_available_models") value = { models: [] };
+    } else if (command.type === "set_auto_retry") await this.autoRetryGate;
+    else if (command.type === "get_available_models") value = { models: [] };
     else if (command.type === "get_commands")
       value = {
         commands: [
@@ -321,6 +324,21 @@ async function setup(
     expect((await runtime.snapshot()).active?.commands).toBeDefined(),
   );
   return { runtime, worker, workers, path, directory, records, catalog };
+}
+
+async function openOtherSession(fixture: Awaited<ReturnType<typeof setup>>) {
+  const source = fixture.records.get(SESSION_ID)!;
+  const record = {
+    ...source,
+    id: OTHER_SESSION_ID,
+    path: join(fixture.directory, "other-session.jsonl"),
+  };
+  await writeFile(
+    record.path,
+    (await readFile(source.path, "utf8")).replace(SESSION_ID, OTHER_SESSION_ID),
+  );
+  fixture.records.set(record.id, record);
+  await fixture.runtime.openSession(record.id);
 }
 
 afterEach(async () => {
@@ -477,23 +495,88 @@ describe("stock RPC branch bridge", () => {
     },
   );
 
-  it("forks through an independent owner while preserving an active source worker, queue, and dialog", async () => {
-    const { runtime, worker, workers, path } = await setup();
-    try {
-      worker.emit("event", { type: "agent_start" });
-      worker.emit("event", {
-        type: "queue_update",
-        steering: ["steer later"],
-        followUp: ["follow later"],
-      });
-      worker.emit("event", {
-        type: "extension_ui_request",
-        id: "source-dialog",
-        method: "confirm",
-        title: "Source dialog",
-      });
-      await vi.waitFor(async () =>
-        expect(await runtime.snapshot()).toMatchObject({
+  it.each(["source", "other", "none"] as const)(
+    "forks an active source without changing its worker, queue, or dialog when the Host selection is %s",
+    async (selection) => {
+      const fixture = await setup();
+      const { runtime, worker, workers, path } = fixture;
+      try {
+        worker.emit("event", { type: "agent_start" });
+        worker.emit("event", {
+          type: "queue_update",
+          steering: ["steer later"],
+          followUp: ["follow later"],
+        });
+        worker.emit("event", {
+          type: "extension_ui_request",
+          id: "source-dialog",
+          method: "confirm",
+          title: "Source dialog",
+        });
+        await vi.waitFor(async () =>
+          expect(await runtime.snapshot()).toMatchObject({
+            runState: "running",
+            pendingExtensionUiRequests: [
+              { id: "source-dialog", sessionId: SESSION_ID },
+            ],
+            pendingQueues: {
+              steering: [
+                expect.objectContaining({ textPreview: "steer later" }),
+              ],
+              followUp: [
+                expect.objectContaining({ textPreview: "follow later" }),
+              ],
+            },
+          }),
+        );
+        const sourceBefore = await readFile(path, "utf8");
+        const tree = await runtime.branchTree(SESSION_ID);
+        if (selection === "other") await openOtherSession(fixture);
+        else if (selection === "none") await runtime.deselectSession();
+        const selectedBeforeFork = runtime.activeSessionId;
+        const forked = await runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "u2",
+        });
+
+        expect(forked).toMatchObject({
+          sessionId: FORK_SESSION_ID,
+          editorText: "second question",
+          snapshot: {
+            active: {
+              sessionId: FORK_SESSION_ID,
+              durableLeafId: "a1",
+            },
+            sessionStatuses: {
+              [SESSION_ID]: { runState: "running" },
+            },
+          },
+        });
+        const expectedSelection =
+          selection === "source" ? FORK_SESSION_ID : selectedBeforeFork;
+        expect(runtime.activeSessionId).toBe(expectedSelection);
+        await vi.waitFor(async () => {
+          expect(
+            (await runtime.snapshot(FORK_SESSION_ID)).active?.commands,
+          ).toEqual([{ name: "visible", source: "extension" }]);
+        });
+        expect(runtime.activeSessionId).toBe(expectedSelection);
+        expect(worker.commands.some((command) => command.type === "fork")).toBe(
+          false,
+        );
+        expect(worker.stops).toBe(0);
+        expect(await readFile(path, "utf8")).toBe(sourceBefore);
+        const destination = await readFile(
+          join(resolve(path, ".."), `${FORK_SESSION_ID}.jsonl`),
+          "utf8",
+        );
+        expect(destination).toContain('"id":"a1"');
+        expect(destination).not.toContain('"id":"u2"');
+
+        const source = await runtime.snapshot(SESSION_ID);
+        expect(source).toMatchObject({
+          active: { sessionId: SESSION_ID },
           runState: "running",
           pendingExtensionUiRequests: [
             { id: "source-dialog", sessionId: SESSION_ID },
@@ -504,56 +587,103 @@ describe("stock RPC branch bridge", () => {
               expect.objectContaining({ textPreview: "follow later" }),
             ],
           },
+        });
+        expect(workers[0]).toBe(worker);
+        expect(worker.stops).toBe(0);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("preserves a newer selection made while an addressed fork waits in the source operation lane", async () => {
+    const fixture = await setup();
+    const { runtime, worker } = fixture;
+    let release!: () => void;
+    worker.autoRetryGate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const changing = runtime.setAutoRetry(SESSION_ID, false);
+    try {
+      await vi.waitFor(() =>
+        expect(worker.commands).toContainEqual({
+          type: "set_auto_retry",
+          enabled: false,
         }),
       );
-      const sourceBefore = await readFile(path, "utf8");
       const tree = await runtime.branchTree(SESSION_ID);
-      const forked = await runtime.forkBranch({
+      await openOtherSession(fixture);
+      const forking = runtime.forkBranch({
         sessionId: SESSION_ID,
         revision: tree.revision,
         targetId: "u2",
       });
-
+      // This newer selection is made before the queued fork can begin admission.
+      await runtime.openSession(SESSION_ID);
+      release();
+      await changing;
+      const forked = await forking;
       expect(forked).toMatchObject({
         sessionId: FORK_SESSION_ID,
         editorText: "second question",
-        snapshot: {
-          active: {
-            sessionId: FORK_SESSION_ID,
-            durableLeafId: "a1",
-          },
-          sessionStatuses: {
-            [SESSION_ID]: { runState: "running" },
-          },
-        },
       });
-      expect(runtime.activeSessionId).toBe(FORK_SESSION_ID);
-      expect(worker.commands.some((command) => command.type === "fork")).toBe(
-        false,
+      expect(runtime.activeSessionId).toBe(SESSION_ID);
+      expect((await runtime.snapshot(SESSION_ID)).active?.effectiveLeafId).toBe(
+        "a2",
       );
-      expect(worker.stops).toBe(0);
-      expect(await readFile(path, "utf8")).toBe(sourceBefore);
-      const destination = await readFile(
-        join(resolve(path, ".."), `${FORK_SESSION_ID}.jsonl`),
-        "utf8",
-      );
-      expect(destination).toContain('"id":"a1"');
-      expect(destination).not.toContain('"id":"u2"');
+    } finally {
+      release();
+      await changing;
+      await runtime.close();
+    }
+  });
 
-      const source = await runtime.openSession(SESSION_ID);
-      expect(source).toMatchObject({
-        active: { sessionId: SESSION_ID },
-        runState: "running",
-        pendingExtensionUiRequests: [
-          { id: "source-dialog", sessionId: SESSION_ID },
-        ],
-        pendingQueues: {
-          steering: [expect.objectContaining({ textPreview: "steer later" })],
-          followUp: [expect.objectContaining({ textPreview: "follow later" })],
-        },
+  it("retains source identity, revision, target, and conflict validation when another session is selected", async () => {
+    const stageFork = vi.fn<StageSessionFork>();
+    const fixture = await setup(15_000, undefined, stageFork);
+    const { runtime, path, directory } = fixture;
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      await openOtherSession(fixture);
+      const request = {
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      };
+      await expect(
+        runtime.forkBranch({ ...request, sessionId: FORK_SESSION_ID }),
+      ).rejects.toThrow("That session is not open on this host");
+      await expect(
+        runtime.forkBranch({ ...request, revision: tree.revision + 1 }),
+      ).rejects.toThrow(/stale/);
+      await expect(
+        runtime.forkBranch({ ...request, targetId: "a1" }),
+      ).rejects.toThrow("Fork requires a user message on the active branch");
+      await runtime.navigateBranch({
+        ...request,
+        targetId: "a1",
+        mode: "switch",
       });
-      expect(workers[0]).toBe(worker);
-      expect(worker.stops).toBe(0);
+      const earlierTree = await runtime.branchTree(SESSION_ID);
+      await expect(
+        runtime.forkBranch({ ...request, revision: earlierTree.revision }),
+      ).rejects.toThrow("Fork requires a user message on the active branch");
+      await appendFile(
+        path,
+        `${JSON.stringify(entry("external", "a2", "assistant", "external divergence", 60))}\n`,
+      );
+      await expect(
+        runtime.forkBranch({
+          ...request,
+          revision: earlierTree.revision,
+          targetId: "u1",
+        }),
+      ).rejects.toThrow(/could not verify ownership/);
+      expect(stageFork).not.toHaveBeenCalled();
+      await expect(
+        readFile(join(directory, `${FORK_SESSION_ID}.jsonl`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
     } finally {
       await runtime.close();
     }
