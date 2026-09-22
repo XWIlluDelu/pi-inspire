@@ -60,6 +60,13 @@ export const ContextPane = memo(function ContextPane({
         event.target.closest(".terminal-pane--focused")
       )
         return false;
+      // Terminal search consumes Escape locally and returns focus to its PTY.
+      if (
+        event.target instanceof Element &&
+        modalPaneRef.current?.contains(event.target) &&
+        event.target.closest(".terminal-search")
+      )
+        return false;
       if (!dismissTerminalMenu(modalPaneRef.current, event.target)) onClose?.();
     },
   );
