@@ -86,7 +86,10 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   HTTP resync failures obey the same session and selection-generation checks as successful reads,
   including switching away and back or replacing a same-session branch view. An old read must not
   publish an error over the current selection. A current-API 401 remains transport-wide; an error
-  from a replaced API remains stale. `store-async-ownership.test.ts` covers these boundaries.
+  from a replaced API remains stale. Obsolete operation completions cannot start a new resync that
+  invalidates the current selection's pending read. Abort error publication and optimistic thinking
+  rollback also require the original selection generation, including A → B → A navigation.
+  `store-async-ownership.test.ts` covers these boundaries.
 
   Fork validates its private destination before publication; once that complete JSONL is atomically
   published, any later attachment failure reports the exact committed destination and cannot become

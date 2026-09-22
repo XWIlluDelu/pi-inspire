@@ -942,7 +942,12 @@ export class AppStore {
     preserveAppendHistory = true,
   ): Promise<void> {
     const api = this.api;
-    if (!api) return;
+    if (
+      !api ||
+      this.state.sessionId !== expectedSessionId ||
+      this.selectionGeneration !== expectedGeneration
+    )
+      return;
     const transportGeneration = this.transportGeneration;
     const request = ++this.resyncRequest;
     const ownsTransport = (): boolean =>
@@ -1776,6 +1781,7 @@ export class AppStore {
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return;
@@ -1801,7 +1807,11 @@ export class AppStore {
           this.updateCommandActivity(sessionId, compacting.id, {
             message: `Cancellation was not confirmed: ${message}`,
           });
-        this.fail(message);
+        if (
+          this.state.sessionId === sessionId &&
+          this.selectionGeneration === selectionGeneration
+        )
+          this.fail(message);
       }
     }
   };
@@ -1844,6 +1854,7 @@ export class AppStore {
 
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
@@ -1855,7 +1866,7 @@ export class AppStore {
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
       this.preferences.rememberModel({ provider, id: modelId });
-      await this.resync(sessionId, this.selectionGeneration);
+      await this.resync(sessionId, selectionGeneration);
       return true;
     } catch (error) {
       if (!ownsTransport()) return false;
@@ -1872,6 +1883,7 @@ export class AppStore {
 
   setThinkingLevel = async (level: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
@@ -1894,7 +1906,8 @@ export class AppStore {
       // predecessor was itself only an optimistic request that later failed.
       if (
         request === this.thinkingLevelRequest &&
-        this.state.sessionId === sessionId
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === selectionGeneration
       ) {
         this.set({ thinkingLevel: previous });
         void this.resync();
