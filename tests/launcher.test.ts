@@ -407,6 +407,12 @@ describe("production launcher", () => {
     expect(terminalUnit).toContain(
       `ExecStart=${unixLauncher} terminal-daemon --root ${root}`,
     );
+    for (const content of [unit, terminalUnit]) {
+      expect(content).toContain("Environment=INSPIRE_ENVIRONMENT=shell");
+      expect(content).not.toContain("Environment=NODE_ENV=");
+      // Installation never snapshots the caller's environment into the unit.
+      expect(content).not.toContain(environment.PATH);
+    }
   });
 
   it("stops the readiness wait when the service process exits", async () => {
@@ -480,6 +486,8 @@ describe("production launcher", () => {
     const port = await freePort();
     const home = join(directory, "home");
     const env = launcherEnv(statePath, port, home);
+    // A user-exported NODE_ENV must not select an in-process terminal owner.
+    env.NODE_ENV = "test";
     env.INSPIRE_TERMINAL_DAEMON_ADDRESS =
       process.platform === "win32"
         ? `\\\\.\\pipe\\inspire-terminal-launcher-${port}`
