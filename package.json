@@ -109,8 +109,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.8",
-    "@earendil-works/pi-coding-agent": "0.86.0",
-    "@earendil-works/pi-tui": "0.86.0",
+    "@earendil-works/pi-coding-agent": "0.87.0",
+    "@earendil-works/pi-tui": "0.87.0",
     "@playwright/test": "1.62.1",
     "@tanstack/react-virtual": "^3.14.7",
     "@testing-library/jest-dom": "^7.0.0",
