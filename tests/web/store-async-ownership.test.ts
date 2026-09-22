@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activeSnapshot,
+  bootstrapPayload,
   deferred,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -104,6 +106,79 @@ describe("detail snapshots and selection intent", () => {
       openingSessionId: null,
     });
   });
+});
+
+describe("bootstrap snapshot ownership", () => {
+  it("keeps a same-session resync committed while bootstrap was in flight", async () => {
+    const bootstrap = deferred<RouteResponse>();
+    let reconnecting = false;
+    installFetch((url, init) => {
+      if (reconnecting && url.startsWith("/api/bootstrap"))
+        return bootstrap.promise;
+      if (url === "/api/control/model") return { body: { ok: true } };
+      if (url.startsWith("/api/snapshot"))
+        return {
+          body: activeSnapshot({
+            model: { provider: "provider", id: "new-model" },
+          }),
+        };
+      if (url === "/api/preferences")
+        return {
+          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
+        };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    reconnecting = true;
+    const initializing = store.init(null);
+    await store.setModel("provider", "new-model");
+    bootstrap.resolve({
+      body: bootstrapPayload({ snapshot: activeSnapshot() }),
+    });
+    await initializing;
+    expect(store.getState().model).toMatchObject({
+      provider: "provider",
+      id: "new-model",
+    });
+  });
+
+  it.each(["open", "new", "deselect"] as const)(
+    "keeps a %s selection committed while reconnect bootstrap was in flight",
+    async (operation) => {
+      const bootstrap = deferred<RouteResponse>();
+      let reconnecting = false;
+      installFetch((url, init) => {
+        if (reconnecting && url.startsWith("/api/bootstrap"))
+          return bootstrap.promise;
+        if (url === "/api/sessions/open" || url === "/api/sessions/new")
+          return { body: activeSnapshot({ sessionId: "s2" }) };
+        if (url === "/api/sessions/deselect")
+          return {
+            body: { active: null, runState: "idle", sessionStatuses: {} },
+          };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      reconnecting = true;
+      const initializing = store.init(null);
+      if (operation === "open") await store.openSession("s2");
+      else if (operation === "new") await store.newSession("/proj");
+      else await store.deselectSession();
+      const sessionId = operation === "deselect" ? null : "s2";
+      expect(store.getState().sessionId).toBe(sessionId);
+
+      bootstrap.resolve({
+        body: bootstrapPayload({ snapshot: activeSnapshot() }),
+      });
+      await initializing;
+      expect(store.getState().sessionId).toBe(sessionId);
+      const socket = FakeWebSocket.instances.at(-1)!;
+      const url = new URL(socket.url, window.location.href);
+      expect(url.searchParams.get("detail")).toBe(sessionId ?? "");
+      // The old bootstrap digest cannot attest the retained newer selection.
+      expect(url.searchParams.has("snapshot")).toBe(false);
+    },
+  );
 });
 
 describe("resync failure ownership", () => {

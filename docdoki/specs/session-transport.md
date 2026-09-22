@@ -65,7 +65,10 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   snapshot instead of guessing across a sequence gap. Bootstrap itself is latest-wins: each request
   captures its API identity and transport generation, and only the still-current request may apply
   bootstrap state, load launch preferences, create a WebSocket, or interpret a 401 as pairing
-  failure. Browser-only, bounded Performance timeline measures expose bootstrap confirmation, prompt
+  failure. Within that transport, a snapshot already committed by selection or resync supersedes
+  the older bootstrap's snapshot and digest; Host metadata can still refresh. Launch continuation
+  honors the selection intent captured before bootstrap began. Browser-only, bounded Performance
+  timeline measures expose bootstrap confirmation, prompt
   confirmation, WebSocket handshake phase, snapshot characters, and event-window frame/character
   rates without creating persistent telemetry. If selection changes while the host is reading a
   snapshot, it retries against the new owner before sending anything authoritative.
