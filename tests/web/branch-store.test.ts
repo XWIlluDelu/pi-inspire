@@ -69,6 +69,80 @@ describe("branch request view ownership", () => {
     expect(store.getState().branchTreeLoading).toBe(false);
   });
 
+  it.each(["success", "failure"] as const)(
+    "releases a tree read made stale by an ordinary append (%s)",
+    async (outcome) => {
+      const pending = deferred<RouteResponse | undefined>();
+      let treeReads = 0;
+      const store = await setup((url) => {
+        if (!url.startsWith("/api/branches/tree")) return undefined;
+        treeReads += 1;
+        return treeReads === 1
+          ? pending.promise
+          : { body: { ...branchTree(), effectiveLeafId: "a2", revision: 2 } };
+      });
+      const loading = store.loadBranchTree();
+      // Append continuation keeps the session, incarnation, and view, but
+      // advances the leaf that owns the History read.
+      (
+        store as unknown as { applySnapshot(snapshot: unknown): void }
+      ).applySnapshot(
+        activeSnapshot({
+          effectiveLeafId: "a2",
+          transcriptPage: {
+            revision: 2,
+            appendFromRevision: 1,
+            effectiveLeafId: "a2",
+          },
+        }),
+      );
+      pending.resolve(
+        outcome === "success"
+          ? { body: branchTree() }
+          : { status: 503, body: { error: "Old tree failed" } },
+      );
+      await loading;
+      expect(store.getState().branchTreeLoading).toBe(false);
+      expect(store.getState().branchTree?.revision).toBe(1);
+      expect(store.getState().branchTreeError).toMatch(/stale|changed/);
+
+      await store.loadBranchTree();
+      expect(treeReads).toBe(2);
+      expect(store.getState().branchTree?.revision).toBe(2);
+      expect(store.getState().branchTreeError).toBeNull();
+    },
+  );
+
+  it.each(["navigate", "fork"] as const)(
+    "releases a %s action made stale by an ordinary append",
+    async (kind) => {
+      const pending = deferred<RouteResponse | undefined>();
+      const store = await setup((url) =>
+        url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
+      );
+      const acting =
+        kind === "navigate"
+          ? store.navigateBranch("a1", "switch")
+          : store.forkBranch("u1");
+      (
+        store as unknown as { applySnapshot(snapshot: unknown): void }
+      ).applySnapshot(
+        activeSnapshot({
+          effectiveLeafId: "a2",
+          transcriptPage: {
+            revision: 2,
+            appendFromRevision: 1,
+            effectiveLeafId: "a2",
+          },
+        }),
+      );
+      pending.resolve({ status: 409, body: { error: "Old branch revision" } });
+      await expect(acting).resolves.toBe(false);
+      expect(store.getState().branchActionId).toBeNull();
+      expect(store.getState().branchTreeError).toMatch(/stale|changed/);
+    },
+  );
+
   it("ignores a delayed navigation error after a same-session view transition", async () => {
     const pending = deferred<RouteResponse | undefined>();
     const store = await setup((url) =>

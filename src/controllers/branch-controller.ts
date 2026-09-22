@@ -118,11 +118,15 @@ export class BranchController {
     const request = ++this.treeRequest;
     const ticket = this.viewTicket(state);
     const transportGeneration = this.host.transportGeneration();
+    const ownsRequest = (): boolean =>
+      request === this.treeRequest &&
+      this.host.api() === api &&
+      this.host.transportGeneration() === transportGeneration;
+    const owns = (): boolean => ownsRequest() && this.ownsView(ticket);
     this.host.patch({ branchTreeLoading: true, branchTreeError: null });
     try {
       const tree = await api.branchTree(sessionId);
-      if (!this.ownsTreeRequest(request, ticket, api, transportGeneration))
-        return;
+      if (!owns()) return;
       if (
         tree.sessionId !== ticket.sessionId ||
         tree.effectiveLeafId !== ticket.effectiveLeafId
@@ -146,8 +150,7 @@ export class BranchController {
         }
         return;
       }
-      if (!this.ownsTreeRequest(request, ticket, api, transportGeneration))
-        return;
+      if (!owns()) return;
       this.host.patch({
         branchTreeError:
           error instanceof Error
@@ -155,8 +158,18 @@ export class BranchController {
             : "Failed to load branch history",
       });
     } finally {
-      if (this.ownsTreeRequest(request, ticket, api, transportGeneration))
-        this.host.patch({ branchTreeLoading: false });
+      // An ordinary append can advance the leaf without invalidating the
+      // request's view. Retire its loading marker even when its data is stale.
+      if (ownsRequest())
+        this.host.patch({
+          branchTreeLoading: false,
+          ...(!this.ownsView(ticket)
+            ? {
+                branchTreeError:
+                  "Branch history changed — refresh to use branch actions",
+              }
+            : {}),
+        });
     }
   }
 
@@ -248,11 +261,11 @@ export class BranchController {
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
     const transportGeneration = this.host.transportGeneration();
-    const owns = (): boolean =>
+    const ownsRequest = (): boolean =>
       actionRequest === this.actionRequest &&
-      this.ownsView(ticket) &&
       this.host.api() === api &&
       this.host.transportGeneration() === transportGeneration;
+    const owns = (): boolean => ownsRequest() && this.ownsView(ticket);
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
     try {
       const response = await perform();
@@ -275,8 +288,16 @@ export class BranchController {
       });
       return false;
     } finally {
-      if (owns() && this.host.state().branchActionId === actionId)
-        this.host.patch({ branchActionId: null });
+      if (ownsRequest() && this.host.state().branchActionId === actionId)
+        this.host.patch({
+          branchActionId: null,
+          ...(!this.ownsView(ticket)
+            ? {
+                branchTreeError:
+                  "Branch history changed — refresh to use branch actions",
+              }
+            : {}),
+        });
     }
   }
 
@@ -355,20 +376,6 @@ export class BranchController {
       state.transcriptViewId === ticket.viewId &&
       state.transcriptEffectiveLeafId === ticket.effectiveLeafId &&
       this.host.selectionRequest() === ticket.selectionRequest
-    );
-  }
-
-  private ownsTreeRequest(
-    request: number,
-    ticket: BranchViewTicket,
-    api: Api,
-    transportGeneration: number,
-  ): boolean {
-    return (
-      request === this.treeRequest &&
-      this.ownsView(ticket) &&
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration
     );
   }
 
