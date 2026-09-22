@@ -8,7 +8,7 @@ export function dismissTerminalMenu(
 ): boolean {
   if (!root || !(target instanceof Element)) return false;
   const menu = target.closest<HTMLDetailsElement>(
-    `${TERMINAL_MENU_SELECTOR}[open]`,
+    `${TERMINAL_MENU_SELECTOR}[open], details[data-terminal-menu-group][open]`,
   );
   if (!menu || !root.contains(menu)) return false;
   menu.open = false;

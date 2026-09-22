@@ -66,6 +66,12 @@ global selection. Its destination warms normally without stealing newer selectio
 intent, including while the fork waits in the source operation lane.
 [[async-ownership-review]] records the approved follow-up and targeted verification.
 
+Terminal controls now use one compact header, contextual selection/search, and
+one grouped More menu. Duplicate and browser command-history/rerun controls are
+removed while shell, control-takeover, and inert quoting workflows remain.
+[[terminal-controls-redesign]] records the design, output/clipboard ownership
+repairs, and desktop/narrow Chromium evidence; [[terminal]] holds the contract.
+
 ## Cross-spec direction
 
 The product separates durable Pi state, a safe browser projection, and transient live events. The local host is the only privileged boundary and the browser remains replaceable: refreshing or reconnecting reconstructs the visible state from Pi’s session records and current runtime rather than from browser-local conversation authority.
