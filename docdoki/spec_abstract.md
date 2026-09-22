@@ -19,7 +19,7 @@
 
 ## Implemented capability
 
-Pi's support baseline is now **0.86.0**. System prompt/tool-loadout records remain canonical
+Pi's support baseline is now **0.87.0**. System prompt/tool-loadout records remain canonical
 host-side state without becoming conversation rows, and `/bug` provides terminal-only guidance.
 [[dependency-boundaries]] records the compatibility review, repairs, and verification scope.
 
