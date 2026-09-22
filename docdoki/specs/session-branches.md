@@ -59,9 +59,12 @@ continuity comes from [[session-transport]].
   moves to the selected user turn's parent and prefills the composer without submitting.
 
 - Same-file branch navigation requires an idle, fresh, conflict-free worker with no queued input or
-  pre-existing dialog. Fork requires a fresh selected source revision, materialized current-format
-  source, conflict-free projection, and active-path user target; source run state, Pending queues,
-  and extension dialogs are not preconditions because no source command or replacement occurs.
+  pre-existing dialog. Fork addresses its source by session id and requires that source's fresh
+  branch revision, materialized current-format JSONL, conflict-free projection, and active-path user
+  target. The Host's global selection is not an admission condition: another browser may select a
+  different session or deselect without disabling Fork in this browser's source view. Source run
+  state, Pending queues, and extension dialogs are not preconditions because no source command or
+  replacement occurs.
   Browser branch-tree and branch-action requests are owned by a bounded `BranchController`; its
   current API, transport generation, selection generation, selection intent, transcript view, and
   effective leaf must all still match before it can commit a response through `AppStore`. A
@@ -103,10 +106,13 @@ continuity comes from [[session-transport]].
   admitted prefix may continue throughout fork without entering the destination. The host opens the
   private projection, reserves its id and final path, atomically publishes the complete JSONL
   without replacement, reopens it under that reservation, and attaches a processless destination
-  before normal configured worker warm-up. Concurrent open/create/delete operations share that
-  reservation. Catalog-driven opens wait on the reservation, a newer
-  selection intent wins, pre-publication failure removes staging, and post-publication failure
-  identifies the committed destination instead of inviting a blind retry.
+  before normal configured worker warm-up, independently of the Host's global selection. Concurrent
+  open/create/delete operations share that reservation. Catalog-driven opens wait on the reservation.
+  The response always identifies the destination for the requesting browser; automatic Host selection
+  changes only if the source is still selected and no newer selection intent has occurred since fork
+  dispatch, including while waiting for the source operation lane. Pre-publication failure removes
+  staging, and post-publication failure identifies the committed destination instead of inviting a
+  blind retry.
 
   Branch switching remains reversible and non-destructive; edit-from-here confirms only when it
   would replace a non-empty Composer draft.
