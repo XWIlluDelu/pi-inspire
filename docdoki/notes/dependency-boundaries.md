@@ -15,7 +15,27 @@ The npm release therefore has two independent checks:
 
 Pi's own shrinkwrapped dependency tree belongs to the external Pi installation rather than INSΠRE's production dependency graph. INSΠRE does not override, downgrade, or silently substitute that tree.
 
-## Current baseline: Pi 0.86.0
+## Current baseline: Pi 0.87.0
+
+Both exact Pi development dependencies and the lockfile now use `0.87.0`.
+The external runtime authority and browser fuzzy-search boundary are unchanged.
+The version-specific TUI license override uses the same MIT text, verified against
+the published npm source revision recorded in `scripts/licenses/README.md`.
+
+`tests/server/pi-context-edits.integration.test.ts` uses the installed Pi SDK to
+append omission and string-replacement edits, then verifies that INSΠRE preserves
+raw display messages across live reconciliation and reopening while Pi's model
+context changes. It also covers retain-none compaction followed by new input.
+No runtime adapter or UI behavior change was needed for these cases.
+
+[GitHub Actions validation](https://github.com/XWIlluDelu/pi-inspire/actions/runs/35689791288)
+on Linux / Node 22 passed the three added regressions, `npm run ci`, and
+`npm run release:verify`. The job recorded the resolved SDK/RPC installation as
+Pi `0.87.0` and saved the tested source candidate as
+`7a3d4e1fda3a2309508fe3d494ce43aa4564fec8` before running the checks.
+These results do not claim a new macOS or Windows run or exercise every user extension.
+
+## Previous verification: Pi 0.86.0
 
 The [0.86.0 release](https://pi.dev/news/releases/0.86.0) was reviewed against INSΠRE's
 actual SDK/RPC, session projection, extension bridge, and browser fuzzy-search boundaries.
