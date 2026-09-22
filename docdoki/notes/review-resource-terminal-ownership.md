@@ -8,7 +8,8 @@ purpose: Explain session-addressed resource reads, project-owned terminal receip
 
 Global Host selection is not permission to resolve another browser's resource. `RuntimeReadController`
 uses the requested open slot; context reconciliation and lazy message reads retain slot-registration,
-view and revision checks without selecting it globally.
+view and revision checks without selecting it globally. This is the same ownership distinction as
+[[async-ownership-review]].
 
 Discovery and read authorization are separate. The former Git preview-index and ignore-rule expiry
 policy was superseded by [[filesystem-git-separation]]: discovery may be cached, but content reads

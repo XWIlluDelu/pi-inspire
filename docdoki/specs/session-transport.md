@@ -65,7 +65,10 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   snapshot instead of guessing across a sequence gap. Bootstrap itself is latest-wins: each request
   captures its API identity and transport generation, and only the still-current request may apply
   bootstrap state, load launch preferences, create a WebSocket, or interpret a 401 as pairing
-  failure. Browser-only, bounded Performance timeline measures expose bootstrap confirmation, prompt
+  failure. Within that transport, a snapshot already committed by selection or resync supersedes
+  the older bootstrap's snapshot and digest; Host metadata can still refresh. Launch continuation
+  honors the selection intent captured before bootstrap began. Browser-only, bounded Performance
+  timeline measures expose bootstrap confirmation, prompt
   confirmation, WebSocket handshake phase, snapshot characters, and event-window frame/character
   rates without creating persistent telemetry. If selection changes while the host is reading a
   snapshot, it retries against the new owner before sending anything authoritative.
@@ -83,7 +86,10 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   HTTP resync failures obey the same session and selection-generation checks as successful reads,
   including switching away and back or replacing a same-session branch view. An old read must not
   publish an error over the current selection. A current-API 401 remains transport-wide; an error
-  from a replaced API remains stale. `store-async-ownership.test.ts` covers these boundaries.
+  from a replaced API remains stale. Obsolete operation completions cannot start a new resync that
+  invalidates the current selection's pending read. Abort error publication and optimistic thinking
+  rollback also require the original selection generation, including A → B → A navigation.
+  `store-async-ownership.test.ts` covers these boundaries.
 
   Fork validates its private destination before publication; once that complete JSONL is atomically
   published, any later attachment failure reports the exact committed destination and cannot become
