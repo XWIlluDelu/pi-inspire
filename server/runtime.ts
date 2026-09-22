@@ -2556,13 +2556,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     request: BranchForkRequest,
   ): Promise<BranchForkResponse> {
     const source = this.requireSlot(request.sessionId);
+    const selectionAtDispatch = this.selectionSequence;
     return this.mutateSlot(source, async () => {
-      if (this.selectedSessionId !== source.id) {
-        throw requestError(
-          "Fork requires the source session to remain selected",
-          409,
-        );
-      }
+      // The addressed source and its fresh branch revision authorize Fork;
+      // another browser's Host selection does not own this source view.
       await this.reconcileSlot(source, true);
       this.throwIfConflicted(source);
       this.requireFreshBranchRevision(source, request.revision);
@@ -2585,7 +2582,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         request.targetId,
         MAX_PROMPT_CHARS,
       );
-      const selectionAtDispatch = this.selectionSequence;
       const staged = await this.stageFork({
         sourcePath,
         sourceSessionId: source.id,
@@ -2759,8 +2755,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.catalog.invalidate();
         reservation.release();
         reservation = null;
-        if (selected)
-          void this.ensureProcess(destination).catch(() => undefined);
+        // Like openSession, return the addressed preview immediately and warm
+        // its runtime even when a different browser owns the Host selection.
+        void this.ensureProcess(destination).catch(() => undefined);
         this.scheduleIdleWorkerEviction();
         return { sessionId: destinationId, snapshot, editorText };
       } catch (error) {
