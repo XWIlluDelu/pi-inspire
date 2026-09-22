@@ -609,6 +609,9 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  // HTTP production behavior belongs to this application, not NODE_ENV:
+  // changing the process environment also changes Pi and every tool it spawns.
+  app.set("env", "production");
   const authorityId = randomUUID();
   const heartbeatIntervalMs =
     deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS;

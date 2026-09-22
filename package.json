@@ -66,7 +66,8 @@
       "server/file-lock.d.mts",
       "server/platform-paths.d.mts",
       "server/process-tree.d.mts",
-      "server/static-asset-cache.d.mts"
+      "server/static-asset-cache.d.mts",
+      "server/user-environment.d.mts"
     ]
   },
   "scripts": {

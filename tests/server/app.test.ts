@@ -166,6 +166,12 @@ describe("local host API", () => {
       .get("/api/bootstrap")
       .set("Authorization", `Bearer ${token}`);
 
+  it("sets production HTTP behavior without overriding the user's NODE_ENV", () => {
+    expect(application.app.get("env")).toBe("production");
+    // Vitest supplies development; production belongs to Express, not its parent environment.
+    expect(process.env.NODE_ENV).toBe("development");
+  });
+
   it("loads private tool presentation declarations into authenticated bootstrap", async () => {
     await writeFile(
       join(temporary, "tool-presentations.json"),

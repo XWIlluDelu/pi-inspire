@@ -97,6 +97,47 @@ Installation writes separate `inspire-host.service` and `inspire-terminal.servic
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
+### User execution environment
+
+Direct local launches inherit the calling process's exported environment. Linux services load your
+shell's current login/interactive exports once at startup, so tools installed through your normal
+shell setup remain available to Pi and extensions. The fixed Node path in the unit is only for
+bootstrapping Inspire. Running a command that delegates to an installed service does **not** copy
+that terminal's temporary environment into the service.
+
+Inspire does not set `NODE_ENV` for you. An unset, empty, or explicitly configured value stays that
+way in Pi and project terminals; the Web server configures its own production HTTP behavior.
+
+Launch controls:
+
+- `INSPIRE_ENVIRONMENT=inherit` uses the supplied environment without running shell initialization.
+- `INSPIRE_ENVIRONMENT=shell` loads the shell environment, including for an explicit direct launch.
+- `INSPIRE_SHELL=/absolute/path/to/zsh` overrides `SHELL` and the account default for discovery.
+  Supported POSIX shells are sh, Bash, Zsh, Fish, Dash, and Ksh. Windows direct launches inherit.
+
+For a persistent service, set overrides in a systemd user-service drop-in for the affected Host or
+terminal unit, rather than only in the terminal that runs `inspire start`. An `inherit` override is
+useful when you already manage the complete service environment yourself.
+
+Discovery runs from your home directory without a terminal, suppresses startup output, and reads
+exports over a separate pipe. It fails clearly after ten seconds or an oversized/invalid export;
+it does not silently continue with a broken PATH or store environment values in unit files/logs.
+If your shell startup opens a TUI or prompts for input, guard that interactive-only code using
+`INSPIRE_RESOLVING_ENVIRONMENT=1`, while leaving environment exports enabled. Only exported variables
+are shared, not aliases or functions; a service cannot adopt a virtual environment already activated
+in another terminal tab. Project terminal tabs still run their own shell initialization.
+
+**Upgrading existing Linux services:** reinstall the unit files to remove the old terminal
+`NODE_ENV=production` override, then restart when it is safe to end terminal processes:
+
+```bash
+./inspire service install-host
+./inspire restart --all  # Ends all project terminal processes
+```
+
+An ordinary Host-only restart leaves existing terminal processes and their environment unchanged.
+After verifying normal command lookup, any temporary per-tool PATH symlinks can be removed.
+
 ## Pi native commands
 
 Slash completion distinguishes commands adapted for the browser from **Terminal only** entries.

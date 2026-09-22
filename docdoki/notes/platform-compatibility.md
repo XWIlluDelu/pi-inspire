@@ -37,6 +37,66 @@ The CLI verifies systemd's readiness hook after restart; the browser observes a 
 asserting end-to-end tunnel or full-terminal success. A submitted operation that cannot be established
 as unissued retains its drain and requires operator service recovery.
 
+## User execution environment
+
+### Boundary and rationale
+
+The user approved reusing their existing development environment alongside their external Pi
+installation. The original systemd units reduced PATH to the bootstrap Node directory and system
+bins. A normally installed CLI in `~/.local/bin` was consequently invisible to extension processes.
+Separately, `inspire.mjs` and the terminal unit forced `NODE_ENV=production`, changing npm behavior in
+user projects. These were launcher-environment problems, not reasons to customize individual tools.
+
+`server/user-environment.mjs` resolves exports at the launcher boundary. Direct launches retain the
+caller's environment; installed services use the user's selected login/interactive shell from their
+home directory. The helper runs the current absolute Node executable only to serialize exports.
+Runtime children receive the resolved result, with discovery consumed rather than recursively run.
+The binding contract is in [[host-lifecycle]] and [[pi-integration]].
+
+No second environment database or install-time credential snapshot is needed. Removing Inspire's
+forced NODE_ENV preserves user provenance directly, including unset and empty values. Express sets
+its production mode on its own application object. `INSPIRE_TERMINAL_IN_PROCESS`, not the user's
+NODE_ENV, controls the special in-process terminal owner.
+
+Independent terminal services need the same boundary. The installed terminal launcher resolves the
+shell environment. The transient `systemd-run` path transfers named exports using `--setenv=NAME`
+with the supplied subprocess environment, rather than including values in command arguments. The
+new service receives systemd's own invocation/notification identity, not the Host's. Detached fallback
+continues to inherit the supplied environment.
+
+### Probe behavior and failure handling
+
+- Supported shell initialization uses `-i -l -c`, not manually sourcing a particular rc file in a
+  potentially different shell. `INSPIRE_SHELL` overrides SHELL/account selection; explicit inherit
+  mode supports externally managed environments. This does not change Pi's native shell tools.
+- Startup output is discarded, while exports use a separate pipe. The final command redirects its
+  stdout to that pipe: interactive Bash did not reliably preserve an inherited auxiliary descriptor
+  into Node, so writing directly to fd 3 failed in the initial experiment. Explicit descriptor
+  duplication works with the tested Bash and Zsh initialization.
+- The probe is isolated, limited to ten seconds and 1 MiB of exports, and killed as a process group
+  on timeout/overflow/failure. Errors do not repeat shell output or environment values. No partial
+  result or silently reduced PATH is accepted.
+- Shell unsets are retained. Explicit Inspire controls and systemd identity survive initialization;
+  temporary probe state does not. Interactive-only prompts/TUI startup can check
+  `INSPIRE_RESOLVING_ENVIRONMENT=1` while leaving exports active.
+- The result contains exported process state, not aliases/functions or a virtual environment from
+  some other terminal tab. Existing terminal processes are not changed by a Host restart.
+
+### Deployment boundary
+
+Project changes do not rewrite the installed services, restart the active Host/terminal daemon,
+change the user's shell files, modify Pi, or remove existing workaround symlinks. Existing terminal
+unit files still force production until reinstalled. The documented migration is:
+
+```sh
+./inspire service install-host
+./inspire restart --all
+```
+
+The second command ends project terminal processes and must be scheduled deliberately. Host-only
+restart keeps those processes and their old environment. Remove any temporary tool symlink only
+after verifying the newly started runtime's normal command lookup.
+
 ## Portable file-lock phase races
 
 `server/file-lock.mjs` keeps Linux's established kernel-flock protocol. macOS and Windows instead publish process-birth-bound participants in a Lamport bakery: `choosing-<token>.json` is atomically renamed to `ticket-<number>-<token>.json` before entry to the critical section.

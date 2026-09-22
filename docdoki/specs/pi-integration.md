@@ -44,7 +44,10 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   fallback.
 
 - The normal Pi agent directory and project working directory remain authoritative for settings,
-  credentials, models, extensions, skills, prompts, context files, and sessions.
+  credentials, models, extensions, skills, prompts, context files, and sessions. Pi and its tools
+  inherit the user's exported execution environment under [[host-lifecycle]], not a reduced
+  service-only PATH or an Inspire-injected NODE_ENV. Pi remains a directly managed RPC worker;
+  environment reuse neither adds a PTY nor changes Pi's native command execution semantics.
 
 - The browser receives model availability and runtime state but never stored credential values. Its
   Settings surface can change Pi's auto-compaction, auto-retry, steering-delivery, and

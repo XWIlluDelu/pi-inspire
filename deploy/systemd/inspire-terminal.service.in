@@ -7,8 +7,9 @@ Wants=network-online.target
 Type=notify
 NotifyAccess=all
 WorkingDirectory=@ROOT@
-Environment=NODE_ENV=production
+# Bootstrap Node only; the launcher obtains the user's current shell environment.
 Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+Environment=INSPIRE_ENVIRONMENT=shell
 ExecStart=@LAUNCHER@ terminal-daemon --root @ROOT@ --host 127.0.0.1 --port 4587
 Restart=on-failure
 RestartSec=3

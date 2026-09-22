@@ -38,6 +38,7 @@ async function fixture(fail: boolean) {
     "platform-paths",
     "process-tree",
     "static-asset-cache",
+    "user-environment",
   ])
     await cp(
       resolve(`server/${file}.mjs`),
