@@ -3,7 +3,7 @@ import {
   ArrowRight,
   Bell,
   ChevronDown,
-  CopyPlus,
+  ChevronRight,
   ExternalLink,
   FolderKanban,
   Maximize2,
@@ -32,7 +32,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
-  MAX_TERMINAL_TITLE_CHARS,
   type TerminalCatalogResponse,
   type TerminalDescriptor,
   type TerminalProfile,
@@ -40,13 +39,13 @@ import {
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
 import { terminalOperations } from "../controllers/terminal-operation-controller";
-import { TerminalCatalogController } from "../terminal-catalog";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
   subscribeTerminalInsertion,
   type TerminalUiAction,
 } from "../terminal-actions";
+import { TerminalCatalogController } from "../terminal-catalog";
 import { dismissTerminalMenu, TERMINAL_MENU_SELECTOR } from "../terminal-menus";
 import {
   loadTerminalUiSettings,
@@ -165,6 +164,8 @@ export const TerminalPane = memo(function TerminalPane({
   );
   const [terminalFilter, setTerminalFilter] = useState("");
   const [globalLoading, setGlobalLoading] = useState(false);
+  const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
+  const [menuHost, setMenuHost] = useState<HTMLDivElement | null>(null);
   const [insertionRevision, setInsertionRevision] = useState(0);
   const requestGeneration = useRef(0);
   const knownOutputOffsetsRef = useRef(new Map<string, number>());
@@ -415,8 +416,8 @@ export const TerminalPane = memo(function TerminalPane({
         if (menu !== current) menu.open = false;
       }
     };
-    // Native toggle does not bubble; capture includes command history in the
-    // child view without duplicating menu ownership in every trigger.
+    // Only the two top-level menus participate in mutual exclusion; inline
+    // disclosure groups remain inside their owning menu.
     pane.addEventListener("toggle", closeOtherMenus, true);
     document.addEventListener("pointerdown", dismissMenus, true);
     return () => {
@@ -659,33 +660,6 @@ export const TerminalPane = memo(function TerminalPane({
     }
   };
 
-  const duplicateTerminal = async (source: TerminalDescriptor) => {
-    try {
-      const created = await api.createTerminal({
-        cwd: source.projectCwd,
-        profileId: source.profileId,
-        cols: source.cols,
-        rows: source.rows,
-      });
-      // Publish the committed shell independently of its optional title write.
-      await commitDescriptor(created, true);
-      const duplicate =
-        source.titleSource === "user"
-          ? await api.renameTerminal(created.id, {
-              title: `${source.title.slice(0, MAX_TERMINAL_TITLE_CHARS - 5)} copy`,
-            })
-          : created;
-      await commitDescriptor(duplicate, true);
-    } catch (duplicateError) {
-      if (!catalogController.active) return;
-      setError(
-        duplicateError instanceof Error
-          ? duplicateError.message
-          : "Terminal could not be duplicated",
-      );
-    }
-  };
-
   const restartTerminal = async (terminal: TerminalDescriptor) => {
     if (
       terminal.status === "running" &&
@@ -924,24 +898,28 @@ export const TerminalPane = memo(function TerminalPane({
 
   const globalGroups = new Map<string, TerminalDescriptor[]>();
   for (const terminal of globalCatalog?.terminals ?? []) {
+    if (
+      terminalFilter &&
+      !`${terminal.title} ${terminal.currentCommand} ${terminal.projectCwd}`
+        .toLowerCase()
+        .includes(terminalFilter.toLowerCase())
+    )
+      continue;
     const group = globalGroups.get(terminal.projectCwd) ?? [];
     group.push(terminal);
     globalGroups.set(terminal.projectCwd, group);
   }
-
-  const filteredTerminals = terminalFilter
-    ? terminals.filter((terminal) =>
-        `${terminal.title} ${terminal.currentCommand}`
-          .toLowerCase()
-          .includes(terminalFilter.toLowerCase()),
-      )
-    : terminals;
 
   return (
     <div
       ref={paneRef}
       className={`terminal-pane${focused ? " terminal-pane--focused" : ""}`}
       onKeyDown={onMenuKeyDown}
+      onClickCapture={(event) => {
+        // Capture also covers controls portalled from the active xterm view.
+        const button = (event.target as Element).closest("button");
+        button?.closest(TERMINAL_MENU_SELECTOR)?.removeAttribute("open");
+      }}
     >
       {sessionCwd && cwd !== sessionCwd ? (
         <div className="terminal-project-context">
@@ -1059,7 +1037,10 @@ export const TerminalPane = memo(function TerminalPane({
             <Plus size={15} aria-hidden />
           </button>
           {(catalog?.profiles.length ?? 0) > 1 ? (
-            <details className="terminal-menu" data-terminal-menu>
+            <details
+              className="terminal-menu terminal-menu--profiles"
+              data-terminal-menu
+            >
               <summary
                 className="terminal-tabs__profile"
                 aria-label="Choose terminal profile"
@@ -1075,12 +1056,7 @@ export const TerminalPane = memo(function TerminalPane({
                       type="button"
                       key={profile.id}
                       data-terminal-focus-trigger
-                      onClick={(event) => {
-                        void createTerminal(profile);
-                        event.currentTarget
-                          .closest("details")
-                          ?.removeAttribute("open");
-                      }}
+                      onClick={() => void createTerminal(profile)}
                     >
                       <span>{profile.label}</span>
                       {profile.isDefault ? <small>Default</small> : null}
@@ -1090,189 +1066,7 @@ export const TerminalPane = memo(function TerminalPane({
             </details>
           ) : null}
         </div>
-        <details
-          className="terminal-menu terminal-menu--more"
-          data-terminal-menu
-        >
-          <summary
-            className="icon-button"
-            aria-label="Terminal actions"
-            title="Terminal actions"
-          >
-            <MoreHorizontal size={15} aria-hidden />
-          </summary>
-          <div
-            className="terminal-menu__popover"
-            onClick={(event) => {
-              if ((event.target as Element).closest("button"))
-                event.currentTarget.closest("details")?.removeAttribute("open");
-            }}
-          >
-            {terminals.length > 5 ? (
-              <label className="terminal-menu__search">
-                <Search size={13} aria-hidden />
-                <input
-                  value={terminalFilter}
-                  onChange={(event) => setTerminalFilter(event.target.value)}
-                  placeholder="Find terminal"
-                  aria-label="Find terminal"
-                />
-              </label>
-            ) : null}
-            {terminals.length > 5 ? (
-              <div className="terminal-menu__terminal-list">
-                {filteredTerminals.map((terminal) => (
-                  <button
-                    type="button"
-                    key={terminal.id}
-                    onClick={(event) => {
-                      setActiveId(terminal.id);
-                      event.currentTarget
-                        .closest("details")
-                        ?.removeAttribute("open");
-                    }}
-                  >
-                    <span>{terminalLabel(terminal)}</span>
-                    <small>{terminal.currentCommand}</small>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {activeTerminal ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => beginRename(activeTerminal)}
-                >
-                  <Pencil size={13} aria-hidden /> Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void duplicateTerminal(activeTerminal)}
-                >
-                  <CopyPlus size={13} aria-hidden /> Duplicate
-                </button>
-                {terminals.indexOf(activeTerminal) > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const target =
-                        terminals[terminals.indexOf(activeTerminal) - 1];
-                      if (target)
-                        void reorder(activeTerminal.id, target.id, "before");
-                    }}
-                  >
-                    <ArrowLeft size={13} aria-hidden /> Move tab left
-                  </button>
-                ) : null}
-                {terminals.indexOf(activeTerminal) < terminals.length - 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const target =
-                        terminals[terminals.indexOf(activeTerminal) + 1];
-                      if (target)
-                        void reorder(activeTerminal.id, target.id, "after");
-                    }}
-                  >
-                    <ArrowRight size={13} aria-hidden /> Move tab right
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  data-terminal-focus-trigger
-                  onClick={() => void restartTerminal(activeTerminal)}
-                >
-                  <RotateCcw size={13} aria-hidden /> Restart
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInWindow(activeTerminal)}
-                >
-                  <ExternalLink size={13} aria-hidden /> Open in window
-                </button>
-                <button
-                  type="button"
-                  className="terminal-menu__danger"
-                  onClick={() => void closeTerminal(activeTerminal)}
-                >
-                  <Trash2 size={13} aria-hidden /> Close
-                </button>
-                {activeTerminal.status === "running" ? (
-                  <button
-                    type="button"
-                    className="terminal-menu__danger"
-                    onClick={() => void closeTerminal(activeTerminal, true)}
-                  >
-                    <X size={13} aria-hidden /> Force terminate
-                  </button>
-                ) : null}
-              </>
-            ) : null}
-            <button
-              type="button"
-              className="terminal-menu__settings"
-              onClick={(event) => {
-                setSettingsOpen(true);
-                event.currentTarget.closest("details")?.removeAttribute("open");
-              }}
-            >
-              <Settings2 size={13} aria-hidden /> Settings
-            </button>
-          </div>
-        </details>
-        <details
-          className="terminal-menu terminal-menu--projects"
-          data-terminal-menu
-          onToggle={(event) => {
-            if (event.currentTarget.open) void loadGlobal();
-          }}
-        >
-          <summary
-            className="icon-button"
-            aria-label="Terminals in all projects"
-            title="All project terminals"
-          >
-            <FolderKanban size={14} aria-hidden />
-          </summary>
-          <div className="terminal-menu__popover terminal-menu__popover--global">
-            <div className="terminal-menu__heading">All project terminals</div>
-            {globalLoading && !globalCatalog ? (
-              <div className="terminal-menu__message">Loading…</div>
-            ) : globalGroups.size === 0 ? (
-              <div className="terminal-menu__message">No terminals</div>
-            ) : (
-              [...globalGroups].map(([projectCwd, projectTerminals]) => (
-                <div className="terminal-menu__project" key={projectCwd}>
-                  <div title={projectCwd}>
-                    {projectLabel(projectCwd)}
-                    {projectCwd === cwd ? <small>Current</small> : null}
-                  </div>
-                  {projectTerminals.map((terminal) => (
-                    <button
-                      type="button"
-                      key={terminal.id}
-                      onClick={(event) => {
-                        setActiveId(terminal.id);
-                        setCwd(projectCwd);
-                        event.currentTarget
-                          .closest("details")
-                          ?.removeAttribute("open");
-                      }}
-                    >
-                      <span
-                        className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                        aria-hidden
-                      />
-                      <span>{terminalLabel(terminal)}</span>
-                      <small>{terminal.currentCommand}</small>
-                    </button>
-                  ))}
-                </div>
-              ))
-            )}
-          </div>
-        </details>
+        <div ref={setToolbarHost} className="terminal-view-controls" />
         <button
           type="button"
           className="icon-button terminal-tabs__focus"
@@ -1286,6 +1080,185 @@ export const TerminalPane = memo(function TerminalPane({
             <Maximize2 size={14} aria-hidden />
           )}
         </button>
+        <details
+          className="terminal-menu terminal-menu--more"
+          data-terminal-menu
+          onToggle={(event) => {
+            if (
+              event.target !== event.currentTarget ||
+              event.currentTarget.open
+            )
+              return;
+            for (const group of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
+              "details[open]",
+            ))
+              group.open = false;
+          }}
+        >
+          <summary
+            className="icon-button"
+            aria-label="Terminal actions"
+            title="Terminal actions"
+          >
+            <MoreHorizontal size={15} aria-hidden />
+          </summary>
+          <div className="terminal-menu__popover">
+            <div ref={setMenuHost} className="terminal-menu__view" />
+            {activeTerminal ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => beginRename(activeTerminal)}
+                >
+                  <Pencil size={14} aria-hidden /> Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openInWindow(activeTerminal)}
+                >
+                  <ExternalLink size={14} aria-hidden /> Open in window
+                </button>
+                <details
+                  className="terminal-menu__group"
+                  data-terminal-menu-group
+                >
+                  <summary>
+                    <SquareTerminal size={14} aria-hidden /> Manage terminal
+                    <ChevronRight
+                      className="terminal-menu__chevron"
+                      size={13}
+                      aria-hidden
+                    />
+                  </summary>
+                  <div>
+                    {terminals.indexOf(activeTerminal) > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target =
+                            terminals[terminals.indexOf(activeTerminal) - 1];
+                          if (target)
+                            void reorder(
+                              activeTerminal.id,
+                              target.id,
+                              "before",
+                            );
+                        }}
+                      >
+                        <ArrowLeft size={14} aria-hidden /> Move tab left
+                      </button>
+                    ) : null}
+                    {terminals.indexOf(activeTerminal) <
+                    terminals.length - 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target =
+                            terminals[terminals.indexOf(activeTerminal) + 1];
+                          if (target)
+                            void reorder(activeTerminal.id, target.id, "after");
+                        }}
+                      >
+                        <ArrowRight size={14} aria-hidden /> Move tab right
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      data-terminal-focus-trigger
+                      onClick={() => void restartTerminal(activeTerminal)}
+                    >
+                      <RotateCcw size={14} aria-hidden /> Restart
+                    </button>
+                    <button
+                      type="button"
+                      className="terminal-menu__danger"
+                      onClick={() => void closeTerminal(activeTerminal)}
+                    >
+                      <Trash2 size={14} aria-hidden /> Close
+                    </button>
+                    {activeTerminal.status === "running" ? (
+                      <button
+                        type="button"
+                        className="terminal-menu__danger"
+                        onClick={() => void closeTerminal(activeTerminal, true)}
+                      >
+                        <X size={14} aria-hidden /> Force terminate
+                      </button>
+                    ) : null}
+                  </div>
+                </details>
+              </>
+            ) : null}
+            <div className="terminal-menu__separator" />
+            <details
+              className="terminal-menu__group terminal-menu__projects"
+              data-terminal-menu-group
+              onToggle={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  event.currentTarget.open
+                )
+                  void loadGlobal();
+              }}
+            >
+              <summary aria-label="Terminals in all projects">
+                <FolderKanban size={14} aria-hidden /> All terminals
+                <ChevronRight
+                  className="terminal-menu__chevron"
+                  size={13}
+                  aria-hidden
+                />
+              </summary>
+              <div>
+                <label className="terminal-menu__search">
+                  <Search size={13} aria-hidden />
+                  <input
+                    value={terminalFilter}
+                    onChange={(event) => setTerminalFilter(event.target.value)}
+                    placeholder="Find terminal or project"
+                    aria-label="Find terminal or project"
+                  />
+                </label>
+                {globalLoading && !globalCatalog ? (
+                  <div className="terminal-menu__message">Loading…</div>
+                ) : globalGroups.size === 0 ? (
+                  <div className="terminal-menu__message">
+                    {terminalFilter ? "No matching terminals" : "No terminals"}
+                  </div>
+                ) : (
+                  [...globalGroups].map(([projectCwd, projectTerminals]) => (
+                    <div className="terminal-menu__project" key={projectCwd}>
+                      <div title={projectCwd}>
+                        {projectLabel(projectCwd)}
+                        {projectCwd === cwd ? <small>Current</small> : null}
+                      </div>
+                      {projectTerminals.map((terminal) => (
+                        <button
+                          type="button"
+                          key={terminal.id}
+                          onClick={() => {
+                            setActiveId(terminal.id);
+                            setCwd(projectCwd);
+                          }}
+                        >
+                          <span
+                            className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                            aria-hidden
+                          />
+                          <span>{terminalLabel(terminal)}</span>
+                          <small>{terminal.currentCommand}</small>
+                        </button>
+                      ))}
+                    </div>
+                  ))
+                )}
+              </div>
+            </details>
+            <button type="button" onClick={() => setSettingsOpen(true)}>
+              <Settings2 size={14} aria-hidden /> Settings
+            </button>
+          </div>
+        </details>
       </div>
 
       {loading && !catalog ? (
@@ -1326,6 +1299,8 @@ export const TerminalPane = memo(function TerminalPane({
                   terminal={terminal}
                   active={terminal.id === activeId}
                   settings={uiSettings}
+                  toolbarHost={toolbarHost}
+                  menuHost={menuHost}
                   onDescriptor={applyDescriptor}
                   onBackgroundOutput={markBackgroundOutput}
                   onBell={markBell}

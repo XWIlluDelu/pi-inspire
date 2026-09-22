@@ -94,6 +94,36 @@ describe("terminal menu dismissal", () => {
     }
   });
 
+  it("dismisses an inline group before its containing menu or drawer", () => {
+    const close = vi.fn();
+    render(
+      <MenuModal onClose={close}>
+        <details open data-terminal-menu>
+          <summary>Terminal actions</summary>
+          <details open data-terminal-menu-group>
+            <summary>Display</summary>
+            <button type="button">Clear scrollback</button>
+          </details>
+        </details>
+      </MenuModal>,
+    );
+    const action = screen.getByRole("button", { name: "Clear scrollback" });
+    action.focus();
+    fireEvent.keyDown(action, { key: "Escape" });
+    expect(action.closest("details")).not.toHaveAttribute("open");
+    const group = screen.getByText("Display");
+    expect(group.closest("[data-terminal-menu]")).toHaveAttribute("open");
+    expect(group).toHaveFocus();
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.keyDown(group, { key: "Escape" });
+    expect(group.closest("[data-terminal-menu]")).not.toHaveAttribute("open");
+    const summary = screen.getByText("Terminal actions");
+    expect(summary).toHaveFocus();
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.keyDown(summary, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("does not dismiss an underlying terminal menu through a newer modal", () => {
     const closeOuter = vi.fn();
     const closeTop = vi.fn();

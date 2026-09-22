@@ -6,13 +6,20 @@ import { type IMarker, type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   ClipboardPaste,
-  History as CommandHistory,
   Copy,
+  Eraser,
+  Eye,
   Keyboard,
+  LoaderCircle,
   MessageSquareQuote,
+  Monitor,
+  RotateCcw,
   Search,
+  Square,
+  TextSelect,
   X,
 } from "lucide-react";
 import {
@@ -20,9 +27,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   INSPIRE_SHELL_OSC,
   MAX_TERMINAL_COLS,
@@ -42,6 +51,10 @@ import {
   takeTerminalInsertion,
 } from "../terminal-actions";
 import {
+  type TerminalCommandOutput,
+  terminalCommandOutput,
+} from "../terminal-command-output";
+import {
   TerminalConnection,
   type TerminalTransportStatus,
 } from "../terminal-connection";
@@ -54,6 +67,8 @@ interface TerminalViewProps {
   terminal: TerminalDescriptor;
   active: boolean;
   settings: TerminalUiSettings;
+  toolbarHost: HTMLElement | null;
+  menuHost: HTMLElement | null;
   onDescriptor(terminal: TerminalDescriptor): void;
   onBackgroundOutput(id: string): void;
   onBell(terminal: TerminalDescriptor): void;
@@ -66,13 +81,6 @@ interface TerminalViewProps {
       { type: "command_complete" }
     >,
   ): void;
-}
-
-interface TerminalCommandBoundary {
-  command: string;
-  start: IMarker;
-  end: IMarker | null;
-  exitCode: number | null;
 }
 
 interface SearchState {
@@ -192,6 +200,8 @@ export const TerminalView = memo(function TerminalView({
   terminal: descriptor,
   active,
   settings,
+  toolbarHost,
+  menuHost,
   onDescriptor,
   onBackgroundOutput,
   onBell,
@@ -215,10 +225,14 @@ export const TerminalView = memo(function TerminalView({
   const ctrlLatchedRef = useRef(false);
   const altLatchedRef = useRef(false);
   const replayGenerationRef = useRef(0);
+  const clipboardEpochRef = useRef(0);
   const snapshotStartedRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const bellTimerRef = useRef<number | null>(null);
-  const commandMarkersRef = useRef<TerminalCommandBoundary[]>([]);
+  const commandStartRef = useRef<{ marker: IMarker; column: number } | null>(
+    null,
+  );
+  const lastOutputRef = useRef<TerminalCommandOutput | null>(null);
   const [transport, setTransport] =
     useState<TerminalTransportStatus>("connecting");
   const [writable, setWritable] = useState(false);
@@ -230,7 +244,9 @@ export const TerminalView = memo(function TerminalView({
   const [bellFlash, setBellFlash] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [outputBelow, setOutputBelow] = useState(false);
-  const [commandRevision, setCommandRevision] = useState(0);
+  const [lastOutput, setLastOutput] = useState<TerminalCommandOutput | null>(
+    null,
+  );
 
   descriptorRef.current = descriptor;
   activeRef.current = active;
@@ -242,6 +258,21 @@ export const TerminalView = memo(function TerminalView({
   onCommandCompleteRef.current = onCommandComplete;
   ctrlLatchedRef.current = ctrlLatched;
   altLatchedRef.current = altLatched;
+
+  useLayoutEffect(() => {
+    clipboardEpochRef.current += 1;
+  }, [active]);
+
+  const clearCommandOutput = useCallback(() => {
+    const start = commandStartRef.current;
+    const output = lastOutputRef.current;
+    commandStartRef.current = null;
+    lastOutputRef.current = null;
+    start?.marker.dispose();
+    output?.start.dispose();
+    output?.end.dispose();
+    setLastOutput(null);
+  }, []);
 
   const currentDimensions = useCallback(() => {
     const proposed = fitRef.current?.proposeDimensions();
@@ -268,6 +299,12 @@ export const TerminalView = memo(function TerminalView({
 
   const handleControl = useCallback(
     (message: TerminalServerControlMessage) => {
+      if (
+        message.type === "attached" ||
+        (message.type === "ownership" &&
+          message.writable !== writableRef.current)
+      )
+        clipboardEpochRef.current += 1;
       const xterm = xtermRef.current;
       if (message.type === "attached") {
         replayGenerationRef.current += 1;
@@ -327,12 +364,7 @@ export const TerminalView = memo(function TerminalView({
       const xterm = xtermRef.current;
       if (!xterm) return;
       if (frame.kind === "snapshot" && !snapshotStartedRef.current) {
-        for (const boundary of commandMarkersRef.current) {
-          boundary.start.dispose();
-          boundary.end?.dispose();
-        }
-        commandMarkersRef.current = [];
-        setCommandRevision((revision) => revision + 1);
+        clearCommandOutput();
         xterm.reset();
         snapshotStartedRef.current = true;
       }
@@ -344,7 +376,7 @@ export const TerminalView = memo(function TerminalView({
       if (frame.kind === "output" && !activeRef.current)
         onBackgroundOutput(descriptorRef.current.id);
     },
-    [onBackgroundOutput],
+    [clearCommandOutput, onBackgroundOutput],
   );
 
   useEffect(() => {
@@ -414,30 +446,46 @@ export const TerminalView = memo(function TerminalView({
         const phase = separator < 0 ? value : value.slice(0, separator);
         const payload = separator < 0 ? "" : value.slice(separator + 1);
         if (phase === "C" || phase === "C1") {
-          const command = shellMarkerCommand(phase, payload);
+          if (!shellMarkerCommand(phase, payload)) return true;
+          commandStartRef.current?.marker.dispose();
           const marker = xterm.registerMarker(0);
-          if (!command || !marker) return true;
-          commandMarkersRef.current.push({
-            command,
-            start: marker,
-            end: null,
-            exitCode: null,
-          });
-          while (commandMarkersRef.current.length > 200) {
-            const retired = commandMarkersRef.current.shift();
-            retired?.start.dispose();
-            retired?.end?.dispose();
-          }
-          setCommandRevision((revision) => revision + 1);
+          commandStartRef.current = marker
+            ? { marker, column: xterm.buffer.active.cursorX }
+            : null;
         } else if (phase === "D") {
-          const boundary = commandMarkersRef.current.at(-1);
-          if (!boundary || boundary.end) return true;
-          boundary.end = xterm.registerMarker(0) ?? null;
-          const exitCode = Number(payload);
-          boundary.exitCode = Number.isInteger(exitCode) ? exitCode : null;
-          setCommandRevision((revision) => revision + 1);
+          const start = commandStartRef.current;
+          commandStartRef.current = null;
+          if (!start || start.marker.isDisposed) return true;
+          const end = xterm.registerMarker(0);
+          if (!end) {
+            start.marker.dispose();
+            return true;
+          }
+          // Keep only the last completed output, not a second command history.
+          lastOutputRef.current?.start.dispose();
+          lastOutputRef.current?.end.dispose();
+          const output = {
+            start: start.marker,
+            startColumn: start.column,
+            end,
+            endColumn: xterm.buffer.active.cursorX,
+          };
+          lastOutputRef.current = output;
+          setLastOutput(output);
+          const retire = () => {
+            if (lastOutputRef.current === output) setLastOutput(null);
+          };
+          start.marker.onDispose(retire);
+          end.onDispose(retire);
         }
         return true;
+      },
+    );
+    const resetDisposable = xterm.parser.registerEscHandler(
+      { final: "c" },
+      () => {
+        clearCommandOutput();
+        return false;
       },
     );
     const fileLinksDisposable = xterm.registerLinkProvider({
@@ -497,6 +545,9 @@ export const TerminalView = memo(function TerminalView({
         resultCount: result.resultCount,
       })),
     );
+    // Cell columns are not durable through reflow. Never copy guessed ranges
+    // after a resize; the next completed command establishes fresh boundaries.
+    const resizeDisposable = xterm.onResize(clearCommandOutput);
     const selectionDisposable = xterm.onSelectionChange(() =>
       setHasSelection(xterm.hasSelection()),
     );
@@ -580,6 +631,7 @@ export const TerminalView = memo(function TerminalView({
       status: (status) => {
         setTransport(status);
         if (status !== "connected") {
+          clipboardEpochRef.current += 1;
           replayGenerationRef.current += 1;
           writableRef.current = false;
           setWritable(false);
@@ -620,12 +672,14 @@ export const TerminalView = memo(function TerminalView({
       document.fonts?.removeEventListener("loadingdone", refitAfterFontLoad);
       host.removeEventListener("paste", protectNativePaste, true);
       inputDisposable.dispose();
+      resizeDisposable.dispose();
       resultsDisposable.dispose();
       bellDisposable.dispose();
       selectionDisposable.dispose();
       scrollDisposable.dispose();
       fileLinksDisposable.dispose();
       shellMarkerDisposable.dispose();
+      resetDisposable.dispose();
       if (bellTimerRef.current !== null)
         window.clearTimeout(bellTimerRef.current);
       webgl?.dispose();
@@ -636,6 +690,7 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [
     api,
+    clearCommandOutput,
     currentDimensions,
     descriptor.id,
     fitAndResize,
@@ -778,8 +833,19 @@ export const TerminalView = memo(function TerminalView({
     }
   };
   const pasteClipboard = async () => {
+    const xterm = xtermRef.current;
+    if (!xterm || !ready || !writableRef.current) return;
+    const epoch = clipboardEpochRef.current;
+    const opener = document.activeElement;
+    const ownsPaste = () =>
+      epoch === clipboardEpochRef.current &&
+      activeRef.current &&
+      writableRef.current &&
+      descriptorRef.current.status === "running" &&
+      xtermRef.current === xterm;
     try {
       const value = await clipboardText();
+      if (!ownsPaste()) return;
       if (
         value &&
         (!settingsRef.current.pasteProtection ||
@@ -788,13 +854,22 @@ export const TerminalView = memo(function TerminalView({
             "Paste multiple lines or control characters into this terminal?",
           ))
       )
-        xtermRef.current?.paste(value);
+        xterm.paste(value);
     } catch (clipboardError) {
+      if (!ownsPaste()) return;
       setError(
         clipboardError instanceof Error
           ? clipboardError.message
           : "Clipboard access failed",
       );
+    } finally {
+      // Return from the dismissed menu, but never steal a newer focus choice.
+      if (
+        ownsPaste() &&
+        (document.activeElement === opener ||
+          document.activeElement === document.body)
+      )
+        xterm.focus();
     }
   };
   const sendTouchKey = (value: string) => {
@@ -843,64 +918,14 @@ export const TerminalView = memo(function TerminalView({
     if (event.key === "Enter") {
       event.preventDefault();
       find(event.shiftKey ? "previous" : "next");
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeSearch();
     }
   };
 
-  const commandBoundaries =
-    commandRevision >= 0
-      ? commandMarkersRef.current.filter(
-          (boundary) => !boundary.start.isDisposed && boundary.start.line >= 0,
-        )
-      : [];
-  const lastCommand = commandBoundaries.at(-1);
-  const navigateCommand = (direction: "previous" | "next") => {
-    const xterm = xtermRef.current;
-    if (!xterm || commandBoundaries.length === 0) return;
-    const viewport = xterm.buffer.active.viewportY;
-    let target: TerminalCommandBoundary | undefined;
-    if (direction === "previous") {
-      for (let index = commandBoundaries.length - 1; index >= 0; index -= 1) {
-        if (commandBoundaries[index]!.start.line < viewport) {
-          target = commandBoundaries[index];
-          break;
-        }
-      }
-      target ??= commandBoundaries.at(-1);
-    } else {
-      target = commandBoundaries.find(
-        (boundary) => boundary.start.line > viewport,
-      );
-      target ??= commandBoundaries[0];
-    }
-    if (target) xterm.scrollToLine(target.start.line);
-  };
-  const copyLastCommand = async () => {
-    if (!lastCommand) return;
-    try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard access is unavailable in this browser");
-      await navigator.clipboard.writeText(lastCommand.command);
-    } catch (clipboardError) {
-      setError(
-        clipboardError instanceof Error
-          ? clipboardError.message
-          : "Clipboard write failed",
-      );
-    }
-  };
   const copyLastCommandOutput = async () => {
     const xterm = xtermRef.current;
-    const endLine = lastCommand?.end?.line;
-    if (!xterm || !lastCommand || endLine === undefined || endLine < 0) return;
-    const lines: string[] = [];
-    for (let line = lastCommand.start.line + 1; line <= endLine; line += 1) {
-      const value = xterm.buffer.active.getLine(line)?.translateToString(true);
-      if (value !== undefined) lines.push(value);
-    }
-    const output = lines.join("\n").trimEnd();
+    const outputRange = lastOutputRef.current;
+    if (!xterm || !outputRange) return;
+    const output = terminalCommandOutput(xterm.buffer.normal, outputRange);
     if (!output) return;
     try {
       if (!navigator.clipboard?.writeText)
@@ -914,25 +939,16 @@ export const TerminalView = memo(function TerminalView({
       );
     }
   };
-  const rerunLastCommand = () => {
-    if (!lastCommand || !writable || !ready) return;
-    if (
-      isRiskyPaste(lastCommand.command) &&
-      !window.confirm("Run this multi-line terminal command again?")
-    )
-      return;
-    if (!connectionRef.current?.sendInput(`${lastCommand.command}\r`))
-      setError("Terminal command could not be sent");
-  };
-
   const statusLabel =
     descriptor.status === "exited"
       ? `Exited ${descriptor.exitCode ?? ""}`.trim()
-      : writable
-        ? "Controlling"
-        : descriptor.hasOwner
-          ? "View only"
-          : "Control available";
+      : transport !== "connected"
+        ? transport.charAt(0).toUpperCase() + transport.slice(1)
+        : writable
+          ? "Controlling"
+          : descriptor.hasOwner
+            ? "View only"
+            : "Control available";
 
   return (
     <section
@@ -940,243 +956,272 @@ export const TerminalView = memo(function TerminalView({
       aria-label={`Terminal ${descriptor.title}`}
       aria-hidden={!active}
     >
-      <div className="terminal-view__toolbar">
-        {search.open ? (
-          <div className="terminal-search" role="search">
-            <Search size={13} aria-hidden />
-            <input
-              autoFocus
-              value={search.query}
-              onChange={(event) => {
-                const query = event.target.value;
-                setSearch((current) => ({ ...current, query }));
-                if (query)
-                  searchRef.current?.findNext(query, {
-                    ...searchOptions,
-                    incremental: true,
-                  });
-                else searchRef.current?.clearDecorations();
-              }}
-              onKeyDown={handleSearchKey}
-              aria-label="Search terminal output"
-              placeholder="Find"
-            />
-            <button
-              type="button"
-              className="terminal-search__option"
-              aria-pressed={search.caseSensitive}
-              aria-label="Match case"
-              title="Match case"
-              onClick={() => toggleSearchOption("caseSensitive")}
-            >
-              Aa
-            </button>
-            <button
-              type="button"
-              className="terminal-search__option"
-              aria-pressed={search.wholeWord}
-              aria-label="Match whole word"
-              title="Match whole word"
-              onClick={() => toggleSearchOption("wholeWord")}
-            >
-              ab
-            </button>
-            <button
-              type="button"
-              className="terminal-search__option"
-              aria-pressed={search.regex}
-              aria-label="Use regular expression"
-              title="Use regular expression"
-              onClick={() => toggleSearchOption("regex")}
-            >
-              .*
-            </button>
-            <span className="terminal-search__count" aria-live="polite">
-              {search.resultCount > 0
-                ? `${search.resultIndex + 1}/${search.resultCount}`
-                : "0/0"}
-            </span>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => find("previous")}
-              aria-label="Previous terminal match"
-              title="Previous match"
-            >
-              <ChevronUp size={14} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => find("next")}
-              aria-label="Next terminal match"
-              title="Next match"
-            >
-              <ChevronDown size={14} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={closeSearch}
-              aria-label="Close terminal search"
-              title="Close search"
-            >
-              <X size={14} aria-hidden />
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="terminal-view__status" title={transport}>
+      {active && toolbarHost
+        ? createPortal(
+            <>
               <span
-                className={`terminal-view__status-dot terminal-view__status-dot--${transport}`}
-                aria-hidden
-              />
-              <span>{statusLabel}</span>
-            </div>
-            <div className="terminal-view__actions">
-              {!writable && descriptor.status === "running" ? (
-                <button
-                  type="button"
-                  className="terminal-view__control"
-                  disabled={!ready}
-                  onClick={() => {
-                    const dimensions = currentDimensions();
-                    connectionRef.current?.takeControl(
-                      dimensions.cols,
-                      dimensions.rows,
-                    );
-                    xtermRef.current?.focus();
-                  }}
-                >
-                  <Keyboard size={13} aria-hidden />
-                  Take control
-                </button>
-              ) : null}
-              <details className="terminal-command-menu" data-terminal-menu>
-                <summary
-                  className="icon-button"
-                  aria-label="Terminal command history"
-                  title="Command history"
-                >
-                  <CommandHistory size={14} aria-hidden />
+                className={`terminal-view__status terminal-view__status--${transport}`}
+                role="status"
+                aria-label={statusLabel}
+                title={`${statusLabel} · ${transport}`}
+              >
+                {descriptor.status === "exited" ? (
+                  <Square size={12} aria-hidden />
+                ) : transport !== "connected" ? (
+                  <LoaderCircle size={14} aria-hidden />
+                ) : writable ? (
+                  <Keyboard size={14} aria-hidden />
+                ) : (
+                  <Eye size={14} aria-hidden />
+                )}
+                <span className="terminal-view__status-label">
+                  {statusLabel}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  if (search.open) closeSearch();
+                  else setSearch((current) => ({ ...current, open: true }));
+                }}
+                aria-label="Search terminal output"
+                aria-expanded={search.open}
+                title="Search terminal output"
+              >
+                <Search size={14} aria-hidden />
+              </button>
+            </>,
+            toolbarHost,
+          )
+        : null}
+      {active && menuHost
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                onClick={() => void pasteClipboard()}
+                disabled={
+                  !writable || !ready || descriptor.status !== "running"
+                }
+                aria-label="Paste into terminal"
+              >
+                <ClipboardPaste size={14} aria-hidden /> Paste
+              </button>
+              <button
+                type="button"
+                disabled={!lastOutput}
+                title={
+                  lastOutput
+                    ? "Copy the last completed command output"
+                    : "Available after a command finishes in this view (requires shell integration)"
+                }
+                onClick={() => void copyLastCommandOutput()}
+              >
+                <Copy size={14} aria-hidden /> Copy last output
+              </button>
+              <details
+                className="terminal-menu__group"
+                data-terminal-menu-group
+              >
+                <summary>
+                  <Monitor size={14} aria-hidden /> Display
+                  <ChevronRight
+                    className="terminal-menu__chevron"
+                    size={13}
+                    aria-hidden
+                  />
                 </summary>
-                <div
-                  className="terminal-command-menu__popover"
-                  onClick={(event) => {
-                    if ((event.target as Element).closest("button"))
-                      event.currentTarget
-                        .closest("details")
-                        ?.removeAttribute("open");
-                  }}
-                >
+                <div>
                   <button
                     type="button"
-                    disabled={commandBoundaries.length === 0}
-                    onClick={() => navigateCommand("previous")}
+                    onClick={() => {
+                      xtermRef.current?.selectAll();
+                      xtermRef.current?.focus();
+                    }}
                   >
-                    Previous command
-                  </button>
-                  <button
-                    type="button"
-                    disabled={commandBoundaries.length === 0}
-                    onClick={() => navigateCommand("next")}
-                  >
-                    Next command
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!lastCommand}
-                    onClick={() => void copyLastCommand()}
-                  >
-                    Copy last command
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!lastCommand?.end}
-                    onClick={() => void copyLastCommandOutput()}
-                  >
-                    Copy last output
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!lastCommand || !writable || !ready}
-                    onClick={rerunLastCommand}
-                  >
-                    Run last command again
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => xtermRef.current?.selectAll()}
-                  >
-                    Select all
+                    <TextSelect size={14} aria-hidden /> Select all
                   </button>
                   <button
                     type="button"
                     onClick={() => xtermRef.current?.clear()}
                   >
-                    Clear local scrollback
+                    <Eraser size={14} aria-hidden /> Clear local scrollback
                   </button>
                   <button
                     type="button"
                     onClick={() => {
+                      clearCommandOutput();
                       xtermRef.current?.reset();
                       connectionRef.current?.forceSnapshot();
                     }}
                   >
-                    Reset terminal display
+                    <RotateCcw size={14} aria-hidden /> Reset terminal display
                   </button>
                 </div>
               </details>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() =>
-                  setSearch((current) => ({ ...current, open: true }))
-                }
-                aria-label="Search terminal output"
-                title="Search terminal output"
-              >
-                <Search size={14} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => void copySelection()}
-                disabled={!hasSelection}
-                aria-label="Copy terminal selection"
-                title="Copy selection"
-              >
-                <Copy size={14} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => {
-                  const selection = xtermRef.current?.getSelection();
-                  if (selection) onSendToComposerRef.current?.(selection);
-                }}
-                disabled={!hasSelection || !onSendToComposer}
-                aria-label="Send terminal selection to composer"
-                title="Send selection to composer"
-              >
-                <MessageSquareQuote size={14} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => void pasteClipboard()}
-                disabled={!writable || !ready}
-                aria-label="Paste into terminal"
-                title="Paste"
-              >
-                <ClipboardPaste size={14} aria-hidden />
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+            </>,
+            menuHost,
+          )
+        : null}
       <div className="terminal-view__stage">
         <div ref={hostRef} className="terminal-view__xterm" />
+        <div className="terminal-view__overlays">
+          {search.open ? (
+            <div
+              className="terminal-search"
+              role="search"
+              aria-label="Terminal output"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                closeSearch();
+              }}
+            >
+              <Search size={13} aria-hidden />
+              <input
+                autoFocus
+                value={search.query}
+                onChange={(event) => {
+                  const query = event.target.value;
+                  setSearch((current) => ({ ...current, query }));
+                  if (query)
+                    searchRef.current?.findNext(query, {
+                      ...searchOptions,
+                      incremental: true,
+                    });
+                  else searchRef.current?.clearDecorations();
+                }}
+                onKeyDown={handleSearchKey}
+                aria-label="Search terminal output"
+                placeholder="Find"
+              />
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.caseSensitive}
+                aria-label="Match case"
+                title="Match case"
+                onClick={() => toggleSearchOption("caseSensitive")}
+              >
+                Aa
+              </button>
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.wholeWord}
+                aria-label="Match whole word"
+                title="Match whole word"
+                onClick={() => toggleSearchOption("wholeWord")}
+              >
+                ab
+              </button>
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.regex}
+                aria-label="Use regular expression"
+                title="Use regular expression"
+                onClick={() => toggleSearchOption("regex")}
+              >
+                .*
+              </button>
+              <span className="terminal-search__count" aria-live="polite">
+                {search.resultCount > 0
+                  ? `${search.resultIndex + 1}/${search.resultCount}`
+                  : "0/0"}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => find("previous")}
+                aria-label="Previous terminal match"
+                title="Previous match"
+              >
+                <ChevronUp size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => find("next")}
+                aria-label="Next terminal match"
+                title="Next match"
+              >
+                <ChevronDown size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={closeSearch}
+                aria-label="Close terminal search"
+                title="Close search"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          ) : null}
+          {hasSelection && !search.open ? (
+            <div
+              className="terminal-selection"
+              role="group"
+              aria-label="Selected terminal text"
+            >
+              <button
+                type="button"
+                onClick={() => void copySelection()}
+                aria-label="Copy terminal selection"
+              >
+                <Copy size={14} aria-hidden /> Copy
+              </button>
+              {onSendToComposer ? (
+                <button
+                  type="button"
+                  className="terminal-selection__quote"
+                  onClick={() => {
+                    const selection = xtermRef.current?.getSelection();
+                    if (selection) onSendToComposerRef.current?.(selection);
+                  }}
+                  aria-label="Send terminal selection to composer"
+                  title="Add selection to the composer without sending"
+                >
+                  <MessageSquareQuote size={14} aria-hidden /> Add to chat
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {error ? (
+            <button
+              type="button"
+              className="terminal-view__error"
+              onClick={() => setError(null)}
+              title="Dismiss"
+            >
+              {error}
+            </button>
+          ) : null}
+        </div>
+        {!writable && descriptor.status === "running" ? (
+          <div className="terminal-view__ownership">
+            <span>{statusLabel}</span>
+            {ready ? (
+              <button
+                type="button"
+                className="terminal-view__control"
+                onClick={() => {
+                  const dimensions = currentDimensions();
+                  connectionRef.current?.takeControl(
+                    dimensions.cols,
+                    dimensions.rows,
+                  );
+                  xtermRef.current?.focus();
+                }}
+              >
+                <Keyboard size={13} aria-hidden /> Take control
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {outputBelow ? (
           <button
             type="button"
@@ -1188,16 +1233,6 @@ export const TerminalView = memo(function TerminalView({
             }}
           >
             New output ↓
-          </button>
-        ) : null}
-        {error ? (
-          <button
-            type="button"
-            className="terminal-view__error"
-            onClick={() => setError(null)}
-            title="Dismiss"
-          >
-            {error}
           </button>
         ) : null}
         {descriptor.status === "exited" ? (
