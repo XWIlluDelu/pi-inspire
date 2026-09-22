@@ -23,6 +23,45 @@ afterEach(async () => {
 });
 
 describe("PiRpcProcess", () => {
+  it("preserves user exports through Pi and an extension-style subprocess", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-environment-"));
+    directories.push(directory);
+    const cliPath = join(directory, "fake-pi.mjs");
+    await writeFile(
+      cliPath,
+      `
+import { createInterface } from 'node:readline';
+import { execFileSync } from 'node:child_process';
+createInterface({ input: process.stdin }).on('line', line => {
+  const command = JSON.parse(line);
+  const data = JSON.parse(execFileSync(process.execPath, ['-p',
+    'JSON.stringify({ nodeEnv: process.env.NODE_ENV ?? null, custom: process.env.USER_EXPORT, path: process.env.PATH })'
+  ], { encoding: 'utf8' }));
+  console.log(JSON.stringify({ type: 'response', id: command.id, command: command.type, success: true, data }));
+});
+`,
+    );
+    for (const nodeEnv of [undefined, "", "test", "production"]) {
+      const rpc = new PiRpcProcess({
+        cwd: directory,
+        cliPath,
+        env: {
+          NODE_ENV: nodeEnv,
+          USER_EXPORT: "caller-value",
+          PATH: directory,
+        },
+      });
+      processes.push(rpc);
+      await rpc.start();
+      await expect(rpc.request({ type: "get_state" })).resolves.toEqual({
+        nodeEnv: nodeEnv ?? null,
+        custom: "caller-value",
+        path: directory,
+      });
+      await rpc.stop();
+    }
+  });
+
   it("marks an explicitly stopped compact request as cancelled, not outcome-unknown", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
     directories.push(directory);

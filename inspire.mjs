@@ -68,6 +68,9 @@ const { inspireRuntimeDirectory } = await import(
 const { signalProcessTree } = await import(
   pathToFileURL(join(supportRoot, "process-tree.mjs")).href
 );
+const { resolveLaunchEnvironment } = await import(
+  pathToFileURL(join(supportRoot, "user-environment.mjs")).href
+);
 
 function exists(path) {
   return stat(path).then(
@@ -191,6 +194,7 @@ async function ensureBuild() {
       join(root, "build", "server", "npm-command.mjs"),
       join(root, "build", "server", "platform-paths.mjs"),
       join(root, "build", "server", "process-tree.mjs"),
+      join(root, "build", "server", "user-environment.mjs"),
     ]) {
       if (!(await exists(path)))
         throw new Error("The installed INSΠRE package is incomplete.");
@@ -407,7 +411,6 @@ async function superviseHost(context, mock, lease) {
   const [command, args] = runtimeCommand();
   const environment = {
     ...process.env,
-    NODE_ENV: "production",
     INSPIRE_OPEN: process.env.INSPIRE_OPEN ?? "1",
     INSPIRE_INSTALLATION_ROOT: root,
     INSPIRE_STATE_PATH: context.statePath,
@@ -782,6 +785,13 @@ function printHelp() {
 }
 
 async function main() {
+  const environment = await resolveLaunchEnvironment(process.env, {
+    service: isHostServiceExec(),
+  });
+  for (const key of Object.keys(process.env)) {
+    if (environment[key] === undefined) delete process.env[key];
+  }
+  Object.assign(process.env, environment);
   const [mode = "start", ...args] = process.argv.slice(2);
   switch (mode) {
     case "":

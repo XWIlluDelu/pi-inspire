@@ -8,7 +8,9 @@ Type=simple
 WorkingDirectory=@ROOT@
 Environment=INSPIRE_OPEN=0
 Environment=INSPIRE_QUIET=1
+# Bootstrap Node only; the launcher obtains the user's current shell environment.
 Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+Environment=INSPIRE_ENVIRONMENT=shell
 ExecStart=@LAUNCHER@
 ExecStartPost=@LAUNCHER@ wait-ready
 TimeoutStartSec=5min

@@ -19,6 +19,11 @@
 
 ## Implemented capability
 
+Startup reuses the user's exported execution environment: direct launches inherit; Linux services
+resolve login/interactive shell exports instead of treating bootstrap PATH as the user's tool path.
+Inspire no longer forces NODE_ENV into Pi or project terminals. [[user-execution-environment]] records
+bounded discovery, independent daemon transport, verification, and the explicit service migration.
+
 Pi's support baseline is now **0.87.0**. System prompt/tool-loadout records remain canonical
 host-side state without becoming conversation rows, and `/bug` provides terminal-only guidance.
 [[dependency-boundaries]] records the compatibility review, repairs, and verification scope.

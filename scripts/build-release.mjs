@@ -23,6 +23,7 @@ for (const supportModule of [
   "platform-paths.mjs",
   "process-tree.mjs",
   "static-asset-cache.mjs",
+  "user-environment.mjs",
 ]) {
   await cp(
     resolve(root, "server", supportModule),
