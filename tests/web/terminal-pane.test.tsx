@@ -12,9 +12,9 @@ import type {
   TerminalCatalogResponse,
   TerminalDescriptor,
 } from "../../shared/terminal-contracts";
-import { TerminalCatalogController } from "../../src/terminal-catalog";
 import { TerminalPane } from "../../src/components/TerminalPane";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
+import { TerminalCatalogController } from "../../src/terminal-catalog";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
@@ -90,6 +90,7 @@ function tabs() {
     .filter((button) => button.hasAttribute("aria-pressed"));
 }
 async function switchToB() {
+  screen.getByLabelText("Terminal actions").closest("details")!.open = true;
   const menu = screen
     .getByLabelText("Terminals in all projects")
     .closest("details")!;
@@ -102,6 +103,8 @@ async function switchToB() {
 function action(name: string) {
   const menu = screen.getByLabelText("Terminal actions").closest("details")!;
   menu.open = true;
+  if (["Move tab right", "Close", "Restart"].includes(name))
+    within(menu).getByText("Manage terminal").closest("details")!.open = true;
   fireEvent.click(within(menu).getByRole("button", { name }));
 }
 
@@ -125,6 +128,30 @@ afterEach(() => {
 });
 
 describe("terminal project ownership", () => {
+  it("keeps the all-project navigator inside More and filters project paths", async () => {
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    const more = screen.getByLabelText("Terminal actions").closest("details")!;
+    const projects = screen
+      .getByLabelText("Terminals in all projects")
+      .closest("details")!;
+    expect(more).toContainElement(projects);
+    expect(screen.queryByText("Duplicate")).not.toBeInTheDocument();
+    more.open = true;
+    projects.open = true;
+    fireEvent(projects, new Event("toggle"));
+    await within(projects).findByRole("button", { name: /B shell/ });
+    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
+      target: { value: "/B" },
+    });
+    expect(
+      within(projects).queryByRole("button", { name: /A shell/ }),
+    ).toBeNull();
+    fireEvent.click(within(projects).getByRole("button", { name: /B shell/ }));
+    await screen.findByRole("button", { name: "B shell", pressed: true });
+    expect(more).not.toHaveAttribute("open");
+  });
+
   it("references a terminal panel only after its lazy view exists", async () => {
     render(<TerminalPane cwd="/A" />);
     const unopened = await screen.findByRole("button", {
@@ -187,15 +214,7 @@ describe("terminal project ownership", () => {
     ).toBeTruthy();
   });
 
-  it.each([
-    "create",
-    "duplicate",
-    "reopen",
-    "reorder",
-    "close",
-    "restart",
-    "rename",
-  ])(
+  it.each(["create", "reopen", "reorder", "close", "restart", "rename"])(
     "ignores a delayed %s response after switching projects in the pane",
     async (operation) => {
       const pending = deferred<unknown>();
@@ -208,7 +227,6 @@ describe("terminal project ownership", () => {
       await screen.findByRole("button", { name: "A shell", pressed: true });
       if (operation === "create")
         fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-      if (operation === "duplicate") action("Duplicate");
       if (operation === "reorder") action("Move tab right");
       if (operation === "close") action("Close");
       if (operation === "restart") action("Restart");
