@@ -56,6 +56,16 @@ Displayed custom messages are independently readable, information-blue extension
 
 Pi reply errors are visible at the failed message, including empty replies, retained partial output, and expandable/copyable details restored from Pi history. [[follow-pi-error-display-2026-09-06]] records implementation evidence and deployment scope.
 
+Bootstrap, History, and runtime-control completions now preserve newer browser
+ownership, including ordinary appends and A → B → A navigation.
+[[async-ownership-review]] records the five repairs, 13 regression cases, and
+verification limits.
+
+Fork now admits a fresh, session-addressed source independently of the Host's
+global selection. Its destination warms normally without stealing newer selection
+intent, including while the fork waits in the source operation lane.
+[[async-ownership-review]] records the approved follow-up and targeted verification.
+
 ## Cross-spec direction
 
 The product separates durable Pi state, a safe browser projection, and transient live events. The local host is the only privileged boundary and the browser remains replaceable: refreshing or reconnecting reconstructs the visible state from Pi’s session records and current runtime rather than from browser-local conversation authority.
