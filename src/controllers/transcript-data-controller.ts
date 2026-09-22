@@ -177,6 +177,12 @@ export class TranscriptDataController {
     const { api, sessionId, revision, viewId, incarnation } = scope;
     const request = new AbortController();
     this.olderTranscriptRequest = request;
+    // A Prompt Map seek can move the paging boundary without changing the
+    // session/view/revision. The old page no longer belongs at the front.
+    const ownsCursor = () =>
+      !request.signal.aborted &&
+      this.olderTranscriptRequest === request &&
+      this.host.state().olderMessagesCursor === cursor;
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
     try {
       const page = await api.olderTranscript(sessionId, cursor, request.signal);
@@ -186,6 +192,7 @@ export class TranscriptDataController {
         revision,
       );
       if (
+        !ownsCursor() ||
         !this.ownsScope(scope, true) ||
         page.sessionId !== sessionId ||
         !pageLineageCompatible ||
@@ -224,7 +231,7 @@ export class TranscriptDataController {
       });
       return true;
     } catch (error) {
-      if (request.signal.aborted || !this.ownsScope(scope)) return false;
+      if (!ownsCursor() || !this.ownsScope(scope)) return false;
       await this.handleScopedReadError(scope, error, () =>
         this.host.patch({
           olderMessagesError:
@@ -238,10 +245,11 @@ export class TranscriptDataController {
       );
       return false;
     } finally {
-      if (this.olderTranscriptRequest === request)
+      if (this.olderTranscriptRequest === request) {
         this.olderTranscriptRequest = null;
-      if (this.ownsScope(scope))
-        this.host.patch({ loadingOlderMessages: false });
+        if (this.ownsScope(scope))
+          this.host.patch({ loadingOlderMessages: false });
+      }
     }
   };
 
