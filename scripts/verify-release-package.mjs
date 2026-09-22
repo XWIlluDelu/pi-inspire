@@ -408,6 +408,7 @@ try {
     "build/server/platform-paths.mjs",
     "build/server/process-tree.mjs",
     "build/server/static-asset-cache.mjs",
+    "build/server/user-environment.mjs",
     "build/server/session-fork.js",
     "build/server/session-fork-worker.js",
     "connections/dispatch.mjs",

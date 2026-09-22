@@ -7,6 +7,7 @@ import { resolveAccessToken } from "./access-token.js";
 import { installationKey } from "./installation-key.js";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
 import { TerminalServiceError } from "./terminal-service.js";
+import { systemdEnvironmentArguments } from "./user-environment.mjs";
 import {
   defaultTerminalDaemonAddress,
   defaultTerminalDaemonStatePath,
@@ -53,6 +54,7 @@ async function runSystemdUnit(
   command: string,
   args: string[],
   unit: string,
+  environment: NodeJS.ProcessEnv,
 ): Promise<boolean> {
   if (process.platform !== "linux") return false;
   return new Promise<boolean>((resolvePromise) => {
@@ -65,11 +67,12 @@ async function runSystemdUnit(
         "--quiet",
         "--property=Restart=on-failure",
         "--property=RestartSec=2s",
+        ...systemdEnvironmentArguments(environment),
         "--",
         command,
         ...args,
       ],
-      { stdio: "ignore" },
+      { stdio: "ignore", env: environment },
     );
     child.once("error", () => resolvePromise(false));
     child.once("exit", (code) => resolvePromise(code === 0));
@@ -152,6 +155,7 @@ export async function launchTerminalDaemon(
     executable.command,
     daemonArgs,
     unit,
+    environment,
   );
   if (!startedBySystemd) {
     const child = spawn(executable.command, daemonArgs, {
