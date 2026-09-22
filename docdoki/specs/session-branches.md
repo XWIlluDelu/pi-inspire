@@ -66,7 +66,9 @@ continuity comes from [[session-transport]].
   current API, transport generation, selection generation, selection intent, transcript view, and
   effective leaf must all still match before it can commit a response through `AppStore`. A
   bootstrap or selection replacement invalidates pending tree/action requests and clears their
-  actionable presentation.
+  actionable presentation. Ordinary append can invalidate the effective leaf without replacing the
+  view: the still-current request must retire its loading/action marker and expose refreshable stale
+  history even when its result is discarded. It cannot clear a newer request's marker.
 
   Extension responses use a separate process-instance-validated per-slot FIFO, so navigation hooks
   can await browser input without deadlocking the mutation FIFO and each accepted response is
