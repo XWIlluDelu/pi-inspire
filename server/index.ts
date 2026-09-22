@@ -197,10 +197,7 @@ const toolPresentations = new ToolPresentationConfigStore(
 const resources = new ResourceStore();
 const git = mock ? new MockGitInspection() : new GitInspectionService();
 let terminal: TerminalService;
-if (
-  process.env.INSPIRE_TERMINAL_IN_PROCESS === "1" ||
-  process.env.NODE_ENV === "test"
-) {
+if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
   terminal = new TerminalSessionManager();
 } else {
   terminal = await launchTerminalDaemon({ root, host, port }).catch((error) => {

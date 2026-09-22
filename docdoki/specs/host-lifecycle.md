@@ -5,7 +5,8 @@ covers:
   - inspire.mjs
   - deploy/systemd/**
   - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output}.mjs
-  - server/{app,index,pi-rpc,pi-installation,preferences,access-token}.ts
+  - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
+  - server/user-environment.{mjs,d.mts}
   - server/runtime-event-sockets.ts
   - server/{host-restart,host-restart-systemd,restart-preflight}.ts
   - shared/host-restart.ts
@@ -16,6 +17,8 @@ covers:
   - server/{file-lock,static-asset-cache}.mjs
   - server/*diagnostic*.ts
   - tests/launcher.test.ts
+  - tests/user-environment-launcher.test.ts
+  - tests/server/terminal-daemon-environment.test.ts
   - tests/portable/**
   - tests/server/{app,access-token,pi-installation,pi-rpc,static-asset-cache}.test.ts
 ---
@@ -56,6 +59,38 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
 
 - Pi’s saved project-trust policy remains authoritative; the host does not load project resources
   through a separate bypass path.
+
+### User execution environment
+
+- Direct local launches inherit the caller's exported environment. Installed POSIX services resolve
+  the user's login/interactive shell exports once at startup, before dependency preparation, Pi
+  discovery, or runtime creation. Their fixed Node search path is bootstrap-only, not the user's
+  development-tool PATH. Delegating a CLI command to an already installed service does not transfer
+  the calling terminal's transient exports to that service.
+- `INSPIRE_ENVIRONMENT=inherit|shell` selects an explicit launch policy; the default is shell for
+  installed services and inherit for direct launches. `INSPIRE_SHELL` overrides `SHELL` and the
+  account's default shell for export discovery. Unsupported shells or platforms fail explicitly
+  rather than silently substituting an incomplete environment. Windows direct launch inherits.
+- Discovery invokes the selected shell's normal login/interactive initialization in the user's home,
+  without a PTY, then exports through a dedicated pipe. It has a ten-second deadline and a 1 MiB
+  export limit, terminates its isolated probe group on failure, and never logs or persists shell
+  output or environment values. Failed or incomplete discovery prevents the new launch. User
+  unsets are preserved; service identity and explicit Inspire controls survive shell initialization.
+  Probe-only state is not propagated, and children inherit the resolved environment without probing
+  again. Actual terminal tabs retain their own normal initialization.
+- Application-specific settings must not rewrite unrelated user variables. Inspire does not force
+  `NODE_ENV`; an unset, empty, or user-supplied value is preserved through Host, Pi, and project
+  terminals. Express owns its production HTTP mode locally. An explicit
+  `INSPIRE_TERMINAL_IN_PROCESS` flag, not a user's NODE_ENV, selects the test-only in-process owner.
+- Transient terminal services carry the supplied exports through systemd without placing values in
+  command arguments or reusing the Host's service identity. Installed services do not snapshot
+  credentials or the installer's PATH in unit files. Existing units require reinstallation to remove
+  the former terminal NODE_ENV override; applying that change to a running terminal daemon requires
+  an explicit terminal restart, never an implicit interruption of its PTYs.
+
+This contract covers exported variables and executable lookup, not aliases, shell functions, or
+adopting a virtual environment from another terminal tab. Rationale and verification:
+[[user-execution-environment]].
 
 ### Pairing and authenticated ingress
 
