@@ -24,6 +24,7 @@ import {
   type NewSessionDefaults,
   THINKING_LEVELS,
 } from "../shared/contracts.js";
+import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PROBE_REFERENCES,
@@ -48,10 +49,10 @@ import {
 import { requestError } from "./request-error.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
-import type { SessionCatalogLike } from "./session-catalog.js";
-import type { TerminalService } from "./terminal-service.js";
-import { createTerminalGateway } from "./terminal-gateway.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
+import type { SessionCatalogLike } from "./session-catalog.js";
+import { createTerminalGateway } from "./terminal-gateway.js";
+import type { TerminalService } from "./terminal-service.js";
 import type {
   ToolPresentationConfigLike,
   ToolPresentationConfigurationState,
@@ -397,6 +398,8 @@ interface AppDependencies {
    * the runtime for its short idle fence, never restarts systemd itself. */
   maintenanceRestart?: MaintenanceRestartLike;
   hostRestart?: import("./host-restart.js").HostRestartController;
+  /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
+  getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Browser-safe configured model metadata, available without a live worker. */
   availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
   /** Cached public-release observation; failures never block local work. */
@@ -784,6 +787,16 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  app.get("/api/host/herdr", async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!deps.getHerdrStatus)
+      throw requestError(
+        "Herdr enhancement status is unavailable for this Host.",
+        503,
+      );
+    response.json(await deps.getHerdrStatus());
   });
 
   app.get("/api/host/restart", async (_request, response) => {

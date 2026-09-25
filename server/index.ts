@@ -12,6 +12,13 @@ import {
 } from "./diagnostics.js";
 import { GitInspectionService } from "./git-inspection.js";
 import {
+  defaultHerdrWorkerDirectory,
+  HerdrEnhancement,
+} from "./herdr-enhancement.js";
+import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
+import { HostRestartController } from "./host-restart.js";
+import { systemdRestartBackend } from "./host-restart-systemd.js";
+import {
   consumeStopRequest,
   INSTANCE_STATE_VERSION,
   type InstanceState,
@@ -34,6 +41,7 @@ import {
   availableModelOptions,
   resolveNewSessionDefaults,
 } from "./model-catalog.js";
+import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -45,7 +53,11 @@ import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import { requestError } from "./request-error.js";
 import { ResourceStore } from "./resources.js";
-import { RuntimeController, type RuntimeLike } from "./runtime.js";
+import {
+  RuntimeController,
+  type RuntimeLike,
+  type RuntimeWorkerStatus,
+} from "./runtime.js";
 import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
 import {
   currentStaticAssetPaths,
@@ -53,8 +65,6 @@ import {
   prepareStaticAssetCache,
 } from "./static-asset-cache.mjs";
 import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
-import { HostRestartController } from "./host-restart.js";
-import { systemdRestartBackend } from "./host-restart-systemd.js";
 import {
   type TerminalService,
   TerminalServiceError,
@@ -168,6 +178,18 @@ const diagnostics = await openDiagnosticLogger({
 });
 diagnostics.record("info", "host_starting", { processId: process.pid });
 
+const preferences = new PreferencesStore(
+  process.env.INSPIRE_PREFERENCES_PATH || undefined,
+);
+const herdr = new HerdrEnhancement({
+  enabled: (await preferences.read()).herdrEnabled,
+  mock,
+  registry: new HerdrWorkerRegistry(
+    defaultHerdrWorkerDirectory(root, host, port),
+  ),
+  diagnostics,
+});
+void herdr.initialize();
 const attachments = new AttachmentStore();
 let catalog: SessionCatalogLike;
 let runtime: RuntimeLike;
@@ -179,17 +201,16 @@ if (mock) {
   runtime = new RuntimeController(
     catalog,
     attachments,
-    undefined,
+    (options) => herdr.createProcess(options),
     undefined,
     undefined,
     undefined,
     undefined,
     diagnostics,
-  );
+  ).on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
+    herdr.updateWorkerStatus(rpc, status);
+  });
 }
-const preferences = new PreferencesStore(
-  process.env.INSPIRE_PREFERENCES_PATH || undefined,
-);
 const toolPresentations = new ToolPresentationConfigStore(
   process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
     defaultToolPresentationConfigPath(root),
@@ -301,6 +322,7 @@ const application = createInspireServer({
   mock,
   version: packageJson.version,
   piVersion: piInstallation.version,
+  getHerdrStatus: () => herdr.status(),
   maintenanceRestart,
   hostRestart: new HostRestartController(
     runtime,
@@ -333,6 +355,12 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
     console.error("Failed to shut down cleanly", error);
     exitCode = 1;
   } finally {
+    try {
+      await herdr.close();
+    } catch (error) {
+      console.error("Failed to close the Herdr enhancement", error);
+      exitCode = 1;
+    }
     try {
       await diagnostics.close();
     } catch (error) {
