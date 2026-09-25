@@ -1,23 +1,24 @@
-import { requestError } from "./request-error.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { acquireFileLock } from "./file-lock.mjs";
-import { inspireConfigDirectory } from "./platform-paths.mjs";
 import {
   CONTENT_TEXT_SIZES,
-  defaultPreferences,
   DESKTOP_SEND_KEYS,
-  READING_WIDTHS,
-  MAX_SESSION_ID_CHARS,
+  defaultPreferences,
   type InspirePreferences,
+  MAX_SESSION_ID_CHARS,
+  READING_WIDTHS,
 } from "../shared/contracts.js";
+import { acquireFileLock } from "./file-lock.mjs";
+import { inspireConfigDirectory } from "./platform-paths.mjs";
+import { requestError } from "./request-error.js";
 
 // Field validators stay default-free here: `.partial()` keeps `.default()`,
 // so a patch schema derived from defaulted fields would fill absent keys and
 // clobber stored values on every patch.
 const preferenceFields = {
+  herdrEnabled: z.boolean(),
   theme: z.enum(["system", "light", "dark"]),
   palette: z.enum(["amber", "teal"]),
   contentTextSize: z.enum(CONTENT_TEXT_SIZES),
