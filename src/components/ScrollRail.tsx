@@ -5,7 +5,8 @@ import { useEffect, useRef } from "react";
  * docdoki panel library): the native bar is hidden and a fixed-position
  * thumb straddles the pane's edge — the nav's right border, the context
  * pane's left border — or, for the reading column, floats in the margin
- * beside the text. It is purely a pointer affordance: wheel and keyboard
+ * beside the text, or follows a composer-adjacent dock's trailing edge.
+ * It is purely a pointer affordance: wheel and keyboard
  * scrolling stay native, so it renders aria-hidden and never takes focus.
  */
 export function ScrollRail({
@@ -20,7 +21,7 @@ export function ScrollRail({
    * container scrolls itself. Re-resolved on every sync, so swapped
    * elements (preview kinds) rebind automatically. */
   scroller?: string;
-  variant: "nav" | "ctx" | "reading";
+  variant: "nav" | "ctx" | "reading" | "dock";
   /** Called before this overlay directly moves the scroller. */
   onUserScroll?: () => void;
 }) {
@@ -54,6 +55,9 @@ export function ScrollRail({
       if (el) {
         resizeObserver = new ResizeObserver(schedule);
         resizeObserver.observe(el);
+        // An earlier sibling can move a dock without resizing the dock itself.
+        if (variant === "dock" && root.parentElement)
+          resizeObserver.observe(root.parentElement);
       }
     };
 
@@ -72,6 +76,13 @@ export function ScrollRail({
           x: root.getBoundingClientRect().left,
           top: rect.top + 6,
           height: rect.height - 12,
+        };
+      }
+      if (variant === "dock") {
+        return {
+          x: rect.right - 1,
+          top: rect.top + 4,
+          height: rect.height - 8,
         };
       }
       // reading: a mid-height rail floating in the margin right of the

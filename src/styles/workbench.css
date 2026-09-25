@@ -12,10 +12,35 @@
    concise here; its full host-projected text remains in the transcript. */
 .activity__live {
   display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
-  gap: var(--space-2);
 }
+
+.activity__retry {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+.activity__retry-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.activity__retry-label svg {
+  flex: 0 0 auto;
+}
+
+.activity__retry-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
 
 /* --- Context / resources pane ---
    Wide enough to genuinely preview documents: it scales with the viewport

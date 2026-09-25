@@ -224,7 +224,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   composer-adjacent transient surface names `compacting` and `retrying` from the authoritative
   session run state, independently of manual commands, automatic triggers, or whether this browser
   saw a start event. Retry attempt/reason details enrich that state when available; missing details
-  still display `Retrying` without invented counters. The same surface shows the combined count as
+  still display `Retrying` without invented counters. Ordinary retry, compaction retry, and
+  summary retry keep their short status distinct from any long reason, which wraps within the
+  composer width rather than stretching a non-wrapping chip. The same surface shows the combined count as
   `N Pending`, not `queued`; executing and failed tools remain in their chronological Transcript cards
   instead of being duplicated above the Composer. Bounded host-projected steering and follow-up
   arrays remain in one labelled Pending surface that preserves each array's order, marks rows `S` or
@@ -249,9 +251,16 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   receipts describe that browser's request/results, not Pi's current phase. `/compact` retains its
   eventual success/cancel/error receipt; its running phase is shown only by the state-owned activity
   surface, identical to automatic compaction. A delayed HTTP receipt cannot extend or end that phase.
-  Receipts show their local request time; a successful compact receipt is retired when subsequent
-  agent work or compaction begins in that session, while its durable checkpoint remains in history.
-  Export and reload retain their named operation receipts. Running receipts use the command and
+  Receipt headings show command and outcome, not local request time; receipt metadata retains
+  `createdAt` without redundant header timestamps. A successful compact receipt is retired when
+  subsequent agent work or compaction begins in that session, while its durable checkpoint remains
+  in history. Export and reload retain their named operation receipts. Successful `/copy`, `/name`
+  with a new name, `/model` with an exact match, and `/thinking` with a valid level give a brief
+  confirmation instead of occupying the receipt dock after settlement; failures retain the
+  command's actual diagnostic without a duplicate generic notice. Ordinary controls still give
+  their own warning notices on failure. Composer, receipts, and extension widgets share an outer
+  width even when either dock scrolls; independent scrollports preserve pointer and keyboard
+  scrolling with visible overlay rails. Running receipts use the command and
   phase without invented explanatory progress messages; compaction and other Host commands do not replace the
   editor placeholder with “keep writing” or “send when finished” guidance. Host-adapter labels and
   results must not be represented as verbatim Pi UI copy. Compact can be cancelled through the
