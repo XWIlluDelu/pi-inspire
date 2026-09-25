@@ -8,9 +8,10 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { NativeCommandActivity as Activity } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
+import { ScrollRail } from "./ScrollRail";
 
 function ActivityIcon({ status }: { status: Activity["status"] }) {
   if (status === "running")
@@ -23,6 +24,7 @@ function ActivityIcon({ status }: { status: Activity["status"] }) {
 }
 
 export const CommandActivity = memo(function CommandActivity() {
+  const dockRef = useRef<HTMLElement>(null);
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -41,7 +43,13 @@ export const CommandActivity = memo(function CommandActivity() {
   if (!state.sessionId || activities.length === 0) return null;
 
   return (
-    <section className="command-activity" aria-label="Command activity">
+    <section
+      ref={dockRef}
+      className="command-activity"
+      aria-label="Command activity"
+      tabIndex={0}
+    >
+      <ScrollRail container={dockRef} variant="dock" />
       {activities.map((activity) => (
         <article
           key={activity.id}
@@ -54,19 +62,6 @@ export const CommandActivity = memo(function CommandActivity() {
           <div className="command-activity__body">
             <div className="command-activity__heading">
               <code>{activity.title}</code>
-              {activity.createdAt !== undefined &&
-              Number.isFinite(activity.createdAt) ? (
-                <time
-                  className="command-activity__state"
-                  dateTime={new Date(activity.createdAt).toISOString()}
-                  title={new Date(activity.createdAt).toLocaleString()}
-                >
-                  {new Date(activity.createdAt).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </time>
-              ) : null}
               <span className="command-activity__state">
                 {activity.status === "running"
                   ? "Running"
