@@ -80,6 +80,11 @@ describe("authenticated page restart API", () => {
     await api
       .post("/api/host/restart")
       .set("Authorization", "Bearer fixture-token")
+      .send({ ...intent, interruptWork: false })
+      .expect(400);
+    await api
+      .post("/api/host/restart")
+      .set("Authorization", "Bearer fixture-token")
       .send({ ...intent, hostId: randomUUID() })
       .expect(409);
     await api
@@ -92,6 +97,11 @@ describe("authenticated page restart API", () => {
       .set("Authorization", "Bearer fixture-token")
       .send(intent)
       .expect(202);
+    await api
+      .post("/api/host/restart")
+      .set("Authorization", "Bearer fixture-token")
+      .send({ ...intent, interruptWork: true })
+      .expect(409);
     expect(prepare).toHaveBeenCalledOnce();
     const late = await api
       .get("/api/host/restart")

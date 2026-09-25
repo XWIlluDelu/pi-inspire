@@ -7,10 +7,12 @@ import { useModalFocus } from "../use-modal-focus";
 
 function RestartConfirmation({
   scope,
+  interruptWork,
   onClose,
   onConfirm,
 }: {
   scope: HostRestartScope;
+  interruptWork: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -28,12 +30,22 @@ function RestartConfirmation({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="dialog__title" id="host-restart-title">
-          {scope === "all" ? "Restart all?" : "Restart Host?"}
+          {interruptWork
+            ? scope === "all"
+              ? "Stop work and restart all?"
+              : "Stop work and restart Host?"
+            : scope === "all"
+              ? "Restart all?"
+              : "Restart Host?"}
         </h2>
         <p className="dialog__message" id="host-restart-description">
-          {scope === "all"
-            ? "This will end all project terminal processes and briefly disconnect the page."
-            : "The page will briefly disconnect."}
+          {interruptWork
+            ? scope === "all"
+              ? "This will stop all active Pi work, discard Pending messages, end all project terminal processes, and briefly disconnect the page."
+              : "This will stop all active Pi work, discard Pending messages, and briefly disconnect the page. Project terminals keep running."
+            : scope === "all"
+              ? "This will end all project terminal processes and briefly disconnect the page."
+              : "The page will briefly disconnect."}
         </p>
         <div className="host-restart__actions">
           <button type="button" className="button" onClick={onClose}>
@@ -41,10 +53,16 @@ function RestartConfirmation({
           </button>
           <button
             type="button"
-            className={`button ${scope === "all" ? "button--danger" : "button--primary"}`}
+            className={`button ${scope === "all" || interruptWork ? "button--danger" : "button--primary"}`}
             onClick={onConfirm}
           >
-            {scope === "all" ? "Restart all" : "Restart Host"}
+            {interruptWork
+              ? scope === "all"
+                ? "Stop work and restart all"
+                : "Stop work and restart Host"
+              : scope === "all"
+                ? "Restart all"
+                : "Restart Host"}
           </button>
         </div>
       </div>
@@ -61,6 +79,7 @@ export function HostRestartSettings() {
   const [confirmation, setConfirmation] = useState<{
     scope: HostRestartScope;
     hostId: string;
+    interruptWork: boolean;
   } | null>(null);
   useEffect(() => {
     let retired = false;
@@ -84,13 +103,20 @@ export function HostRestartSettings() {
     !!state.pending ||
     !!active ||
     !!state.error;
+  const canStopAndRestart =
+    !disabled &&
+    operation?.phase === "rejected" &&
+    (operation.busyReason === "active-work" ||
+      operation.busyReason === "in-flight-operation");
   const unobserved =
     state.pending &&
     state.status?.hostId === state.pending.hostId &&
     operation?.id !== state.pending.operationId;
   const message =
     state.error ??
-    operation?.error ??
+    (operation?.phase === "rejected" && operation.error
+      ? `Last restart attempt: ${operation.error}`
+      : operation?.error) ??
     (operation?.phase === "preparing"
       ? "Preparing restart…"
       : operation?.phase === "submitted"
@@ -109,7 +135,11 @@ export function HostRestartSettings() {
             className="button"
             disabled={disabled}
             onClick={() =>
-              setConfirmation({ scope, hostId: state.status!.hostId })
+              setConfirmation({
+                scope,
+                hostId: state.status!.hostId,
+                interruptWork: false,
+              })
             }
           >
             <RefreshCw size={14} aria-hidden />
@@ -117,6 +147,23 @@ export function HostRestartSettings() {
           </button>
         ))}
       </div>
+      {canStopAndRestart ? (
+        <div className="host-restart__actions">
+          <button
+            type="button"
+            className="button button--danger"
+            onClick={() =>
+              setConfirmation({
+                scope: operation.scope,
+                hostId: state.status!.hostId,
+                interruptWork: true,
+              })
+            }
+          >
+            Stop work and restart {operation.scope === "all" ? "all" : "Host"}
+          </button>
+        </div>
+      ) : null}
       {!state.status ? (
         <p className="settings__field-help">Checking availability…</p>
       ) : !state.status.available ? (
@@ -157,11 +204,13 @@ export function HostRestartSettings() {
       {confirmation ? (
         <RestartConfirmation
           scope={confirmation.scope}
+          interruptWork={confirmation.interruptWork}
           onClose={() => setConfirmation(null)}
           onConfirm={() => {
             void hostRestartClient.start(
               confirmation.scope,
               confirmation.hostId,
+              confirmation.interruptWork,
             );
             setConfirmation(null);
           }}

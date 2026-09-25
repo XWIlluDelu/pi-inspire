@@ -42,6 +42,21 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
   });
 
+  it("persists the work-interruption grant inside a distinct operation and replays only that grant", async () => {
+    const f = fixture();
+    await f.client.refresh();
+    await f.client.start("host", f.status.hostId, true);
+    const request = f.api.restartHost.mock.calls[0]![0];
+    expect(request).toMatchObject({ scope: "host", interruptWork: true });
+    const reloaded = new HostRestartClient(f.api);
+    await reloaded.refresh();
+    expect(reloaded.snapshot().pending).toEqual(request);
+    await reloaded.retry();
+    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
+    await reloaded.start("host", f.status.hostId);
+    expect(f.api.restartHost).toHaveBeenCalledTimes(2);
+  });
+
   it("does not treat an HTTP rejection as proof that a previously delivered restart failed", async () => {
     const f = fixture();
     await f.client.refresh();
@@ -89,6 +104,19 @@ describe("browser restart delivery", () => {
     await f.client.start("host", f.status.hostId);
     expect(f.client.snapshot().blocked).toBe(true);
     expect(f.api.restartHost).not.toHaveBeenCalled();
+    sessionStorage.clear();
+    sessionStorage.setItem(
+      "inspire:host-restart:v1",
+      JSON.stringify({
+        hostId: f.status.hostId,
+        operationId: crypto.randomUUID(),
+        scope: "host",
+        interruptWork: false,
+      }),
+    );
+    const invalidGrant = new HostRestartClient(f.api);
+    await invalidGrant.refresh();
+    expect(invalidGrant.snapshot().blocked).toBe(true);
     sessionStorage.clear();
     const client = new HostRestartClient(
       f.api,
