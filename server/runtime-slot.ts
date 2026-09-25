@@ -1,11 +1,13 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { type BranchBridgeResult } from "../shared/branch-bridge-protocol.js";
 import {
+  type ComposerHistoryEntry,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
   type PendingQueues,
   type ProjectionConflict,
+  type PromptRequest,
   type RetryInfo,
   type RunState,
 } from "../shared/contracts.js";
@@ -133,6 +135,20 @@ export interface RuntimeSlot {
   stopping: Promise<void> | null;
   /** Worker owning a prompt whose Pi receipt is still pending. */
   pendingPrompt: PiRpcProcess | null;
+  pendingPromptCount: number;
+  /** Explicit branch selection changes, distinct from a compaction's view refresh. */
+  deliveryNavigationEpoch: number;
+  /** Host-held input awaiting a safe Pi prompt boundary; not persisted Pi history. */
+  deferredPrompts: Array<{
+    request: PromptRequest;
+    worker: PiRpcProcess;
+    navigationEpoch: number;
+    incarnationId: string;
+    resolve: (entry: ComposerHistoryEntry | null) => void;
+    reject: (error: Error) => void;
+  }>;
+  drainingDeferredPrompts: boolean;
+  deliveryQueue: RuntimeOperationQueue;
   ready: boolean;
   preview: ActiveSessionSnapshot | null;
   projection: SessionProjectionView | null;
@@ -150,6 +166,7 @@ export interface RuntimeSlot {
   pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
+  piPendingQueues: PendingQueues;
   extensionDisplays: ExtensionDisplay[];
   extensionStatuses: Record<string, string>;
   availableModels: unknown[] | null;
@@ -219,6 +236,11 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     startupStop: null,
     stopping: null,
     pendingPrompt: null,
+    pendingPromptCount: 0,
+    deliveryNavigationEpoch: 0,
+    deferredPrompts: [],
+    drainingDeferredPrompts: false,
+    deliveryQueue: emptyOperationQueue(),
     ready: false,
     runState: "idle",
     compactionReturnState: null,
@@ -231,6 +253,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     pendingExtensionUiTimers: new Map(),
     extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
+    piPendingQueues: emptyPendingQueues(),
     extensionDisplays: [],
     extensionStatuses: {},
     availableModels: null,

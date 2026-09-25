@@ -10,9 +10,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_compact", async (event, ctx) => {
     const startedAt = performance.now();
     ctx.ui.setStatus("pi-operation-compaction", `waiting:${event.reason}`);
-    // This real child-process timer is the regression witness. Do not shorten
-    // it or replace it with fake timers: the former prompt deadline was 30s.
-    await delay(35_000, undefined, { signal: event.signal });
+    // The slow-lifecycle case uses the full 35s; focused preflight ordering
+    // cases use the same real Pi path with a shorter isolated fixture timer.
+    await delay(
+      Number(process.env.PI_FIXTURE_COMPACT_DELAY_MS ?? 35_000),
+      undefined,
+      { signal: event.signal },
+    );
     ctx.ui.setStatus("pi-operation-compaction", "completed");
     return {
       compaction: {
