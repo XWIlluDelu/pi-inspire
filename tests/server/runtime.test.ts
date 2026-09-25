@@ -4200,7 +4200,96 @@ describe("maintenance restart admission", () => {
     await runtime.close();
   });
 
-  it("does not grant a lease while an open request is still in flight", async () => {
+  it("allows explicit interruption of active Pi work while another restart lease stays exclusive", async () => {
+    const workers = new Map<string, FakeRpc>();
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    const worker = workers.get("a")!;
+    worker.emit("event", {
+      type: "queue_update",
+      steering: ["pending input"],
+      followUp: [],
+    });
+    expect(runtime.reserveMaintenanceRestart()).toEqual({
+      kind: "busy",
+      reason: "active-work",
+    });
+    const lease = runtime.reserveMaintenanceRestart(true);
+    if (lease.kind !== "ready") throw new Error("Expected forced lease");
+    expect(runtime.reserveMaintenanceRestart(true)).toEqual({
+      kind: "busy",
+      reason: "restart-pending",
+    });
+    expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
+      "committed",
+    );
+    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
+      status: 503,
+    });
+    await runtime.close();
+    expect(worker.stops).toBe(1);
+  });
+
+  it("interrupts a genuinely pending manual compaction rather than waiting for its RPC", async () => {
+    const workers = new Map<string, FakeRpc>();
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.set(worker.sessionId, worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    const worker = workers.get("a")!;
+    const { promise: compactStarted, resolve: started } = deferredSignal();
+    let cancelCompact!: (error: Error) => void;
+    worker.responseOverrides.set("compact", () => {
+      started();
+      return new Promise((_resolve, reject) => {
+        cancelCompact = reject;
+      });
+    });
+    const originalStop = worker.stop.bind(worker);
+    vi.spyOn(worker, "stop").mockImplementation(async () => {
+      cancelCompact(new Error("worker stopped during compaction"));
+      await originalStop();
+    });
+    const compacting = runtime.nativeCommand({
+      sessionId: "a",
+      command: "compact",
+    });
+    // Attach the failure observer before the worker can be stopped.
+    const settledCompact = compacting.catch((error: unknown) => error);
+    await compactStarted;
+    expect(runtime.reserveMaintenanceRestart()).toEqual({
+      kind: "busy",
+      reason: "active-work",
+    });
+    const lease = runtime.reserveMaintenanceRestart(true);
+    if (lease.kind !== "ready") throw new Error("Expected forced lease");
+    expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
+      "committed",
+    );
+    await runtime.close();
+    expect(worker.stops).toBe(1);
+    await expect(settledCompact).resolves.toBeInstanceOf(Error);
+  });
+
+  it("does not grant an idle-only lease while an open request is still in flight", async () => {
     const store = trackedAttachmentStore();
     const { promise: gate, resolve: release } = deferredSignal();
     const { promise: reachedPreview, resolve: entered } = deferredSignal();

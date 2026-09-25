@@ -206,7 +206,10 @@ function consoleRuntimeError(sessionId: string, error: unknown): void {
   );
 }
 
-type MaintenanceRestartBusyReason = "active-work" | "in-flight-operation";
+type MaintenanceRestartBusyReason =
+  | "active-work"
+  | "in-flight-operation"
+  | "restart-pending";
 
 export type MaintenanceRestartDecision =
   | { kind: "ready"; leaseId: string; expiresAt: number }
@@ -296,9 +299,11 @@ export interface RuntimeLike {
   ): Promise<BranchNavigateResponse>;
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
-  /** Fence new work for a short, scheduled service replacement after every
-   * runtime slot has been proven idle. */
-  reserveMaintenanceRestart?(): MaintenanceRestartDecision;
+  /** Fence new work for a short restart handoff. Explicit page authority may
+   * interrupt existing runtime work; scheduled callers remain idle-only. */
+  reserveMaintenanceRestart?(
+    interruptWork?: boolean,
+  ): MaintenanceRestartDecision;
   commitMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
   releaseMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
   close(): Promise<void>;
@@ -351,6 +356,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     leaseId: string;
     expiresAt: number;
     phase: "preparing" | "committed";
+    interruptWork: boolean;
   } | null = null;
   private maintenanceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
@@ -568,19 +574,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   /** Prepare a short no-new-work lease. Only an authoritative commit of this
    * exact lease may authorize restart; committed admission never auto-reopens. */
-  reserveMaintenanceRestart(): MaintenanceRestartDecision {
+  reserveMaintenanceRestart(interruptWork = false): MaintenanceRestartDecision {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
     if (this.maintenanceRestart !== null)
-      return { kind: "busy", reason: "in-flight-operation" };
-    if (this.hasActiveRuntimeWork())
-      return { kind: "busy", reason: "active-work" };
-    if (this.maintenanceOperations > 0 || this.hasInFlightRuntimeOperation())
-      return { kind: "busy", reason: "in-flight-operation" };
+      return { kind: "busy", reason: "restart-pending" };
+    if (!interruptWork) {
+      if (this.hasActiveRuntimeWork())
+        return { kind: "busy", reason: "active-work" };
+      if (this.maintenanceOperations > 0 || this.hasInFlightRuntimeOperation())
+        return { kind: "busy", reason: "in-flight-operation" };
+    }
 
     const expiresAt = Date.now() + MAINTENANCE_RESTART_LEASE_MS;
     const leaseId = randomBytes(32).toString("base64url");
-    this.maintenanceRestart = { leaseId, expiresAt, phase: "preparing" };
+    this.maintenanceRestart = {
+      leaseId,
+      expiresAt,
+      phase: "preparing",
+      interruptWork,
+    };
     this.maintenanceRestartTimer = setTimeout(
       () => this.expireMaintenanceRestart(),
       MAINTENANCE_RESTART_LEASE_MS,
@@ -601,9 +614,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (lease.phase !== "preparing")
       return { kind: "skipped", reason: "lease-already-committed" };
     if (
-      this.hasActiveRuntimeWork() ||
-      this.maintenanceOperations > 0 ||
-      this.hasInFlightRuntimeOperation()
+      !lease.interruptWork &&
+      (this.hasActiveRuntimeWork() ||
+        this.maintenanceOperations > 0 ||
+        this.hasInFlightRuntimeOperation())
     )
       return { kind: "skipped", reason: "active-work" };
     // No await between validation and closing admission indefinitely. A delayed

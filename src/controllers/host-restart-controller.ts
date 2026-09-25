@@ -56,12 +56,16 @@ export class HostRestartClient {
         if (
           !value ||
           typeof value !== "object" ||
-          Object.keys(value).sort().join() !== "hostId,operationId,scope" ||
+          ![
+            "hostId,operationId,scope",
+            "hostId,interruptWork,operationId,scope",
+          ].includes(Object.keys(value).sort().join()) ||
           typeof value.hostId !== "string" ||
           !UUID.test(value.hostId) ||
           typeof value.operationId !== "string" ||
           !UUID.test(value.operationId) ||
-          !["host", "all"].includes(value.scope)
+          !["host", "all"].includes(value.scope) ||
+          ("interruptWork" in value && value.interruptWork !== true)
         )
           throw new Error();
         this.patch({ pending: value });
@@ -106,6 +110,9 @@ export class HostRestartClient {
       } else if (
         pending &&
         status.operation?.id === pending.operationId &&
+        status.operation.scope === pending.scope &&
+        Boolean(status.operation.interruptWork) ===
+          Boolean(pending.interruptWork) &&
         status.operation.phase === "rejected"
       ) {
         this.persist(null);
@@ -120,7 +127,11 @@ export class HostRestartClient {
         });
     }
   }
-  start = async (scope: HostRestartScope, hostId: string): Promise<void> => {
+  start = async (
+    scope: HostRestartScope,
+    hostId: string,
+    interruptWork = false,
+  ): Promise<void> => {
     if (this.state.sending || this.state.blocked || this.state.pending) return;
     try {
       this.restore();
@@ -130,7 +141,12 @@ export class HostRestartClient {
         this.state.status.hostId !== hostId
       )
         return;
-      const pending = { hostId, operationId: crypto.randomUUID(), scope };
+      const pending: HostRestartRequest = {
+        hostId,
+        operationId: crypto.randomUUID(),
+        scope,
+        ...(interruptWork ? { interruptWork: true } : {}),
+      };
       this.persist(pending);
       this.patch({ pending, notice: null });
       await this.retry();
@@ -147,6 +163,7 @@ export class HostRestartClient {
       if (
         receipt.id === pending.operationId &&
         receipt.scope === pending.scope &&
+        Boolean(receipt.interruptWork) === Boolean(pending.interruptWork) &&
         receipt.phase === "rejected" &&
         this.state.pending === pending
       ) {
