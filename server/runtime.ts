@@ -12,9 +12,9 @@ import {
   encodeBranchBridgeJson,
 } from "../shared/branch-bridge-protocol.js";
 import {
+  nativeCommand,
   parseCommandInvocation,
   parseNativeCommand,
-  nativeCommand,
 } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
@@ -222,6 +222,13 @@ export type MaintenanceRestartTransition =
   | { kind: "released" }
   | { kind: "skipped"; reason: string };
 
+/** Backend-neutral status of one admitted worker, separate from browser events. */
+export interface RuntimeWorkerStatus {
+  sessionId: string;
+  runState: SessionRuntimeStatus["runState"];
+  needsInput: boolean;
+}
+
 export interface RuntimeLike {
   /** Host default selection. Addressed operations and browser detail interests
    * retain their own session/view ownership independently of this value. */
@@ -321,6 +328,10 @@ interface ForkReservation {
 
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
+  private readonly workerStatuses = new WeakMap<
+    PiRpcProcess,
+    RuntimeWorkerStatus
+  >();
   private readonly loadingSlots = new Map<string, Promise<RuntimeSlot>>();
   private readonly loadingPaths = new Map<string, Promise<RuntimeSlot>>();
   private readonly opening = new Map<string, Promise<RuntimeSlot>>();
@@ -403,13 +414,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       loadingPath: (path) => this.loadingPaths.get(path),
       hasLoadingPath: (path) => this.loadingPaths.has(path),
       hasProvisionalReservation: (sessionId, path) =>
-        [...this.provisionalSlots.values()].some(
-          ({ slot }) =>
-            slot.id === sessionId ||
-            (path !== undefined &&
-              slot.sessionPath !== null &&
-              resolve(slot.sessionPath) === path),
-        ),
+        Boolean(this.provisionalReservation(sessionId, path)),
       hasForkReservation: (sessionId, path) =>
         this.forkReservationsById.has(sessionId) ||
         this.forkReservationsByPath.has(path),
@@ -562,10 +567,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         Boolean(
           sessionPath && this.forkReservationsByPath.has(resolve(sessionPath)),
         ),
-      detachProcess: (_slot, rpc) => this.processRegistry.detach(rpc),
-      clearWriterBaseline: (slot) =>
-        this.projectionCoordinator.clearWriterBaseline(slot),
-      renewView: (slot) => this.renewView(slot),
+      stopWorker: (slot) => this.stopWriter(slot),
       removeSlot: (slot) => {
         if (this.slots.get(slot.id) === slot) this.slots.delete(slot.id);
       },
@@ -757,6 +759,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): PiRpcOptions {
     return {
       cwd,
+      // Internal GUI navigation only; Pi and the user's configuration own
+      // model tools, system prompts, and any collaboration extensions.
       args: [...args, "--extension", BRANCH_EXTENSION_PATH],
       workerId: bridge.workerId,
       diagnostic: (level, event, fields) =>
@@ -824,18 +828,27 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
+  private provisionalReservation(sessionId: string, path?: string) {
+    return [...this.provisionalSlots.values()].find(
+      ({ slot }) =>
+        slot.id === sessionId ||
+        (path !== undefined &&
+          slot.sessionPath !== null &&
+          resolve(slot.sessionPath) === path) ||
+        // An unconfirmed writer that never reported its file cannot yet be
+        // excluded as the owner of a newly discovered catalog record.
+        (slot.stopping !== null && slot.sessionPath === null),
+    );
+  }
+
   private async waitForProvisionalReservation(
     sessionId: string,
     path: string,
   ): Promise<void> {
     while (true) {
-      const reservation = [...this.provisionalSlots.values()].find(
-        ({ slot }) =>
-          slot.id === sessionId ||
-          (slot.sessionPath !== null && resolve(slot.sessionPath) === path),
-      );
+      const reservation = this.provisionalReservation(sessionId, path);
       if (!reservation) return;
-      await reservation.completion;
+      await (reservation.slot.stopping ?? reservation.completion);
     }
   }
 
@@ -1009,7 +1022,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         let state: { isStreaming?: boolean; isCompacting?: boolean };
         try {
           state = await item.worker.request({ type: "get_state" });
-        } catch (error) {
+        } catch {
           this.rejectDeferredPrompts(slot, item.worker);
           return;
         }
@@ -1169,8 +1182,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       );
     for (const expectation of slot.persistenceExpectations)
       expectation.settle(null);
-    await error.stopped;
-    await this.stopWriter(slot);
+    try {
+      await Promise.all([this.stopWriter(slot), error.stopped]);
+    } catch {
+      // Failure to prove exit cannot turn uncertain delivery into rejection.
+      // Retirement retains the writer fence; callers must retain the receipt.
+      throw requestError(
+        `Pi ${error.command} outcome is unknown; the previous worker could not be confirmed stopped`,
+        504,
+        { code: "PI_RPC_OUTCOME_UNKNOWN", outcomeUnknown: true },
+      );
+    }
     if (slot.projection)
       await this.reconcileSlot(slot, true).catch(() => undefined);
     const conflict = this.setProjectionConflict(
@@ -1361,6 +1383,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // unaddressable `pending-*` id, so they stay local; the creating request
     // returns the full state once the real id is known.
     if (this.slots.get(slot.id) !== slot) return;
+    const sessionStatus = this.statusFor(slot);
+    if (slot.process && slot.ready) {
+      const previous = this.workerStatuses.get(slot.process);
+      const needsInput = sessionStatus.needsInput === true;
+      if (
+        previous?.sessionId !== slot.id ||
+        previous.runState !== sessionStatus.runState ||
+        previous.needsInput !== needsInput
+      ) {
+        const workerStatus: RuntimeWorkerStatus = {
+          sessionId: slot.id,
+          runState: sessionStatus.runState,
+          needsInput,
+        };
+        this.workerStatuses.set(slot.process, workerStatus);
+        this.emit("worker_status", slot.process, workerStatus);
+      }
+    }
     const projected = safeProjection(event);
     const body =
       projected && typeof projected === "object" && !Array.isArray(projected)
@@ -1369,7 +1409,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.emit("event", {
       ...body,
       sessionId: slot.id,
-      sessionStatus: this.statusFor(slot),
+      sessionStatus,
     });
   }
 
@@ -1378,44 +1418,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     _rpc: PiRpcProcess,
     error: Error,
   ): void {
-    this.rejectDeferredPrompts(slot, _rpc);
-    slot.process = null;
-    slot.pendingPrompt = null;
-    slot.pendingPromptCount = 0;
-    slot.ready = false;
-    slot.compactionReturnState = null;
+    // `exit` retires RPC availability, not necessarily the Pi writer. The
+    // shared stop path revokes authority immediately and retains its actual
+    // stop promise (including failure) for replacement and Host shutdown.
+    void this.stopWriter(slot).catch(() => undefined);
     slot.retry = null;
     slot.summarizationRetry = null;
     slot.activeAssistantCorrelation = null;
-    this.projectionCoordinator.clearWriterBaseline(slot);
-    slot.bridge = null;
-    this.renewView(slot);
-    if (slot.navigationLease) slot.branchRevision += 1;
-    slot.navigationLease = null;
-    if (slot.pendingBranchBridge) {
-      slot.pendingBranchBridge.reject(new Error("Branch bridge worker exited"));
-      slot.pendingBranchBridge = null;
-    }
-    if (slot.pendingPartialPersistence) {
-      this.projectionCoordinator.clearPartialPersistence(slot);
-      this.setProjectionConflict(
-        slot,
-        "incomplete-persistence",
-        "Pi exited before an incomplete JSONL persistence frame was verified",
-      );
-    } else if (slot.conflict) {
+    if (slot.conflict) {
       slot.runState = "conflict";
     } else {
       slot.runState = "failed";
       slot.attention = this.selectedSessionId === slot.id ? null : "failed";
     }
-    this.extensionUi.clear(slot, "stopped");
     slot.piPendingQueues = emptyPendingQueues();
     if (slot.deferredPrompts.length === 0)
       slot.pendingQueues = emptyPendingQueues();
     else this.refreshPendingQueues(slot);
-    slot.extensionDisplays = [];
-    slot.extensionStatuses = {};
     this.logRuntimeError(slot.id, error, "worker_exit");
     this.emitSlotEvent(slot, {
       type: "runtime_error",
@@ -1616,11 +1635,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const forkReserved =
         this.forkReservationsById.has(session.id) ||
         this.forkReservationsByPath.has(path);
-      const provisionalReserved = [...this.provisionalSlots.values()].some(
-        ({ slot }) =>
-          slot.id === session.id ||
-          (slot.sessionPath !== null && resolve(slot.sessionPath) === path),
-      );
+      const provisionalReserved = this.provisionalReservation(session.id, path);
       if (!forkReserved && !provisionalReserved) break;
     }
     this.assertNotClosing();
@@ -1772,7 +1787,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const session = await this.catalog.get(id);
       if (!session) throw requestError("Session not found", 404);
-
       const slot = await this.prepareSlot(session);
       const ready = Boolean(slot.process && slot.ready);
       const snapshot = ready
@@ -2079,13 +2093,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.logRuntimeError(slot.id, failure, "new_session_post_commit");
         return committedSnapshot;
       }
-      this.provisionalSlots.delete(provisionalId);
-      const stillOwned = slot.process === rpc;
-      slot.process = null;
-      slot.ready = false;
-      if (stillOwned) await rpc.stop();
-      await slot.projection?.close().catch(() => undefined);
-      slot.projection = null;
+      try {
+        await this.stopWriter(slot);
+      } finally {
+        // Failed creation is not proof that its native file has no writer.
+        // Keep an unconfirmed stop reserved, even before catalog publication.
+        if (!slot.stopping) this.provisionalSlots.delete(provisionalId);
+        await slot.projection?.close().catch(() => undefined);
+        slot.projection = null;
+      }
       throw failure;
     } finally {
       finishProvisional();

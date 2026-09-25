@@ -197,6 +197,8 @@ export function isSessionRuntimeStatus(
 }
 
 export interface InspirePreferences {
+  /** Optional Herdr-managed background workers; changes apply on Host restart. */
+  herdrEnabled: boolean;
   theme: ThemePreference;
   palette: PalettePreference;
   /** Reading typography for conversation prose, composer drafts, code, and text previews. */
@@ -236,6 +238,7 @@ export interface InspirePreferences {
 /** The complete user-facing Settings surface. Navigation curation and MRU
  * metadata deliberately stay outside bulk Restore defaults. */
 export const defaultInterfaceSettings = {
+  herdrEnabled: false,
   theme: "system",
   palette: "amber",
   contentTextSize: "comfortable",
@@ -250,6 +253,7 @@ export const defaultInterfaceSettings = {
   completionAttention: "off",
 } satisfies Pick<
   InspirePreferences,
+  | "herdrEnabled"
   | "theme"
   | "palette"
   | "contentTextSize"

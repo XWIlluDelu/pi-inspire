@@ -1,5 +1,3 @@
-import { requestError } from "./request-error.js";
-import { SettingsManager } from "./pi-runtime.js";
 import {
   MAX_CURATED_SESSION_RESULTS,
   MAX_SESSION_DISPLAY_TITLE_CHARS,
@@ -8,6 +6,8 @@ import {
   type SessionListResponse,
   type SessionSummary,
 } from "../shared/contracts.js";
+import { SettingsManager } from "./pi-runtime.js";
+import { requestError } from "./request-error.js";
 import {
   SessionMetadataIndex,
   type SessionRecord,
@@ -227,12 +227,15 @@ export class SessionCatalog implements SessionCatalogLike {
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
     if (ids.length === 0) return [];
     await this.refresh();
-    const sessions = await Promise.all(
-      [...new Set(ids)].map((id) => this.get(id)),
-    );
-    return sessions.flatMap((session) =>
-      session ? [this.project(session)] : [],
-    );
+    return [...new Set(ids)].flatMap((id) => {
+      if (this.ambiguousIds.has(id))
+        throw requestError(
+          "The session identity is ambiguous in the Pi catalog",
+          409,
+        );
+      const record = this.byId.get(id);
+      return record ? [this.project(record)] : [];
+    });
   }
 
   /** The newest sessions of each named working directory. A folder pinned as
