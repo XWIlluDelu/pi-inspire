@@ -33,8 +33,14 @@ Attempt-start, retry-finished, compaction-end, settlement, and worker loss retir
 Backoff does not change `compacting` to `retrying`, preserving standalone compaction cancellation.
 No countdown or percentage is inferred from token occupancy.
 
-Local receipts show request time. Successful compact receipts stop occupying the composer dock
-once later agent work or compaction starts; persistent checkpoints remain in the transcript.
+Local receipts retain `createdAt` for lifecycle metadata but no longer display request time in
+headers. Successful compact receipts stop occupying the composer dock once later agent work or
+compaction starts; persistent checkpoints remain in the transcript. Simple command success
+(`/copy`, argument-bearing `/name`, exact `/model`, valid `/thinking`) uses a short notice and
+retires its running receipt; failure retains a receipt with the actual cause, without a second
+control-level warning. Control invocations still own their own warning notices. Mutation outcomes
+separate success, actual failure, and lost ownership; background command failures update their
+originating receipt without showing a notice over another session.
 Terminal-only capability is part of the option description rather than an inaccessible group label.
 Reload explicitly says that the worker was replaced; terminal guidance does not imply that opening
 a shell transfers ownership of the current session.

@@ -15,10 +15,11 @@
   gap: var(--space-1);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
 }
 
 .command-activity__item {
+  flex: 0 0 auto;
   --command-tone: var(--info);
   position: relative;
   display: grid;
@@ -190,7 +191,12 @@
   gap: var(--space-1);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+
+.command-activity::-webkit-scrollbar,
+.extension-dock::-webkit-scrollbar {
+  display: none;
 }
 
 .extension-dock--below {
