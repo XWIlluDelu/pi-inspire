@@ -24,6 +24,12 @@ resolve login/interactive shell exports instead of treating bootstrap PATH as th
 Inspire no longer forces NODE_ENV into Pi or project terminals. [[user-execution-environment]] records
 bounded discovery, independent daemon transport, verification, and the explicit service migration.
 
+Steer/Queue now remains available through manual and automatic compaction, including long
+extension receipts: bounded Host-held input appears in the ordinary Pending/Clear surface until a
+safe Pi delivery boundary; active agents receive it without waiting for an earlier receipt.
+Local commands, running export, and model/thinking controls remain available without locking the
+composer. [[composer]] and [[native-command-compatibility]] define the ownership boundary.
+
 Pi's support baseline is now **0.87.0**. System prompt/tool-loadout records remain canonical
 host-side state without becoming conversation rows, and `/bug` provides terminal-only guidance.
 [[dependency-boundaries]] records the compatibility review, repairs, and verification scope.

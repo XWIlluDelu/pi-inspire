@@ -47,6 +47,7 @@ interface RuntimeWorkerLifecycleHost {
   ): ProjectionConflict;
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
+  rejectDeferredPrompts(slot: RuntimeSlot, worker: PiRpcProcess): void;
   scheduleIdleWorkerEviction(): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
 }
@@ -89,8 +90,10 @@ export class RuntimeWorkerLifecycle {
         });
       }
     }
+    this.host.rejectDeferredPrompts(slot, rpc);
     slot.process = null;
     slot.pendingPrompt = null;
+    slot.pendingPromptCount = 0;
     slot.ready = false;
     slot.compactionReturnState = null;
     this.host.clearWriterBaseline(slot);
@@ -205,6 +208,7 @@ export class RuntimeWorkerLifecycle {
     slot.bridge = bridge;
     slot.ready = false;
     this.host.clearPendingExtensionUi(slot, "replaced");
+    slot.piPendingQueues = emptyPendingQueues();
     slot.pendingQueues = emptyPendingQueues();
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};

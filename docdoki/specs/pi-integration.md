@@ -129,11 +129,15 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   recovery writes fenced; metadata-only watchdogs report that state without inventing completion.
   Coarse diagnostic phase labels never become execution authority. Evidence: [[operation-lifecycle-ownership]].
 
-- Pending supports the public `queue_update` text arrays and explicit confirmed `clear_queue`, not a
-  separately negotiated structured management protocol. Unsupported pause/resume, per-item
-  deletion/conversion, text-fetch RPCs, and startup capability probes are absent from the production
-  contract and its Fake RPC fixtures. A clear receipt does not claim that a racing already-consumed
-  entry was retracted; authoritative queue events own the resulting display.
+- Pending combines Pi's public `queue_update` text arrays with bounded, worker/branch-selection-bound Host
+  input waiting for a safe prompt boundary. The latter is transient delivery ownership, not
+  persisted conversation: a real active agent can receive selected steering/follow-up while an
+  earlier extension/preflight receipt is still pending; without an active agent, the first existing
+  prompt or command must settle before a Host-held input can begin a new prompt. Explicit confirmed
+  Clear removes not-yet-dispatched Host input and invokes Pi's `clear_queue`. Unsupported pause/resume,
+  per-item deletion/conversion, text-fetch RPCs, and startup capability probes remain absent. A
+  clear receipt does not claim that a racing already-consumed entry was retracted; authoritative
+  queue events own Pi's resulting display.
 
 - Worker replacement retires its event ownership and outstanding extension requests. A new-session
   worker keeps its existing provisional slot while its public session identity is finalized; an
