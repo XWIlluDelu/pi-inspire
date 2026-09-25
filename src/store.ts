@@ -2265,6 +2265,8 @@ export class AppStore {
     this.preferences.setReadingWidth(value);
   setLaunch = (value: LaunchPreference): void =>
     this.preferences.setLaunch(value);
+  setHerdrEnabled = (value: boolean): void =>
+    this.preferences.setHerdrEnabled(value);
   setDesktopSendKey = (value: DesktopSendKeyPreference): void =>
     this.preferences.setDesktopSendKey(value);
   setCompletionAttention = (

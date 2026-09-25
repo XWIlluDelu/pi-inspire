@@ -23,10 +23,12 @@ import {
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
 } from "../../server/pi-rpc.js";
+import { ResourceStore } from "../../server/resources.js";
 import {
   MAX_IDLE_WORKERS,
   PI_STARTUP_RESPONSE_UI_ERROR,
   RuntimeController,
+  type RuntimeWorkerStatus,
   safeProjection,
 } from "../../server/runtime.js";
 import type {
@@ -34,13 +36,12 @@ import type {
   SessionRecord,
 } from "../../server/session-catalog.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
-import { PreviewProjection } from "./fixtures/preview-projection.js";
 import { SessionProjection } from "../../server/session-projection.js";
-import { ResourceStore } from "../../server/resources.js";
 import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
 } from "../../shared/contracts.js";
+import { PreviewProjection } from "./fixtures/preview-projection.js";
 
 class FakeRpc extends EventEmitter {
   readonly commands: Array<Record<string, unknown>> = [];
@@ -764,53 +765,65 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("does not restage or duplicate attachments when prompt acceptance is unknown", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([await persistedRecord("a")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        const request = worker.request.bind(worker);
-        worker.request = async <T>(command: Record<string, unknown>) => {
-          if (command.type !== "prompt") return request<T>(command);
-          worker.commands.push(command);
-          const error = new PiRpcOutcomeUnknownError("prompt");
-          error.stopped = Promise.resolve();
-          throw error;
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-    );
-    await runtime.openSession("a");
-    const doc = await store.add(upload("notes.txt", "text/plain"));
-    await expect(
-      runtime.prompt({
-        sessionId: "a",
-        message: "send once",
-        attachmentIds: [doc.id],
-      }),
-    ).rejects.toThrow(/outcome is unknown/);
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toHaveLength(1);
-    await expect(
-      runtime.prompt({
-        sessionId: "a",
-        message: "do not retry",
-        attachmentIds: [doc.id],
-      }),
-    ).rejects.toThrow(/already belong/);
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toHaveLength(1);
-    await store.remove(doc.id);
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
-      /already belong/,
-    );
-    await runtime.close();
-  });
+  it.each([true, false])(
+    "does not restage or duplicate unknown prompt delivery (exit confirmed: %s)",
+    async (confirmed) => {
+      const store = trackedAttachmentStore();
+      let worker!: FakeRpc;
+      const runtime = new RuntimeController(
+        catalog([await persistedRecord("a")]),
+        store,
+        (options) => {
+          worker = new FakeRpc(options);
+          const request = worker.request.bind(worker);
+          worker.request = async <T>(command: Record<string, unknown>) => {
+            if (command.type !== "prompt") return request<T>(command);
+            worker.commands.push(command);
+            const error = new PiRpcOutcomeUnknownError("prompt");
+            error.stopped = confirmed
+              ? Promise.resolve()
+              : Promise.reject(new Error("Worker exit unconfirmed"));
+            throw error;
+          };
+          if (!confirmed)
+            worker.stop = async () => {
+              throw new Error("Worker exit unconfirmed");
+            };
+          return worker as unknown as PiRpcProcess;
+        },
+      );
+      await runtime.openSession("a");
+      const doc = await store.add(upload("notes.txt", "text/plain"));
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "send once",
+          attachmentIds: [doc.id],
+        }),
+      ).rejects.toMatchObject({
+        outcomeUnknown: true,
+        message: expect.stringMatching(/outcome is unknown/),
+      });
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "do not retry",
+          attachmentIds: [doc.id],
+        }),
+      ).rejects.toThrow(/already belong/);
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
+      await store.remove(doc.id);
+      await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
+        /already belong/,
+      );
+      await runtime.close();
+    },
+  );
 
   it("acknowledges an accepted prompt when its immediate projection refresh fails", async () => {
     const store = trackedAttachmentStore();
@@ -1125,7 +1138,11 @@ describe("RuntimeController concurrent sessions", () => {
       await new Promise<void>((resolveTick) => setImmediate(resolveTick));
       await runtime.openSession("b");
       const events: Array<Record<string, unknown>> = [];
+      const workerStatuses: RuntimeWorkerStatus[] = [];
       runtime.on("event", (event) => events.push(event));
+      runtime.on("worker_status", (rpc, status) => {
+        if (rpc === workers[0]) workerStatuses.push(status);
+      });
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "needs-answer",
@@ -1139,6 +1156,11 @@ describe("RuntimeController concurrent sessions", () => {
       const snapshot = await runtime.snapshot("a");
       expect(snapshot.sessionStatuses.a?.needsInput).toBe(true);
       expect(snapshot.pendingExtensionUiRequests?.[0]?.id).toBe("needs-answer");
+      expect(workerStatuses.at(-1)).toEqual({
+        sessionId: "a",
+        runState: "idle",
+        needsInput: true,
+      });
       await runtime.extensionUiResponse({
         sessionId: "a",
         id: "needs-answer",
@@ -1147,6 +1169,11 @@ describe("RuntimeController concurrent sessions", () => {
       expect(
         (await runtime.snapshot("a")).sessionStatuses.a?.needsInput,
       ).toBeUndefined();
+      expect(workerStatuses.at(-1)).toEqual({
+        sessionId: "a",
+        runState: "idle",
+        needsInput: false,
+      });
       expect(runtime.activeSessionId).toBe("b");
     } finally {
       await runtime.close();
@@ -1674,6 +1701,92 @@ describe("RuntimeController concurrent sessions", () => {
     ]);
     await runtime.close();
   });
+
+  it.each([
+    ["unexpected exit", "confirmed"],
+    ["unexpected exit", "unconfirmed"],
+    ["idle eviction", "confirmed"],
+    ["idle eviction", "unconfirmed"],
+  ] as const)(
+    "fences replacement after %s until stop is %s",
+    async (retirement, outcome) => {
+      const errors = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
+      let confirmStop!: () => void;
+      let rejectStop!: (error: Error) => void;
+      const stop = new Promise<void>((resolve, reject) => {
+        confirmStop = resolve;
+        rejectStop = reject;
+      });
+      const workers: FakeRpc[] = [];
+      const ids = Array.from({ length: MAX_IDLE_WORKERS + 2 }, (_, index) =>
+        String(index),
+      );
+      const runtime = new RuntimeController(
+        catalog(ids.map((id) => record(id, "/tmp"))),
+        trackedAttachmentStore(),
+        (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      try {
+        await runtime.openSession("0");
+        await waitForReady(runtime, "0");
+        const old = workers[0]!;
+        const stopping = vi.spyOn(old, "stop").mockImplementation(() => stop);
+        if (retirement === "unexpected exit") {
+          // No pending mutation response supplies an error.stopped fallback.
+          old.emit("event", { type: "agent_start" });
+          old.emit("exit", new Error("RPC disconnected"));
+        } else {
+          for (const id of ids.slice(1)) {
+            await runtime.openSession(id);
+            await waitForReady(runtime, id);
+          }
+        }
+        await vi.waitFor(() => expect(stopping).toHaveBeenCalledOnce());
+        const delivery = runtime
+          .openSession("0")
+          .then(() =>
+            runtime.prompt({ sessionId: "0", message: "after retirement" }),
+          )
+          .then(
+            () => null,
+            (error: unknown) => error,
+          );
+        await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+        expect(
+          workers.filter((worker) => worker.sessionId === "0"),
+        ).toHaveLength(1);
+
+        if (outcome === "confirmed") {
+          confirmStop();
+          expect(await delivery).toBeNull();
+          expect(
+            workers.filter((worker) => worker.sessionId === "0"),
+          ).toHaveLength(2);
+        } else {
+          const failure = new Error("Old writer exit unconfirmed");
+          rejectStop(failure);
+          expect(await delivery).toBe(failure);
+          await expect(runtime.openSession("0")).rejects.toThrow(
+            "Old writer exit unconfirmed",
+          );
+          expect(
+            workers.filter((worker) => worker.sessionId === "0"),
+          ).toHaveLength(1);
+        }
+      } finally {
+        confirmStop();
+        await runtime.close().catch(() => undefined);
+        errors.mockRestore();
+      }
+    },
+  );
 
   it("keeps replacement and prompt writes fenced when stop rejects without exit", async () => {
     const store = trackedAttachmentStore();
@@ -2582,6 +2695,47 @@ describe("RuntimeController concurrent sessions", () => {
       await runtime.close();
     }
   });
+
+  it.each(["resume", "new"])(
+    "adds only internal GUI support, not agent tools or prompt policy (%s)",
+    async (mode) => {
+      let worker!: FakeRpc;
+      const runtime = new RuntimeController(
+        catalog([record("a", "/tmp")]),
+        trackedAttachmentStore(),
+        (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      try {
+        if (mode === "resume") {
+          await runtime.openSession("a");
+          await waitForReady(runtime);
+        } else {
+          await runtime.newSession(TEST_CWD);
+        }
+        expect(worker.options.args).toEqual([
+          ...(mode === "resume" ? ["--session", "/sessions/a.jsonl"] : []),
+          "--extension",
+          expect.stringMatching(/\/inspire-branch-bridge\.(ts|js)$/),
+        ]);
+        expect(Object.keys(worker.options.env ?? {}).sort()).toEqual([
+          "INSPIRE_BRANCH_COMMAND",
+          "INSPIRE_BRANCH_STATUS_KEY",
+          "INSPIRE_BRANCH_WORKER_ID",
+        ]);
+        const message = "Use my configured tools and prompts.";
+        await runtime.prompt({ sessionId: worker.sessionId, message });
+        expect(worker.commands).toContainEqual(
+          expect.objectContaining({ type: "prompt", message }),
+        );
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
 
   it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
     const store = trackedAttachmentStore();
@@ -3793,6 +3947,73 @@ describe("RuntimeController concurrent sessions", () => {
     expect(workers.reduce((sum, worker) => sum + worker.starts, 0)).toBe(1);
     expect(workers.reduce((sum, worker) => sum + worker.stops, 0)).toBe(1);
   });
+
+  it.each([
+    { reported: true, confirmed: true },
+    { reported: true, confirmed: false },
+    { reported: false, confirmed: false },
+  ])(
+    "retains a failed new-session reservation until exit is confirmed (identity=$reported, stop=$confirmed)",
+    async ({ reported, confirmed }) => {
+      const target = record("new-id", TEST_CWD);
+      target.path = join(fixtureWorkspace, "new-id.jsonl");
+      const sessions = catalog([target]);
+      const lookup = vi.spyOn(sessions, "get");
+      const workers: FakeRpc[] = [];
+      const disconnected = new Error("Transport lost before commit");
+      let finishStop!: (error?: Error) => void;
+      const stopped = new Promise<void>((resolve, reject) => {
+        finishStop = (error) => (error ? reject(error) : resolve());
+      });
+      const runtime = new RuntimeController(
+        sessions,
+        trackedAttachmentStore(),
+        (options) => {
+          const worker = new FakeRpc(options);
+          if (workers.length === 0) {
+            worker.stop = () => {
+              worker.stops += 1;
+              return stopped;
+            };
+            worker.responseOverrides.set(
+              reported ? "get_commands" : "get_state",
+              () => {
+                worker.emit("exit", disconnected);
+                throw disconnected;
+              },
+            );
+          }
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      const creating = runtime.newSession(TEST_CWD).catch((error) => error);
+      await vi.waitFor(() => expect(workers[0]?.stops).toBe(1));
+      const opening = runtime.openSession("new-id").catch((error) => error);
+      await vi.waitFor(() => expect(lookup).toHaveBeenCalledWith("new-id"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(workers).toHaveLength(1);
+
+      if (confirmed) {
+        finishStop();
+        expect(await creating).toBe(disconnected);
+        expect(await opening).toMatchObject({
+          active: { sessionId: "new-id" },
+        });
+        await waitForReady(runtime, "new-id");
+        expect(workers).toHaveLength(2);
+      } else {
+        const unconfirmed = new Error("Worker exit unconfirmed");
+        finishStop(unconfirmed);
+        expect(await creating).toBe(unconfirmed);
+        expect(await opening).toBe(unconfirmed);
+        await expect(runtime.openSession("new-id")).rejects.toBe(unconfirmed);
+        expect(workers).toHaveLength(1);
+      }
+      await runtime.close();
+    },
+  );
 
   it("unregisters and stops a provisional worker whose startup fails", async () => {
     const store = trackedAttachmentStore();

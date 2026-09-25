@@ -44,6 +44,7 @@ import {
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
+import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 
 interface Choice<T extends string> {
@@ -743,6 +744,7 @@ export const SettingsContent = memo(function SettingsContent({
             title="Behavior"
             description="Set workbench behavior and controls owned by the live Pi runtime."
           >
+            <HerdrSettings />
             <SettingField
               label="On launch"
               description="Open the welcome page or continue the previous session."

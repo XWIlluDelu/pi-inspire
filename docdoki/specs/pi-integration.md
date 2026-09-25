@@ -35,6 +35,23 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
 
 ## Checks
 
+### Agent ownership
+
+- Pi and the user's configuration own model tools, prompts, extensions, and execution policy.
+  Inspire does not add LLM tools, append system prompts, or inject delegation instructions.
+  User-configured communication extensions remain Pi extensions, not an Inspire-owned workflow.
+- GUI support is limited to rendering native state and translating explicit user operations.
+  The branch-navigation bridge is an internal non-model command for a GUI action; it must not
+  register model tools or change prompt construction. Explicitly attached files and selected
+  prompt resources remain user input, not permission to introduce background agent policy.
+- Both worker backends preserve that boundary. Herdr supplies real environment capabilities;
+  no visible agent feature is required to demonstrate the enhancement. Its module does not
+  define a second session list, message-routing service, collaboration receipt store, or scheduler.
+- Keep one operation/session authority and narrow backend interfaces. Normal mode remains
+  independent of Herdr; enabled-mode costs and failure paths belong to its environment module.
+  Performance, reliable failure handling, clear code, and maintainability constrain the design,
+  rather than minimum patch size or the number of exposed features.
+
 ### Installed runtime and typed controls
 
 - The local host resolves the user's separately installed `pi` executable, loads the public SDK from
@@ -46,8 +63,9 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
 - The normal Pi agent directory and project working directory remain authoritative for settings,
   credentials, models, extensions, skills, prompts, context files, and sessions. Pi and its tools
   inherit the user's exported execution environment under [[host-lifecycle]], not a reduced
-  service-only PATH or an Inspire-injected NODE_ENV. Pi remains a directly managed RPC worker;
-  environment reuse neither adds a PTY nor changes Pi's native command execution semantics.
+  service-only PATH or an Inspire-injected NODE_ENV. Direct RPC pipes remain the default;
+  [[herdr-enhancement]] may change worker placement through a private byte transport, but neither
+  backend changes Pi's native command execution semantics or replaces RPC with terminal frames.
 
 - The browser receives model availability and runtime state but never stored credential values. Its
   Settings surface can change Pi's auto-compaction, auto-retry, steering-delivery, and

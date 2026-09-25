@@ -3,8 +3,8 @@ import { once } from "node:events";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -66,6 +66,16 @@ describe("PreferencesStore validation", () => {
     const second = await store.inspect();
     expect(second.warning).toMatch(/not valid JSON.*left unchanged/);
     expect(await readFile(path, "utf8")).toBe(raw);
+  });
+
+  it("defaults Herdr off, validates the boolean, and persists a field-scoped opt-in", async () => {
+    const { path, store } = await fixture();
+    expect((await store.read()).herdrEnabled).toBe(false);
+    await expect(store.patch({ herdrEnabled: "yes" })).rejects.toBeDefined();
+    await store.patch({ herdrEnabled: true });
+    expect(JSON.parse(await readFile(path, "utf8")).herdrEnabled).toBe(true);
+    await store.patch({ herdrEnabled: false });
+    expect((await store.read()).herdrEnabled).toBe(false);
   });
 
   it("treats missing legacy fields as migration defaults, not corruption", async () => {

@@ -36,12 +36,13 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts";
-import type { SessionResourceListResponse } from "../shared/resource-references";
+import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type {
+  HostRestartOperation,
   HostRestartRequest,
   HostRestartStatus,
-  HostRestartOperation,
 } from "../shared/host-restart";
+import type { SessionResourceListResponse } from "../shared/resource-references";
 import type {
   TerminalAttachTicketResponse,
   TerminalCatalogResponse,
@@ -395,6 +396,10 @@ async function deliverPrompt(
 
 export function createApi(token: string | null = null) {
   return {
+    herdrStatus: () =>
+      request<HerdrEnhancementStatus>(token, "/api/host/herdr", {
+        signal: AbortSignal.timeout(10_000),
+      }),
     hostRestartStatus: () =>
       request<HostRestartStatus>(token, "/api/host/restart", {
         signal: AbortSignal.timeout(10_000),
