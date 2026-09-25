@@ -39,14 +39,14 @@ Make Pi's built-in command syntax a first-class Web interaction: supported comma
 ## Current state
 
 - **Completed:** The shared registry covers Pi 0.84's interactive built-ins while preserving runtime extension/prompt/skill precedence (with `/compact` as the deliberate Host override). Browser-native commands reuse model, thinking, settings, sessions, History, naming, copy, update, and new-session surfaces. Host-native compact, HTML export, and resource reload have typed authenticated routes and named lifecycle receipts. Terminal-only commands point to the persistent project terminal, and unknown slash or bang commands cannot consume a model turn.
-- **Completed:** Manual compaction acknowledges immediately in Composer, runs outside the prompt timeout, currently blocks compaction-time delivery rather than implementing Pi TUI's separate compaction queue, and can be cancelled by replacing only its owning worker. Durable compaction and branch summaries render as searchable dedicated cards. Settings now expose Pi's auto-compaction, auto-retry, steering, and follow-up modes.
-- **Remaining outside the built-in surface:** An extension `registerCommand()` handler still owns the prompt RPC until its preflight completes. Long handlers and unbounded extension dialogs therefore retain the existing 30-second prompt-confirmation boundary; changing that safely needs its own accepted-operation identity and cancellation design.
-- **Modified files:** shared command/contracts; Host runtime/RPC/routes; Web store, Composer, command palette, Settings, transcript projection/styles; focused server/Web tests and owning specs.
+- **Completed:** Manual compaction acknowledges immediately in Composer, runs outside the prompt timeout, accepts temporary Host-held Steer/Queue with the same Pending and Clear surface as Pi queues, and can be cancelled by replacing only its owning worker. Durable compaction and branch summaries render as searchable dedicated cards. Settings expose Pi's auto-compaction, auto-retry, steering, and follow-up modes.
+- **Completed in the delivery follow-up:** A long `registerCommand()` handler or prompt preflight does not freeze later Steer/Queue and Clear. A real streaming agent receives queued direction independently of the earlier operation's receipt; before Pi starts its agent the original command/prompt keeps its place, and Host-held input waits. Composer operations own independent input/artifact partitions and retry identities. Export can read the current Pi state during an active run; reload and manual compact remain busy-gated.
+- **Modified files:** shared command/contracts; Host runtime/RPC/routes; Web store, Composer, command palette, Settings, transcript projection/styles; focused server/Web tests and owning specs. The delivery follow-up also changes Host Pending projection/worker lifecycle, Composer operation ownership, the isolated Pi fixture, and their focused tests.
 
 ## User review: command copy and compaction UX
 
 - Removed the browser-authored running explanations for compact/export/reload and the command-specific “keep writing” editor placeholders. Running receipts retain command identity and phase; Host results and error diagnostics remain. Focused store/Composer tests pass (136 tests), as does TypeScript checking.
-- Source inspection of the repository's Pi 0.84.4 and locally installed Pi 0.85.1 distinguishes TUI from RPC: interactive input uses `queueCompactionMessage` for steer/follow-up and `flushCompactionQueue` after compaction. `AgentSession.prompt` rejects ordinary input while manual compaction is active. The existing Web send block is an adapter limitation, not upstream UI parity; this review does not implement a new queue.
+- Source inspection distinguished Pi TUI's `queueCompactionMessage` from RPC's ordinary prompt path, which rejects input during manual compaction. The Host now holds bounded input owned by the worker, slot incarnation, and explicit branch selection instead of pretending the public RPC itself accepts it; it drains only after real Pi compaction/agent state permits delivery. No extra copy promises a waiting interval.
 - Proposed, not yet decided or implemented: successful compaction should retain only its authoritative chronological context-summary row, without a second persistent Composer result requiring dismissal. Running feedback, command failures, and export paths need their own lifecycle treatment rather than moving every transient notice into durable conversation history. The user requested a transcript inventory before choosing broader visual unification.
 
 ## Checkpoint card consistency
@@ -65,6 +65,22 @@ Verification: 64 focused Web/configuration tests, TypeScript, Web build, and six
 checkpoint cases passed. The browser cases cover light/dark at 1280, 390, and 320 pixels,
 including reload, source order, keyboard disclosure/copy, overflow, and accessibility.
 
+## Delivery follow-up evidence
+
+- A private offline Pi fixture demonstrates real threshold auto-compaction in the first prompt's
+  preflight (`isCompacting=true`, `isStreaming=false`), Host Pending for its follow-up, and Pi
+  persisted user text in original-then-follow-up order after compaction. It does not call a paid
+  provider. Fake-worker checks cover manual compact consume/Clear/abort, long extension handler
+  Steer/Queue and Clear before its receipt, and slow-steer receipt concurrency.
+- Review verification: 181 tests passed across the focused runtime, stream-budget, Composer,
+  controller, and store files; the separate real-Pi preflight case passed. TypeScript checking
+  and formatting checks passed. The review repaired the Pending mode type, test-harness wiring,
+  and two Composer ownership bugs: an old receipt cannot clear a later identical draft, and
+  successive attachment-only or repeated project-only submissions retain independent input
+  identities. Component checks also include a delayed compact HTTP receipt; store checks include
+  live model/thinking/export and local commands. This work has not been deployed or restarted in
+  the user's service.
+
 ## Next actions
 
 - [x] Define a shared native-command registry, parser, argument contract, and capability mapping without claiming terminal-only behavior.
@@ -74,7 +90,7 @@ including reload, source order, keyboard disclosure/copy, overflow, and accessib
 - [x] Reject unknown and terminal-only command syntax before it can consume a model turn, with specific recovery guidance.
 - [x] Preserve extension/prompt/skill dispatch and collision semantics.
 - [x] Verify parser, routing, lifecycle, accessibility, responsive presentation, Pi projection behavior, and the ordinary prompt/queue path.
-- [ ] Design extension-command acceptance identities and cancellation separately before extending the prompt confirmation boundary.
+- [x] Use existing prompt operation identities to preserve long-handler receipt observation while allowing independent Steer/Queue and Clear; do not extend the RPC confirmation timeout or cancel unrelated extension commands.
 
 ## Decisions
 
@@ -85,4 +101,4 @@ including reload, source order, keyboard disclosure/copy, overflow, and accessib
 
 ## Handoff
 
-The built-in command surface is implemented. A future extension-command lifecycle should start from Pi's delayed `preflightResult` for `registerCommand()` handlers in RPC mode; do not merely lengthen both timeouts, because reconnect, cancellation, and retry identity would remain ambiguous.
+The built-in command surface and the follow-up delivery changes are implemented. Long extension handlers still own their original command/prompt operation and can be explicitly stopped only through existing session cancellation; this change does not invent an extension-specific completion or cancellation API.

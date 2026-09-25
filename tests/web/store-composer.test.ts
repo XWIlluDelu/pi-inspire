@@ -419,6 +419,72 @@ describe("Pi native command dispatch", () => {
     });
   });
 
+  it("keeps local controls and live model/thinking/export available during Pi work", async () => {
+    let exports = 0;
+    let modelChanges = 0;
+    let thinkingChanges = 0;
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/transcript/assistant-text"))
+        return { body: { text: "last settled answer" } };
+      if (url.startsWith("/api/control/model")) {
+        modelChanges += 1;
+        return { body: { ok: true } };
+      }
+      if (url.startsWith("/api/control/thinking")) {
+        thinkingChanges += 1;
+        return { body: { ok: true } };
+      }
+      if (url.startsWith("/api/control/native-command")) {
+        exports += 1;
+        return {
+          body: {
+            command: "export",
+            outcome: "completed",
+            message: "Exported.",
+          },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const running = activeSnapshot();
+    running.runState = "running";
+    running.sessionStatuses.s1 = { runState: "running" };
+    socket.emit({ type: "snapshot", data: running });
+    await store.sendPrompt("/settings");
+    expect(store.getState().nativeCommandUiRequest?.action).toBe("settings");
+    await store.sendPrompt("/session");
+    expect(store.getState().commandActivities.s1?.at(-1)?.command).toBe(
+      "session",
+    );
+    await store.sendPrompt("/copy");
+    await vi.waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("last settled answer"),
+    );
+    await store.sendPrompt("/model");
+    expect(store.getState().nativeCommandUiRequest?.action).toBe("model");
+    await store.sendPrompt("/thinking");
+    expect(store.getState().nativeCommandUiRequest?.action).toBe("thinking");
+    await store.sendPrompt("/model no-exact-match");
+    expect(store.getState().nativeCommandUiRequest?.action).toBe("model");
+    expect(store.getState().commandActivities.s1?.at(-1)?.command).not.toBe(
+      "model",
+    );
+    await store.sendPrompt("/model kimi-coding/kimi-k3");
+    await store.sendPrompt("/thinking low");
+    await vi.waitFor(() => {
+      expect(modelChanges).toBe(1);
+      expect(thinkingChanges).toBe(1);
+    });
+    await store.sendPrompt("/export");
+    await vi.waitFor(() => expect(exports).toBe(1));
+  });
+
   it("updates Pi delivery and resilience settings through typed controls", async () => {
     const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
     let runtimeSettings: PiRuntimeSettings = {

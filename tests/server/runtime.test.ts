@@ -1831,9 +1831,11 @@ describe("RuntimeController concurrent sessions", () => {
 
     worker.emit("event", { type: "agent_start" });
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    worker.responseOverrides.set("export_html", { path: "/tmp/live.html" });
     await expect(
       runtime.nativeCommand({ sessionId: "a", command: "export" }),
-    ).rejects.toMatchObject({ status: 409 });
+    ).resolves.toMatchObject({ command: "export", outcome: "completed" });
+    expect(worker.commands).toContainEqual({ type: "export_html" });
     await runtime.close();
   });
 
@@ -2036,13 +2038,25 @@ describe("RuntimeController concurrent sessions", () => {
     });
     await compactStarted;
     expect((await runtime.snapshot()).runState).toBe("compacting");
+    const pending = runtime.prompt({
+      sessionId: "a",
+      message: "direction held through compaction",
+      behavior: "steer",
+    });
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+    );
     await runtime.abort("a");
+    await expect(pending).rejects.toMatchObject({ code: "PROMPT_ABORTED" });
 
     await expect(compacting).resolves.toMatchObject({
       command: "compact",
       outcome: "cancelled",
     });
     expect(worker.stops).toBe(1);
+    expect(
+      worker.commands.filter((command) => command.type === "prompt"),
+    ).toEqual([]);
     expect((await runtime.snapshot()).runState).toBe("aborted");
     await runtime.close();
   });
@@ -2853,6 +2867,299 @@ describe("RuntimeController concurrent sessions", () => {
       followUp: [],
     });
     await runtime.close();
+  });
+
+  it("holds manual-compaction input as Pending, clears it, and starts the first surviving prompt once Pi is idle", async () => {
+    let worker!: FakeRpc;
+    const compactGate = deferredSignal();
+    let streaming = false;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      worker.responseOverrides.set("compact", () => compactGate.promise);
+      worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        sessionFile: worker.sessionPath,
+        isStreaming: streaming,
+        isCompacting: false,
+        thinkingLevel: "medium",
+        model: { provider: "test", id: "model" },
+      }));
+      worker.responseOverrides.set("prompt", () => {
+        streaming = true;
+        return {};
+      });
+      const compact = runtime.nativeCommand({
+        sessionId: "a",
+        command: "compact",
+      });
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.type === "compact"),
+        ).toBe(true),
+      );
+      const removed = runtime.prompt({
+        sessionId: "a",
+        message: "remove me",
+        behavior: "steer",
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      await runtime.clearPending("a");
+      await expect(removed).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
+      const first = runtime.prompt({
+        sessionId: "a",
+        message: "start",
+        behavior: "steer",
+      });
+      const second = runtime.prompt({
+        sessionId: "a",
+        message: "later",
+        behavior: "followUp",
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
+      );
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toEqual([]);
+      worker.emit("event", {
+        type: "compaction_end",
+        reason: "manual",
+        result: {},
+      });
+      compactGate.resolve();
+      await compact;
+      await Promise.all([first, second]);
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toMatchObject([
+        { message: "start" },
+        { message: "later", streamingBehavior: "followUp" },
+      ]);
+    } finally {
+      compactGate.resolve();
+      await runtime.close();
+    }
+  });
+
+  it("does not overtake the original prompt while auto-compaction runs in preflight", async () => {
+    let worker!: FakeRpc;
+    const firstGate = deferredSignal();
+    let streaming = false;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      worker.responseOverrides.set(
+        "prompt",
+        (command: Record<string, unknown>) =>
+          command.message === "first" ? firstGate.promise : {},
+      );
+      worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        sessionFile: worker.sessionPath,
+        isStreaming: streaming,
+        isCompacting: false,
+      }));
+      const first = runtime.prompt({ sessionId: "a", message: "first" });
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.type === "prompt"),
+        ).toBe(true),
+      );
+      worker.emit("event", { type: "compaction_start", reason: "threshold" });
+      const queued = runtime.prompt({
+        sessionId: "a",
+        message: "follow",
+        behavior: "followUp",
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      worker.emit("event", {
+        type: "compaction_end",
+        reason: "threshold",
+        result: {},
+      });
+      await new Promise<void>((done) => setImmediate(done));
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
+      streaming = true;
+      firstGate.resolve();
+      await Promise.all([first, queued]);
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toMatchObject([
+        { message: "first" },
+        { message: "follow", streamingBehavior: "followUp" },
+      ]);
+    } finally {
+      firstGate.resolve();
+      await runtime.close();
+    }
+  });
+
+  it("lets queued input and Clear bypass a blocked extension receipt", async () => {
+    let worker!: FakeRpc;
+    const extensionGate = deferredSignal();
+    const steeringGate = deferredSignal();
+    let streaming = false;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.responseOverrides.set("get_commands", () => ({
+          commands: [{ name: "slow", source: "extension" }],
+        }));
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      await runtime.snapshot();
+      worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        sessionFile: worker.sessionPath,
+        isStreaming: streaming,
+        isCompacting: false,
+      }));
+      worker.responseOverrides.set(
+        "prompt",
+        (command: Record<string, unknown>) =>
+          command.message === "/slow"
+            ? extensionGate.promise
+            : command.message === "live"
+              ? steeringGate.promise
+              : {},
+      );
+      const extension = runtime.prompt({ sessionId: "a", message: "/slow" });
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.type === "prompt"),
+        ).toBe(true),
+      );
+      const queued = runtime.prompt({
+        sessionId: "a",
+        message: "direction",
+        behavior: "steer",
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      await runtime.clearPending("a");
+      await expect(queued).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
+      const steering = runtime.prompt({
+        sessionId: "a",
+        message: "live",
+        behavior: "steer",
+      });
+      const following = runtime.prompt({
+        sessionId: "a",
+        message: "more",
+        behavior: "followUp",
+      });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
+      );
+      streaming = true;
+      worker.emit("event", { type: "agent_start" });
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.message === "more"),
+        ).toBe(true),
+      );
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toMatchObject([
+        { message: "/slow" },
+        { message: "live", streamingBehavior: "steer" },
+        { message: "more", streamingBehavior: "followUp" },
+      ]);
+      steeringGate.resolve();
+      await Promise.all([steering, following]);
+      extensionGate.resolve();
+      await extension;
+    } finally {
+      steeringGate.resolve();
+      extensionGate.resolve();
+      await runtime.close();
+    }
+  });
+
+  it("does not make a slow steer receipt block the next steer or Clear", async () => {
+    let worker!: FakeRpc;
+    const slowGate = deferredSignal();
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      worker.emit("event", { type: "agent_start" });
+      worker.responseOverrides.set(
+        "prompt",
+        (command: Record<string, unknown>) =>
+          command.message === "slow" ? slowGate.promise : {},
+      );
+      const slow = runtime.prompt({
+        sessionId: "a",
+        message: "slow",
+        behavior: "steer",
+      });
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.message === "slow"),
+        ).toBe(true),
+      );
+      const next = runtime.prompt({
+        sessionId: "a",
+        message: "next",
+        behavior: "followUp",
+      });
+      await runtime.clearPending("a");
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.some((command) => command.message === "next"),
+        ).toBe(true),
+      );
+      slowGate.resolve();
+      await Promise.all([slow, next]);
+    } finally {
+      slowGate.resolve();
+      await runtime.close();
+    }
   });
 
   it("clears the public Pi queue at its current boundary without rewriting newer projections", async () => {

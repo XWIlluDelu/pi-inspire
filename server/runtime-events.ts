@@ -81,6 +81,8 @@ interface RuntimeEventControllerHost {
   invalidateCatalog(): void;
   scheduleIdleWorkerEviction(): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
+  refreshPendingQueues(slot: RuntimeSlot): void;
+  resumeDeferredPrompts(slot: RuntimeSlot): void;
   processOwner(rpc: PiRpcProcess): RuntimeSlot | undefined;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   setProjectionConflict(
@@ -427,11 +429,12 @@ export class RuntimeEventController {
         break;
       }
       case "queue_update":
-        slot.pendingQueues = pendingQueuesFromTexts(
+        slot.piPendingQueues = pendingQueuesFromTexts(
           record.steering,
           record.followUp,
-          slot.pendingQueues.revision,
+          slot.piPendingQueues.revision,
         );
+        this.host.refreshPendingQueues(slot);
         // Public Pi emits full-text arrays on queue updates. The browser
         // receives only the bounded Host projection.
         forwardedEvent = {
@@ -540,7 +543,10 @@ export class RuntimeEventController {
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
         // Public Pi's text projection can leave image-only rows stale until settlement.
-        slot.pendingQueues = emptyPendingQueues();
+        slot.piPendingQueues = emptyPendingQueues();
+        if (slot.deferredPrompts.length === 0)
+          slot.pendingQueues = emptyPendingQueues();
+        else this.host.refreshPendingQueues(slot);
         this.host.invalidateCatalog();
         this.host.scheduleIdleWorkerEviction();
         break;
@@ -549,6 +555,12 @@ export class RuntimeEventController {
     if (slot.runState !== "retrying") slot.retry = null;
     if (!isBusyRunState(slot.runState)) slot.summarizationRetry = null;
     this.host.emitSlotEvent(slot, forwardedEvent);
+    if (
+      record.type === "compaction_end" ||
+      record.type === "agent_start" ||
+      record.type === "agent_settled"
+    )
+      this.host.resumeDeferredPrompts(slot);
   }
 
   private interceptBranchStatus(

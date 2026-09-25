@@ -13,14 +13,17 @@ import type { ComposerHistoryEntry } from "../../shared/contracts";
 import { clipboardFiles } from "../../src/clipboard-files";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
+import { deleteSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  type RouteResponse,
   TEST_HOST_AUTHORITY,
 } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
@@ -28,6 +31,7 @@ import { pendingQueues } from "./pending-fixtures";
 let promptBodies: Record<string, unknown>[];
 let abortBodies: Record<string, unknown>[];
 let promptFails: boolean;
+let promptGates: Promise<RouteResponse>[];
 let fileSearchFails: boolean;
 let slowSearchGate: Promise<void> | null;
 let historyEntries: ComposerHistoryEntry[];
@@ -37,6 +41,7 @@ beforeAll(async () => {
   promptBodies = [];
   abortBodies = [];
   promptFails = false;
+  promptGates = [];
   fileSearchFails = false;
   slowSearchGate = null;
   historyEntries = [];
@@ -122,7 +127,7 @@ beforeAll(async () => {
           body: { error: "boom" },
         };
       promptBodies.push(body);
-      return { status: 202, body: { accepted: true } };
+      return promptGates.shift() ?? { status: 202, body: { accepted: true } };
     }
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     return undefined;
@@ -148,6 +153,8 @@ function typeDraft(text: string) {
 }
 
 function clearLeftovers() {
+  deleteSessionDraft("s1");
+  store.replaceComposerText("");
   for (const item of store.getState().attachments)
     store.removeAttachment(item.localId);
   for (const path of store.getState().projectFiles)
@@ -225,6 +232,62 @@ describe("composer attachments", () => {
     // accepted submission clears the draft and attachments
     expect(screen.getByLabelText("Message")).toHaveValue("");
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
+  });
+
+  it("does not clear a later matching draft when an earlier handed-off receipt arrives", async () => {
+    clearLeftovers();
+    const first = deferred<RouteResponse>();
+    promptGates.push(first.promise);
+    render(<Composer />);
+
+    typeDraft("same text");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(promptBodies.at(-1)?.message).toBe("same text"));
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+
+    typeDraft("same text");
+    await act(async () => {
+      first.resolve({ status: 202, body: { accepted: true } });
+      await first.promise;
+    });
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    expect(screen.getByLabelText("Message")).toHaveValue("same text");
+    clearLeftovers();
+  });
+
+  it("allows successive attachment-only and repeated project-only submissions", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const before = promptBodies.length;
+
+    await attachFile("first.txt");
+    await screen.findByText("notes.txt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(promptBodies.length).toBe(before + 1));
+    await waitFor(() =>
+      expect(screen.queryByText("notes.txt")).not.toBeInTheDocument(),
+    );
+
+    await attachFile("second.txt");
+    await screen.findByText("notes.txt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(promptBodies.length).toBe(before + 2));
+    expect(promptBodies.slice(before)).toEqual([
+      expect.objectContaining({ message: "", attachmentIds: ["att-1"] }),
+      expect.objectContaining({ message: "", attachmentIds: ["att-1"] }),
+    ]);
+
+    for (let index = 0; index < 2; index++) {
+      await waitFor(() => expect(store.getState().sending).toBe(false));
+      act(() => store.addProjectFile("src/repeated.ts"));
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(promptBodies.length).toBe(before + 3 + index));
+      expect(promptBodies.at(-1)).toMatchObject({
+        message: "",
+        projectFiles: ["src/repeated.ts"],
+      });
+    }
+    clearLeftovers();
   });
 
   it("retains the draft and attachments when submission fails", async () => {
@@ -600,7 +663,60 @@ describe("composer-adjacent status and queued controls", () => {
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
 
-  it("keeps drafts local and removes steer controls during compaction", () => {
+  it("does not let a late compact HTTP receipt lock the composer after Pi settles", async () => {
+    clearLeftovers();
+    const compactReceipt = deferred<RouteResponse>();
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      if (String(input).startsWith("/api/control/native-command"))
+        return compactReceipt.promise.then(
+          (route) =>
+            new Response(JSON.stringify(route.body), {
+              status: route.status ?? 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+        );
+      return previousFetch(input, init);
+    };
+    try {
+      const socket = FakeWebSocket.instances.at(-1)!;
+      act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+      render(<Composer />);
+      await store.sendPrompt("/compact");
+      const compacting = activeSnapshot();
+      compacting.runState = "compacting";
+      compacting.sessionStatuses.s1 = { runState: "compacting" };
+      act(() => socket.emit({ type: "snapshot", data: compacting }));
+      await waitFor(() =>
+        expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+          command: "compact",
+          status: "running",
+        }),
+      );
+      act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+      typeDraft("next task");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() =>
+        expect(promptBodies.at(-1)).toMatchObject({ message: "next task" }),
+      );
+    } finally {
+      compactReceipt.resolve({
+        body: {
+          command: "compact",
+          outcome: "completed",
+          message: "Context compacted.",
+        },
+      });
+      globalThis.fetch = previousFetch;
+      act(() =>
+        FakeWebSocket.instances
+          .at(-1)!
+          .emit({ type: "snapshot", data: activeSnapshot() }),
+      );
+    }
+  });
+
+  it("accepts steer during compaction and keeps cancellation available", async () => {
     clearLeftovers();
     const before = promptBodies.length;
     const socket = FakeWebSocket.instances.at(-1)!;
@@ -613,10 +729,13 @@ describe("composer-adjacent status and queued controls", () => {
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
-    expect(textarea).toHaveAttribute("placeholder", "Message Pi…");
+    expect(textarea).toHaveAttribute(
+      "placeholder",
+      "Add direction to the running task…",
+    );
     expect(
-      screen.queryByRole("group", { name: "Message delivery" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("group", { name: "Message delivery" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Cancel context compaction" }),
     ).toBeInTheDocument();
@@ -627,10 +746,14 @@ describe("composer-adjacent status and queued controls", () => {
     );
     expect(meter.getAttribute("title")).not.toContain("type /compact");
 
-    typeDraft("send after the checkpoint");
+    typeDraft("steer during the checkpoint");
     fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(textarea).toHaveValue("send after the checkpoint");
-    expect(promptBodies).toHaveLength(before);
+    await waitFor(() => expect(promptBodies).toHaveLength(before + 1));
+    expect(promptBodies.at(-1)).toMatchObject({
+      message: "steer during the checkpoint",
+      behavior: "steer",
+    });
+    expect(textarea).toHaveValue("");
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });

@@ -45,6 +45,22 @@ Terminal-only capability is part of the option description rather than an inacce
 Reload explicitly says that the worker was replaced; terminal guidance does not imply that opening
 a shell transfers ownership of the current session.
 
+## Compaction-time delivery boundary
+
+Pi TUI's compaction input queue is not the public RPC prompt surface. The Host instead holds a
+bounded transient queue attached to the same session, worker instance, and explicit branch-selection
+identity. Compaction can legitimately renew the browser view while retaining that selection. Its Pending
+projection composes that queue with Pi's public text arrays. Clear owns both at the operation
+boundary, and worker/branch replacement rejects undelivered input for browser recovery rather than
+writing to another history. Actual Pi streaming state, not a Host `queued` label, decides whether
+Steer/Queue joins a live agent or must wait behind the original preflight/extension command.
+
+Each browser delivery has an independent operation record and attachment handoff. A slow receipt
+cannot block later input, and a failed older delivery cannot clear a newer editor or in-flight
+partition. The original prompt operation identity continues through the Host's 20-second receipt
+observation window; uncertain outcome retains its retry identity. This does not invent a durable
+shadow conversation or claim that a Host-held item is already Pi history.
+
 ## Deliberate limits
 
 HTML export, worker-based reload, and worker-based compact cancellation remain bounded existing
@@ -61,7 +77,9 @@ replay missed transient failures after reconnect. These limits are described in 
   namespaced commands, exact casing, pasted separators, and queued reload retirement are covered.
 - Feedback: manual outcomes without local receipts, live and snapshot-restored compaction backoff,
   invalid counters, detail bounding and retirement, and receipt time/lifecycle are covered.
-- Existing real-Pi offline integration remains the public SDK/RPC boundary check. Mock event and
-  browser tests verify presentation, not paid-provider compaction or failure injection.
+- Offline real-Pi integration covers the public SDK/RPC preflight boundary without a paid provider.
+  Focused fake-worker and browser tests cover Host-held Pending, Clear, long extension receipts,
+  separate operation identities, and composer command presentation; they do not claim a provider
+  compaction quality result.
 
 Relevant contracts: [[pi-integration]], [[composer]]. Historical background: [[state-authority-review]].

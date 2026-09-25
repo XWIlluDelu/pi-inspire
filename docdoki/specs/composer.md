@@ -212,10 +212,13 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   `running`, `retrying`, and `queued` are one shared browser/host delivery-state authority, so
   queued work exposes a visible two-option equal-width `Steer` / `Queue` segmented control beside
   abort; the selected mode changes the input placeholder and the send action's accessible name,
-  rather than hiding delivery behind a shortcut. `compacting` remains editable and abortable but
-  blocks delivery, as do an in-flight host export or resource reload. This is a Web-adapter
-  limitation, not Pi TUI behavior: Pi's interactive mode queues compaction-time input separately,
-  while the public ordinary prompt path rejects it during manual compaction.
+  rather than hiding delivery behind a shortcut. `compacting` likewise accepts Steer/Queue and
+  remains abortable. Pi's public prompt path cannot accept input during manual compaction; the Host
+  holds a bounded, worker/branch-selection-owned temporary delivery queue and resumes at the actual Pi boundary.
+  During automatic compaction in prompt preflight, the original prompt remains first; only a real
+  active Pi agent receives steering or follow-up directly. A standalone manual compaction instead
+  lets the first surviving input start a prompt. Unsent Host-held input is not Pi history and cannot
+  cross worker replacement or branch navigation.
 
   The entire Composer surface carries its slow theme-colored breathing halo only while this
   authority reports `running`, including while a descendant control retains focus; retrying and
@@ -229,15 +232,16 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   composer width rather than stretching a non-wrapping chip. The same surface shows the combined count as
   `N Pending`, not `queued`; executing and failed tools remain in their chronological Transcript cards
   instead of being duplicated above the Composer. Bounded host-projected steering and follow-up
-  arrays remain in one labelled Pending surface that preserves each array's order, marks rows `S` or
-  `Q`, and clearly marks omitted or truncated text.
+  arrays and Host-held temporary inputs remain in one labelled Pending surface that preserves each
+  array's order, marks rows `S` or `Q`, and clearly marks omitted or truncated text.
 
   Individual or numbered-list copy uses exactly the displayed text; truncated rows and partial lists
   explicitly label that operation as preview copy and never claim to include omitted content. An
-  explicit confirmed Clear all invokes public Pi `clear_queue` for whatever remains unconsumed at
-  its operation boundary; it does not interrupt the current run or substitute for pause. There are
-  no dormant pause/resume, per-item delete/convert, exact-text RPC, second editor, or browser-owned
-  pending queue paths.
+  explicit confirmed Clear all removes Host-held, not-yet-dispatched input and invokes public Pi
+  `clear_queue` for whatever remains unconsumed at its operation boundary; it does not interrupt the
+  current run or substitute for pause. A cleared Host delivery is definitively rejected to its
+  originating browser operation. There are no dormant pause/resume, per-item delete/convert,
+  exact-text RPC, second editor, or browser-owned pending queue paths.
 
 - A shared Pi-native registry covers the installed interactive command vocabulary even though Pi RPC
   does not enumerate built-ins. Browser-owned commands open or invoke existing model, thinking,
@@ -247,7 +251,11 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   guidance plus a copyable command. Unknown slash commands and `!` shell syntax never silently
   consume a model turn. Native commands reject attachments and project-file references.
 
-  Host operations acknowledge immediately and run outside prompt confirmation timeouts. Command
+  Host operations acknowledge immediately and run outside prompt confirmation timeouts. An active
+  export reads the Pi content available at invocation, not a promised future complete answer; it
+  does not lock subsequent input. Reload and explicitly starting another compact still refuse while
+  Pi work is active. Local/read-only commands remain available regardless of prompt delivery phase.
+  Command
   receipts describe that browser's request/results, not Pi's current phase. `/compact` retains its
   eventual success/cancel/error receipt; its running phase is shown only by the state-owned activity
   surface, identical to automatic compaction. A delayed HTTP receipt cannot extend or end that phase.
@@ -283,7 +291,11 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   full content. A changed branch or browser selection invalidates a pending copy before clipboard
   mutation.
 
-- Submission errors preserve the draft and attachments. Every prompt delivery carries a random
+- Submitting transfers that exact draft and its staged artifacts into an independently owned
+  operation, leaving the editor available for the next message. A definitively failed or
+  acceptance-unknown delivery restores its input if the editor is empty; otherwise a Restore action
+  retains it without replacing newer work. Explicitly cleared Pending releases its attachments
+  instead of inviting a duplicate retry. Every prompt delivery carries a random
   operation identity and the current process-lifetime Host authority. The Host keeps bounded
   process-lifetime fingerprints and retires old response bodies to tombstones instead of forgetting
   an operation identity: concurrent or near-term copies await or return its one result without
@@ -296,7 +308,8 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
   After an acceptance-unknown transport, request-timeout, marked-edge, unowned 5xx, or explicit
   Host-reported unknown/retired outcome, a later user retry of the unchanged draft reuses the exact
-  operation identity and payload while the Host authority remains unchanged. A same-Host header
+  operation identity and payload while the Host authority remains unchanged, even if compaction
+  completion changed the editor's default delivery mode. A same-Host header
   identifies the respondent, not the operation result: only the retained operation's matched refusal
   (Host authority, operation ID, and rejected outcome) clears the identity. A 401/404/500 from receipt
   observation does not reject the original operation.
@@ -309,9 +322,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   to its canonical trigger; the mock-host Chromium gate witnesses that Escape path. Home and End
   retain their ordinary editable-search text navigation rather than moving the active option.
 
-  Project-file chips are frozen while delivery is in flight, remain partitioned with other composer
-  artifacts by session, and clear only from the owning partition after the host accepts the exact
-  delivery that included them. Pi acceptance remains a successful, non-retryable send even if the
+  Project-file chips and attachments handed off to one in-flight operation are separate from the
+  editable next draft, remain partitioned with other composer artifacts by session, and release only
+  on that operation's confirmed acceptance, explicit clear, or user withdrawal after restoration. Pi acceptance remains a successful, non-retryable send even if the
   subsequent disk-projection reconciliation discovers a conflict: the owning sent draft clears, the
   affected worker stops accepting writes, and the conflict remains explicitly recoverable instead of
   inviting duplicate delivery. Attachment uploads still in flight, failed attachment chips, and

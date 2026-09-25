@@ -98,6 +98,7 @@ import {
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
 
 import { getAgentDir, SettingsManager } from "./pi-runtime.js";
+import { mergePendingQueues } from "./runtime-pending.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
@@ -131,6 +132,7 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
   ),
 );
 const MAX_PROMPT_CHARS = 500_000;
+const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 
@@ -452,6 +454,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       invalidateCatalog: () => this.catalog.invalidate(),
       scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
+      refreshPendingQueues: (slot) => this.refreshPendingQueues(slot),
+      resumeDeferredPrompts: (slot) => this.resumeDeferredPrompts(slot),
       processOwner: (rpc) => this.processRegistry.ownerOf(rpc),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       setProjectionConflict: (slot, kind, message) =>
@@ -536,6 +540,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
+        rejectDeferredPrompts: (slot, worker) =>
+          this.rejectDeferredPrompts(slot, worker),
         scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
         logRuntimeError: (sessionId, error, event) =>
           this.logRuntimeError(sessionId, error, event),
@@ -893,6 +899,167 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.queueSlotOperation(slot, slot.mutationQueue, operation);
   }
 
+  /** Queue-control RPCs can reach a ready Pi worker while a persistence
+   * command awaits a hook/compaction; their own order remains deterministic. */
+  private deliverySlot<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.queueSlotOperation(slot, slot.deliveryQueue, operation);
+  }
+
+  private readyForDelivery(slot: RuntimeSlot): boolean {
+    const rpc = slot.process;
+    return Boolean(
+      this.slots.get(slot.id) === slot &&
+        !this.deletions.isDeleting(slot.id) &&
+        !slot.conflict &&
+        !slot.navigationLease &&
+        rpc &&
+        slot.ready &&
+        rpc.available &&
+        this.processRegistry.ownerOf(rpc) === slot,
+    );
+  }
+
+  private refreshPendingQueues(slot: RuntimeSlot, publish = false): void {
+    slot.pendingQueues = mergePendingQueues(
+      slot.piPendingQueues,
+      slot.deferredPrompts.map(({ request }) => request),
+      slot.pendingQueues.revision,
+    );
+    if (publish)
+      this.emitSlotEvent(slot, {
+        type: "queue_update",
+        pendingQueues: slot.pendingQueues,
+      });
+  }
+
+  private deferPrompt(
+    slot: RuntimeSlot,
+    request: PromptRequest,
+  ): Promise<ComposerHistoryEntry | null> {
+    const worker = slot.process;
+    if (!worker || !this.readyForDelivery(slot))
+      throw requestError("Pi worker changed before message delivery", 409);
+    if (slot.deferredPrompts.length >= MAX_DEFERRED_PROMPTS)
+      throw requestError(
+        "Pending input is full; clear it or try again later",
+        409,
+      );
+    const result = new Promise<ComposerHistoryEntry | null>(
+      (resolve, reject) => {
+        slot.deferredPrompts.push({
+          request: { ...request, behavior: request.behavior ?? "followUp" },
+          worker,
+          navigationEpoch: slot.deliveryNavigationEpoch,
+          incarnationId: slot.incarnationId,
+          resolve,
+          reject,
+        });
+      },
+    );
+    this.refreshPendingQueues(slot, true);
+    // An auto-compacting prompt or extension command may still own the
+    // persistence FIFO. Its receipt, not compaction_end alone, chooses whether
+    // the deferred input should join an active run or start a fresh one.
+    void slot.mutationQueue.tail.then(() => this.resumeDeferredPrompts(slot));
+    return result;
+  }
+
+  private rejectDeferredPrompts(slot: RuntimeSlot, worker: PiRpcProcess): void {
+    const retained = slot.deferredPrompts.filter(
+      (item) => item.worker !== worker,
+    );
+    if (retained.length === slot.deferredPrompts.length) return;
+    for (const item of slot.deferredPrompts) {
+      if (item.worker === worker)
+        item.reject(
+          requestError("Pi worker changed before message delivery", 409),
+        );
+    }
+    slot.deferredPrompts = retained;
+    this.refreshPendingQueues(slot, true);
+  }
+
+  private resumeDeferredPrompts(slot: RuntimeSlot): void {
+    if (slot.drainingDeferredPrompts || slot.deferredPrompts.length === 0)
+      return;
+    slot.drainingDeferredPrompts = true;
+    void (async () => {
+      while (slot.deferredPrompts.length > 0) {
+        const item = slot.deferredPrompts[0]!;
+        if (
+          this.closing ||
+          !this.readyForDelivery(slot) ||
+          slot.process !== item.worker ||
+          slot.deliveryNavigationEpoch !== item.navigationEpoch ||
+          slot.incarnationId !== item.incarnationId
+        ) {
+          slot.deferredPrompts.shift();
+          this.refreshPendingQueues(slot, true);
+          item.reject(
+            requestError(
+              "Session or worker changed before message delivery",
+              409,
+            ),
+          );
+          continue;
+        }
+        let state: { isStreaming?: boolean; isCompacting?: boolean };
+        try {
+          state = await item.worker.request({ type: "get_state" });
+        } catch (error) {
+          this.rejectDeferredPrompts(slot, item.worker);
+          return;
+        }
+        if (slot.deferredPrompts[0] !== item) continue;
+        if (state.isCompacting) {
+          // Pi emits compaction_end before clearing its private compact flag.
+          if (slot.runState !== "compacting")
+            setTimeout(() => this.resumeDeferredPrompts(slot), 0);
+          return;
+        }
+        if (!state.isStreaming && slot.mutationQueue.pending > 0) {
+          await slot.mutationQueue.tail;
+          continue;
+        }
+        let dispatched!: () => void;
+        const sent = new Promise<void>((resolve) => {
+          dispatched = resolve;
+        });
+        // With a live agent, only the write boundary is serialized. A slow
+        // receipt must not hold the remaining steering/follow-up inputs.
+        const settled = this.promptInside(
+          {
+            ...item.request,
+            ...(state.isStreaming ? {} : { behavior: undefined }),
+          },
+          true,
+          item,
+          state.isStreaming,
+          dispatched,
+        ).then(item.resolve, (error: unknown) => {
+          const index = slot.deferredPrompts.indexOf(item);
+          if (index >= 0) {
+            slot.deferredPrompts.splice(index, 1);
+            this.refreshPendingQueues(slot, true);
+          }
+          item.reject(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        });
+        await (state.isStreaming ? Promise.race([sent, settled]) : settled);
+      }
+    })()
+      .catch((error) =>
+        this.logRuntimeError(slot.id, error, "deferred_prompt_drain"),
+      )
+      .finally(() => {
+        slot.drainingDeferredPrompts = false;
+      });
+  }
+
   /** Extension responses are non-persisting and must be deliverable while a
    * branch mutation is waiting on an extension hook. This independent FIFO is
    * process-instance validated and protects the worker from reclamation. */
@@ -1211,7 +1378,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     _rpc: PiRpcProcess,
     error: Error,
   ): void {
+    this.rejectDeferredPrompts(slot, _rpc);
     slot.process = null;
+    slot.pendingPrompt = null;
+    slot.pendingPromptCount = 0;
     slot.ready = false;
     slot.compactionReturnState = null;
     slot.retry = null;
@@ -1240,7 +1410,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.attention = this.selectedSessionId === slot.id ? null : "failed";
     }
     this.extensionUi.clear(slot, "stopped");
-    slot.pendingQueues = emptyPendingQueues();
+    slot.piPendingQueues = emptyPendingQueues();
+    if (slot.deferredPrompts.length === 0)
+      slot.pendingQueues = emptyPendingQueues();
+    else this.refreshPendingQueues(slot);
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
     this.logRuntimeError(slot.id, error, "worker_exit");
@@ -1925,12 +2098,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async promptInside(
     request: PromptRequest,
+    resumed = false,
+    expected?: RuntimeSlot["deferredPrompts"][number],
+    resumedStreaming = false,
+    onDispatched?: () => void,
   ): Promise<ComposerHistoryEntry | null> {
     const slot = this.requireSlot(request.sessionId);
     const entered = request.message.trim();
     assertPublicPrompt(slot, entered);
     const invocation = parseCommandInvocation(entered);
     const native = parseNativeCommand(entered);
+    const canQueue = Boolean(
+      (request.behavior || slot.deferredPrompts.length > 0) &&
+        !native &&
+        !entered.startsWith("!") &&
+        this.readyForDelivery(slot) &&
+        (!invocation ||
+          (runtimeResourceOwnsCommand(slot, invocation.name) &&
+            !runtimeResourceOwnsCommand(slot, invocation.name, "extension"))),
+    );
+    if (
+      canQueue &&
+      !resumed &&
+      (slot.runState === "compacting" ||
+        slot.runState === "queued" ||
+        slot.deferredPrompts.length > 0)
+    )
+      return this.deferPrompt(slot, request);
+    const directDelivery =
+      canQueue &&
+      (resumedStreaming ||
+        slot.runState === "running" ||
+        slot.runState === "retrying");
     if (
       invocation &&
       !runtimeResourceOwnsCommand(slot, invocation.name) &&
@@ -2000,7 +2199,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
     let enteredGate = false;
     try {
-      return await this.mutateSlot(slot, async () => {
+      const deliver = async () => {
         enteredGate = true;
         // Pi's resource dispatcher splits on a literal space. The Host must
         // enforce the same normalization as the browser for other API clients.
@@ -2016,8 +2215,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             request,
             this.attachments,
           );
-          const readySlot = await this.ensureFreshWriterInsideGate(slot);
-          if (!readySlot.process || !readySlot.ready) {
+          const readySlot = directDelivery
+            ? slot
+            : await this.ensureFreshWriterInsideGate(slot);
+          const readyProcess = readySlot.process;
+          if (!readyProcess || !readySlot.ready) {
             throw requestError("Pi runtime failed to start", 503);
           }
           assertPublicPrompt(readySlot, message);
@@ -2105,16 +2307,42 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             contextFiles,
             projectFiles,
           );
+          if (
+            readySlot.process !== readyProcess ||
+            !readySlot.ready ||
+            this.processRegistry.ownerOf(readyProcess) !== slot ||
+            (expected &&
+              (expected.worker !== readyProcess ||
+                expected.navigationEpoch !== slot.deliveryNavigationEpoch ||
+                expected.incarnationId !== slot.incarnationId))
+          )
+            throw requestError(
+              "Session or worker changed before message delivery",
+              409,
+            );
+          if (expected && !slot.deferredPrompts.includes(expected))
+            throw requestError("Pending message was cleared", 409, {
+              code: "PROMPT_CLEARED",
+            });
           if (!fullMessage && images.length === 0)
             throw new Error("Message or attachment is required");
+          if (expected) {
+            slot.deferredPrompts.splice(
+              slot.deferredPrompts.indexOf(expected),
+              1,
+            );
+            this.refreshPendingQueues(slot, true);
+          }
+          onDispatched?.();
           const previousRunState = slot.runState;
           // Pi owns preflight, including hooks/compaction/dialogs, before its
           // prompt receipt. Publish admission so a silent hook is stoppable.
           if (!isBusyRunState(previousRunState)) slot.runState = "queued";
-          slot.pendingPrompt = readySlot.process;
+          slot.pendingPrompt = readyProcess;
+          slot.pendingPromptCount += 1;
           this.emitSlotEvent(slot, { type: "prompt_pending" });
           try {
-            await this.requestPersistence(readySlot, readySlot.process, {
+            await this.requestPersistence(readySlot, readyProcess, {
               type: "prompt",
               message: fullMessage,
               ...(images.length > 0 ? { images } : {}),
@@ -2123,7 +2351,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : {}),
             });
             accepted = true;
-            slot.pendingPrompt = null;
             // A registered extension's handler has finished at this receipt.
             // Ordinary prompts stay queued until Pi supplies lifecycle events.
             if (
@@ -2209,8 +2436,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             }
             throw error;
           } finally {
-            if (slot.pendingPrompt === readySlot.process)
-              slot.pendingPrompt = null;
+            if (slot.pendingPrompt === readyProcess) {
+              slot.pendingPromptCount -= 1;
+              if (slot.pendingPromptCount === 0) slot.pendingPrompt = null;
+            }
           }
         } catch (error) {
           const outcomeUnknown =
@@ -2252,7 +2481,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               ),
             );
         return acceptedHistoryEntry;
-      });
+      };
+      return directDelivery
+        ? await deliver()
+        : await this.mutateSlot(slot, deliver);
     } catch (error) {
       if (!enteredGate) {
         // A closing runtime can reject a queued mutation before its callback
@@ -2537,6 +2769,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         );
       }
       slot.branchRevision += 1;
+      slot.deliveryNavigationEpoch += 1;
       this.renewView(slot);
       if (result.effectiveLeaf === projection.leafId) {
         slot.navigationLease = null;
@@ -2812,7 +3045,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           // receive either a dialog answer or another persistence command.
           await this.stopWriter(slot);
           this.extensionUi.clear(slot, "aborted");
-          slot.pendingQueues = emptyPendingQueues();
+          slot.piPendingQueues = emptyPendingQueues();
+          this.refreshPendingQueues(slot);
           slot.extensionDisplays = [];
           slot.extensionStatuses = {};
           for (const expectation of slot.persistenceExpectations)
@@ -2849,6 +3083,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const rpc = slot.process;
       if (!rpc || !slot.ready) {
         throw requestError("There is no live Pi runtime to abort", 409);
+      }
+      if (slot.deferredPrompts.length > 0) {
+        for (const item of slot.deferredPrompts)
+          item.reject(
+            requestError("Pending message was cancelled", 409, {
+              code: "PROMPT_ABORTED",
+            }),
+          );
+        slot.deferredPrompts = [];
+        this.refreshPendingQueues(slot, true);
       }
       if (
         slot.runState === "compacting" &&
@@ -2887,14 +3131,44 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   clearPending(sessionId: string): Promise<void> {
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(sessionId);
-      await this.mutateSlot(slot, async () => {
-        const ready = await this.ensureFreshWriterInsideGate(slot);
+      const direct = this.readyForDelivery(slot);
+      const worker = slot.process;
+      const viewId = slot.viewId;
+      const incarnationId = slot.incarnationId;
+      const clear = async () => {
+        if (
+          direct &&
+          (slot.process !== worker ||
+            slot.viewId !== viewId ||
+            slot.incarnationId !== incarnationId ||
+            !this.readyForDelivery(slot))
+        )
+          throw requestError(
+            "Session or worker changed before clearing Pending",
+            409,
+          );
+        const ready = direct
+          ? slot
+          : await this.ensureFreshWriterInsideGate(slot);
+        for (const item of slot.deferredPrompts)
+          item.reject(
+            requestError("Pending message was cleared", 409, {
+              code: "PROMPT_CLEARED",
+            }),
+          );
+        if (slot.deferredPrompts.length > 0) {
+          slot.deferredPrompts = [];
+          this.refreshPendingQueues(slot, true);
+        }
         // Consumption may race this request. queue_update, not the receipt,
         // owns the display; discard Pi's potentially large returned texts.
-        await this.requestPersistence(slot, ready.process, {
+        await this.requestPersistence(slot, ready.process!, {
           type: "clear_queue",
         });
-      });
+      };
+      await (direct
+        ? this.deliverySlot(slot, clear)
+        : this.mutateSlot(slot, clear));
     });
   }
 
@@ -2957,17 +3231,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             409,
           );
         }
-        const result = await this.mutateSlot(slot, async () => {
-          assertNativeCommandIdle(slot, "export");
-          const ready = await this.ensureFreshWriterInsideGate(slot);
-          return ready.process.request<{ path?: unknown }>(
+        const direct = this.readyForDelivery(slot);
+        const worker = slot.process;
+        const viewId = slot.viewId;
+        const incarnationId = slot.incarnationId;
+        const exportHtml = async () => {
+          if (
+            direct &&
+            (slot.process !== worker ||
+              slot.viewId !== viewId ||
+              slot.incarnationId !== incarnationId ||
+              !this.readyForDelivery(slot))
+          )
+            throw requestError("Session or worker changed before export", 409);
+          const ready = direct
+            ? slot
+            : await this.ensureFreshWriterInsideGate(slot);
+          return ready.process!.request<{ path?: unknown }>(
             {
               type: "export_html",
               ...(argument ? { outputPath: argument } : {}),
             },
             null,
           );
-        });
+        };
+        const result = await (direct
+          ? this.deliverySlot(slot, exportHtml)
+          : this.mutateSlot(slot, exportHtml));
         if (!result || typeof result.path !== "string" || !result.path) {
           throw new Error("Pi did not report the exported file path");
         }

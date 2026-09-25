@@ -49,6 +49,8 @@ function setup(incremental = true) {
     clearPendingExtensionUi: () => {},
     invalidateCatalog: () => {},
     scheduleIdleWorkerEviction: () => {},
+    refreshPendingQueues: () => {},
+    resumeDeferredPrompts: () => {},
     emitSlotEvent: (_owner, event) => {
       forwarded = event as Record<string, unknown>;
       forwardedEvents.push(forwarded);
