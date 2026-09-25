@@ -198,6 +198,10 @@ describe("runtime-owned activity", () => {
       expect(retryStatus()).toHaveTextContent(
         detail ? "Retry 2/3 — Provider overloaded" : "Retrying",
       );
+      if (detail)
+        expect(
+          retryStatus()?.querySelector(".activity__retry-reason"),
+        ).toHaveTextContent("Provider overloaded");
       // An unrelated settings/projection snapshot must not erase retry detail.
       act(() => socket().emit({ type: "snapshot", data: snapshot }));
       expect(retryStatus()).toHaveTextContent(
@@ -415,7 +419,7 @@ describe("summary retry and command receipts", () => {
     await waitFor(() => expect(store.getState().runState).toBe("failed"));
   });
 
-  it("timestamps local results and removes successful compact receipts when conversation continues", async () => {
+  it("keeps receipt times in data, not headings, and retires compact receipts when conversation continues", async () => {
     renderActivity();
     act(() => {
       void store.sendPrompt("/compact");
@@ -429,9 +433,11 @@ describe("summary retry and command receipts", () => {
     );
     await screen.findByText("Done");
     const receipt = screen.getByText("/compact").closest("article")!;
+    expect(receipt.querySelector("time")).toBeNull();
     expect(
-      receipt.querySelector("time")?.getAttribute("datetime"),
-    ).toBeTruthy();
+      store.getState().commandActivities[store.getState().sessionId!]?.at(-1)
+        ?.createdAt,
+    ).toEqual(expect.any(Number));
     act(() =>
       socket().emit({
         type: "agent_start",

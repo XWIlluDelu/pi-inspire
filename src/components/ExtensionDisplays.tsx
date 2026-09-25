@@ -1,11 +1,12 @@
 import { Package } from "lucide-react";
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type {
   ExtensionDisplay,
   ExtensionWidgetDisplay,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
 import { CopyAction } from "./CopyAction";
+import { ScrollRail } from "./ScrollRail";
 
 type Placement = ExtensionWidgetDisplay["placement"];
 
@@ -67,6 +68,7 @@ export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
   displays: ExtensionDisplay[];
   placement: Placement;
 }) {
+  const dockRef = useRef<HTMLDivElement>(null);
   const visible = displays.filter(
     (display): display is ExtensionWidgetDisplay =>
       display.kind === "widget" && display.placement === placement,
@@ -74,14 +76,17 @@ export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
   if (visible.length === 0) return null;
   return (
     <div
+      ref={dockRef}
       className={`extension-dock extension-dock--${placement === "aboveEditor" ? "above" : "below"}`}
       role="region"
+      tabIndex={0}
       aria-label={
         placement === "aboveEditor"
           ? "Extension content above composer"
           : "Extension content below composer"
       }
     >
+      <ScrollRail container={dockRef} variant="dock" />
       {visible.map((display) => (
         <TextWidget key={display.id} display={display} />
       ))}

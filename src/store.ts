@@ -63,7 +63,10 @@ import { PreferenceController } from "./controllers/preference-controller";
 import { ResourceController } from "./controllers/resource-controller";
 import { RuntimeEventController } from "./controllers/runtime-event-controller";
 import { SessionCatalogController } from "./controllers/session-catalog-controller";
-import { SessionManagementController } from "./controllers/session-management-controller";
+import {
+  type CommandChangeResult,
+  SessionManagementController,
+} from "./controllers/session-management-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
 import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
@@ -1148,6 +1151,30 @@ export class AppStore {
     this.set({ commandActivities });
   };
 
+  private finishSimpleCommand(
+    sessionId: string,
+    id: number,
+    result: CommandChangeResult,
+    confirmation: string,
+  ): void {
+    if (result.status === "success") {
+      this.dismissCommandActivity(sessionId, id);
+      if (this.state.sessionId === sessionId) this.notify("info", confirmation);
+    } else {
+      this.updateCommandActivity(
+        sessionId,
+        id,
+        result.status === "error"
+          ? { status: "error", message: result.message }
+          : {
+              status: "warning",
+              message:
+                "The command outcome is unknown after ownership changed.",
+            },
+      );
+    }
+  }
+
   private requestNativeCommandUi(
     sessionId: string,
     action: NonNullable<AppState["nativeCommandUiRequest"]>["action"],
@@ -1511,13 +1538,13 @@ export class AppStore {
         "running",
         `Switching to ${model.provider}/${model.id}…`,
       );
-      void this.setModel(model.provider, model.id).then((changed) =>
-        this.updateCommandActivity(sessionId, id, {
-          status: changed ? "success" : "error",
-          message: changed
-            ? `Active model is now ${model.provider}/${model.id}.`
-            : "The model change was not accepted.",
-        }),
+      void this.changeModel(model.provider, model.id).then((result) =>
+        this.finishSimpleCommand(
+          sessionId,
+          id,
+          result,
+          `Active model is now ${model.provider}/${model.id}.`,
+        ),
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
@@ -1561,13 +1588,13 @@ export class AppStore {
         "running",
         `Setting thinking level to ${level}…`,
       );
-      void this.setThinkingLevel(level).then((changed) =>
-        this.updateCommandActivity(sessionId, id, {
-          status: changed ? "success" : "error",
-          message: changed
-            ? `Thinking level is now ${level}.`
-            : "The thinking-level change was not accepted.",
-        }),
+      void this.changeThinkingLevel(level).then((result) =>
+        this.finishSimpleCommand(
+          sessionId,
+          id,
+          result,
+          `Thinking level is now ${level}.`,
+        ),
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
@@ -1591,14 +1618,16 @@ export class AppStore {
         "running",
         "Renaming session…",
       );
-      void this.renameSession(sessionId, command.argument).then((changed) =>
-        this.updateCommandActivity(sessionId, id, {
-          status: changed ? "success" : "error",
-          message: changed
-            ? `Session renamed to “${command.argument.slice(0, 160)}”.`
-            : "The session rename was not accepted.",
-        }),
-      );
+      void this.sessionManagement
+        .renameSessionResult(sessionId, command.argument)
+        .then((result) =>
+          this.finishSimpleCommand(
+            sessionId,
+            id,
+            result,
+            `Session renamed to “${command.argument.slice(0, 160)}”.`,
+          ),
+        );
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "copy") {
@@ -1648,11 +1677,12 @@ export class AppStore {
           } catch {
             throw new Error("Clipboard access was unavailable.");
           }
-          this.updateCommandActivity(sessionId, id, {
-            status: "success",
-            message:
-              "Copied the complete last assistant response to the clipboard.",
-          });
+          this.finishSimpleCommand(
+            sessionId,
+            id,
+            { status: "success" },
+            "Copied the complete last assistant response to the clipboard.",
+          );
         })
         .catch((error: unknown) => {
           if (
@@ -1854,71 +1884,89 @@ export class AppStore {
 
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return false;
-    try {
-      await api.setModel(sessionId, provider, modelId);
-      if (!ownsTransport()) return false;
-      // Recency records only successful runtime changes. Keep unavailable
-      // identities in the source preference; the picker filters its display.
-      this.preferences.rememberModel({ provider, id: modelId });
-      await this.resync(sessionId, selectionGeneration);
-      return true;
-    } catch (error) {
-      if (!ownsTransport()) return false;
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      else
-        this.notify(
-          "warning",
-          error instanceof Error ? error.message : "Failed to set model",
-        );
-      return false;
-    }
+    const result = await this.changeModel(provider, modelId);
+    if (result.status === "error" && this.state.sessionId === sessionId)
+      this.notify("warning", result.message);
+    return result.status === "success";
   };
 
-  setThinkingLevel = async (level: string): Promise<boolean> => {
+  private changeModel = async (
+    provider: string,
+    modelId: string,
+  ): Promise<CommandChangeResult> => {
     const sessionId = this.state.sessionId;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return false;
+    if (!api || !sessionId) return { status: "stale" };
+    try {
+      await api.setModel(sessionId, provider, modelId);
+      if (!ownsTransport()) return { status: "stale" };
+      // Recency records only successful runtime changes. Keep unavailable
+      // identities in the source preference; the picker filters its display.
+      this.preferences.rememberModel({ provider, id: modelId });
+      await this.resync(sessionId, selectionGeneration);
+      return { status: "success" };
+    } catch (error) {
+      if (!ownsTransport()) return { status: "stale" };
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      return {
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to set model",
+      };
+    }
+  };
+
+  setThinkingLevel = async (level: string): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    const result = await this.changeThinkingLevel(level);
+    if (result.status === "error" && this.state.sessionId === sessionId)
+      this.notify("warning", result.message);
+    return result.status === "success";
+  };
+
+  private changeThinkingLevel = async (
+    level: string,
+  ): Promise<CommandChangeResult> => {
+    const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    const ownsTransport = (): boolean =>
+      this.api === api && this.transportGeneration === transportGeneration;
+    if (!api || !sessionId) return { status: "stale" };
     const previous = this.state.thinkingLevel;
     const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevel: level });
     try {
       await api.setThinkingLevel(sessionId, level);
-      return ownsTransport();
+      return ownsTransport() && request === this.thinkingLevelRequest
+        ? { status: "success" }
+        : { status: "stale" };
     } catch (error) {
-      if (!ownsTransport()) return false;
-      if (error instanceof ApiError && error.status === 401) {
+      if (!ownsTransport()) return { status: "stale" };
+      if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-        return false;
-      }
-      // An older failure cannot undo a newer click. If the latest request was
-      // refused, restore its immediate predecessor and reconcile in case that
-      // predecessor was itself only an optimistic request that later failed.
+      if (request !== this.thinkingLevelRequest) return { status: "stale" };
+      // A failed request cannot undo a newer click. Reconcile in case the
+      // immediate predecessor was itself only an optimistic request.
       if (
-        request === this.thinkingLevelRequest &&
         this.state.sessionId === sessionId &&
         this.selectionGeneration === selectionGeneration
       ) {
         this.set({ thinkingLevel: previous });
         void this.resync();
-        this.notify(
-          "warning",
+      }
+      return {
+        status: "error",
+        message:
           error instanceof Error
             ? error.message
             : "Failed to set thinking level",
-        );
-      }
-      return false;
+      };
     }
   };
 

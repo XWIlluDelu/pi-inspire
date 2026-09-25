@@ -598,6 +598,18 @@ describe("Pi native command dispatch", () => {
       accepted: true,
     });
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(fullText));
+    await vi.waitFor(() =>
+      expect(
+        store
+          .getState()
+          .commandActivities.s1?.some(
+            (activity) => activity.command === "copy",
+          ),
+      ).toBeFalsy(),
+    );
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "Copied the complete",
+    );
     const query = new URL(copyUrl, "http://localhost").searchParams;
     expect(query.get("sessionId")).toBe("s1");
     expect(query.get("viewId")).toBe(store.getState().transcriptViewId);
@@ -629,6 +641,72 @@ describe("Pi native command dispatch", () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["/model kimi-coding/kimi-k3", "/api/control/model", "model"],
+    ["/thinking low", "/api/control/thinking", "thinking"],
+    ["/name New session", "/api/sessions/rename", "name"],
+  ] as const)(
+    "%s keeps successful confirmation transient and retains one real failure",
+    async (command, route, name) => {
+      let fail = false;
+      installFetch((url, init) => {
+        if (url.startsWith(route))
+          return fail
+            ? { status: 400, body: { error: `Pi rejected ${name}` } }
+            : { body: { ok: true } };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+
+      await store.sendPrompt(command);
+      await vi.waitFor(() =>
+        expect(
+          store
+            .getState()
+            .commandActivities.s1?.some((item) => item.command === name),
+        ).toBeFalsy(),
+      );
+      expect(store.getState().notices.at(-1)?.kind).toBe("info");
+
+      fail = true;
+      const noticeCount = store.getState().notices.length;
+      await store.sendPrompt(command);
+      await vi.waitFor(() =>
+        expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+          command: name,
+          status: "error",
+          message: `Pi rejected ${name}`,
+        }),
+      );
+      expect(store.getState().notices).toHaveLength(noticeCount);
+    },
+  );
+
+  it("keeps a delayed command failure in its original session without notifying the new one", async () => {
+    const response = deferred<RouteResponse>();
+    installFetch((url, init) =>
+      url.startsWith("/api/control/model")
+        ? response.promise
+        : baseRoutes(url, init),
+    );
+    const { store, socket } = await initStore();
+    await store.sendPrompt("/model kimi-coding/kimi-k3");
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({ sessionId: "s2" }),
+    });
+    const notices = store.getState().notices.length;
+    response.resolve({ status: 400, body: { error: "Provider denied model" } });
+    await vi.waitFor(() =>
+      expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+        command: "model",
+        status: "error",
+        message: "Provider denied model",
+      }),
+    );
+    expect(store.getState().notices).toHaveLength(notices);
+  });
+
   it("executes browser-native model and session information commands", async () => {
     const modelBodies: Record<string, unknown>[] = [];
     installFetch((url, init) => {
@@ -647,6 +725,18 @@ describe("Pi native command dispatch", () => {
       historyEntry: null,
     });
     await vi.waitFor(() => expect(modelBodies).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(
+        store
+          .getState()
+          .commandActivities.s1?.some(
+            (activity) => activity.command === "model",
+          ),
+      ).toBeFalsy(),
+    );
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "Active model is now",
+    );
     await store.sendPrompt("/session");
 
     expect(modelBodies[0]).toEqual({

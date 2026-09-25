@@ -28,6 +28,11 @@ interface SessionManagementHost {
   ): InspirePreferences;
 }
 
+export type CommandChangeResult =
+  | { status: "success" }
+  | { status: "error"; message: string }
+  | { status: "stale" };
+
 /** Owns session metadata edits and destructive Hidden workflows, including
  * transport fencing, preference-write ordering, and committed-result repair. */
 export class SessionManagementController {
@@ -40,8 +45,18 @@ export class SessionManagementController {
   }
 
   renameSession = async (sessionId: string, name: string): Promise<boolean> => {
+    const result = await this.renameSessionResult(sessionId, name);
+    if (result.status === "error" && this.host.state().sessionId === sessionId)
+      this.host.notify("warning", result.message);
+    return result.status === "success";
+  };
+
+  renameSessionResult = async (
+    sessionId: string,
+    name: string,
+  ): Promise<CommandChangeResult> => {
     const api = this.host.api();
-    if (!api || !sessionId || !name.trim()) return false;
+    if (!api || !sessionId || !name.trim()) return { status: "stale" };
     const transportGeneration = this.host.transportGeneration();
     const request = Symbol(sessionId);
     this.latestRename.set(sessionId, request);
@@ -52,28 +67,22 @@ export class SessionManagementController {
     const trimmedName = name.trim();
     try {
       await api.renameSession(sessionId, trimmedName);
-      if (!ownsRequest()) return false;
+      if (!ownsRequest()) return { status: "stale" };
       // The response may return after a session switch; only the owning
       // session's visible title updates.
       if (this.host.state().sessionId === sessionId)
         this.host.patch({ sessionName: trimmedName });
       void this.host.refreshLoadedSessions();
-      return true;
+      return { status: "success" };
     } catch (error) {
-      if (!ownsRequest()) return false;
-      if (error instanceof ApiError && error.status === 401) {
+      if (!ownsRequest()) return { status: "stale" };
+      if (error instanceof ApiError && error.status === 401)
         this.host.handleAuthFailure();
-        return false;
-      }
-      // A background rename must not surface its failure over another visible
-      // session. The caller still receives false for its owning editor.
-      if (this.host.state().sessionId === sessionId) {
-        this.host.notify(
-          "warning",
+      return {
+        status: "error",
+        message:
           error instanceof Error ? error.message : "Failed to rename session",
-        );
-      }
-      return false;
+      };
     } finally {
       if (this.latestRename.get(sessionId) === request)
         this.latestRename.delete(sessionId);
