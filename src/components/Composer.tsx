@@ -80,7 +80,6 @@ export const Composer = memo(function Composer() {
       attachments: source.attachments,
       projectFiles: source.projectFiles,
       workspaceShowHidden: source.workspaceShowHidden,
-      sending: source.sending,
       model: source.model,
       availableModels: source.availableModels,
       commands: source.commands,
@@ -88,15 +87,6 @@ export const Composer = memo(function Composer() {
       desktopSendKey: source.prefs.desktopSendKey,
       recentModelIds: source.prefs.recentModelIds,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
-      activeHostCommand: source.sessionId
-        ? source.commandActivities[source.sessionId]?.find(
-            (activity) =>
-              activity.status === "running" &&
-              (activity.command === "compact" ||
-                activity.command === "export" ||
-                activity.command === "reload"),
-          )
-        : undefined,
     }),
     shallowEqual,
   );
@@ -152,6 +142,15 @@ export const Composer = memo(function Composer() {
     "steer" | "followUp"
   >("steer");
   const wasBusyRef = useRef(false);
+  const inputSnapshot = useMemo(
+    () => ({
+      draft,
+      attachments: state.attachments,
+      projectFiles: state.projectFiles,
+    }),
+    [draft, state.attachments, state.projectFiles],
+  );
+  const handedOffRef = useRef<typeof inputSnapshot | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const busy = isBusyRunState(state.runState);
@@ -162,8 +161,7 @@ export const Composer = memo(function Composer() {
   const isRetrying = state.runState === "retrying";
   const isCompacting = state.runState === "compacting";
   const isFailed = state.runState === "failed";
-  const hostCommandBusy = Boolean(state.activeHostCommand);
-  const deliveryBusy = busy && !isCompacting;
+  const deliveryBusy = busy;
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -176,6 +174,7 @@ export const Composer = memo(function Composer() {
           : "";
 
   const updateDraft = (text: string) => {
+    handedOffRef.current = null;
     setDraft(text);
     if (sessionId) setSessionDraft(sessionId, text);
   };
@@ -232,6 +231,7 @@ export const Composer = memo(function Composer() {
   useLayoutEffect(() => {
     if (previousSessionRef.current === sessionId) return;
     previousSessionRef.current = sessionId;
+    handedOffRef.current = null;
     // Every transient composer surface belongs to the session that opened it.
     // Reset before paint so it cannot silently retarget the newly visible one.
     setDraft(sessionId ? sessionDraft(sessionId) : "");
@@ -261,13 +261,12 @@ export const Composer = memo(function Composer() {
 
   const canSend = Boolean(
     !sessionOpening &&
-      !isCompacting &&
-      !hostCommandBusy &&
       sessionId &&
       (draft.trim() ||
         state.attachments.length > 0 ||
         state.projectFiles.length > 0),
   );
+  const failedPrompt = store.failedComposerPrompt();
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
     : state.runState === "conflict"
@@ -275,12 +274,21 @@ export const Composer = memo(function Composer() {
       : undefined;
   const submit = async (behavior?: "steer" | "followUp") => {
     const message = draft;
-    if (!canSend || state.sending || sessionOpening) return;
+    if (!canSend || sessionOpening || handedOffRef.current === inputSnapshot)
+      return;
     const owner = sessionId;
     if (owner && sessionDraft(owner) !== message)
       setSessionDraft(owner, message);
     const recordsHistory = !store.isNativeCommand(message);
-    const sent = await store.sendPrompt(message, behavior);
+    let handedOff = false;
+    const sent = await store.sendPrompt(message, behavior, () => {
+      handedOff = true;
+      handedOffRef.current = inputSnapshot;
+      if (owner && sessionDraft(owner) === message) {
+        setSessionDraft(owner, "");
+        if (store.getState().sessionId === owner) setDraft("");
+      }
+    });
     if (!sent || !owner) return;
     if (recordsHistory && historyScope) {
       const entries = rememberComposerHistory(
@@ -291,7 +299,7 @@ export const Composer = memo(function Composer() {
         current.key === historyKey ? { key: historyKey, entries } : current,
       );
     }
-    if (sessionDraft(owner) !== message) return;
+    if (handedOff || sessionDraft(owner) !== message) return;
     setSessionDraft(owner, "");
     if (store.getState().sessionId === owner) setDraft("");
   };
@@ -324,7 +332,7 @@ export const Composer = memo(function Composer() {
     <form
       className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
       aria-label="Message composer"
-      aria-busy={busy || hostCommandBusy || sessionOpening || undefined}
+      aria-busy={busy || sessionOpening || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(activeBehavior);
@@ -358,14 +366,31 @@ export const Composer = memo(function Composer() {
       <AttachmentList
         sessionId={sessionId}
         items={state.attachments}
-        disabled={state.sending || sessionOpening}
+        disabled={sessionOpening}
         onRemove={store.removeAttachment}
       />
       <ProjectFileChips
         paths={state.projectFiles}
-        disabled={state.sending || sessionOpening}
+        disabled={sessionOpening}
         onRemove={store.removeProjectFile}
       />
+      {failedPrompt ? (
+        <div className="composer__failed-delivery" role="status">
+          <span>Message not delivered</span>
+          <button
+            type="button"
+            disabled={
+              sessionOpening ||
+              Boolean(
+                draft || state.attachments.length || state.projectFiles.length,
+              )
+            }
+            onClick={() => store.restoreFailedComposerPrompt()}
+          >
+            Restore
+          </button>
+        </div>
+      ) : null}
       <ComposerInput
         key={`input-${inputKey}`}
         value={draft}
@@ -375,7 +400,7 @@ export const Composer = memo(function Composer() {
         onHistoryCancel={cancelHistoryPreview}
         history={history}
         commands={state.commands}
-        completionDisabled={state.sending || sessionOpening}
+        completionDisabled={sessionOpening}
         disabled={sessionOpening}
         completionScope={historyKey}
         showHiddenFiles={state.workspaceShowHidden}
@@ -488,7 +513,7 @@ export const Composer = memo(function Composer() {
           <button
             type="submit"
             className="composer__send"
-            disabled={!canSend || state.sending}
+            disabled={!canSend}
             aria-label={
               deliveryBehavior === "steer"
                 ? "Send as steer"
@@ -530,7 +555,7 @@ export const Composer = memo(function Composer() {
           <button
             type="submit"
             className="composer__send"
-            disabled={!canSend || state.sending}
+            disabled={!canSend}
             aria-label="Send message"
             title="Send"
           >
@@ -544,7 +569,7 @@ export const Composer = memo(function Composer() {
           showHidden={state.workspaceShowHidden}
           onShowHiddenChange={store.setWorkspaceShowHidden}
           selected={state.projectFiles}
-          disabled={state.sending || sessionOpening}
+          disabled={sessionOpening}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
           onClose={() => {

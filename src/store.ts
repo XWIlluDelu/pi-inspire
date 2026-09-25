@@ -73,6 +73,7 @@ import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
+import { sessionDraft, setSessionDraft } from "./session-drafts";
 import {
   deriveSnapshotTransition,
   type SnapshotMode,
@@ -347,6 +348,12 @@ export class AppStore {
       if (this.state.sessionId === sessionId) this.fail(message);
     },
     handleAuthFailure: () => this.handleAuthFailure(),
+    restoreDraftIfEmpty: (sessionId, message) => {
+      if (sessionDraft(sessionId)) return false;
+      setSessionDraft(sessionId, message);
+      if (this.state.sessionId === sessionId) this.replaceComposerText(message);
+      return true;
+    },
   });
   private readonly sessionManagement = new SessionManagementController({
     state: () => this.state,
@@ -1427,9 +1434,7 @@ export class AppStore {
     }
 
     if (
-      (command.descriptor.execution === "host" ||
-        command.name === "model" ||
-        command.name === "thinking") &&
+      (command.name === "compact" || command.name === "reload") &&
       isBusyRunState(this.state.runState)
     ) {
       this.presentCommandActivity(
@@ -1519,15 +1524,14 @@ export class AppStore {
       );
       if (matches.length !== 1) {
         this.requestNativeCommandUi(sessionId, "model", command.argument);
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
-          matches.length > 1 ? "warning" : "info",
-          matches.length > 1
-            ? "That model name is ambiguous. The model picker shows the matches."
-            : "No exact model matched. The model picker is open with your search.",
-        );
+        if (matches.length > 1)
+          this.presentCommandActivity(
+            sessionId,
+            input,
+            command.name,
+            "warning",
+            "That model name is ambiguous. The model picker shows the matches.",
+          );
         return ACCEPTED_NATIVE_COMMAND;
       }
       const model = matches[0]!;
@@ -1759,9 +1763,17 @@ export class AppStore {
     return ACCEPTED_NATIVE_COMMAND;
   }
 
+  failedComposerPrompt = () => this.composer.failedPrompt(this.state.sessionId);
+
+  restoreFailedComposerPrompt = (): boolean => {
+    const sessionId = this.state.sessionId;
+    return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;
+  };
+
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
+    onHandoff?: () => void,
   ): Promise<PromptAcceptedResponse | false> => {
     const native = parseNativeCommand(message);
     if (native && this.isNativeCommand(message))
@@ -1792,6 +1804,7 @@ export class AppStore {
           ? `/${invocation.name} ${invocation.argument}`
           : `/${invocation.name}`,
         behavior,
+        onHandoff,
       );
     } else if (message.trim().startsWith("!")) {
       const sessionId = this.state.sessionId;
@@ -1806,7 +1819,7 @@ export class AppStore {
         );
       return false;
     }
-    return this.composer.send(message, behavior);
+    return this.composer.send(message, behavior, onHandoff);
   };
 
   abort = async (): Promise<void> => {
