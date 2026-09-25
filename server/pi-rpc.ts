@@ -1,11 +1,13 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { TextDecoder } from "node:util";
 import { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 import type { DiagnosticLevel } from "./diagnostics.js";
+import {
+  createDirectPiRpcTransport,
+  type PiRpcTransport,
+  type PiRpcTransportFactory,
+} from "./pi-rpc-transport.js";
 import { piInstallation } from "./pi-runtime.js";
-import { stopPiRpcChild } from "./pi-rpc-stop.js";
-import { isolatedProcessOptions } from "./process-tree.mjs";
 import { requestError } from "./request-error.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
@@ -111,6 +113,8 @@ export interface PiRpcOptions {
   env?: NodeJS.ProcessEnv;
   cliPath?: string;
   workerId?: string;
+  sessionId?: string;
+  createTransport?: PiRpcTransportFactory;
   diagnostic?: (
     level: DiagnosticLevel,
     event: string,
@@ -119,7 +123,7 @@ export interface PiRpcOptions {
 }
 
 export class PiRpcProcess extends EventEmitter {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: PiRpcTransport | null = null;
   private pending = new Map<string, PendingRequest>();
   private retired = new Map<
     string,
@@ -131,6 +135,7 @@ export class PiRpcProcess extends EventEmitter {
   private stderr = "";
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
+  private exitError: Error | null = null;
 
   constructor(private readonly options: PiRpcOptions) {
     super();
@@ -144,8 +149,7 @@ export class PiRpcProcess extends EventEmitter {
     return Boolean(
       !this.stopping &&
         this.child &&
-        this.child.exitCode === null &&
-        this.child.signalCode === null &&
+        this.child.available &&
         this.child.stdin.writable,
     );
   }
@@ -174,25 +178,19 @@ export class PiRpcProcess extends EventEmitter {
     if (this.child) throw new Error("Pi RPC process is already running");
 
     const cliPath = this.options.cliPath ?? piInstallation.cliPath;
-    const child = spawn(
-      process.execPath,
-      [cliPath, "--mode", "rpc", ...(this.options.args ?? [])],
-      {
-        cwd: this.options.cwd,
-        env: {
-          ...process.env,
-          PI_SKIP_VERSION_CHECK: "1",
-          ...this.options.env,
-        },
-        // Pi and every tool it launches own an isolated process group on
-        // POSIX. Host eviction can then terminate the whole worker tree rather
-        // than orphaning a long-running shell/tool grandchild.
-        ...isolatedProcessOptions(),
-        stdio: ["pipe", "pipe", "pipe"],
+    const child = (this.options.createTransport ?? createDirectPiRpcTransport)({
+      executable: process.execPath,
+      args: [cliPath, "--mode", "rpc", ...(this.options.args ?? [])],
+      cwd: this.options.cwd,
+      env: {
+        ...process.env,
+        PI_SKIP_VERSION_CHECK: "1",
+        ...this.options.env,
       },
-    );
+    });
     this.child = child;
     this.stopping = false;
+    this.exitError = null;
     this.stderr = "";
     this.phase = "unknown";
     this.diagnostic("info", "worker_spawn", { childPid: child.pid });
@@ -215,6 +213,9 @@ export class PiRpcProcess extends EventEmitter {
 
     this.attachLineReader(child);
     try {
+      await child.ready;
+      if (this.stopping || this.child !== child)
+        throw this.exitError ?? new Error("Pi RPC startup was stopped");
       await this.request({ type: "get_state" }, 60_000);
     } catch (error) {
       // Startup owns an explicit deadline; failed startup cannot strand a writer.
@@ -223,7 +224,7 @@ export class PiRpcProcess extends EventEmitter {
     }
   }
 
-  private attachLineReader(child: ChildProcessWithoutNullStreams): void {
+  private attachLineReader(child: PiRpcTransport): void {
     let decoder = new TextDecoder("utf-8", { fatal: true });
     let parts: string[] = [];
     let lineBytes = 0;
@@ -355,6 +356,8 @@ export class PiRpcProcess extends EventEmitter {
       // replacement uses this exact wire boundary to attribute events.
       if (pending.responseFence) pending.responseFence.received = true;
       pending.resolve(record as unknown as RpcResponse);
+      if (pending.command === "get_state" && record.success)
+        this.emit("state", record.data);
       return true;
     }
     if (record.type === "compaction_start") this.phase = "compaction";
@@ -373,11 +376,9 @@ export class PiRpcProcess extends EventEmitter {
     return true;
   }
 
-  private handleExit(
-    child: ChildProcessWithoutNullStreams,
-    error: Error,
-  ): void {
+  private handleExit(child: PiRpcTransport, error: Error): void {
     if (this.child !== child || this.stopping) return;
+    this.exitError = this.withStderr(error);
     this.diagnostic("error", "worker_exit", {
       errorName: error.name,
       pendingRequests: this.pending.size,
@@ -404,25 +405,29 @@ export class PiRpcProcess extends EventEmitter {
     this.emit("exit", this.withStderr(error));
   }
 
-  private beginStop(
-    child: ChildProcessWithoutNullStreams,
-    graceful: boolean,
-  ): Promise<void> {
+  private beginStop(child: PiRpcTransport, graceful: boolean): Promise<void> {
     this.stopping = true;
     const phase = this.phase;
-    const stopped = stopPiRpcChild(child, graceful, (event, fields) => {
-      this.diagnostic(
-        event === "worker_stop_overdue" || event === "worker_stop_signal_failed"
-          ? "warning"
-          : "debug",
-        event,
-        { childPid: child.pid, phase, ...fields },
-      );
-    }).then(() => {
-      if (this.child === child) this.child = null;
-      this.stopPromise = null;
-      this.diagnostic("info", "worker_stopped", { childPid: child.pid, phase });
-    });
+    const stopped = child
+      .stop(graceful, (event, fields) => {
+        this.diagnostic(
+          event === "worker_stop_overdue" ||
+            event === "worker_stop_signal_failed"
+            ? "warning"
+            : "debug",
+          event,
+          { childPid: child.pid, phase, ...fields },
+        );
+      })
+      .then(() => {
+        if (this.child === child) this.child = null;
+        this.stopPromise = null;
+        this.diagnostic("info", "worker_stopped", {
+          childPid: child.pid,
+          phase,
+        });
+        this.emit("stopped");
+      });
     this.stopPromise = stopped;
     return stopped;
   }
