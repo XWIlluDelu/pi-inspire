@@ -19,6 +19,16 @@ and invocation ownership before committing the existing non-expiring drain. Syst
 single full-restart transaction, with Host ordered after terminal startup. There is no full-to-Host-only
 fallback and no connection-service restart. Unknown submission retains the drain; it is not a refusal.
 
+When an idle-only page restart is rejected for active or in-flight Pi work, Settings offers a
+separate confirmed **Stop work and restart** under the rejected scope. The new operation identity
+carries `interruptWork: true`; a retry cannot upgrade an idle-only identity, and the server rejects
+same-identity permission changes. The runtime lease bypasses workload idle checks (run/dialog/Pending,
+active operations and maintenance counters), retaining preflight, exclusive restart lease and final
+service-owner checks.
+The existing Host close path stops all worker process groups on successful Host replacement;
+Host-only leaves project terminals independent, while all-services restart ends terminal processes.
+The prior refusal is labelled as a last-attempt result rather than a live busy diagnosis.
+
 The browser persists delivery identity before POST, restores it on reload, rechecks read-only, and
 retries only the same identity explicitly. A new Host retires that old identity without claiming that
 all terminal work restarted successfully. Current authoritative preparation outranks old reconnection
