@@ -659,12 +659,6 @@ export function PendingQueueGroups({
           ) : null}
         </div>
       </div>
-      {confirmClear ? (
-        <p className="pending-groups__note" role="status">
-          Clear whatever remains queued when Pi handles this request. Items may
-          be consumed meanwhile; the current run is not stopped.
-        </p>
-      ) : null}
       {previewOnly || omitted > 0 ? (
         <p className="pending-groups__note">
           Text previews only; copy uses the displayed text, not omitted content.
@@ -680,12 +674,6 @@ export function PendingQueueGroups({
           <div className="pending-group__head">
             <div className="pending-group__head-lead">
               <span className="pending-group__label">{group.label}</span>
-              <span className="pending-group__hint">
-                ·{" "}
-                {group.key === "steering"
-                  ? "Delivers on next step"
-                  : "Delivers after completion"}
-              </span>
             </div>
             <span className="pending-group__head-count">
               <span aria-hidden>

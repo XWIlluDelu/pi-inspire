@@ -20,6 +20,7 @@ function createHarness(sessionId = "session-a") {
   const clearVisibleError = vi.fn();
   const failVisible = vi.fn();
   const handleAuthFailure = vi.fn();
+  const restoreDraftIfEmpty = vi.fn().mockReturnValue(true);
   const controller = new ComposerController({
     state: () => ({ sessionId: activeSessionId }),
     api: () => api,
@@ -28,6 +29,7 @@ function createHarness(sessionId = "session-a") {
     patch,
     notify,
     handleAuthFailure,
+    restoreDraftIfEmpty,
     clearVisibleError: (owner) => {
       if (activeSessionId === owner) clearVisibleError();
     },
@@ -44,6 +46,7 @@ function createHarness(sessionId = "session-a") {
     clearVisibleError,
     failVisible,
     handleAuthFailure,
+    restoreDraftIfEmpty,
     deleteAttachment,
     replaceTransport: (replacement?: Api) => {
       generation += 1;
@@ -68,6 +71,81 @@ const acceptedPrompt: PromptAcceptedResponse = {
 };
 
 describe("ComposerController", () => {
+  it("hands off two independent operations and retains a failed first input without replacing later work", async () => {
+    const first = deferred<PromptAcceptedResponse>();
+    const second = deferred<PromptAcceptedResponse>();
+    const harness = createHarness();
+    harness.prompt
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    harness.controller.addProjectFile("/workspace/first.ts");
+    const handedOff = vi.fn();
+    const firstSend = harness.controller.send("first", "steer", handedOff);
+    expect(handedOff).toHaveBeenCalledOnce();
+    expect(harness.slice().projectFiles).toEqual([]);
+    harness.controller.addProjectFile("/workspace/second.ts");
+    const secondSend = harness.controller.send("second", "followUp", handedOff);
+    expect(handedOff).toHaveBeenCalledTimes(2);
+    expect(
+      harness.prompt.mock.calls.map(([request]) => request.projectFiles),
+    ).toEqual([["/workspace/first.ts"], ["/workspace/second.ts"]]);
+    harness.restoreDraftIfEmpty.mockReturnValue(false);
+    first.reject(new ApiError(409, "not delivered"));
+    await expect(firstSend).resolves.toBe(false);
+    expect(harness.slice().sending).toBe(true);
+    expect(harness.controller.failedPrompt("session-a")?.message).toBe("first");
+    second.resolve(acceptedPrompt);
+    await expect(secondSend).resolves.toEqual(acceptedPrompt);
+    expect(harness.controller.failedPrompt("session-a")?.message).toBe("first");
+    harness.restoreDraftIfEmpty.mockReturnValue(true);
+    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
+    expect(harness.slice().projectFiles).toEqual(["/workspace/first.ts"]);
+  });
+
+  it("releases a definitively cleared Host Pending delivery without restoring it as a failed draft", async () => {
+    const response = deferred<PromptAcceptedResponse>();
+    const harness = createHarness();
+    harness.prompt.mockReturnValue(response.promise);
+    harness.controller.addProjectFile("/workspace/clear.ts");
+    const sending = harness.controller.send("clear this", "steer");
+    response.reject(
+      new ApiError(
+        409,
+        "Pending message was cleared",
+        undefined,
+        "PROMPT_CLEARED",
+      ),
+    );
+    await expect(sending).resolves.toBe(false);
+    expect(harness.slice().projectFiles).toEqual([]);
+    expect(harness.controller.failedPrompt("session-a")).toBeNull();
+    expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
+  });
+
+  it("retains a prior unknown operation identity when a later delivery succeeds", async () => {
+    const first = deferred<PromptAcceptedResponse>();
+    const second = deferred<PromptAcceptedResponse>();
+    const harness = createHarness();
+    harness.prompt
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue(acceptedPrompt);
+    const firstSend = harness.controller.send("first", "steer");
+    const firstIdentity = harness.prompt.mock.calls[0]![0].operationId;
+    const secondSend = harness.controller.send("second", "followUp");
+    harness.restoreDraftIfEmpty.mockReturnValue(false);
+    first.reject(new ApiTransportError("request"));
+    second.resolve(acceptedPrompt);
+    await Promise.all([firstSend, secondSend]);
+    harness.restoreDraftIfEmpty.mockReturnValue(true);
+    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
+    await harness.controller.send("first");
+    expect(harness.prompt.mock.calls[2]![0]).toMatchObject({
+      operationId: firstIdentity,
+      behavior: "steer",
+    });
+  });
+
   it("clears only the delivered partition and preserves an attachment staged during send", async () => {
     const pending = deferred<PromptAcceptedResponse>();
     const harness = createHarness();

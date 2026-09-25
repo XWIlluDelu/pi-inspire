@@ -49,13 +49,23 @@ interface PendingPromptDelivery {
   request: PromptDeliveryRequest;
 }
 
+interface DeliveryRecord {
+  delivery: PendingPromptDelivery;
+  message: string;
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  historyDraft: ComposerArtifactDraft | null;
+}
+
 export interface ComposerPartition {
   attachments: PendingAttachment[];
   projectFiles: string[];
   sending: boolean;
   historyDraft: ComposerArtifactDraft | null;
-  /** Retained only after an acceptance-unknown transport result. */
-  pendingDelivery: PendingPromptDelivery | null;
+  /** Independently owned operations; only an exact retry may reuse an unknown ID. */
+  deliveries: Map<string, DeliveryRecord>;
+  unknownDeliveries: Map<string, PendingPromptDelivery>;
+  failedDeliveries: DeliveryRecord[];
 }
 
 interface ComposerControllerState {
@@ -77,6 +87,7 @@ interface ComposerControllerHost {
   clearVisibleError(sessionId: string): void;
   failVisible(sessionId: string, message: string): void;
   handleAuthFailure(): void;
+  restoreDraftIfEmpty(sessionId: string, message: string): boolean;
 }
 
 /**
@@ -86,7 +97,10 @@ interface ComposerControllerHost {
  */
 export class ComposerController {
   private readonly composers = new Map<string, ComposerPartition>();
-  private readonly confirmations = new Map<string, AbortController>();
+  private readonly confirmations = new Map<
+    string,
+    Map<string, AbortController>
+  >();
   private requestEpoch = 0;
 
   constructor(private readonly host: ComposerControllerHost) {}
@@ -104,13 +118,22 @@ export class ComposerController {
 
   invalidateForTransportReplacement(): void {
     this.requestEpoch += 1;
-    for (const confirmation of this.confirmations.values())
-      confirmation.abort();
+    for (const confirmations of this.confirmations.values())
+      for (const confirmation of confirmations.values()) confirmation.abort();
     this.confirmations.clear();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
-      deliveryOutcomeUnknown ||= composer.sending;
+      deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
+      for (const record of composer.deliveries.values()) {
+        composer.unknownDeliveries.set(
+          record.delivery.signature,
+          record.delivery,
+        );
+        composer.failedDeliveries.push(record);
+      }
+      composer.deliveries.clear();
       composer.sending = false;
+      this.restoreFailedIfEmpty(sessionId, composer);
       const invalidateUploads = (items: PendingAttachment[]) =>
         items.map((item) =>
           item.status === "uploading"
@@ -139,7 +162,9 @@ export class ComposerController {
   }
 
   discard(sessionId: string): void {
-    this.confirmations.get(sessionId)?.abort();
+    for (const confirmation of this.confirmations.get(sessionId)?.values() ??
+      [])
+      confirmation.abort();
     this.confirmations.delete(sessionId);
     const composer = this.composers.get(sessionId);
     if (composer) {
@@ -153,7 +178,17 @@ export class ComposerController {
       composer.projectFiles = [];
       composer.sending = false;
       composer.historyDraft = null;
-      composer.pendingDelivery = null;
+      for (const record of [
+        ...composer.deliveries.values(),
+        ...composer.failedDeliveries,
+      ]) {
+        this.releaseAttachments(record.attachments);
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+      }
+      composer.deliveries.clear();
+      composer.failedDeliveries = [];
+      composer.unknownDeliveries.clear();
       this.composers.delete(sessionId);
     }
     deleteSessionDraft(sessionId);
@@ -163,6 +198,7 @@ export class ComposerController {
   async send(
     message: string,
     behavior?: "steer" | "followUp",
+    onHandoff?: () => void,
   ): Promise<PromptAcceptedResponse | false> {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
@@ -176,7 +212,8 @@ export class ComposerController {
       this.requestEpoch === requestEpoch &&
       this.composers.get(sessionId) === composer;
     const composer = this.forSession(sessionId);
-    if (composer.sending) return false;
+    // A matching in-flight request is a duplicate click, not a new message.
+    // Different input may proceed while a previous Pi receipt is pending.
     if (composer.attachments.some((item) => item.status === "uploading")) {
       this.host.notify("warning", "Attachments are still uploading");
       return false;
@@ -266,25 +303,27 @@ export class ComposerController {
       ...(projectFiles.length > 0 ? { projectFiles } : {}),
       ...(behavior ? { behavior } : {}),
     };
-    const signature = JSON.stringify(deliveryContent);
+    // A phase change (e.g. compacting → idle) cannot turn an unknown steer
+    // into a second operation. Reobserve its original, exact payload.
+    const signature = JSON.stringify({
+      ...deliveryContent,
+      behavior: undefined,
+    });
     if (
-      composer.pendingDelivery?.signature === signature &&
-      composer.pendingDelivery.request.authorityId !== authorityId
-    ) {
-      // A restarted Host cannot answer the old operation. Fail closed once so
-      // an ordinary Retry cannot turn an unknown outcome into a duplicate.
-      composer.pendingDelivery = null;
+      [...composer.deliveries.values()].some(
+        (record) => record.delivery.signature === signature,
+      )
+    )
+      return false;
+    const retained = composer.unknownDeliveries.get(signature);
+    if (retained && retained.request.authorityId !== authorityId) {
+      composer.unknownDeliveries.delete(signature);
       this.host.failVisible(
         sessionId,
         "The Host restarted after this message had an unknown delivery outcome. Check the conversation before sending it again.",
       );
-      this.publish(sessionId);
       return false;
     }
-    const retained =
-      composer.pendingDelivery?.signature === signature
-        ? composer.pendingDelivery
-        : null;
     const delivery: PendingPromptDelivery = retained ?? {
       signature,
       request: {
@@ -293,40 +332,39 @@ export class ComposerController {
         ...deliveryContent,
       },
     };
-    composer.pendingDelivery = delivery;
+    const record: DeliveryRecord = {
+      delivery,
+      message,
+      attachments: included,
+      projectFiles,
+      historyDraft: composer.historyDraft,
+    };
+    composer.failedDeliveries = composer.failedDeliveries.filter(
+      (item) => item.delivery !== retained,
+    );
+    composer.deliveries.set(delivery.request.operationId, record);
+    composer.attachments = [];
+    composer.projectFiles = [];
+    composer.historyDraft = null;
     composer.sending = true;
+    onHandoff?.();
     this.publish(sessionId);
     const confirmation = new AbortController();
-    this.confirmations.set(sessionId, confirmation);
+    const confirmations = this.confirmations.get(sessionId) ?? new Map();
+    confirmations.set(delivery.request.operationId, confirmation);
+    this.confirmations.set(sessionId, confirmations);
     try {
       const response = await api.prompt(delivery.request, confirmation.signal);
       if (!ownsTransport()) return false;
-      // Accepted: clear exactly what was delivered, from the owner session's
-      // partition — never from whichever session is visible by now.
-      // Artifacts staged while the request was in flight belong to the next
-      // message. Failures keep everything.
-      const sentIds = new Set(included.map((item) => item.localId));
-      const sentPaths = new Set(projectFiles);
-      for (const item of composer.attachments) {
-        if (!sentIds.has(item.localId)) continue;
+      for (const item of record.attachments)
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      }
-      composer.attachments = composer.attachments.filter(
-        (item) => !sentIds.has(item.localId),
-      );
-      composer.projectFiles = composer.projectFiles.filter(
-        (path) => !sentPaths.has(path),
-      );
-      this.releaseHistoryDraft(composer);
-      composer.pendingDelivery = null;
+      if (record.historyDraft)
+        this.releaseAttachments(record.historyDraft.attachments);
+      composer.unknownDeliveries.delete(signature);
       this.host.clearVisibleError(sessionId);
-      return {
-        accepted: true,
-        historyEntry: response.historyEntry,
-      };
+      return { accepted: true, historyEntry: response.historyEntry };
     } catch (error) {
       if (!ownsTransport()) return false;
-      this.commitHistoryDraft(composer);
       const acceptanceUnknown =
         !(error instanceof ApiError) ||
         error.edge === "ssh-reverse" ||
@@ -337,37 +375,87 @@ export class ComposerController {
         error.code === "HOST_AUTHORITY_CHANGED" ||
         ((error.status === 408 || error.status >= 500) &&
           error.authorityId !== authorityId);
-      if (error instanceof ApiError && !acceptanceUnknown) {
-        // Only a definitive refusal releases this delivery identity. A Host
-        // can authoritatively report uncertainty; provenance is not outcome.
-        composer.pendingDelivery = null;
-        if (error.status === 401) {
-          composer.sending = false;
-          this.host.handleAuthFailure();
-          return false;
-        }
+      if (acceptanceUnknown)
+        composer.unknownDeliveries.set(signature, delivery);
+      else composer.unknownDeliveries.delete(signature);
+      if (error instanceof ApiError && error.code === "PROMPT_CLEARED") {
+        this.releaseAttachments(record.attachments);
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+        return false;
       }
-      // Keep failures attached to the session that sent the prompt. Transport,
-      // marked-edge, and unowned timeout/5xx failures retain the operation so
-      // an unchanged Host can answer a retry without delivering twice.
-      this.host.failVisible(
-        sessionId,
-        acceptanceUnknown
-          ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
-          : error instanceof Error
-            ? error.message
-            : "Failed to send",
-      );
+      composer.failedDeliveries.push(record);
+      this.restoreFailedIfEmpty(sessionId, composer);
+      if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
+        return false;
+      if (error instanceof ApiError && error.status === 401) {
+        composer.deliveries.delete(delivery.request.operationId);
+        composer.sending = composer.deliveries.size > 0;
+        this.publish(sessionId);
+        this.host.handleAuthFailure();
+      } else
+        this.host.failVisible(
+          sessionId,
+          acceptanceUnknown
+            ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
+            : error instanceof Error
+              ? error.message
+              : "Failed to send",
+        );
       return false;
     } finally {
-      if (this.confirmations.get(sessionId) === confirmation)
-        this.confirmations.delete(sessionId);
+      const confirmations = this.confirmations.get(sessionId);
+      confirmations?.delete(delivery.request.operationId);
+      if (confirmations?.size === 0) this.confirmations.delete(sessionId);
       if (ownsTransport()) {
-        composer.sending = false;
+        composer.deliveries.delete(delivery.request.operationId);
+        composer.sending = composer.deliveries.size > 0;
         this.prune(sessionId, composer);
         this.publish(sessionId);
       }
     }
+  }
+
+  failedPrompt(sessionId: string | null): { message: string } | null {
+    const record = sessionId
+      ? this.composers.get(sessionId)?.failedDeliveries[0]
+      : undefined;
+    return record ? { message: record.message } : null;
+  }
+
+  restoreFailedPrompt(sessionId: string): boolean {
+    const composer = this.composers.get(sessionId);
+    if (!composer) return false;
+    const restored = this.restoreFailedIfEmpty(sessionId, composer);
+    if (restored) this.publish(sessionId);
+    return restored;
+  }
+
+  private restoreFailedIfEmpty(
+    sessionId: string,
+    composer: ComposerPartition,
+  ): boolean {
+    const record = composer.failedDeliveries[0];
+    if (
+      !record ||
+      composer.attachments.length > 0 ||
+      composer.projectFiles.length > 0 ||
+      !this.host.restoreDraftIfEmpty(sessionId, record.message)
+    )
+      return false;
+    composer.failedDeliveries.shift();
+    composer.attachments = record.attachments.map((item) =>
+      item.recalledArtifact?.preview
+        ? {
+            ...item,
+            recalledArtifact: { ...item.recalledArtifact, preview: false },
+          }
+        : item,
+    );
+    composer.projectFiles = record.projectFiles;
+    if (record.historyDraft)
+      this.releaseAttachments(record.historyDraft.attachments);
+    return true;
   }
 
   previewHistoryEntry(
@@ -376,7 +464,6 @@ export class ComposerController {
   ): void {
     if (this.host.state().sessionId !== scope.sessionId) return;
     const composer = this.forSession(scope.sessionId);
-    if (composer.sending) return;
     if (!entry) {
       this.restoreHistoryDraft(composer);
       this.prune(scope.sessionId, composer);
@@ -439,7 +526,7 @@ export class ComposerController {
 
   commitHistoryPreview(scope: ComposerHistoryScope): void {
     const composer = this.composers.get(scope.sessionId);
-    if (!composer || composer.sending) return;
+    if (!composer) return;
     const scopeKey = composerHistoryScopeKey(scope);
     if (composer.historyDraft?.scopeKey !== scopeKey) return;
     this.commitHistoryDraft(composer);
@@ -448,7 +535,7 @@ export class ComposerController {
 
   cancelHistoryPreview(sessionId: string): void {
     const composer = this.composers.get(sessionId);
-    if (!composer || composer.sending) return;
+    if (!composer) return;
     this.restoreHistoryDraft(composer);
     this.prune(sessionId, composer);
     this.publish(sessionId);
@@ -575,9 +662,8 @@ export class ComposerController {
     const sessionId = this.host.state().sessionId;
     if (!sessionId) return;
     const composer = this.composers.get(sessionId);
-    if (!composer || composer.sending) return;
-    // Frozen while a prompt is delivering: the host may be resolving these
-    // very files into the outgoing message.
+    if (!composer) return;
+    // Outgoing files are owned by their operation, not this editable partition.
     const target = composer.attachments.find(
       (item) => item.localId === localId,
     );
@@ -600,7 +686,7 @@ export class ComposerController {
     const sessionId = this.host.state().sessionId;
     if (!sessionId || !path) return;
     const composer = this.forSession(sessionId);
-    if (composer.sending || composer.projectFiles.includes(path)) return;
+    if (composer.projectFiles.includes(path)) return;
     const recalledProjectCount = composer.attachments.filter(
       (item) =>
         item.recalledArtifact?.type === "file" &&
@@ -624,9 +710,7 @@ export class ComposerController {
     const sessionId = this.host.state().sessionId;
     if (!sessionId) return;
     const composer = this.composers.get(sessionId);
-    if (!composer || composer.sending) return;
-    // Frozen while delivering: a sent path removed and re-added mid-flight
-    // would otherwise be swept by the delivery's scoped clear.
+    if (!composer) return;
     composer.projectFiles = composer.projectFiles.filter(
       (item) => item !== path,
     );
@@ -684,7 +768,9 @@ export class ComposerController {
         projectFiles: [],
         sending: false,
         historyDraft: null,
-        pendingDelivery: null,
+        deliveries: new Map(),
+        unknownDeliveries: new Map(),
+        failedDeliveries: [],
       };
       this.composers.set(sessionId, composer);
     }
@@ -695,7 +781,9 @@ export class ComposerController {
     if (
       !composer.sending &&
       !composer.historyDraft &&
-      !composer.pendingDelivery &&
+      composer.deliveries.size === 0 &&
+      composer.unknownDeliveries.size === 0 &&
+      composer.failedDeliveries.length === 0 &&
       composer.attachments.length === 0 &&
       composer.projectFiles.length === 0
     ) {
