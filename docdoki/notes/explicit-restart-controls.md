@@ -21,6 +21,16 @@ and invocation ownership before committing the existing non-expiring drain. Syst
 single full-restart transaction, with Host ordered after terminal startup. There is no full-to-Host-only
 fallback and no connection-service restart. Unknown submission retains the drain; it is not a refusal.
 
+When an idle-only page restart is rejected for active or in-flight Pi work, Settings offers a
+separate confirmed **Stop work and restart** under the rejected scope. The new operation identity
+carries `interruptWork: true`; a retry cannot upgrade an idle-only identity, and the server rejects
+same-identity permission changes. The runtime lease bypasses workload idle checks (run/dialog/Pending,
+active operations and maintenance counters), retaining preflight, exclusive restart lease and final
+service-owner checks.
+The existing Host close path stops all worker process groups on successful Host replacement;
+Host-only leaves project terminals independent, while all-services restart ends terminal processes.
+The prior refusal is labelled as a last-attempt result rather than a live busy diagnosis.
+
 The browser persists delivery identity before POST, restores it on reload, rechecks read-only, and
 retries only the same identity explicitly. A new Host retires that old identity without claiming that
 all terminal work restarted successfully. Current authoritative preparation outranks old reconnection
@@ -57,6 +67,19 @@ notices. Concurrent status observers share an in-flight service inspection.
   Reviewed screenshots: `output/playwright/restart-{host,all}-{desktop,narrow}.png` and
   `output/playwright/restart-rejected-narrow.png`. Local reproduction script:
   `output/playwright/restart-flow.js` (CLI run-code, fixture API interception, service workers blocked).
+
+## Focused interruption evidence (2026-09-25)
+
+- TypeScript (`tsc -b`) and 38 selected Host restart, restart API, scheduled-maintenance,
+  runtime lease/close, and Web restart tests passed. The selected runtime maintenance block covers
+  active queued Pi work and a genuinely pending manual `compact` RPC: idle-only reservation refuses
+  them; the explicit lease commits and fences new work; normal close stops the worker and settles its
+  RPC. A second restart lease remains unavailable even with the grant. Preparation failure never
+  requests a lease or restart.
+- Narrow (390×844) headless Chromium rendered the actual Settings confirmation with the real CSS
+  using an isolated Vite component fixture; screenshot:
+  `output/playwright/restart-stop-work-narrow.png`. The dialog fits inside the 390px viewport and
+  names Pi work, Pending input, terminal processes, and scope. No installed service was restarted.
 
 ## Limits
 

@@ -804,6 +804,7 @@ export function createInspireServer(deps: AppDependencies): {
       hostId: z.string().uuid(),
       operationId: z.string().uuid(),
       scope: z.enum(["host", "all"]),
+      interruptWork: z.literal(true).optional(),
     })
     .strict();
   app.post("/api/host/restart", (request, response) => {

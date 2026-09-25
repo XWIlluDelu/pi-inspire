@@ -54,7 +54,10 @@ export class HostRestartController {
       throw requestError("Host changed. Review restart again.", 409);
     const previous = this.receipts.get(request.operationId);
     if (previous) {
-      if (previous.scope !== request.scope)
+      if (
+        previous.scope !== request.scope ||
+        Boolean(previous.interruptWork) !== Boolean(request.interruptWork)
+      )
         throw requestError("Restart operation does not match.", 409);
       return { ...previous };
     }
@@ -72,6 +75,7 @@ export class HostRestartController {
     const operation: HostRestartOperation = {
       id: request.operationId,
       scope: request.scope,
+      ...(request.interruptWork ? { interruptWork: true as const } : {}),
       phase: "preparing",
     };
     this.receipts.set(operation.id, operation);
@@ -86,13 +90,21 @@ export class HostRestartController {
     try {
       if (!(await this.backend.inspect())) throw new Error(UNAVAILABLE);
       await this.backend.prepare();
-      // Preparation can be slow. Acquire the authoritative idle fence only
+      // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.
-      const reservation = this.runtime.reserveMaintenanceRestart?.();
-      if (!reservation || reservation.kind !== "ready")
+      const reservation = this.runtime.reserveMaintenanceRestart?.(
+        operation.interruptWork === true,
+      );
+      if (reservation?.kind === "busy") {
+        operation.busyReason = reservation.reason;
         throw new Error(
-          "Finish Pi work and pending operations before restarting.",
+          reservation.reason === "restart-pending"
+            ? "Another restart is already pending."
+            : "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
         );
+      }
+      if (!reservation || reservation.kind !== "ready")
+        throw new Error("Restart admission is unavailable.");
       leaseId = reservation.leaseId;
       const result = await this.backend.request(
         operation.scope === "all",
