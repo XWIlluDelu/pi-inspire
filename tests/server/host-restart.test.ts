@@ -4,11 +4,16 @@ import {
   HostRestartController,
   type HostRestartBackend,
 } from "../../server/host-restart.js";
-import type { RuntimeLike } from "../../server/runtime.js";
+import type {
+  MaintenanceRestartDecision,
+  RuntimeLike,
+} from "../../server/runtime.js";
 
 function fixture(overrides: Partial<HostRestartBackend> = {}) {
   const runtime = {
-    reserveMaintenanceRestart: vi.fn(() => ({
+    reserveMaintenanceRestart: vi.fn<
+      (interruptWork?: boolean) => MaintenanceRestartDecision
+    >(() => ({
       kind: "ready",
       leaseId: "lease",
       expiresAt: Date.now() + 30_000,
@@ -101,16 +106,75 @@ describe("manual Host restart ownership", () => {
     expect(f.backend.prepare).toHaveBeenCalledOnce();
   });
 
-  it("checks fresh runtime work after preparation and leaves busy Pi untouched", async () => {
+  it("refuses ordinary busy restart, then explicitly authorizes interruption after fresh preparation", async () => {
     const f = fixture();
-    f.runtime.reserveMaintenanceRestart.mockReturnValue({
-      kind: "busy",
-    } as never);
-    f.controller.start(await intent(f.controller));
+    f.runtime.reserveMaintenanceRestart.mockImplementation((interruptWork) =>
+      interruptWork
+        ? { kind: "ready", leaseId: "lease", expiresAt: Date.now() + 30_000 }
+        : { kind: "busy", reason: "active-work" },
+    );
+    const safe = await intent(f.controller);
+    f.controller.start(safe);
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation).toMatchObject({
+        phase: "rejected",
+        busyReason: "active-work",
+      }),
+    );
+    expect(f.backend.request).not.toHaveBeenCalled();
+    expect(() => f.controller.start({ ...safe, interruptWork: true })).toThrow(
+      "does not match",
+    );
+    const forced = {
+      ...safe,
+      operationId: randomUUID(),
+      interruptWork: true as const,
+    };
+    f.controller.start(forced);
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
+    );
+    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(true);
+    expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
+    expect(f.backend.prepare).toHaveBeenCalledTimes(2);
+    expect(f.backend.request).toHaveBeenCalledOnce();
+    expect(() =>
+      f.controller.start({ ...forced, interruptWork: undefined }),
+    ).toThrow("does not match");
+  });
+
+  it("does not interrupt on failed forced preparation or when another restart lease exists", async () => {
+    const f = fixture({
+      prepare: vi.fn(async () => {
+        throw new Error("Build failed");
+      }),
+    });
+    f.controller.start({
+      ...(await intent(f.controller)),
+      interruptWork: true,
+    });
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation?.phase).toBe("rejected"),
     );
+    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
     expect(f.backend.request).not.toHaveBeenCalled();
+
+    const occupied = fixture();
+    occupied.runtime.reserveMaintenanceRestart.mockReturnValue({
+      kind: "busy",
+      reason: "restart-pending",
+    });
+    occupied.controller.start({
+      ...(await intent(occupied.controller)),
+      interruptWork: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await occupied.controller.status()).operation).toMatchObject({
+        phase: "rejected",
+        busyReason: "restart-pending",
+      }),
+    );
+    expect(occupied.backend.request).not.toHaveBeenCalled();
   });
 
   it("does not prepare or restart unsupported services", async () => {
