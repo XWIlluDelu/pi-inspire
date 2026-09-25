@@ -51,6 +51,11 @@ Make Pi's built-in command syntax a first-class Web interaction: supported comma
 
 ## Checkpoint card consistency
 
+Command receipts now follow the same no-clock header convention; their request time remains
+metadata. Simple successful commands retire their receipt in favor of a short notice; actual
+failures retain one attributable receipt. Retry reasons wrap below compact phase labels, and
+composer-adjacent scrollports reuse the visible overlay rail without narrowing their cards.
+
 Context-summary cards no longer add clock-time metadata to their headers, matching Thinking,
 tool, and extension-message cards. Token counts, Markdown summaries, disclosure, copy, and
 canonical timestamps remain unchanged; the separate assistant-round Details preference is

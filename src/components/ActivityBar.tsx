@@ -2,6 +2,33 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { shallowEqual, useAppState } from "../store";
 
+function RetryStatus({
+  label,
+  reason,
+  tone,
+}: {
+  label: string;
+  reason?: string;
+  tone: "info" | "warning";
+}) {
+  const Icon = tone === "info" ? Loader2 : AlertTriangle;
+  return (
+    <span className={`chip chip--${tone} chip--live activity__retry`}>
+      <span className="activity__retry-label">
+        <Icon
+          size={12}
+          className={tone === "info" ? "spin" : undefined}
+          aria-hidden
+        />
+        {label}
+      </span>
+      {reason ? (
+        <span className="activity__retry-reason"> — {reason}</span>
+      ) : null}
+    </span>
+  );
+}
+
 /**
  * Current Pi phase, independent of the trigger or this browser's command receipts.
  * Optional event/snapshot details enrich a state; they never gate its visibility.
@@ -33,13 +60,15 @@ export const ActivityBar = memo(function ActivityBar() {
           role="status"
           aria-label="Context compaction status"
         >
-          <span className="chip chip--info chip--live">
-            <Loader2 size={12} className="spin" aria-hidden />
-            {summaryRetry
-              ? `Compaction retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`
-              : "Compacting context"}
-            {summaryRetry?.message ? ` — ${summaryRetry.message}` : ""}
-          </span>
+          <RetryStatus
+            tone="info"
+            label={
+              summaryRetry
+                ? `Compaction retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`
+                : "Compacting context"
+            }
+            reason={summaryRetry?.message}
+          />
         </div>
       ) : null}
       {!compacting && summaryRetry ? (
@@ -48,11 +77,11 @@ export const ActivityBar = memo(function ActivityBar() {
           role="status"
           aria-label="Summary retry status"
         >
-          <span className="chip chip--warning chip--live">
-            <AlertTriangle size={12} aria-hidden />
-            {`Summary retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`}
-            {summaryRetry.message ? ` — ${summaryRetry.message}` : ""}
-          </span>
+          <RetryStatus
+            tone="warning"
+            label={`Summary retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`}
+            reason={summaryRetry.message}
+          />
         </div>
       ) : null}
       {retrying ? (
@@ -62,13 +91,15 @@ export const ActivityBar = memo(function ActivityBar() {
           aria-label="Retry status"
           aria-atomic="false"
         >
-          <span className="chip chip--warning chip--live">
-            <AlertTriangle size={12} aria-hidden />
-            {state.retry
-              ? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
-              : "Retrying"}
-            {state.retry?.message ? ` — ${state.retry.message}` : ""}
-          </span>
+          <RetryStatus
+            tone="warning"
+            label={
+              state.retry
+                ? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
+                : "Retrying"
+            }
+            reason={state.retry?.message}
+          />
         </div>
       ) : null}
       {pending > 0 ? (
