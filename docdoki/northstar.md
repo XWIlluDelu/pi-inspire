@@ -4,6 +4,8 @@
 
 Build **Inspire**, displayed as **INSΠRE**, into a high-quality graphical home for Pi Coding Agent. The name reflects both “inspire” and “inspect Pi rendering”: the product makes Pi’s conversations and activity easier to inspect while preserving Pi as the agent underneath.
 
+Inspire is Pi's graphical presentation and control layer, not a separate agent platform. Pi and the user's configuration own model tools, prompts, extensions, and agent execution. Optional environments such as Herdr may supply latent capabilities without adding an Inspire-defined agent workflow.
+
 The product begins as a Linux local web application for personal daily use. Its interface should grow toward a scientific workbench rather than remain a generic chat page: conversations are central, while sessions, agent activity, files, changes, and later artifacts or subagents occupy coherent surrounding surfaces.
 
 ## Success criteria
@@ -20,10 +22,14 @@ The product begins as a Linux local web application for personal daily use. Its 
 - The application uses the user’s existing Pi models, credentials, settings, extensions, skills, prompts, project context, and session records wherever Pi exposes them safely.
 - Launch behavior is user-selectable between resuming the previous session and showing a useful welcome page.
 - The first release is dependable for personal Linux use; later remote access and desktop packaging can reuse the same product surface rather than require a rewrite.
+- Optional enhancement is transparent in daily use: the user does not learn a second workflow or need to understand backend ownership. Latent environment capabilities are sufficient; extra buttons, model tools, or agent instructions are not a success criterion.
+- Performance, low bug incidence, clear responsibilities, and maintainability are design constraints. Prefer the best final structure over the smallest patch, while keeping abstractions proportional to real needs and avoiding duplicated state, speculative frameworks, and redundant fallback paths.
 
 ## Hard constraints
 
 - Pi remains the authoritative agent runtime and its session records remain the authoritative conversation history; Inspire must not create a parallel conversation database.
+- Inspire must not supply model tools, inject system prompts or autonomous collaboration instructions, or silently alter Pi's agent behavior. GUI support may translate explicit user actions into native Pi operations, including internal non-model RPC commands where needed.
+- Optional modules have a narrow responsibility boundary. They preserve ordinary send, stop, configuration, restart, and terminal behavior; disabled modules do not burden the normal execution path. Reliability includes truthful failures and recovery, not just successful startup.
 - The browser never receives stored provider credentials or private keys; privileged Pi and filesystem operations stay behind the authenticated local host boundary. A user-created project terminal intentionally grants every paired browser the current operating-system user's shell authority, so browser pairing is a full-control trust decision; terminal state remains host-owned and Pi receives no implicit control of it.
 - The interface must render untrusted model and artifact content defensively. Raw HTML is not trusted by default, mathematical rendering cannot enable trusted commands, and active artifact content requires isolation.
 - One process at a time owns writes to a given Pi session. This is a general Pi usage rule handled as ordinary product behavior, not a burden the user must understand or manage manually.

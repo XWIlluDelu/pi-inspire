@@ -4,6 +4,8 @@ import {
   type CompletionAttentionPreference,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
+  defaultInterfaceSettings,
+  defaultPreferences,
   type InspirePreferences,
   type LaunchPreference,
   type ModelIdentity,
@@ -14,10 +16,8 @@ import {
   type ThemePreference,
   type ToolVisibilityPreference,
   type VisibilityPreference,
-  defaultInterfaceSettings,
-  defaultPreferences,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import type { AppState } from "../app-state";
 
 interface PreferenceControllerHost {
@@ -313,6 +313,10 @@ export class PreferenceController {
 
   setLaunch(launch: LaunchPreference): void {
     this.save({ launch });
+  }
+
+  setHerdrEnabled(herdrEnabled: boolean): void {
+    this.save({ herdrEnabled });
   }
 
   setDesktopSendKey(desktopSendKey: DesktopSendKeyPreference): void {

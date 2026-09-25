@@ -14,10 +14,29 @@
 | Activity presentation | [[tool-presentations]] | Validated local declarations project known Pi calls and optional Thinking text into bounded summaries and typed Web blocks while their native card shells remain fixed. |
 | Session continuity | [[session-continuity]] | Pi’s JSONL remains canonical; [[session-persistence]], [[session-transport]], [[session-branches]], and [[session-deletion]] detail the independent ownership boundaries. |
 | Pi integration | [[pi-integration]], [[host-lifecycle]] | A trusted loopback host adapts Pi RPC into a typed browser interface and presents supported Extension dialogs and text widgets natively without coupling the product to particular Extensions. |
+| Optional enhancement | [[herdr-enhancement]], [[pi-integration]] | An opt-in Herdr environment makes latent capabilities available to the user's Pi without adding model tools, prompts, or a separate workflow. |
 | Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 
+## Current work
+
+The Herdr boundary review is complete; no further implementation remains in that slice.
+Direct RPC remains the default and the optional Herdr setting uses the existing Host restart.
+
 ## Implemented capability
+
+Inspire is Pi's graphical presentation/control layer, not an agent platform. Pi and user
+configuration own tools, prompts, and collaboration behavior. The optional Linux Herdr module
+supplies real placement and environment capabilities while preserving the same GUI, RPC,
+operation authority, and restart semantics. Latent capabilities are enough; Inspire does not
+inject model tools or collaboration instructions. [[pi-integration]] and [[herdr-enhancement]]
+define this boundary. [[follow-herdr-enhancement-2026-09-25]] records the original real-Pi,
+crash-recovery, and release checks.
+
+Worker retirement preserves actual-stop fencing across exit, eviction, and failed provisional
+creation. External workspace closure recovers without uncertain retries. Herdr projects Runtime's
+input-blocked status instead of reinterpreting Pi events, and does not adopt a live native TUI
+as a second writer. [[follow-herdr-review-boundaries-2026-09-25]] records these failure-path checks.
 
 Startup reuses the user's exported execution environment: direct launches inherit; Linux services
 resolve login/interactive shell exports instead of treating bootstrap PATH as the user's tool path.
