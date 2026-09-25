@@ -123,7 +123,10 @@ export function HostRestartSettings() {
         ? "Restart requested."
         : state.notice);
   return (
-    <div className="settings__update-entry host-restart">
+    <div
+      id="settings-host-restart"
+      className="settings__update-entry host-restart"
+    >
       <div className="settings__update-entry-header">
         <span className="settings__field-label">Restart</span>
       </div>

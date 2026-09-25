@@ -1,5 +1,4 @@
 import { isBusyRunState } from "../shared/contracts.js";
-import type { PiRpcProcess } from "./pi-rpc.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
 /** Keep a small warm cache, but never stop selected, busy, in-use, or
@@ -19,9 +18,7 @@ interface RuntimeWorkerPoolHost {
   isLoading(sessionId: string): boolean;
   hasSelectionReservation(sessionId: string): boolean;
   hasForkReservation(sessionId: string, sessionPath: string | null): boolean;
-  detachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void;
-  clearWriterBaseline(slot: RuntimeSlot): void;
-  renewView(slot: RuntimeSlot): void;
+  stopWorker(slot: RuntimeSlot): Promise<void>;
   removeSlot(slot: RuntimeSlot): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
 }
@@ -70,37 +67,27 @@ export class RuntimeWorkerPool {
       // Detach every selected worker synchronously before awaiting any stop;
       // independent force-kill windows then run in parallel.
       if (!this.canEvict(slot)) continue;
-      const rpc = slot.process;
-      if (!rpc) continue;
-      slot.process = null;
-      slot.ready = false;
+      const stop = this.host.stopWorker(slot);
       // Persisted sessions are reloadable. An unselected idle session whose
       // first file never materialized has no catalog identity to reopen, so
       // reclaiming it explicitly abandons that empty transient session.
       const projection = slot.projection;
       slot.projection = null;
       slot.preview = null;
-      this.host.clearWriterBaseline(slot);
-      slot.bridge = null;
-      this.host.renewView(slot);
-      slot.navigationLease = null;
-      this.host.detachProcess(slot, rpc);
       slot.availableModels = null;
       slot.commands = null;
-      const stop = Promise.all([
-        rpc.stop().catch((error) => this.host.logRuntimeError(slot.id, error)),
-        projection
-          ?.close()
-          .catch((error) => this.host.logRuntimeError(slot.id, error)),
-      ]).then(() => undefined);
-      slot.stopping = stop;
       stopping.push(
-        stop.finally(() => {
-          if (slot.stopping === stop) slot.stopping = null;
-        }),
+        Promise.all([
+          stop,
+          projection
+            ?.close()
+            .catch((error) => this.host.logRuntimeError(slot.id, error)),
+        ]).then(() => undefined),
       );
     }
-    await Promise.all(stopping);
+    // Retirement owns each stop barrier and logs unconfirmed stops. A failed
+    // worker stays fenced while independent workers can still be reclaimed.
+    await Promise.allSettled(stopping);
     await this.pruneDormantSlots();
   }
 

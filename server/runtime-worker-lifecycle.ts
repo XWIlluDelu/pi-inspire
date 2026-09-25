@@ -108,6 +108,10 @@ export class RuntimeWorkerLifecycle {
       slot.pendingBranchBridge = null;
     }
     this.host.detachProcess(rpc);
+    // Retire admission synchronously, including unexpected transport exits.
+    // Only a successful actual stop may release this session's writer fence.
+    const stopping = rpc.stop(cancelledCommand);
+    slot.stopping = stopping;
     this.host.clearPendingExtensionUi(slot, "stopped");
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
@@ -116,8 +120,6 @@ export class RuntimeWorkerLifecycle {
       extensionDisplays: [],
       extensionStatuses: {},
     });
-    const stopping = rpc.stop(cancelledCommand);
-    slot.stopping = stopping;
     try {
       await stopping;
       if (slot.stopping === stopping) slot.stopping = null;
@@ -190,13 +192,14 @@ export class RuntimeWorkerLifecycle {
     const bridge = this.host.newBridgeIdentity();
     let rpc: PiRpcProcess;
     try {
-      rpc = this.host.createProcess(
-        this.host.workerOptions(
+      rpc = this.host.createProcess({
+        ...this.host.workerOptions(
           slot.cwd,
           ["--session", slot.sessionPath],
           bridge,
         ),
-      );
+        sessionId: slot.id,
+      });
     } catch (error) {
       projection.resumeReconciliation();
       throw error;
