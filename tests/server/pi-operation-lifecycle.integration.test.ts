@@ -119,7 +119,7 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function fixture(autoCompaction: boolean) {
+async function fixture(autoCompaction: boolean, compactionDelayMs = 35_000) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-pi-operation-")),
   );
@@ -146,6 +146,7 @@ async function fixture(autoCompaction: boolean) {
     PI_OFFLINE: "1",
     PI_SKIP_VERSION_CHECK: "1",
     PI_TELEMETRY: "0",
+    PI_FIXTURE_COMPACT_DELAY_MS: String(compactionDelayMs),
   };
   await Promise.all(
     [home, config, sessions, workspace, temporary].map((path) =>
@@ -522,6 +523,52 @@ afterEach(async () => {
 });
 
 describe("installed Pi operation lifecycle", () => {
+  it("holds follow-up behind a real Pi preflight auto-compaction and its original prompt", async () => {
+    const f = await fixture(true, 1_000);
+    const first = f.delivery("First prompt owns Pi's preflight.");
+    const initial = f.api.prompt(first);
+    await vi.waitFor(() =>
+      expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1),
+    );
+    expect(await f.workers[0]!.request({ type: "get_state" })).toMatchObject({
+      isStreaming: false,
+      isCompacting: true,
+    });
+    const follow = {
+      ...f.delivery("Follow-up from compaction."),
+      behavior: "followUp" as const,
+    };
+    const following = f.api.prompt(follow);
+    await vi.waitFor(async () =>
+      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+    );
+    expect(f.modelRequests).toHaveLength(0);
+    await expect(initial).resolves.toMatchObject({ accepted: true });
+    await expect(following).resolves.toMatchObject({ accepted: true });
+    await vi.waitFor(
+      async () => {
+        expect(f.modelRequests).toHaveLength(2);
+        expect((await f.runtime.snapshot()).runState).toBe("idle");
+      },
+      { timeout: 10_000 },
+    );
+    const written = (await readFile(f.sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)) as SessionEntry[];
+    const userTexts = written.flatMap((entry) => {
+      if (entry.type !== "message" || entry.message.role !== "user") return [];
+      const content = entry.message.content;
+      return [
+        typeof content === "string"
+          ? content
+          : content.find((part) => part.type === "text")?.text,
+      ];
+    });
+    expect(userTexts.slice(-2)).toEqual([first.message, follow.message]);
+    expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+  }, 20_000);
+
   it("accepts an ordinary browser prompt after 35s of real pre-prompt auto-compaction, then reuses the same worker", async () => {
     const f = await fixture(true);
     const worker = f.workers[0]!;
