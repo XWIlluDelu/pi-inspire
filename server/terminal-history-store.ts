@@ -6,6 +6,9 @@ import type { TerminalHistoryBackend } from "./terminal-session-manager.js";
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
+// Leave append headroom after compaction instead of rewriting the retained
+// history for every small batch once a terminal reaches its size limit.
+const RETAIN_HISTORY_BYTES = 24 * 1024 * 1024;
 const FLUSH_DELAY_MS = 100;
 const TERMINAL_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,80}$/u;
 const RESET_SEQUENCE = Buffer.from("\u001bc", "utf8");
@@ -55,7 +58,8 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
     if (pendingSize > MAX_HISTORY_BYTES) {
       const combined = Buffer.concat(chunks, pendingSize);
       const keep = combined.subarray(
-        combined.byteLength - (MAX_HISTORY_BYTES - RESET_SEQUENCE.byteLength),
+        combined.byteLength -
+          (RETAIN_HISTORY_BYTES - RESET_SEQUENCE.byteLength),
       );
       chunks = [RESET_SEQUENCE, Buffer.from(keep)];
       pendingSize = RESET_SEQUENCE.byteLength + keep.byteLength;
@@ -215,7 +219,7 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
         await handle.chmod(PRIVATE_FILE_MODE);
       const knownSize = info.size;
       if (knownSize + data.byteLength > MAX_HISTORY_BYTES) {
-        const capacity = MAX_HISTORY_BYTES - RESET_SEQUENCE.byteLength;
+        const capacity = RETAIN_HISTORY_BYTES - RESET_SEQUENCE.byteLength;
         const newTail = data.subarray(Math.max(0, data.byteLength - capacity));
         const oldTailBytes = Math.min(
           knownSize,
