@@ -25,7 +25,7 @@ through the same RPC and GUI, preserving ordinary send, stop, restart, and termi
 | Pi integration | [[pi-integration]] | Installed Pi configuration, adapted native commands, extension dialogs/status/text widgets. |
 | Host | [[host-lifecycle]] | Pairing, installation, user environment, diagnostics, build publication, and explicit restart. |
 | Herdr | [[herdr-enhancement]] | Default-off Linux worker placement, scoped cleanup, recovery, and Runtime-derived status. |
-| Project terminal | [[terminal]] | Independent PTY daemon, ordered project tabs, detachable browsers, and one explicit input owner. |
+| Project terminal | [[terminal]] | Independent PTY daemon, ordered tabs, explicit input owner, touch keys, and native text selection/copy. |
 | Files and Changes | [[resource-preview]] | Filesystem browsing/search, session-authorized previews, document-relative resources, and Git diffs. |
 | Connections | [[connection-modules]] | Optional ingress to the same paired Host, including the separate terminal data plane. |
 
@@ -53,6 +53,8 @@ Two design follow-ups remain:
   and asynchronous selection ownership.
 - **Herdr:** [[follow-herdr-enhancement-2026-09-25]] records initial transport/environment checks;
   [[follow-deep-review-repairs-2026-09-26]] records the later systemd-scope and real Pi/Bash crash checks.
+- **Terminal:** [[terminal-controls-redesign]] covers the compact controls, touch input, text
+  selection, clipboard ownership, and browser checks.
 - **Files and documents:** [[filesystem-git-separation]] and [[document-relative-previews]] explain
   independent discovery/authorization, inline local images, and document navigation.
 - **Installation:** [[dependency-boundaries]] and [[user-execution-environment]] record the installed-Pi
