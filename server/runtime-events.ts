@@ -662,7 +662,7 @@ export class RuntimeEventController {
               const conflict = this.host.setProjectionConflict(
                 slot,
                 "projection-failure",
-                "Pi finished an operation, but INSΠRE could not verify the resulting session projection; the worker was stopped safely",
+                "Pi finished an operation, but INSΠRE could not verify the resulting session projection. Recover before writing again",
               );
               this.host.emitSlotEvent(slot, {
                 type: "session_projection_conflict",

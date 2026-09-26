@@ -159,6 +159,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * visible session is inspecting an earlier branch. */
   transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
+  composerHistoryVersion: string | null;
   hasOlderMessages: boolean;
   olderMessagesCursor: string | null;
   loadingOlderMessages: boolean;
@@ -219,10 +220,11 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * slice, so staged work never leaks across sessions. */
   attachments: PendingAttachment[];
   projectFiles: string[];
-  /** Prompt delivery in flight for the visible session: repeat sends are
-   * refused and attachment withdrawals freeze, so a DELETE cannot race the
-   * host resolving those same files into the outgoing message. */
+  /** Outgoing operations own their handed-off artifacts independently of the
+   * editable next draft. */
   sending: boolean;
+  /** Failed inputs retained for explicit restoration without replacing a draft. */
+  failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
   pendingAction: "clear" | null;
   /** Files/resources pane visibility (Ctrl+.). */
@@ -320,6 +322,7 @@ export function createInitialAppState(): AppState {
     transcriptViewId: null,
     transcriptDurableLeafId: null,
     transcriptEffectiveLeafId: null,
+    composerHistoryVersion: null,
     hasOlderMessages: false,
     olderMessagesCursor: null,
     loadingOlderMessages: false,
@@ -355,6 +358,7 @@ export function createInitialAppState(): AppState {
     attachments: [],
     projectFiles: [],
     sending: false,
+    failedDeliveryCount: 0,
     pendingAction: null,
     resourcesOpen: false,
     contextMode: "files",

@@ -159,6 +159,7 @@ beforeAll(async () => {
           viewId: state.transcriptViewId,
           incarnation: state.transcriptIncarnation,
           effectiveLeafId: state.transcriptEffectiveLeafId,
+          composerHistoryVersion: state.composerHistoryVersion,
           historyId: "app-test-history",
           total: 0,
           start: 0,

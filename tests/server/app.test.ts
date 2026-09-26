@@ -1075,6 +1075,7 @@ describe("local host API", () => {
       sessionId: "mock-active",
       revision: 7,
       viewId: "mock-view-mock-active",
+      composerHistoryVersion: "history-1",
       messages: [{ role: "user", content: "older", timestamp: 1 }],
       hasOlder: false,
       olderCursor: null,
@@ -1125,6 +1126,7 @@ describe("local host API", () => {
         revision: 7,
         viewId: "mock-view-mock-active",
         historyId: "history-7",
+        composerHistoryVersion: "history-1",
         total: 1,
         start: 0,
         entries: [{ text: "prompt", images: [], files: [] }],
@@ -1369,6 +1371,7 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(stored.body).toEqual({
+      herdrEnabled: false,
       theme: "dark",
       palette: "amber",
       contentTextSize: "comfortable",
