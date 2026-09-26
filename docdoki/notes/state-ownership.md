@@ -1,90 +1,47 @@
 # State and operation ownership
 
-## Asynchronous ownership review
+## Asynchronous selection ownership
 
-### Scope
+### Request ownership and result authority differ
 
-The ownership review examined session selection,
-bootstrap/reconnect, transcript reads, runtime controls, History requests,
-composer/resource/Git ownership, Host projection reconciliation and worker
-reclamation, and terminal transport. It authorized demonstrated correctness and
-implementation-quality repairs, not unapproved product-design changes.
+A request can still own its loading marker after its result has become stale. `BranchController`
+clears a still-owned marker when the effective leaf changes, but does not publish the stale History
+result. Invalidated requests cannot clear a newer request's marker. Conflating those checks formerly
+left History permanently busy after an ordinary append.
 
-### Reproduced and repaired
+Selection identity includes its generation, not only the session ID. A → B → A is a new owner:
+late thinking rollback, abort errors and model-change refreshes from the first A cannot publish into
+the second. `AppStore.resync` rejects an obsolete owner before allocating a request, so an old A
+completion cannot invalidate a valid B refresh.
 
-The first ten added cases failed against the starting implementation. Thirteen
-new regression cases now cover the repaired boundaries and their related cases:
+Bootstrap has a related publication boundary. An open/create/deselect or same-session resync can
+commit while reconnect is pending. Metadata may still refresh, but the old snapshot and its digest
+cannot attest the retained view. Launch continuation uses the intent captured before bootstrap.
 
-- **Late bootstrap replaced a newer committed snapshot.** Completing open,
-  create, or deselect while reconnect bootstrap waited caused the old bootstrap
-  selection to win; a same-session resync could also be overwritten. `AppStore`
-  now fences the snapshot portion by the snapshot publication generation.
-  Current Host metadata can still refresh, but an obsolete snapshot digest cannot
-  attest the retained view. Launch continuation uses the intent captured before
-  bootstrap, not an intent captured after it returns.
-- **History remained permanently busy after ordinary append.** A changed
-  effective leaf invalidated a tree/action result without advancing its request
-  id; the old completion also refused to clear its loading/action marker.
-  `BranchController` now separates ownership of the request marker from authority
-  to publish its result. A still-owned request retires its marker and exposes a
-  refreshable stale-history state; invalidated requests cannot clear newer work.
-- **An old model change suppressed a current session refresh.** After selecting B,
-  a completed model request from A started a new A resync and advanced the shared
-  request counter. B's already-running refresh then discarded its valid result.
-  Model changes capture their original selection generation, and `resync` rejects
-  obsolete owners before allocating a request or issuing HTTP.
-- **Thinking-level refusal rolled back a reopened selection.** A delayed failure
-  from before A → B → A restored the old optimistic predecessor into the reopened
-  A. Rollback now also requires the captured selection generation.
-- **An old abort error appeared in the current view.** A delayed abort failure
-  could replace B's error, or the error of a reopened A or a new same-session
-  branch. Visible errors now require the captured selection owner; session-owned
-  command activity remains attributable to its original operation.
+Source and regression evidence: `src/store.ts`, `src/controllers/branch-controller.ts`,
+`tests/web/store-async-ownership.test.ts` and `tests/web/branch-store.test.ts`. The regressions cover stale-result and loading-marker ownership.
 
-Current-API authentication failures retain their transport-wide meaning. The
-repairs neither cancel accepted Host operations nor add replay/retry fallbacks.
-Implementation: `src/store.ts` and `src/controllers/branch-controller.ts`.
-Regression evidence: `tests/web/store-async-ownership.test.ts` and
-`tests/web/branch-store.test.ts`.
+### Addressed operations are not global selection
 
-### Approved follow-up — session-addressed Fork
+A browser can view A while another browser selects B. An addressed snapshot of A must not require a
+Host-global selection change. Fork likewise validates the addressed source and fresh branch revision;
+its persistence and publication checks remain independent of global selection. The decided contract
+is [[session-branches]].
 
-The reviewed implementation required `RuntimeController.selectedSessionId === source.id`
-inside `forkBranchInside`, while event subscriptions and snapshots were addressed
-per browser. An isolated runtime probe reproduced this sequence:
+Capture automatic-selection intent before entering the source operation lane. Capturing it after a
+queued reconciliation can overwrite a newer selection made while the operation waited. Warm the
+attached destination independently of global selection, as ordinary open does, so its addressed
+preview receives runtime metadata and does not become eligible for dormant reclamation.
 
-1. Open A, then open B as a second browser would.
-2. An addressed snapshot of A succeeds without changing the Host selection.
-3. Fork A refuses with `Fork requires the source session to remain selected`.
+`tests/server/runtime-branching.test.ts` covers another/no global selection, a newer selection during
+queued Fork and retained source validation.
 
-The user approved replacing this admission policy with session-addressed Fork.
-`forkBranchInside` now validates the addressed source and its fresh branch
-revision, retaining source identity, conflict, active-path user target,
-committed-prefix, and publication checks. The contract is in [[session-branches]].
+### Inspect the public boundary before adding recovery
 
-Two related lifecycle details matter:
-
-- Capture the automatic-selection fence before entering the source operation
-  lane. Capturing it only after reconciliation lets a queued fork overwrite a
-  newer selection made while it waited.
-- Warm the attached destination independently of global selection, as ordinary
-  `openSession` does. The requesting browser can adopt that addressed preview
-  even while another session remains globally selected; skipping warm-up leaves
-  the destination without runtime metadata and eligible for dormant reclamation.
-
-Four added runtime regression cases failed before this repair. They cover a
-source viewed while another session or no session is globally selected, newer
-selection during a queued fork, and retained source validation. The expanded
-active-source test also checks unchanged source bytes, worker/queue/dialog
-continuity, destination readiness, and no unexpected global selection change.
-
-### Rejected reconnect hypothesis
-
-The initial runtime probe also disproved a suspected reconnect gap: `RuntimeController.snapshot`
-already reconstructs an absent or LRU-reclaimed slot through the catalog and
-`prepareSlot`, without changing global selection or starting a worker. Reading
-only its lower-level `RuntimeReadController` delegate misses that boundary. No
-extra browser reopen fallback was retained.
+`RuntimeController.snapshot` reconstructs an absent or reclaimed slot through the catalog and
+`prepareSlot`, without selecting it or starting a worker. Inspecting only the lower-level read
+delegate once suggested a nonexistent reconnect gap. No additional browser reopen fallback was
+needed.
 
 ## Operation lifecycle ownership
 
@@ -180,7 +137,7 @@ still restart the Host.
 | Terminal identity | `tests/{server,web}/terminal-operations.test.ts`, `terminal-inprocess-operations.test.ts`, and `terminal-operation-restore.test.ts`: lost replies, concurrent retries, payload/epoch checks, and stored-intent validation. |
 | Restart leases | `tests/server/maintenance-restart.test.ts`, `tests/deploy/idle-maintenance-restart.test.mjs`, and `tests/launcher.test.ts`: expiry, exclusive commit, reordered release, non-issuance, and uncertain submission. |
 
-## State authority review
+## State and observation authority
 
 ### The abstraction error
 
@@ -278,112 +235,86 @@ blanket wording that every same-byte rewrite must be rejected was too broad for 
 and incomplete-tail rewriting. Startup retains its stricter source-version comparison, and the
 pre-existing bounded new-file materialization handling is not broadened into a partial-tail lease.
 
-## Resource and terminal ownership review
+## Resource and terminal addressing
 
- follow-up: [[workbench-implementation]] supersedes the preview-index authority and ignore-rule cache tradeoff below. Only discovery is cached; each content read checks current workspace containment and the pinned object directly. The session/terminal ownership repairs remain in force.
+### A resource read belongs to its addressed session
 
-### Scope and decisions
+Global Host selection is not permission to resolve another browser's resource. `RuntimeReadController`
+uses the requested open slot; context reconciliation and lazy message reads retain slot-registration,
+view and revision checks without selecting it globally. This is the same ownership distinction as
+[[state-ownership]].
 
-The review identified three local defects: resource reads followed global Host selection, terminal mutations could write into another project's pane, and VS Code file URIs retained the URL slash before Windows drive letters. It also identified unconditional preview index rebuilds and the unused terminal `replayModeRef`.
+Discovery and read authorization are separate. The former Git preview-index and ignore-rule expiry
+policy was superseded by [[workbench-implementation]]: discovery may be cached, but content reads
+check current workspace containment and the pinned object directly. [[resource-preview]] is the
+current contract.
 
-- `RuntimeReadController` now addresses the requested open slot. Context reconciliation and lazy message reads retain slot-registration, view, and revision checks without reading or changing global selection. The mock runtime follows the same addressed contract.
-- `TerminalCatalogController` is local to one pane project/reload generation. Full reads and mutation receipts share project, epoch, revision, and ID-merge rules. Partial receipts record a revision high-water mark, not a complete inventory: equal-revision full responses still reconcile membership/order. Epoch changes require a full catalog; previously replaced epochs are rejected. Obsolete success/failure/finally callbacks cannot change selection, errors, creation state, or ordering in the current project. Optimistic rollback only restores its exact unchanged state.
-- VS Code paths are converted through a file URL and Node's native URL-to-path conversion, preserving Windows drives and POSIX absolute paths.
-- Following the review's proposed tradeoff, content requests reuse the five-second project-index cache and shared in-flight scans. Ignore-rule changes become effective on cache expiry or explicit Files refresh. Per-request branch, realpath, and pinned-object checks remain; a serving-time missing indexed file still invalidates the cache. No measured latency improvement is claimed.
-- The write-only replay ref was removed. No broader request framework, terminal protocol change, or test deletion was needed.
+### Partial terminal receipts are not complete catalogs
 
-Contracts: [[resource-preview]] and [[terminal]].
+`TerminalCatalogController` belongs to one project/reload generation. Full reads and mutation
+receipts share project, epoch and revision ownership. A partial receipt advances the revision
+high-water mark, not complete membership: an equal-revision full response still reconciles order
+and membership. An epoch change requires a full catalog; replaced epochs cannot return.
 
-## Simplification review
+Obsolete success, failure and finally callbacks cannot change current selection, errors or loading
+state. Optimistic rollback restores only its exact unchanged state. `tests/web/terminal-pane.test.tsx`
+uses delayed APIs for A → B → A, reload, stale polling, partial receipts and equal-revision full
+reconciliation; terminal rendering is stubbed for these ordering cases. Contract: [[terminal]].
 
-### Repairs
+### File URL conversion is platform-specific
 
-- Removed unused fork-era `rebind` methods from `RuntimeProcessRegistry` and
-  `RuntimeExtensionUiController`. An independent fork does not transfer the source
-  worker or its dialogs; new-session creation finalizes its existing provisional slot.
-- Removed the stateless, single-operation `RuntimePendingController`. Queue clear now
-  uses `RuntimeController`'s existing mutation, writer-admission, and
-  acceptance-unknown handling instead of wiring another callback facade.
-- Removed the redundant `/compact` parser. The new-session prompt path remains
-  supported, but branches before ordinary attachment leasing and shares native
-  command parsing and compaction lifecycle. It is not merely an old-client fallback.
-- Hidden-clear preflight now defaults directly to `validateSessionFile`, independently
-  of the destructive adapter's function identity. Filesystem-backed tests prove that
-  a malformed target rejects the entire reviewed batch before any deletion call,
-  even with an injected delivery adapter. See [[session-deletion]].
-- Terminal spawn and restore share one metadata shape, emulator initialization, and
-  advisory-event registration. A thrown PTY factory disposes the allocated emulator
-  and listeners without publishing a terminal or advancing the catalog. Tests retain
-  live creation, restart, and restore coverage.
-- Removed confirmed unused store/Git/terminal controls, the obsolete ring-buffer
-  reset method, an installation-key passthrough, and the navigation component's
-  test-only re-exports. Tests import `nav-model` directly.
-- Retired the maintenance benchmark's 2,218-line experiment, 78-line bundle-source
-  checker, 37-line profiler adapter, package entry points, and four App Profiler
-  branches. The experiment had five type errors outside normal typecheck coverage;
-  its source-string verifier also failed against the current renderer. Historical
-  measurements, method, and exact Git reproduction points remain in
-  [[performance]]. No new performance improvement is claimed.
+A Windows drive URI retains an extra leading slash if its URL pathname is treated as a filesystem
+path. Convert through a file URL and Node's native URL-to-path conversion instead. The Windows-path
+suite exercises the parser with Node's Windows algorithms on Linux; it establishes parsing, not
+native Windows filesystem or PTY behavior.
 
-### File boundaries
+Sources: `server/runtime-reads.ts`, `src/terminal-catalog.ts`,
+`tests/server/resources-windows-paths.test.ts` and `tests/server/resources.test.ts`.
 
-`server/app.ts` previously combined HTTP authentication/routes with two independent
-WebSocket lifecycles. The review reduced it from 2,410 to approximately 1,517 lines:
+## Responsibility-focused simplification
 
-- `server/runtime-event-sockets.ts` owns `/events` interests, snapshots, bounded
-  batching/backpressure, heartbeat state, and subscription cleanup.
-- `server/terminal-gateway.ts` owns Terminal HTTP routes, single-use tickets,
-  attachments, and terminal-socket cleanup.
-- The shared cookie/origin admission and Host shutdown remain in `app.ts`. The new
-  modules do not own another runtime registry, transcript, or PTY store.
+### Remove a layer when it adds no owner
 
-The 5,085-line `tests/web/store.test.ts` was partitioned by its existing 12 describe
-blocks into six suites: connection/events, transcript, navigation, resources,
-composer/commands, and deletion. All 108 tests remain unchanged in substance and
-pass. The largest resulting suite is about 1,224 lines; only the small setup fixture
-is shared. This is a responsibility split, not reduced regression coverage.
+The former stateless `RuntimePendingController` forwarded one operation through callbacks while
+`RuntimeController` already owned mutation, writer admission and acceptance-unknown handling. Removing
+that facade simplified the dependency path without moving authority. Likewise, independent Fork
+creates a destination rather than transferring the source worker or dialogs, so fork-era `rebind`
+helpers had no remaining role.
 
-The large `RuntimeController` and `SessionProjection` files still warrant care, but
-were not split mechanically: their mutation/persistence and incremental projection
-invariants cross method boundaries, and they already use bounded collaborators.
-This review does not establish that every remaining large file is optimally factored.
-Generated font CSS and source-attributed design material were retained because they
-serve runtime rendering or preserve human design intent, not because of their size.
+This is a reason to inspect responsibility, not a rule against controllers: event sockets and
+terminal gateways each own an independent transport lifecycle and justify their modules.
 
-### Document boundaries
+### Split by responsibility, not line count
 
-The prior Markdown specs hid substantial size in single-line bullets: the session,
-Pi integration, workbench, and conversation contracts were approximately 28.6, 20.8,
-27.4, and 25.9 kB. Their 103 checks were first relocated with exact word/qualifier
-preservation, then duplicate startup/fork descriptions were consolidated without
-removing their additional constraints.
+`server/runtime-event-sockets.ts` owns event interests, snapshots, batching and subscription cleanup;
+`server/terminal-gateway.ts` owns terminal routes, tickets and socket attachments. Authentication and
+Host shutdown remain in `app.ts`. Neither extracted module owns another transcript, runtime or PTY
+registry.
 
-- [[session-continuity]] now routes to [[session-persistence]],
-  [[session-transport]], [[session-branches]], and [[session-deletion]].
-- [[pi-integration]] delegates pairing, packaging, services, and build publication
-  to [[host-lifecycle]].
-- [[workbench]] delegates detailed geometry and preferences to [[workspace-layout]]
-  and [[interface-preferences]].
-- [[conversation]] delegates fold and Adaptive timing to [[activity-presentation]].
-- The coherent [[composer]] contract remains together, but its 15 checks are grouped
-  by concern and wrapped into readable paragraphs. Concurrently completed image-layout
-  and directory-picker requirements were preserved.
+The original 108 store tests were divided by their existing concerns—connection/events, transcript,
+navigation, resources, composer/commands and deletion—with only setup shared. Partitioning by those
+boundaries preserves discoverability without creating a large generalized fixture layer.
 
-Root contracts and `spec_abstract.md` link directly to the new homes. Stale source/test
-associations were removed, moved store tests are addressed by their current paths,
-and comments about global selection, fork rebinding, Trash delivery, and update
-identity were corrected. Document checks found no unmatched `covers` patterns or
-broken wiki-links; the DocDoki private-boundary check passed.
+Persistence and incremental projection invariants can cross methods. A large runtime/projection
+file therefore needs an identified responsibility boundary, not a mechanical size-based split.
 
-### Focus regression found during verification
+### Keep contracts and experiments in their own homes
 
-Three browser cases initially failed to restore the Settings/image opener. An
-isolated StrictMode unit test reproduced the bug before the fix: layout-effect replay
-captured the already-focused internal close button as the new restoration target.
-Unmount then left focus on the document body.
+Root specs link to detailed contracts by authority: persistence/transport/branches/deletion,
+Host lifecycle, workspace/preferences, and activity presentation. A short overview is navigation,
+not a duplicate implementation or check ledger.
 
-`useModalFocus` now retains the previous entry's outside opener only when replaying
-on the same dialog with focus still inside it. It retains the existing modal-stack,
-nested restoration, and stale-microtask guards. The new test went from failing to
-passing; the three affected modal suites passed all 11 tests. Production Chromium
-subsequently passed both Settings variants and image dismissal/focus restoration.
+The retired performance evaluator had drifted into another fake protocol implementation and its
+source-string verifier no longer matched the renderer. [[performance]] retains measurements
+and exact reproduction points; maintaining obsolete executable fixtures was not necessary to keep
+that knowledge.
+
+### StrictMode can recapture a dialog's internal focus
+
+Layout-effect replay can capture an already-focused internal Close button as the restoration target.
+On unmount, focus then falls to the document body rather than the outside opener. `useModalFocus`
+retains the previous entry's outside opener when replaying the same dialog with focus still inside.
+The existing modal stack and stale-microtask ownership remain intact.
+
+An isolated regression failed before the correction; the three affected browser flows then restored
+the opener. Source: `src/use-modal-focus.ts` and `tests/web/modal-focus.test.tsx`.

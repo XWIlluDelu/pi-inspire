@@ -48,7 +48,9 @@ The user rejected Git tracking/ignore rules as file-visibility rules: Files repr
 - Document-local links/images, downloads and terminal file links inherit the independent resource authority. Local images in ignored generated-output directories can load; remote/protocol-relative images, outside targets without citations, sandbox content and transfer limits remain unchanged.
 - Changes no longer infers `+0 −0` from an absent status entry. Only a concrete diff supplies line counts; missing/unavailable/incomplete/not-a-repository observations show unavailable counts and disable navigation. An empty selected Git comparison does not substitute working-tree bytes for staged source.
 
-The earlier preview-index authority and five-second ignore-revocation tradeoff in [[state-ownership]], and the ignored-image refusal recorded in [[workbench-implementation]], are superseded. Their session/object and document safety boundaries remain. Current contracts: [[resource-preview]], [[composer]], [[conversation]].
+Discovery caching does not grant read authority. [[state-ownership]] explains
+session addressing and pinned-object reads; [[workbench-implementation]] applies the same independent
+authorization to document images. Current contracts: [[resource-preview]], [[composer]], [[conversation]].
 
 ### Limits
 
@@ -147,103 +149,44 @@ reads could paste after an A → B → A activation round trip. Clipboard comple
 now checks the originating activation/control epoch, ignores retired errors, and
 returns focus from the dismissed menu without stealing a newer focus choice.
 
-## Streaming tool argument cards
+## Streaming tool argument projection
 
-### Outcome
+### Identity and incremental ownership
 
-Pi JSON/RPC >=0.84.3 supplies tool identity/name at `toolcall_start` (upstream
-PR #7953; verified installed Pi 0.85.1 `docs/rpc.md` and `dist/modes/json-event.js`).
-INSΠRE now creates that named card immediately, streams a bounded argument preview,
-and preserves the same call identity through execution and authoritative results.
-Older identity-less starts retain end-only behavior.
+Pi JSON/RPC >=0.84.3 supplies tool identity/name at `toolcall_start` (upstream PR #7953;
+verified against installed Pi 0.85.1 `docs/rpc.md` and `dist/modes/json-event.js`). That permits a named
+card before arguments complete; older identity-less starts retain end-only behavior. Contracts:
+[[activity-presentation]], [[session-transport]] and [[conversation]].
 
-Contracts: [[../specs/activity-presentation]], [[../specs/session-transport]],
-[[../specs/conversation]].
+`server/tool-argument-stream.ts` parses once into a worker/message-owned preview. Sensitive keyed
+values are redacted before transport; cumulative raw argument JSON is not retained. Immutable path
+updates in `shared/tool-argument-updates.ts` preserve call identity across both projections, and
+prototype-shaped keys remain inert own properties. Final tool data replaces the preview once.
 
-### Implementation boundaries
+`server/runtime-stream-budget.ts` accounts for exact append JSON growth, including escaping and split
+surrogates, without serializing the cumulative assistant on every fragment. Structural changes still
+require full validation. If the item budget removes other argument paths, a character count cannot
+prove the reduced tree: publish a complete checkpoint, not merely the latest path patch.
 
-- `server/tool-argument-stream.ts`: one-pass, worker/message-owned JSON preview
-  parser. Escapes, nested objects/arrays, and complete primitives are supported;
-  sensitive keyed values are discarded/redacted before any transport update.
-  The parser retains no cumulative raw argument JSON.
-- `shared/tool-argument-updates.ts` and `shared/assistant-stream.ts`: immutable
-  path updates and call identity/preview metadata shared by both projections.
-  Prototype-shaped keys remain inert own properties. Interruption metadata is
-  derived from failed/aborted assistant outcomes, including persisted projection.
-- `server/runtime-events.ts`: raw Pi arguments become bounded Host-authored
-  updates, not browser-visible raw JSON. Final ToolCall data is projected once
-  into a complete replacement instead of duplicated in a raw delta envelope.
-- `server/runtime-stream-budget.ts`: append-only body updates account for exact
-  JSON growth, including escaping, split surrogates and revision/preview metadata,
-  without serializing cumulative assistant messages. Structural and final updates
-  retain full validation. Item-budget reduction marks the projected message and
-  publishes a bounded replacement: a character count cannot witness other
-  argument paths being removed from the tree.
-- `server/tool-argument-batches.ts`, `server/runtime-event-sockets.ts`, and browser
-  event/connection reducers: adjacent same-tool fragments coalesce within the
-  existing 16ms window. `sourceEventCount` preserves revision continuity and the
-  2,048-source-event batch limit. Background sessions receive no argument bodies.
-- Existing cards/registry remain authoritative for presentation. Write bodies use
-  the native Content block immediately; other tools show their named shell, then
-  typed content when their partial shape is compatible. States distinguish
-  generating arguments, waiting to execute, running, and actual outcomes.
-  Partial/interrupted paths cannot open resources; copies explicitly say preview.
-  Collapsed cards do not build code bodies or eagerly serialize clipboard data.
+Same-tool fragments coalesce within the existing transport window. `sourceEventCount` preserves
+revision continuity across batches; background viewers receive no argument bodies. Joining snapshots
+can still serialize cumulative replacements, so established-viewer measurements do not describe that
+handshake. Display truncation and partial-path resource/copy rules remain in the contracts.
 
-### Bounds and limitations
+### Incomplete edit items are valid generation shapes
 
-The display parser permits 32,000 decoded string characters per tool, eight path
-segments, 256 nodes, 256-character keys, and 256,000 inspected source characters.
-Limit/malformed-prefix handling freezes an explicitly truncated preview; later
-fragments generate no repeated updates. Code/replacement preview DOM is capped at
-400 lines during generation/interruption. These are display limits, not file-size
-or execution limits. The completed call and persisted message still obey the
-pre-existing Host transcript projection bounds (not unlimited full-file copies).
+A normal next replacement begins as `{}` or oldText-only. Requiring both strings for every item made
+that prefix invalidate the entire diff, hiding previously complete rows. This was shape validation,
+not missing red/green CSS.
 
-New clients consume normalized patches, not public Pi raw argument JSON. Existing
-text/thinking transport and complete joining-socket replacements remain in place.
-A joining socket can still incur cumulative replacement serialization during its
-bounded snapshot handshake; the measured linear wire result below concerns
-established detail viewers. Host activation requires a restart and browser refresh;
-this task did not restart the user's live Host or interrupt active Pi work.
+The native edit rule accepts absent preview fields only with Host-owned preview metadata; wrong types
+and malformed authoritative calls still use their generic presentation. A missing side contributes
+no rows rather than a fabricated empty-string edit. Rendering derives from the current call, not a
+cached last-good diff, so a fresh observer sees the same prefix. Numbered headings remain stable, and
+no completed replacement count is claimed during generation.
 
-### Follow-up: edit diff fallback during generation
-
-The reported loss of red/green edit formatting was a shape-validation bug, not
-missing CSS. `editReplacements` required every array item to contain both strings;
-the parser's normal next-item `{}` or oldText-only prefix invalidated the entire
-presentation. The completed prefix returned to diff view only after newText began.
-Truncation/interruption at that boundary could leave the raw view indefinitely.
-
-The native edit rule now distinguishes absent preview fields from wrong types.
-It accepts incomplete array items and legacy single replacements only when the
-call has Host-owned preview metadata. Missing old/new sides have no diff rows,
-not fabricated empty-string changes. Numbered preview headings remain stable as
-items arrive, and no final replacement count is claimed during generation.
-Rendering is a pure projection of the current call, not a cached last-good view:
-fresh observers reproduce the same content, and malformed authoritative calls
-still fall back. Resource/copy gating, 400-line preview bounds, selected-rule
-ownership and successful `details.patch` authority are unchanged.
-
-- The initial regression run reproduced six failing cases on the prior renderer.
-  `tests/web/streaming-edit-cards.test.tsx` now covers 22 cases: new array items,
-  missing/empty sides, different field orders, legacy calls, DOM identity,
-  interruption/truncation, fresh-observer reconstruction, wrong types, strict
-  completed calls, and successful/error/incompatible result adoption.
-- Node **22.19.0**: formatting, lint, typecheck, Knip and frontend build passed;
-  full working-tree Vitest (excluding the separately scoped launcher suite)
-  passed **154 files / 1,571 tests**, with **2 skipped**. That run also included
-  the then-uncommitted restart controls. Log:
-  `/tmp/inspire-edit-stream-check.log`.
-- Playwright CLI exercised the actual parser → shared immutable updates → native
-  registry → ToolCard path in an isolated static Vite fixture, with no Host proxy
-  or real sessions. Every character was rendered and asserted to remain typed;
-  starting the next replacement retained earlier DOM rows. 1280px light and 390px
-  dark views retained red/green tint, full scroll-width row backgrounds, no page
-  overflow, and distinct generating/interrupted/waiting/applied states.
-  Screenshots: `output/playwright/edit-stream-{desktop-light,narrow-dark,
-  interrupted-dark,applied-dark}.png`. The fixture's only console error was its
-  missing favicon. These checks do not claim a live model or real file edit.
-
-This follow-up changes only frontend presentation; the frontend was rebuilt and
-no live Host restart is required for this fix (refresh the browser).
+Source: `src/tool-presentations/pi-native.ts` and `tests/web/streaming-edit-cards.test.tsx`. Six initial
+regressions failed before repair. Cases cover field order, next-item growth, legacy replacements,
+interruption, fresh observers, DOM identity and final result adoption. Character-by-character browser
+fixtures exercised the parser → shared updates → registry → ToolCard path at desktop/narrow sizes;
+they did not execute a live model or edit a real file.
