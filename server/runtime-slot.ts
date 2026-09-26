@@ -129,7 +129,6 @@ export interface RuntimeSlot {
   process: PiRpcProcess | null;
   startupPhase: "idle" | "starting" | "complete";
   startupError: Error | null;
-  startupStop: Promise<void> | null;
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
   stopping: Promise<void> | null;
@@ -233,7 +232,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     startupThinkingLevel: seed.startupThinkingLevel ?? null,
     startupPhase: "idle",
     startupError: null,
-    startupStop: null,
     stopping: null,
     pendingPrompt: null,
     pendingPromptCount: 0,
