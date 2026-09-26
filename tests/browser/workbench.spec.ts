@@ -1,6 +1,10 @@
 import { basename } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import {
+  decodeTerminalInputFrame,
+  decodeTerminalServerDataFrame,
+} from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 const token = "inspire-browser-test-token";
@@ -383,19 +387,29 @@ test("compact terminal controls keep selection, search, and output scoped to the
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
       .toBe("TERMINAL_REDESIGN_A");
     await more.click();
+    await page.getByRole("button", { name: "Copy all", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toContain("TERMINAL_REDESIGN_A");
+    await more.click();
     await page
-      .locator(".terminal-menu__group > summary")
-      .filter({ hasText: "Display" })
+      .getByRole("button", { name: "Select text", exact: true })
       .click();
-    await page.getByRole("button", { name: "Select all", exact: true }).click();
+    const textDialog = page.getByRole("dialog", {
+      name: "Select terminal text",
+    });
+    const textOutput = textDialog.getByRole("textbox", {
+      name: "Terminal output",
+    });
     await expect(page.locator("details[data-terminal-menu][open]")).toHaveCount(
       0,
     );
-    await expect(
-      page.getByRole("group", { name: "Selected terminal text" }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Copy terminal selection", exact: true })
+    await expect(textOutput).toBeFocused();
+    await expect(textOutput).toHaveAttribute("readonly", "");
+    expect(await dimensions()).toEqual(beforeSearch);
+    await textOutput.press("Control+a");
+    await textDialog
+      .getByRole("button", { name: "Copy selection", exact: true })
       .click();
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
@@ -470,19 +484,25 @@ test("compact terminal controls keep selection, search, and output scoped to the
     );
     await expect(input).toBeFocused();
     await input.press("Control+u");
+    await page.evaluate(() =>
+      Reflect.deleteProperty(navigator.clipboard, "readText"),
+    );
 
     const accessibility = await new AxeBuilder({ page })
       .include(".terminal-pane")
       .analyze();
     expect(accessibility.violations).toEqual([]);
-    // A short panel must scroll its menu, not clip its final settings action.
+    // Height-only changes preserve output; a short panel also scrolls its menu.
     await page
       .locator(".terminal-pane")
       .evaluate((element) => (element.style.flex = "0 0 280px"));
     await more.click();
-    await expect(
-      page.getByRole("button", { name: "Copy last output", exact: true }),
-    ).toBeDisabled();
+    await expect(copyOutput).toBeEnabled();
+    await copyOutput.click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("TERMINAL_REDESIGN_A");
+    await more.click();
     await page
       .locator(".terminal-pane")
       .getByRole("button", { name: "Settings", exact: true })
@@ -543,6 +563,222 @@ test("compact terminal controls keep selection, search, and output scoped to the
         `/api/terminals/${encodeURIComponent(id)}?force=1`,
       );
   }
+});
+
+test.describe("touch terminal", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+
+  test("keeps touch keys in the input flow and offers stable native text selection", async ({
+    context,
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const inputs: string[] = [];
+    let output = "";
+    page.on("websocket", (socket) => {
+      if (new URL(socket.url()).pathname !== "/terminal") return;
+      socket.on("framesent", ({ payload }) => {
+        if (typeof payload !== "string")
+          inputs.push(
+            new TextDecoder().decode(decodeTerminalInputFrame(payload).data),
+          );
+      });
+      const decoder = new TextDecoder();
+      socket.on("framereceived", ({ payload }) => {
+        if (typeof payload !== "string")
+          output += decoder.decode(
+            decodeTerminalServerDataFrame(payload).data,
+            { stream: true },
+          );
+      });
+    });
+    await pairedPage(page);
+    await page.getByRole("button", { name: "Toggle navigation" }).tap();
+    await openMockSession(page, /Review extension event lifecycle/);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const response = await page.request.post("/api/terminals", {
+      data: { cwd: browserWorkspace },
+    });
+    expect(response.ok()).toBe(true);
+    const terminal = (await response.json()) as { id: string };
+    try {
+      await page.getByRole("button", { name: "Toggle resources panel" }).tap();
+      await page.getByRole("button", { name: "Terminal", exact: true }).tap();
+      await expect(
+        page.getByRole("status", { name: "Controlling", exact: true }),
+      ).toBeVisible();
+      const input = page.locator(
+        ".terminal-view--active .xterm-helper-textarea",
+      );
+      const keys = page.getByRole("group", {
+        name: "Terminal keys",
+        exact: true,
+      });
+      const ctrl = keys.getByRole("button", { name: "Ctrl", exact: true });
+      await page.getByRole("button", { name: "Focus terminal input" }).tap();
+      await expect(input).toBeFocused();
+      await ctrl.tap();
+      await expect(ctrl).toHaveAttribute("aria-pressed", "true");
+      await expect(input).toBeFocused();
+      await page.keyboard.insertText("a");
+      await expect.poll(() => inputs.at(-1)).toBe("\u0001");
+      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
+
+      // A native paste is literal even if a touch modifier was waiting.
+      await page.evaluate(() => navigator.clipboard.writeText("c"));
+      await ctrl.tap();
+      await page.keyboard.press("Control+v");
+      await expect
+        .poll(() => inputs.at(-1))
+        .toMatch(/^(?:\u001b\[200~)?c(?:\u001b\[201~)?$/u);
+      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
+      await input.press("Control+u");
+      await ctrl.tap();
+      await keys.getByRole("button", { name: "Arrow up", exact: true }).tap();
+      await expect.poll(() => inputs.at(-1)).toBe("\u001b[1;5A");
+      await expect(input).toBeFocused();
+      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
+
+      await input.evaluate((element) => element.blur());
+      await keys.getByRole("button", { name: "Ctrl+C", exact: true }).tap();
+      await expect.poll(() => inputs.at(-1)).toBe("\u0003");
+      await expect(input).not.toBeFocused();
+      await keys.getByRole("button", { name: "Arrow down", exact: true }).tap();
+      await expect(input).not.toBeFocused();
+      await ctrl.tap();
+      await page.getByRole("button", { name: "Focus terminal input" }).tap();
+      await expect(ctrl).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.insertText("u");
+      await expect.poll(() => inputs.at(-1)).toBe("\u0015");
+
+      await page.keyboard.insertText("printf 'TOUCH\\137COPY_中文\\n'");
+      await input.press("Enter");
+      await expect.poll(() => output).toContain("TOUCH_COPY_中文");
+      const more = page.getByLabel("Terminal actions", { exact: true });
+      await more.tap();
+      await expect(
+        page.getByRole("button", { name: "Copy last output", exact: true }),
+      ).toBeDisabled();
+      await page.getByRole("button", { name: "Copy all", exact: true }).tap();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toContain("TOUCH_COPY_中文");
+      await more.tap();
+      await page
+        .getByRole("button", { name: "Select text", exact: true })
+        .tap();
+      const dialog = page.getByRole("dialog", { name: "Select terminal text" });
+      const text = dialog.getByRole("textbox", {
+        name: "Terminal output",
+        exact: true,
+      });
+      await expect(text).toBeFocused();
+      await expect(text).toHaveAttribute("readonly", "");
+      await expect(text).toHaveAttribute("inputmode", "none");
+      const snapshot = await text.inputValue();
+      await text.evaluate((element: HTMLTextAreaElement) => {
+        const start = element.value.lastIndexOf("TOUCH_COPY_中文");
+        element.setSelectionRange(start, start + "TOUCH_COPY_中文".length);
+      });
+      const copySelection = dialog.getByRole("button", {
+        name: "Copy selection",
+        exact: true,
+      });
+      await expect(copySelection).toBeVisible();
+      // The native selection survives the height change that clears xterm's
+      // canvas selection. Incoming reflow does not replace the captured text.
+      await page.setViewportSize({ width: 390, height: 500 });
+      await expect(text).toHaveValue(snapshot);
+      await copySelection.tap();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe("TOUCH_COPY_中文");
+      await dialog
+        .getByRole("button", { name: "Select all", exact: true })
+        .tap();
+      await expect
+        .poll(() =>
+          text.evaluate(
+            (element: HTMLTextAreaElement) =>
+              element.selectionEnd - element.selectionStart,
+          ),
+        )
+        .toBe(snapshot.length);
+
+      for (const [width, height] of [
+        [320, 740],
+        [700, 390],
+      ]) {
+        await page.setViewportSize({ width, height });
+        const safeInset = width > height ? 36 : 0;
+        await page.evaluate((value) => {
+          document.documentElement.style.setProperty(
+            "--safe-left",
+            `${value}px`,
+          );
+          document.documentElement.style.setProperty(
+            "--safe-right",
+            `${value}px`,
+          );
+        }, safeInset);
+        for (const theme of ["light", "dark"]) {
+          await page.evaluate((value) => {
+            document.documentElement.dataset.theme = value;
+            document.documentElement.dataset.palette =
+              value === "dark" ? "teal" : "amber";
+          }, theme);
+          await expect(dialog).toBeVisible();
+          const bounds = await dialog.boundingBox();
+          expect(bounds!.x).toBeGreaterThanOrEqual(safeInset);
+          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+            width - safeInset,
+          );
+          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
+          expect(
+            await dialog.evaluate(
+              (element) => element.scrollWidth - element.clientWidth,
+            ),
+          ).toBeLessThanOrEqual(1);
+          await page.screenshot({
+            path: `output/playwright/terminal-text-${width}-${theme}.png`,
+          });
+          const accessibility = await new AxeBuilder({ page })
+            .include(".terminal-text-dialog")
+            .analyze();
+          expect(accessibility.violations).toEqual([]);
+        }
+      }
+      await page.evaluate(() =>
+        Object.defineProperty(navigator.clipboard, "writeText", {
+          configurable: true,
+          value: () => Promise.reject(new Error("Clipboard permission denied")),
+        }),
+      );
+      await dialog.getByRole("button", { name: /^Cop/ }).tap();
+      await expect(dialog.getByRole("alert")).toContainText(
+        "Clipboard permission denied",
+      );
+      await expect(text).toBeFocused();
+      expect(
+        await text.evaluate(
+          (element: HTMLTextAreaElement) =>
+            element.selectionEnd - element.selectionStart,
+        ),
+      ).toBe(snapshot.length);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(page.locator(".ctx")).toBeVisible();
+      await expect(input).not.toBeFocused();
+    } finally {
+      await page.request.delete(
+        `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
+      );
+    }
+  });
 });
 
 test("completion titles wrap within their column without hiding long filenames", async ({

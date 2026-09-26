@@ -3,7 +3,7 @@ scope:
   - src/components/TerminalPane.tsx
   - src/components/TerminalView.tsx
   - src/components/ContextPane.tsx
-  - src/terminal-command-output.ts
+  - src/terminal-output.ts
   - src/terminal-menus.ts
   - src/styles/terminal.css
   - tests/web/terminal-*.test.*
