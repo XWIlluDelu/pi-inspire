@@ -677,7 +677,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       (slot) =>
         slot.activeOperations > 0 ||
         slot.stopping !== null ||
-        slot.startupStop !== null ||
         slot.startupPhase === "starting" ||
         slot.navigationLease !== null ||
         slot.pendingBranchBridge !== null ||

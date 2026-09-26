@@ -294,6 +294,45 @@ describe("Pi RPC confirmed-exit writer fence", () => {
     await failure.stopped;
   });
 
+  it("notifies the owner when protocol retirement fails without releasing its writer fence", async () => {
+    const stopError = new Error("synthetic stop could not be confirmed");
+    const transport = Object.assign(new SyntheticChild(), {
+      pid: 12346,
+      available: true,
+      ready: Promise.resolve(),
+      stop: vi.fn(async () => {
+        throw stopError;
+      }),
+    });
+    const worker = new PiRpcProcess({
+      cwd: "/synthetic",
+      createTransport: () => transport,
+    });
+    const exited = vi.fn();
+    const stopped = vi.fn();
+    worker.on("exit", exited);
+    worker.on("stopped", stopped);
+    await worker.start();
+
+    // A buffered extension response never confirms its write. The failed
+    // stop must notify Runtime without converting its exit fence to success.
+    vi.spyOn(transport.stdin, "write").mockReturnValueOnce(false);
+    const outcome = worker
+      .sendExtensionUiResponse({ id: "dialog", confirmed: true }, 5)
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(6);
+    const failure = await outcome;
+    if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
+      throw new Error("Expected stopping unknown outcome");
+    await expect(failure.stopped).rejects.toBe(stopError);
+    expect(exited).toHaveBeenCalledExactlyOnceWith(failure);
+    expect(stopped).not.toHaveBeenCalled();
+    expect(worker.available).toBe(false);
+    await expect(worker.start()).rejects.toThrow(/still stopping/);
+    await expect(worker.stop()).rejects.toBe(stopError);
+    expect(transport.stop).toHaveBeenCalledOnce();
+  });
+
   it("does not release on delayed/failed kills, close, error, or the old fake deadline", async () => {
     const completed = vi.fn();
     boundary.signal.mockRejectedValue(
