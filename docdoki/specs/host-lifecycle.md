@@ -229,6 +229,10 @@ adopting a virtual environment from another terminal tab. Rationale and verifica
   preserves independent project terminals; full restart also ends their processes. The grant bypasses
   runtime work-idle checks, including an in-flight manual compaction or session operation; preparation,
   Host/service ownership, another restart lease, and the final non-expiring commit remain mandatory.
+  Completed failed startups do not count as in-flight work: after confirmed worker retirement,
+  ordinary restart is available again without interruption consent. Pending or rejected actual-stop
+  acknowledgements remain blockers even when the worker no longer appears live. The original
+  startup failure remains available for diagnosis; clearing stale startup state must not erase it.
   The existing
   Host shutdown stops its workers after restart issuance; no work is stopped at preflight failure.
   The exact current service invocation is inspected again before commit and submission. A proven

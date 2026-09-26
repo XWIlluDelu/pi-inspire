@@ -57,6 +57,11 @@ escalation, and watchdog expiry do not fabricate `worker_stopped`. `server/runti
 retains even a rejected stop barrier, so replacement and recovery cannot acquire a writer before
 termination is established. Concurrent Stop calls join the same retirement.
 
+Protocol-write failure notifies Runtime when the stop attempt settles, including rejection.
+`PiRpcProcess.stopForProtocolFailure` observes both outcomes on its notification branch while
+returning the original stop promise. This prevents a detached unhandled rejection from ending
+the Host without swallowing the failure or releasing writer authority.
+
 ### Terminal mutation identity
 
 `server/terminal-operation-receipts.ts` records mutations at the execution owner; the private daemon
@@ -124,6 +129,17 @@ or daily-use Host/service was inspected or restarted.
 - `tests/server/maintenance-restart.test.ts`, `tests/deploy/idle-maintenance-restart.test.mjs`, and
   `tests/launcher.test.ts`: expiry during inspection, exclusive commit, stale/duplicate release,
   lost commit response, proven non-issuance, and ambiguous issued restart retaining admission drain.
+
+### Protocol-failure retirement check (2026-09-26)
+
+A targeted `pi-rpc-ownership.test.ts` regression first reproduced missing owner notification and
+an unhandled rejection. It now verifies original-error notification, rejected stop retention,
+no false `stopped` event, and refusal to restart. The four selected RPC, Herdr transport, and Runtime
+suites passed all 150 tests; server TypeScript and targeted Biome checks also passed.
+An independent Node process using the real RPC wrapper and a synthetic transport now survives
+extension-response timeout plus stop rejection; before the repair it exited with code 1 even
+when the caller handled both errors. The failure injection used only synthetic transport state
+and did not touch running services.
 
 ### Real Pi regression
 

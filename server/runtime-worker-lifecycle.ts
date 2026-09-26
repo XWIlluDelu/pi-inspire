@@ -122,7 +122,12 @@ export class RuntimeWorkerLifecycle {
     });
     try {
       await stopping;
-      if (slot.stopping === stopping) slot.stopping = null;
+      if (slot.stopping === stopping) {
+        slot.stopping = null;
+        // Failed startup is settled once its worker is gone, not ongoing work.
+        // Keep startupError available to the caller unwinding that startup.
+        slot.startupPhase = "idle";
+      }
     } catch (error) {
       // Rejection is not an exit acknowledgement. Keep the rejected barrier
       // so neither recovery nor another start can silently acquire this file.
@@ -207,7 +212,6 @@ export class RuntimeWorkerLifecycle {
     slot.process = rpc;
     slot.startupPhase = "idle";
     slot.startupError = null;
-    slot.startupStop = null;
     slot.bridge = bridge;
     slot.ready = false;
     this.host.clearPendingExtensionUi(slot, "replaced");

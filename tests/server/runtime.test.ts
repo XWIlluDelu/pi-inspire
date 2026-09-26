@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpathSync } from "node:fs";
 import {
@@ -17,6 +18,7 @@ import {
   AttachmentStore,
   addAttachmentContext,
 } from "../../server/attachments.js";
+import { HostRestartController } from "../../server/host-restart.js";
 import {
   PiRpcCancelledError,
   type PiRpcOptions,
@@ -31,6 +33,7 @@ import {
   type RuntimeWorkerStatus,
   safeProjection,
 } from "../../server/runtime.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
@@ -4654,6 +4657,136 @@ describe("maintenance restart admission", () => {
       preview,
     );
   }
+
+  it.each(["start-error", "transport-exit", "startup-dialog"])(
+    "allows a fresh ordinary restart after confirmed retirement of a %s",
+    async (failure) => {
+      const stopStarted = deferredSignal();
+      const stopped = deferredSignal();
+      const runtime = new RuntimeController(
+        catalog([record("a", "/tmp")]),
+        trackedAttachmentStore(),
+        (options) => {
+          const worker = new FakeRpc(options);
+          worker.start = async () => {
+            if (failure === "startup-dialog") {
+              worker.emit("event", {
+                type: "extension_ui_request",
+                id: "startup-confirm",
+                method: "confirm",
+                title: "Startup confirmation",
+                message: "Confirm?",
+              });
+            } else {
+              const error = new Error("Pi failed during startup");
+              if (failure === "transport-exit") worker.emit("exit", error);
+              throw error;
+            }
+          };
+          worker.stop = async () => {
+            stopStarted.resolve();
+            await stopped.promise;
+          };
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      const submit = vi.fn(async (_all: boolean, commit: () => boolean) => ({
+        code: commit() ? 0 : 1,
+      }));
+      const controller = new HostRestartController(runtime, {
+        inspect: async () => true,
+        prepare: async () => {},
+        request: submit,
+      });
+      try {
+        await runtime.openSession("a");
+        await stopStarted.promise;
+        const intent = {
+          hostId: (await controller.status()).hostId,
+          operationId: randomUUID(),
+          scope: "host" as const,
+        };
+        controller.start(intent);
+        await vi.waitFor(async () =>
+          expect((await controller.status()).operation).toMatchObject({
+            phase: "rejected",
+            busyReason: "in-flight-operation",
+          }),
+        );
+        expect(submit).not.toHaveBeenCalled();
+
+        stopped.resolve();
+        const slot = (
+          runtime as unknown as { slots: Map<string, RuntimeSlot> }
+        ).slots.get("a")!;
+        await vi.waitFor(() => {
+          expect(slot.activeOperations).toBe(0);
+          expect(slot.stopping).toBeNull();
+        });
+        expect(slot.process).toBeNull();
+        expect(slot.runState).toBe("failed");
+        // A historical rejection remains immutable; a new ordinary request
+        // must re-evaluate current work without requiring interruption consent.
+        expect(controller.start(intent).phase).toBe("rejected");
+        controller.start({ ...intent, operationId: randomUUID() });
+        await vi.waitFor(async () =>
+          expect((await controller.status()).operation?.phase).toBe(
+            "submitted",
+          ),
+        );
+        expect(slot.startupPhase).toBe("idle");
+        expect(submit).toHaveBeenCalledOnce();
+      } finally {
+        stopped.resolve();
+        await runtime.close();
+      }
+    },
+  );
+
+  it("keeps a failed startup fenced when actual worker retirement rejects", async () => {
+    const stopStarted = deferredSignal();
+    const stopGate = deferredSignal();
+    const createProcess = vi.fn((options: PiRpcOptions) => {
+      const worker = new FakeRpc(options);
+      worker.start = async () => {
+        throw new Error("Pi failed during startup");
+      };
+      worker.stop = async () => {
+        stopStarted.resolve();
+        await stopGate.promise;
+        throw new Error("Pi stop unconfirmed");
+      };
+      return worker as unknown as PiRpcProcess;
+    });
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      createProcess,
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await stopStarted.promise;
+      stopGate.resolve();
+      const slot = (
+        runtime as unknown as { slots: Map<string, RuntimeSlot> }
+      ).slots.get("a")!;
+      await vi.waitFor(() => expect(slot.activeOperations).toBe(0));
+      await expect(slot.stopping).rejects.toThrow("Pi stop unconfirmed");
+      expect(runtime.reserveMaintenanceRestart()).toEqual({
+        kind: "busy",
+        reason: "in-flight-operation",
+      });
+      await expect(runtime.openSession("a")).rejects.toThrow(
+        "Pi stop unconfirmed",
+      );
+      expect(createProcess).toHaveBeenCalledOnce();
+    } finally {
+      stopGate.resolve();
+      await runtime.close();
+    }
+  });
 
   it("rejects an expired lease even after a fresh owner prepares", async () => {
     vi.useFakeTimers();
