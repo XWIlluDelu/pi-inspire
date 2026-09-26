@@ -98,6 +98,11 @@ escalation, and watchdog expiry do not fabricate `worker_stopped`. `server/runti
 retains even a rejected stop barrier, so replacement and recovery cannot acquire a writer before
 termination is established. Concurrent Stop calls join the same retirement.
 
+Protocol-write failure notifies Runtime when the stop attempt settles, including rejection.
+`PiRpcProcess.stopForProtocolFailure` observes both outcomes on its notification branch while
+returning the original stop promise. This prevents a detached unhandled rejection from ending
+the Host without swallowing the failure or releasing writer authority.
+
 #### Terminal mutation identity
 
 `server/terminal-operation-receipts.ts` records mutations at the execution owner; the private daemon
