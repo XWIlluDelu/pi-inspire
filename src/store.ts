@@ -165,7 +165,7 @@ export class AppStore {
   });
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
-  private readonly resources = new ResourceController({
+  private readonly resources: ResourceController = new ResourceController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,

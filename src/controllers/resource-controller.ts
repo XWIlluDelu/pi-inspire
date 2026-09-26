@@ -68,7 +68,7 @@ interface ResourceControllerHost {
    * merely to a session/view/revision projection. */
   transportGeneration(): number;
   handleAuthFailure(): void;
-  prepareGitForResourceOpen(contextMode: "files" | "changes"): void;
+  prepareGitForResourceOpen(contextMode: "files" | "changes"): () => boolean;
   selectWorkspacePath(workspacePath: string, reveal?: boolean): void;
 }
 
@@ -530,7 +530,8 @@ export class ResourceController {
     const { sessionId, transcriptViewId: viewId } = this.host.state();
     if (!api || !sessionId || !viewId) return;
     this.cancelRequest();
-    this.host.prepareGitForResourceOpen(contextMode);
+    const ownsWorkspaceSelection =
+      this.host.prepareGitForResourceOpen(contextMode);
     const request = new AbortController();
     this.resourceRequest = request;
     this.revokePreviewObjectUrl();
@@ -578,7 +579,7 @@ export class ResourceController {
           ? { workspacePath: descriptor.workspacePath }
           : {}),
       });
-      if (descriptor.workspacePath)
+      if (descriptor.workspacePath && ownsWorkspaceSelection())
         this.host.selectWorkspacePath(
           descriptor.workspacePath,
           descriptor.workspacePath !== knownWorkspacePath,

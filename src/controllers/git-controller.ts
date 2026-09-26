@@ -80,6 +80,7 @@ export class GitController {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private observingVisibility = false;
   private selectedWorkspacePath: string | null = null;
+  private selectionEpoch = 0;
 
   constructor(private readonly host: GitControllerHost) {}
 
@@ -234,8 +235,10 @@ export class GitController {
   }
 
   async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+    const epoch = this.selectionEpoch;
     const selection = await this.resolveChange(pathId, requestedSide);
-    if (selection) await this.openResolvedDiff(selection);
+    if (selection && epoch === this.selectionEpoch)
+      await this.openResolvedDiff(selection);
   }
 
   /** Keep Changes aligned with a resource selected from either Files surface. */
@@ -283,14 +286,21 @@ export class GitController {
     }
   }
 
-  /** Resource loading supersedes an in-flight diff transfer. Files selections
-   * also release the Git identity; Changes selections retain it. */
-  prepareResourceOpen(contextMode: "files" | "changes"): void {
-    this.cancelDiff();
+  /** Resource loading supersedes an in-flight diff transfer. Its eventual
+   * workspace mapping may select Git only until a newer selection intent;
+   * the Files preview itself remains independently loadable. */
+  prepareResourceOpen(contextMode: "files" | "changes"): () => boolean {
     if (contextMode === "files") this.clearDiffSelection();
+    else {
+      this.cancelDiff();
+      this.selectionEpoch += 1;
+    }
+    const epoch = this.selectionEpoch;
+    return () => epoch === this.selectionEpoch;
   }
 
   clearDiffSelection(): void {
+    this.selectionEpoch += 1;
     this.cancelDiff();
     this.selectedWorkspacePath = null;
     const state = this.host.state();
@@ -308,8 +318,9 @@ export class GitController {
   }
 
   async openChange(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+    const epoch = ++this.selectionEpoch;
     const selection = await this.resolveChange(pathId, requestedSide);
-    if (!selection) return;
+    if (!selection || epoch !== this.selectionEpoch) return;
     const { change, side } = selection;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
     const deleted =
@@ -325,6 +336,7 @@ export class GitController {
    * Keep the last good status visible, but discard loading flags and diff bytes
    * whose freshness cannot be established across the transport boundary. */
   invalidateForTransportReplacement(): void {
+    this.selectionEpoch += 1;
     this.clearRefreshTimer();
     this.cancelStatusRefresh();
     this.cancelDiff();
