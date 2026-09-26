@@ -4,7 +4,7 @@ import { parseUnifiedDiff } from "../../src/diff";
 const PATCH = [
   "--- a/src/app.ts",
   "+++ b/src/app.ts",
-  "@@ -1,4 +1,4 @@",
+  "@@ -1,3 +1,3 @@",
   ' import x from "x";',
   "-const a = 1;",
   "+const a = 2;",
@@ -24,6 +24,35 @@ describe("parseUnifiedDiff", () => {
       "add",
       "context",
     ]);
+  });
+
+  it("treats marker-like lines inside a hunk as changes, not file headers", () => {
+    const lines = parseUnifiedDiff(
+      [
+        "--- a/a.md",
+        "+++ b/a.md",
+        "@@ -1 +1 @@",
+        "----",
+        "++++",
+        "--- a/b.md",
+        "+++ b/b.md",
+        "@@ -0,0 +1 @@",
+        "+new",
+      ].join("\n"),
+    );
+    expect(lines?.map((line) => line.type)).toEqual([
+      "meta",
+      "meta",
+      "hunk",
+      "del",
+      "add",
+      "meta",
+      "meta",
+      "hunk",
+      "add",
+    ]);
+    // Hunk body text cannot stand in for the required file markers.
+    expect(parseUnifiedDiff("@@ -1 +1 @@\n----\n++++\n")).toBeNull();
   });
 
   it("keeps tool preamble before the diff as meta", () => {
