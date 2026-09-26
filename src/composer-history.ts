@@ -8,6 +8,7 @@ export interface ComposerHistoryScope {
   viewId: string;
   incarnation: string | null;
   effectiveLeafId: string | null;
+  historyVersion: string;
 }
 
 interface HistoryPartition {
@@ -27,6 +28,16 @@ export function composerHistoryScopeKey(scope: ComposerHistoryScope): string {
     scope.viewId,
     scope.incarnation,
     scope.effectiveLeafId,
+    scope.historyVersion,
+  ]);
+}
+
+function historyCacheKey(scope: ComposerHistoryScope): string {
+  return JSON.stringify([
+    scope.sessionId,
+    scope.viewId,
+    scope.incarnation,
+    scope.historyVersion,
   ]);
 }
 
@@ -93,7 +104,7 @@ function touch(key: string, partition: HistoryPartition): void {
 }
 
 function partitionFor(scope: ComposerHistoryScope): HistoryPartition {
-  const key = composerHistoryScopeKey(scope);
+  const key = historyCacheKey(scope);
   const existing = partitions.get(key);
   if (existing) {
     touch(key, existing);
@@ -169,7 +180,7 @@ export async function hydrateComposerHistory(
   scope: ComposerHistoryScope,
   load: () => Promise<ComposerHistoryEntry[] | null>,
 ): Promise<ComposerHistoryEntry[]> {
-  const key = composerHistoryScopeKey(scope);
+  const key = historyCacheKey(scope);
   const partition = partitionFor(scope);
   if (partition.hydrated) return copyEntries(partition.entries);
   if (partition.loading) return partition.loading;

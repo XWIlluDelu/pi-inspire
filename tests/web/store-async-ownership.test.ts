@@ -213,36 +213,42 @@ describe("runtime control completion ownership", () => {
     },
   );
 
-  it("does not roll back a reopened session's thinking level from an old refusal", async () => {
-    const thinking = deferred<RouteResponse>();
-    const fetch = installFetch((url, init) => {
-      if (url === "/api/control/thinking") return thinking.promise;
-      if (url === "/api/sessions/open")
-        return {
-          body: activeSnapshot({
-            sessionId: String(jsonBody(init).id),
-            thinkingLevel: "low",
-          }),
-        };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    const changing = store.setThinkingLevel("high");
-    await store.openSession("s2");
-    await store.openSession("s1");
-    thinking.resolve({
-      status: 503,
-      body: { error: "Old thinking change failed" },
-    });
-    await changing;
-    expect(store.getState().thinkingLevel).toBe("low");
-    expect(
-      fetch.mock.calls.filter(([url]) =>
-        String(url).startsWith("/api/snapshot"),
-      ),
-    ).toHaveLength(0);
-    expect(store.getState().notices).toEqual([]);
-  });
+  it.each(["thinking", "model"] as const)(
+    "keeps a reopened session's state and notices after an old %s refusal",
+    async (control) => {
+      const thinking = deferred<RouteResponse>();
+      const fetch = installFetch((url, init) => {
+        if (url === `/api/control/${control}`) return thinking.promise;
+        if (url === "/api/sessions/open")
+          return {
+            body: activeSnapshot({
+              sessionId: String(jsonBody(init).id),
+              thinkingLevel: "low",
+            }),
+          };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      const changing =
+        control === "thinking"
+          ? store.setThinkingLevel("high")
+          : store.setModel("provider", "model");
+      await store.openSession("s2");
+      await store.openSession("s1");
+      thinking.resolve({
+        status: 503,
+        body: { error: "Old thinking change failed" },
+      });
+      await changing;
+      expect(store.getState().thinkingLevel).toBe("low");
+      expect(
+        fetch.mock.calls.filter(([url]) =>
+          String(url).startsWith("/api/snapshot"),
+        ),
+      ).toHaveLength(0);
+      expect(store.getState().notices).toEqual([]);
+    },
+  );
 
   it("does not supersede the current session's resync when an older model change completes", async () => {
     const model = deferred<RouteResponse>();

@@ -4,11 +4,13 @@ import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
   type RouteHandler,
+  type RouteResponse,
 } from "./helpers";
 
 const baseRoutes: RouteHandler = (url) => {
@@ -60,6 +62,93 @@ const cleanStatus = {
 
 describe("Git inspection ownership and freshness", () => {
   beforeEach(() => installFakeWebSocket());
+
+  it.each(["files", "changes"] as const)(
+    "keeps a newer deleted-file Git selection when a %s preview resolves late",
+    async (origin) => {
+      const lateResource = deferred<RouteResponse>();
+      const resourceStarted = deferred<void>();
+      const deletedPath = {
+        id: "deleted",
+        display: "deleted.txt",
+        utf8Path: "deleted.txt",
+        workspacePath: "deleted.txt",
+      };
+      let resourceSignal: AbortSignal | null | undefined;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/git/status"))
+          return {
+            body: {
+              ...cleanStatus,
+              files: [
+                ...cleanStatus.files,
+                {
+                  path: deletedPath,
+                  unstaged: { kind: "deleted" },
+                  untracked: false,
+                },
+              ],
+              total: 2,
+              groups: {
+                ...cleanStatus.groups,
+                unstaged: [path.id, deletedPath.id],
+              },
+            },
+          };
+        if (url.startsWith("/api/git/diff"))
+          return {
+            body: {
+              path: jsonBody(init).pathId === path.id ? path : deletedPath,
+              side: "unstaged",
+              kind: "binary",
+            },
+          };
+        if (url.startsWith("/api/resources/resolve")) {
+          resourceSignal = init.signal;
+          resourceStarted.resolve();
+          return lateResource.promise;
+        }
+        if (url.startsWith("/api/files/list"))
+          return { body: { entries: [], truncated: false } };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      await store.refreshGitStatus();
+      const opening =
+        origin === "files"
+          ? store.openWorkspaceFile(path.workspacePath)
+          : store.openGitDiff(path.id, "unstaged");
+      await resourceStarted.promise;
+      await store.openGitDiff(deletedPath.id, "unstaged");
+      const selectedDiff = store.getState().gitDiff;
+      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+
+      lateResource.resolve({
+        body: {
+          id: "resource-a",
+          sessionId: "s1",
+          viewId: "view-s1",
+          reference: path.workspacePath,
+          workspacePath: path.workspacePath,
+          name: path.display,
+          mimeType: "application/octet-stream",
+          size: 12,
+          kind: "binary",
+        },
+      });
+      await opening;
+      // The retained Files preview can finish without reclaiming Changes.
+      await vi.waitFor(() =>
+        expect(store.getState().resourcePreview?.status).toBe("ready"),
+      );
+      expect(resourceSignal?.aborted).toBe(false);
+      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+      expect(store.getState().gitDiff).toBe(selectedDiff);
+      await store.refreshGitStatus();
+      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+      expect(store.getState().gitDiff).toBe(selectedDiff);
+    },
+  );
 
   it("retains the last good status visibly stale after a refresh failure", async () => {
     let failing = false;

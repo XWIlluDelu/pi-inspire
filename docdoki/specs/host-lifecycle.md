@@ -119,9 +119,12 @@ adopting a virtual environment from another terminal tab. Rationale and verifica
 
 ### Process, lock, and service ownership
 
-- On POSIX, each Pi worker and the tools it launches share an isolated process group; eviction,
-  protocol-boundary failure, and shutdown signal the whole group so tool descendants cannot outlive
-  their worker. Windows terminates the worker's descendant tree through `taskkill /T`, escalating
+- The direct POSIX backend launches each Pi worker in an isolated process group; eviction,
+  protocol-boundary failure, and shutdown signal that group. Pi's Bash tools create separate groups,
+  which Pi cleans up during cooperative exit; a killed Pi cannot perform that cleanup. The optional
+  [[herdr-enhancement]] backend owns these detached descendants through a per-worker kernel scope,
+  including hard termination and recovery. This does not add a systemd dependency to direct mode.
+  Windows terminates the worker's descendant tree through `taskkill /T`, escalating
   with `/F` only for the existing hard-kill boundary and falling back to Node's direct child signal
   only when the operating-system tree command cannot complete.
 

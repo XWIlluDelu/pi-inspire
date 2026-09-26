@@ -9,18 +9,6 @@ export interface DiffLine {
   text: string;
 }
 
-const META_PREFIXES = [
-  "diff ",
-  "index ",
-  "new file",
-  "deleted file",
-  "rename ",
-  "similarity ",
-  "old mode",
-  "new mode",
-  "\\ No newline",
-];
-
 /**
  * Parse text as a unified diff, or return null when it is not one.
  *
@@ -36,28 +24,31 @@ export function parseUnifiedDiff(text: string): DiffLine[] | null {
   let hunks = 0;
   let changes = 0;
   let fileMarkers = 0;
-  let sawHunk = false;
+  let oldRemaining = 0;
+  let newRemaining = 0;
   for (const line of lines) {
-    if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line)) {
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
       parsed.push({ type: "hunk", text: line });
       hunks += 1;
-      sawHunk = true;
-    } else if (line.startsWith("+++") || line.startsWith("---")) {
-      parsed.push({ type: "meta", text: line });
-      fileMarkers += 1;
-    } else if (META_PREFIXES.some((prefix) => line.startsWith(prefix))) {
-      parsed.push({ type: "meta", text: line });
-    } else if (sawHunk && line.startsWith("+")) {
+      oldRemaining = Number(hunk[1] ?? 1);
+      newRemaining = Number(hunk[2] ?? 1);
+    } else if (newRemaining > 0 && line.startsWith("+")) {
       parsed.push({ type: "add", text: line });
       changes += 1;
-    } else if (sawHunk && line.startsWith("-")) {
+      newRemaining -= 1;
+    } else if (oldRemaining > 0 && line.startsWith("-")) {
       parsed.push({ type: "del", text: line });
       changes += 1;
-    } else if (sawHunk) {
+      oldRemaining -= 1;
+    } else if (oldRemaining > 0 && newRemaining > 0 && line.startsWith(" ")) {
       parsed.push({ type: "context", text: line });
+      oldRemaining -= 1;
+      newRemaining -= 1;
     } else {
-      // Preamble before any diff structure (tool chatter, headings).
+      // File markers are metadata only outside their hunk body.
       parsed.push({ type: "meta", text: line });
+      if (line.startsWith("+++") || line.startsWith("---")) fileMarkers += 1;
     }
   }
   if (hunks === 0 || changes === 0 || fileMarkers < 2) return null;

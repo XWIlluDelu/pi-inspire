@@ -669,6 +669,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
           sessionId: id,
           revision: id === BRANCH_FIXTURE_SESSION_ID ? 7 : 1,
           viewId: `mock-view-${id}`,
+          composerHistoryVersion: "0",
           ...(id === BRANCH_FIXTURE_SESSION_ID
             ? { effectiveLeafId: BRANCH_EARLIER_LEAF_ID }
             : {}),
@@ -881,6 +882,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const timestamp = Date.now();
     const user = { role: "user", content: request.message, timestamp };
     active.transcriptPage.messages.push(user);
+    active.transcriptPage.composerHistoryVersion = String(
+      active.transcriptPage.messages.length,
+    );
     active.isStreaming = true;
     if (this.state.active?.sessionId === sessionId)
       this.state.runState = "running";
@@ -1099,6 +1103,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       sessionId,
       revision: active.transcriptPage.revision,
       viewId: active.transcriptPage.viewId,
+      composerHistoryVersion: active.transcriptPage.composerHistoryVersion,
       messages: [],
       hasOlder: false,
       olderCursor: null,
@@ -1176,6 +1181,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         sessionId,
         revision: active.transcriptPage.revision,
         viewId: active.transcriptPage.viewId,
+        composerHistoryVersion: active.transcriptPage.composerHistoryVersion,
         ...(active.transcriptPage.incarnation
           ? { incarnation: active.transcriptPage.incarnation }
           : {}),

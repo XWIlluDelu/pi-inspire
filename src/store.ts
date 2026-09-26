@@ -165,7 +165,7 @@ export class AppStore {
   });
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
-  private readonly resources = new ResourceController({
+  private readonly resources: ResourceController = new ResourceController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
@@ -858,6 +858,7 @@ export class AppStore {
       transcriptViewId: nextViewId,
       transcriptDurableLeafId: nextDurableLeafId,
       transcriptEffectiveLeafId: nextEffectiveLeafId,
+      composerHistoryVersion: page?.composerHistoryVersion ?? null,
       hasOlderMessages: historyCompatible
         ? this.state.hasOlderMessages
         : Boolean(page?.hasOlder),
@@ -1018,13 +1019,13 @@ export class AppStore {
     sessionId: string,
     viewId: string,
     incarnation: string | null,
-    effectiveLeafId: string | null,
+    historyVersion: string,
   ): Promise<ComposerHistoryEntry[] | null> =>
     this.transcriptData.loadComposerHistory(
       sessionId,
       viewId,
       incarnation,
-      effectiveLeafId,
+      historyVersion,
     );
 
   loadPromptMapTurns = (start?: number): Promise<UserTurnAnchor[]> =>
@@ -1897,8 +1898,13 @@ export class AppStore {
 
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const result = await this.changeModel(provider, modelId);
-    if (result.status === "error" && this.state.sessionId === sessionId)
+    if (
+      result.status === "error" &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === selectionGeneration
+    )
       this.notify("warning", result.message);
     return result.status === "success";
   };
@@ -1935,8 +1941,13 @@ export class AppStore {
 
   setThinkingLevel = async (level: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
+    const selectionGeneration = this.selectionGeneration;
     const result = await this.changeThinkingLevel(level);
-    if (result.status === "error" && this.state.sessionId === sessionId)
+    if (
+      result.status === "error" &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === selectionGeneration
+    )
       this.notify("warning", result.message);
     return result.status === "success";
   };

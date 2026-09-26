@@ -499,34 +499,32 @@ export function parseUnifiedDiff(
 > {
   const decoded = decodePatchLines(output, outputTruncated);
   const lines: GitDiffLine[] = [];
-  let oldLine: number | null = null;
-  let newLine: number | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+  let oldRemaining = 0;
+  let newRemaining = 0;
   for (const text of decoded.lines) {
     const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
     if (hunk) {
       oldLine = Number(hunk[1]);
       newLine = Number(hunk[3]);
+      oldRemaining = Number(hunk[2] ?? 1);
+      newRemaining = Number(hunk[4] ?? 1);
       lines.push({ kind: "hunk", text, oldLine: null, newLine: null });
-    } else if (
-      oldLine !== null &&
-      newLine !== null &&
-      text.startsWith("+") &&
-      !text.startsWith("+++")
-    ) {
+    } else if (newRemaining > 0 && text.startsWith("+")) {
       lines.push({ kind: "add", text, oldLine: null, newLine });
       newLine += 1;
-    } else if (
-      oldLine !== null &&
-      newLine !== null &&
-      text.startsWith("-") &&
-      !text.startsWith("---")
-    ) {
+      newRemaining -= 1;
+    } else if (oldRemaining > 0 && text.startsWith("-")) {
       lines.push({ kind: "delete", text, oldLine, newLine: null });
       oldLine += 1;
-    } else if (oldLine !== null && newLine !== null && text.startsWith(" ")) {
+      oldRemaining -= 1;
+    } else if (oldRemaining > 0 && newRemaining > 0 && text.startsWith(" ")) {
       lines.push({ kind: "context", text, oldLine, newLine });
       oldLine += 1;
       newLine += 1;
+      oldRemaining -= 1;
+      newRemaining -= 1;
     } else {
       lines.push({ kind: "meta", text, oldLine: null, newLine: null });
     }
@@ -703,8 +701,16 @@ export class GitInspectionService implements GitInspectionLike {
       return { ...base, kind: "submodule", state: change.submodule };
     if (change.untracked)
       return { ...base, kind: "unsupported", reason: "untracked-content" };
-    if (!change.path.utf8Path)
+    const facet = side === "staged" ? change.staged : change.unstaged;
+    const originalPath = facet?.originalPath;
+    if (!change.path.utf8Path || (originalPath && !originalPath.utf8Path))
       return { ...base, kind: "unsupported", reason: "path-encoding" };
+    // A destination-only pathspec hides the rename source from Git and turns
+    // the comparison into a whole-file addition. Only the selected side owns
+    // this source: working edits after a staged rename use the new path alone.
+    const paths = originalPath?.utf8Path
+      ? [originalPath.utf8Path, change.path.utf8Path]
+      : [change.path.utf8Path];
 
     const common = [
       ...GIT_CONFIG_ARGS,
@@ -713,10 +719,11 @@ export class GitInspectionService implements GitInspectionLike {
       "diff",
       "--no-ext-diff",
       "--no-textconv",
+      ...(facet?.kind === "renamed" ? ["--find-renames"] : []),
     ];
     const cached = side === "staged" ? ["--cached"] : [];
     const numstat = await this.runner(
-      [...common, "--numstat", "-z", ...cached, "--", change.path.utf8Path],
+      [...common, "--numstat", "-z", ...cached, "--", ...paths],
       { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
     );
     const stats = parseNumstat(numstat.stdout);
@@ -729,7 +736,7 @@ export class GitInspectionService implements GitInspectionLike {
         `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
         ...cached,
         "--",
-        change.path.utf8Path,
+        ...paths,
       ],
       {
         stdoutLimit: GIT_DIFF_OUTPUT_BYTES,

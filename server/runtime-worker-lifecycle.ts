@@ -158,7 +158,7 @@ export class RuntimeWorkerLifecycle {
         const conflict = this.host.setProjectionConflict(
           slot,
           "external-change",
-          "INSΠRE could not verify ownership of a session change; the worker was stopped safely. Recover before writing again",
+          "INSΠRE could not verify ownership of a session change. Recover before writing again",
         );
         await this.stop(slot);
         this.host.emitSlotEvent(slot, {
