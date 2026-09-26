@@ -40,6 +40,29 @@ describe("TerminalHistoryStore", () => {
     expect(await store.read("terminal-1")).toBeNull();
   });
 
+  it("compacts to a low watermark once and then appends small batches", async () => {
+    const { directory, store } = await setup();
+    const limit = 32 * 1024 * 1024;
+    const retainedBytes = 24 * 1024 * 1024;
+    const file = join(directory, "terminal-1.log");
+    store.append("terminal-1", Buffer.alloc(limit, 0x41));
+    await store.flush();
+    expect((await lstat(file)).size).toBe(limit);
+
+    store.append("terminal-1", Buffer.from("first"));
+    await store.flush();
+    expect((await lstat(file)).size).toBe(retainedBytes);
+    for (let index = 0; index < 5; index += 1) {
+      store.append("terminal-1", Buffer.from("tail"));
+      await store.flush();
+      expect((await lstat(file)).size).toBe(retainedBytes + (index + 1) * 4);
+    }
+    const history = (await store.read("terminal-1"))!;
+    expect(history.subarray(0, 2).toString()).toBe("\u001bc");
+    expect(history.subarray(2, -25).every((byte) => byte === 0x41)).toBe(true);
+    expect(history.subarray(-25).toString()).toBe("first" + "tail".repeat(5));
+  });
+
   it("prunes output older than the configured retention", async () => {
     const { directory, store } = await setup();
     store.append("terminal-old", Buffer.from("old"));
