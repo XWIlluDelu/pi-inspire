@@ -5,6 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type IMarker, type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -51,16 +52,26 @@ import {
   takeTerminalInsertion,
 } from "../terminal-actions";
 import {
-  type TerminalCommandOutput,
-  terminalCommandOutput,
-} from "../terminal-command-output";
-import {
   TerminalConnection,
   type TerminalTransportStatus,
 } from "../terminal-connection";
 import { terminalActivationFocus } from "../terminal-focus";
+import {
+  NO_TERMINAL_MODIFIERS,
+  type TerminalModifiers,
+  type TerminalTouchKey,
+  terminalTextInput,
+  terminalTouchInput,
+} from "../terminal-input";
 import { terminalFileLinks } from "../terminal-links";
+import {
+  type TerminalCommandOutput,
+  terminalBufferText,
+  terminalCommandOutput,
+} from "../terminal-output";
 import type { TerminalUiSettings } from "../terminal-settings";
+import { useCopied } from "../use-copied";
+import { TerminalTextDialog } from "./TerminalTextDialog";
 
 interface TerminalViewProps {
   api: Api;
@@ -222,8 +233,7 @@ export const TerminalView = memo(function TerminalView({
   const onOpenFileRef = useRef(onOpenFile);
   const onSendToComposerRef = useRef(onSendToComposer);
   const onCommandCompleteRef = useRef(onCommandComplete);
-  const ctrlLatchedRef = useRef(false);
-  const altLatchedRef = useRef(false);
+  const modifiersRef = useRef(NO_TERMINAL_MODIFIERS);
   const replayGenerationRef = useRef(0);
   const clipboardEpochRef = useRef(0);
   const snapshotStartedRef = useRef(false);
@@ -239,8 +249,15 @@ export const TerminalView = memo(function TerminalView({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState<SearchState>(initialSearch);
-  const [ctrlLatched, setCtrlLatched] = useState(false);
-  const [altLatched, setAltLatched] = useState(false);
+  const [modifiers, setModifiers] = useState(NO_TERMINAL_MODIFIERS);
+  const [textSnapshot, setTextSnapshot] = useState<{
+    text: string;
+    scrollRatio: number;
+  } | null>(null);
+  const { copied, copy } = useCopied({
+    onError: (message) =>
+      setError(`${message}\nUse Select text to copy manually.`),
+  });
   const [bellFlash, setBellFlash] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [outputBelow, setOutputBelow] = useState(false);
@@ -256,12 +273,24 @@ export const TerminalView = memo(function TerminalView({
   onOpenFileRef.current = onOpenFile;
   onSendToComposerRef.current = onSendToComposer;
   onCommandCompleteRef.current = onCommandComplete;
-  ctrlLatchedRef.current = ctrlLatched;
-  altLatchedRef.current = altLatched;
+
+  const updateModifiers = useCallback((next: TerminalModifiers) => {
+    modifiersRef.current = next;
+    setModifiers(next);
+  }, []);
+  const clearModifiers = useCallback(
+    () => updateModifiers(NO_TERMINAL_MODIFIERS),
+    [updateModifiers],
+  );
 
   useLayoutEffect(() => {
     clipboardEpochRef.current += 1;
+    if (!active) setTextSnapshot(null);
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !ready || !writable) clearModifiers();
+  }, [active, ready, writable, clearModifiers]);
 
   const clearCommandOutput = useCallback(() => {
     const start = commandStartRef.current;
@@ -422,6 +451,7 @@ export const TerminalView = memo(function TerminalView({
     );
     xterm.open(host);
     const protectNativePaste = (event: ClipboardEvent) => {
+      clearModifiers();
       const value = event.clipboardData?.getData("text/plain") ?? "";
       if (
         !value ||
@@ -439,6 +469,7 @@ export const TerminalView = memo(function TerminalView({
         xterm.paste(value);
     };
     host.addEventListener("paste", protectNativePaste, true);
+    xterm.textarea?.addEventListener("blur", clearModifiers);
     const shellMarkerDisposable = xterm.parser.registerOscHandler(
       INSPIRE_SHELL_OSC,
       (value) => {
@@ -545,9 +576,14 @@ export const TerminalView = memo(function TerminalView({
         resultCount: result.resultCount,
       })),
     );
-    // Cell columns are not durable through reflow. Never copy guessed ranges
-    // after a resize; the next completed command establishes fresh boundaries.
-    const resizeDisposable = xterm.onResize(clearCommandOutput);
+    // Rows do not reflow text; markers still track their lines when the mobile
+    // keyboard changes the height. A column change invalidates cell offsets.
+    let outputColumns = xterm.cols;
+    const resizeDisposable = xterm.onResize(({ cols }) => {
+      if (cols === outputColumns) return;
+      outputColumns = cols;
+      clearCommandOutput();
+    });
     const selectionDisposable = xterm.onSelectionChange(() =>
       setHasSelection(xterm.hasSelection()),
     );
@@ -566,19 +602,9 @@ export const TerminalView = memo(function TerminalView({
       onBellRef.current(descriptorRef.current);
     });
     const inputDisposable = xterm.onData((value) => {
-      let input = value;
-      if (ctrlLatchedRef.current && input.length === 1) {
-        const code = input.toUpperCase().charCodeAt(0);
-        if (code >= 64 && code <= 95) input = String.fromCharCode(code - 64);
-        ctrlLatchedRef.current = false;
-        setCtrlLatched(false);
-      }
-      if (altLatchedRef.current) {
-        input = `\u001b${input}`;
-        altLatchedRef.current = false;
-        setAltLatched(false);
-      }
-      connectionRef.current?.sendInput(input);
+      const input = terminalTextInput(value, modifiersRef.current);
+      if (input !== null) clearModifiers();
+      connectionRef.current?.sendInput(input ?? value);
     });
     xterm.attachCustomKeyEventHandler((event) => {
       const command = event.metaKey || event.ctrlKey;
@@ -671,6 +697,7 @@ export const TerminalView = memo(function TerminalView({
       themeObserver.disconnect();
       document.fonts?.removeEventListener("loadingdone", refitAfterFontLoad);
       host.removeEventListener("paste", protectNativePaste, true);
+      xterm.textarea?.removeEventListener("blur", clearModifiers);
       inputDisposable.dispose();
       resizeDisposable.dispose();
       resultsDisposable.dispose();
@@ -691,6 +718,7 @@ export const TerminalView = memo(function TerminalView({
   }, [
     api,
     clearCommandOutput,
+    clearModifiers,
     currentDimensions,
     descriptor.id,
     fitAndResize,
@@ -753,6 +781,7 @@ export const TerminalView = memo(function TerminalView({
           )
             continue;
         }
+        clearModifiers();
         xterm.paste(text);
         inserted = true;
       }
@@ -760,7 +789,7 @@ export const TerminalView = memo(function TerminalView({
     };
     deliver();
     return subscribeTerminalInsertion(deliver);
-  }, [active, descriptor.projectCwd, ready, writable]);
+  }, [active, clearModifiers, descriptor.projectCwd, ready, writable]);
 
   useEffect(() => {
     const xterm = xtermRef.current;
@@ -812,25 +841,27 @@ export const TerminalView = memo(function TerminalView({
     if (direction === "next") addon.findNext(search.query, searchOptions);
     else addon.findPrevious(search.query, searchOptions);
   };
-  const closeSearch = () => {
+  const closeSearch = (returnToInput: boolean) => {
     searchRef.current?.clearDecorations();
     setSearch(initialSearch);
-    xtermRef.current?.focus();
+    if (returnToInput) xtermRef.current?.focus();
   };
-  const copySelection = async () => {
+  const copySelection = () => {
     const selection = xtermRef.current?.getSelection();
-    if (!selection) return;
-    try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard access is unavailable in this browser");
-      await navigator.clipboard.writeText(selection);
-    } catch (clipboardError) {
-      setError(
-        clipboardError instanceof Error
-          ? clipboardError.message
-          : "Clipboard write failed",
-      );
-    }
+    if (selection) void copy(selection);
+  };
+  const copyAll = () => {
+    const xterm = xtermRef.current;
+    if (xterm) void copy(terminalBufferText(xterm.buffer.active));
+  };
+  const selectText = () => {
+    const buffer = xtermRef.current?.buffer.active;
+    if (!buffer) return;
+    clearModifiers();
+    setTextSnapshot({
+      text: terminalBufferText(buffer),
+      scrollRatio: buffer.baseY > 0 ? buffer.viewportY / buffer.baseY : 0,
+    });
   };
   const pasteClipboard = async () => {
     const xterm = xtermRef.current;
@@ -853,8 +884,10 @@ export const TerminalView = memo(function TerminalView({
           window.confirm(
             "Paste multiple lines or control characters into this terminal?",
           ))
-      )
+      ) {
+        clearModifiers();
         xterm.paste(value);
+      }
     } catch (clipboardError) {
       if (!ownsPaste()) return;
       setError(
@@ -872,47 +905,15 @@ export const TerminalView = memo(function TerminalView({
         xterm.focus();
     }
   };
-  const sendTouchKey = (value: string) => {
-    let input = value;
-    if (ctrlLatched && input.length === 1) {
-      const code = input.toUpperCase().charCodeAt(0);
-      if (code >= 64 && code <= 95) input = String.fromCharCode(code - 64);
-      setCtrlLatched(false);
-    }
-    if (altLatched) {
-      input = `\u001b${input}`;
-      setAltLatched(false);
-    }
-    connectionRef.current?.sendInput(input);
-    xtermRef.current?.focus();
-  };
-  const sendTouchCursorKey = (
-    normal: string,
-    application: string,
-    final: string,
-  ) => {
-    const modifier = 1 + (altLatched ? 2 : 0) + (ctrlLatched ? 4 : 0);
-    if (modifier === 1) {
-      sendTouchKey(
-        xtermRef.current?.modes.applicationCursorKeysMode
-          ? application
-          : normal,
-      );
-      return;
-    }
-    setCtrlLatched(false);
-    setAltLatched(false);
-    connectionRef.current?.sendInput(`\u001b[1;${modifier}${final}`);
-    xtermRef.current?.focus();
-  };
-  const sendTouchPageKey = (page: 5 | 6) => {
-    const modifier = 1 + (altLatched ? 2 : 0) + (ctrlLatched ? 4 : 0);
-    setCtrlLatched(false);
-    setAltLatched(false);
+  const sendTouchKey = (key: TerminalTouchKey) => {
     connectionRef.current?.sendInput(
-      modifier === 1 ? `\u001b[${page}~` : `\u001b[${page};${modifier}~`,
+      terminalTouchInput(
+        key,
+        modifiersRef.current,
+        xtermRef.current?.modes.applicationCursorKeysMode ?? false,
+      ),
     );
-    xtermRef.current?.focus();
+    clearModifiers();
   };
   const handleSearchKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -921,23 +922,12 @@ export const TerminalView = memo(function TerminalView({
     }
   };
 
-  const copyLastCommandOutput = async () => {
+  const copyLastCommandOutput = () => {
     const xterm = xtermRef.current;
     const outputRange = lastOutputRef.current;
     if (!xterm || !outputRange) return;
     const output = terminalCommandOutput(xterm.buffer.normal, outputRange);
-    if (!output) return;
-    try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard access is unavailable in this browser");
-      await navigator.clipboard.writeText(output);
-    } catch (clipboardError) {
-      setError(
-        clipboardError instanceof Error
-          ? clipboardError.message
-          : "Clipboard write failed",
-      );
-    }
+    if (output) void copy(output);
   };
   const statusLabel =
     descriptor.status === "exited"
@@ -970,7 +960,22 @@ export const TerminalView = memo(function TerminalView({
                 ) : transport !== "connected" ? (
                   <LoaderCircle size={14} aria-hidden />
                 ) : writable ? (
-                  <Keyboard size={14} aria-hidden />
+                  <button
+                    type="button"
+                    className="icon-button terminal-view__keyboard"
+                    aria-label="Focus terminal input"
+                    title="Focus terminal input"
+                    disabled={!ready}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const pending = modifiersRef.current;
+                      xtermRef.current?.blur();
+                      xtermRef.current?.focus();
+                      updateModifiers(pending);
+                    }}
+                  >
+                    <Keyboard size={14} aria-hidden />
+                  </button>
                 ) : (
                   <Eye size={14} aria-hidden />
                 )}
@@ -982,7 +987,7 @@ export const TerminalView = memo(function TerminalView({
                 type="button"
                 className="icon-button"
                 onClick={() => {
-                  if (search.open) closeSearch();
+                  if (search.open) closeSearch(false);
                   else setSearch((current) => ({ ...current, open: true }));
                 }}
                 aria-label="Search terminal output"
@@ -1008,15 +1013,17 @@ export const TerminalView = memo(function TerminalView({
               >
                 <ClipboardPaste size={14} aria-hidden /> Paste
               </button>
+              <button type="button" onClick={copyAll}>
+                <Copy size={14} aria-hidden /> Copy all
+              </button>
+              <button type="button" onClick={selectText}>
+                <TextSelect size={14} aria-hidden /> Select text
+              </button>
               <button
                 type="button"
                 disabled={!lastOutput}
-                title={
-                  lastOutput
-                    ? "Copy the last completed command output"
-                    : "Available after a command finishes in this view (requires shell integration)"
-                }
-                onClick={() => void copyLastCommandOutput()}
+                title="Copy the last completed command output"
+                onClick={copyLastCommandOutput}
               >
                 <Copy size={14} aria-hidden /> Copy last output
               </button>
@@ -1033,15 +1040,6 @@ export const TerminalView = memo(function TerminalView({
                   />
                 </summary>
                 <div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      xtermRef.current?.selectAll();
-                      xtermRef.current?.focus();
-                    }}
-                  >
-                    <TextSelect size={14} aria-hidden /> Select all
-                  </button>
                   <button
                     type="button"
                     onClick={() => xtermRef.current?.clear()}
@@ -1072,11 +1070,15 @@ export const TerminalView = memo(function TerminalView({
               className="terminal-search"
               role="search"
               aria-label="Terminal output"
+              onPointerDown={(event) => {
+                if ((event.target as HTMLElement).closest("button"))
+                  event.preventDefault();
+              }}
               onKeyDown={(event) => {
                 if (event.key !== "Escape") return;
                 event.preventDefault();
                 event.stopPropagation();
-                closeSearch();
+                closeSearch(true);
               }}
             >
               <Search size={13} aria-hidden />
@@ -1153,7 +1155,7 @@ export const TerminalView = memo(function TerminalView({
               <button
                 type="button"
                 className="icon-button"
-                onClick={closeSearch}
+                onClick={() => closeSearch(false)}
                 aria-label="Close terminal search"
                 title="Close search"
               >
@@ -1166,10 +1168,11 @@ export const TerminalView = memo(function TerminalView({
               className="terminal-selection"
               role="group"
               aria-label="Selected terminal text"
+              onPointerDown={(event) => event.preventDefault()}
             >
               <button
                 type="button"
-                onClick={() => void copySelection()}
+                onClick={copySelection}
                 aria-label="Copy terminal selection"
               >
                 <Copy size={14} aria-hidden /> Copy
@@ -1189,6 +1192,11 @@ export const TerminalView = memo(function TerminalView({
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {copied ? (
+            <span className="terminal-copy-confirmation" role="status">
+              <Check size={14} aria-hidden /> Copied
+            </span>
           ) : null}
           {error ? (
             <button
@@ -1226,9 +1234,10 @@ export const TerminalView = memo(function TerminalView({
           <button
             type="button"
             className="terminal-view__new-output"
-            onClick={() => {
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={(event) => {
               xtermRef.current?.scrollToBottom();
-              xtermRef.current?.focus();
+              if (event.detail === 0) xtermRef.current?.focus();
               setOutputBelow(false);
             }}
           >
@@ -1247,77 +1256,95 @@ export const TerminalView = memo(function TerminalView({
       <fieldset
         className="terminal-touch-keys"
         disabled={!writable || !ready || descriptor.status !== "running"}
+        onPointerDown={(event) => event.preventDefault()}
       >
-        <legend className="sr-only">Terminal modifier keys</legend>
-        <button type="button" onClick={() => sendTouchKey("\u001b")}>
+        <legend className="sr-only">Terminal keys</legend>
+        <button type="button" onClick={() => sendTouchKey("Escape")}>
           Esc
+        </button>
+        <button type="button" onClick={() => sendTouchKey("Interrupt")}>
+          Ctrl+C
         </button>
         <button
           type="button"
-          className={ctrlLatched ? "is-active" : ""}
-          aria-pressed={ctrlLatched}
-          onClick={() => setCtrlLatched((value) => !value)}
+          className={modifiers.ctrl ? "is-active" : ""}
+          aria-pressed={modifiers.ctrl}
+          onClick={() =>
+            updateModifiers({
+              ...modifiersRef.current,
+              ctrl: !modifiersRef.current.ctrl,
+            })
+          }
         >
           Ctrl
         </button>
         <button
           type="button"
-          className={altLatched ? "is-active" : ""}
-          aria-pressed={altLatched}
-          onClick={() => setAltLatched((value) => !value)}
+          className={modifiers.alt ? "is-active" : ""}
+          aria-pressed={modifiers.alt}
+          onClick={() =>
+            updateModifiers({
+              ...modifiersRef.current,
+              alt: !modifiersRef.current.alt,
+            })
+          }
         >
           Alt
         </button>
-        <button type="button" onClick={() => sendTouchKey("\t")}>
+        <button type="button" onClick={() => sendTouchKey("Tab")}>
           Tab
         </button>
         <button
           type="button"
           aria-label="Arrow up"
-          onClick={() => sendTouchCursorKey("\u001b[A", "\u001bOA", "A")}
+          onClick={() => sendTouchKey("ArrowUp")}
         >
           ↑
         </button>
         <button
           type="button"
           aria-label="Arrow down"
-          onClick={() => sendTouchCursorKey("\u001b[B", "\u001bOB", "B")}
+          onClick={() => sendTouchKey("ArrowDown")}
         >
           ↓
         </button>
         <button
           type="button"
           aria-label="Arrow left"
-          onClick={() => sendTouchCursorKey("\u001b[D", "\u001bOD", "D")}
+          onClick={() => sendTouchKey("ArrowLeft")}
         >
           ←
         </button>
         <button
           type="button"
           aria-label="Arrow right"
-          onClick={() => sendTouchCursorKey("\u001b[C", "\u001bOC", "C")}
+          onClick={() => sendTouchKey("ArrowRight")}
         >
           →
         </button>
-        <button
-          type="button"
-          onClick={() => sendTouchCursorKey("\u001b[H", "\u001bOH", "H")}
-        >
+        <button type="button" onClick={() => sendTouchKey("Home")}>
           Home
         </button>
-        <button
-          type="button"
-          onClick={() => sendTouchCursorKey("\u001b[F", "\u001bOF", "F")}
-        >
+        <button type="button" onClick={() => sendTouchKey("End")}>
           End
         </button>
-        <button type="button" onClick={() => sendTouchPageKey(5)}>
+        <button type="button" onClick={() => sendTouchKey("PageUp")}>
           PgUp
         </button>
-        <button type="button" onClick={() => sendTouchPageKey(6)}>
+        <button type="button" onClick={() => sendTouchKey("PageDown")}>
           PgDn
         </button>
       </fieldset>
+      {active && textSnapshot
+        ? createPortal(
+            <TerminalTextDialog
+              {...textSnapshot}
+              onClose={() => setTextSnapshot(null)}
+              onSendToComposer={onSendToComposer}
+            />,
+            document.body,
+          )
+        : null}
       <span className="sr-only" aria-live="polite">
         {transport === "reconnecting" ? "Terminal reconnecting" : ""}
       </span>

@@ -133,11 +133,11 @@ The shared header is not another owner of terminal state. Nested menu Escape
 returns to its summary before closing the containing menu or narrow drawer.
 
 Last-output copy retains the latest completed marker pair and the current
-command's start, not a browser command log. `terminal-command-output.ts` reads
-normal-buffer cell columns: it includes the first output line, excludes the next
-prompt, joins soft wraps, and distinguishes wide-character margin padding from
-actual spaces. The view retires ranges on snapshot replacement, resize/reflow,
-and display reset. Scrollback eviction retires markers as well. A real xterm 6
+command's start, not a browser command log. `terminal-output.ts` reads
+buffer cell columns for both command ranges and whole-buffer copy: it includes
+the first output line, excludes the next prompt, joins soft wraps, and distinguishes
+wide-character margin padding from actual spaces. The view retires ranges on
+snapshot replacement, column reflow, and display reset. Scrollback eviction retires markers as well. A real xterm 6
 headless probe showed that `reset()` empties the current marker list without
 setting old `IMarker.isDisposed` flags; reset paths therefore retire these ranges
 explicitly rather than relying on that flag alone.
@@ -148,6 +148,25 @@ stacking context keeps search/selection controls above it. Delayed clipboard
 reads could paste after an A → B → A activation round trip. Clipboard completion
 now checks the originating activation/control epoch, ignores retired errors, and
 returns focus from the dismissed menu without stealing a newer focus choice.
+
+### Text selection and touch input
+
+Xterm's canvas selection is not native mobile text selection, and xterm clears it
+when its row count changes. Command-output markers remain valid across height-only
+changes, so they no longer share that invalidation rule.
+
+`TerminalTextDialog` captures the active buffer once in a read-only textarea.
+Native selection remains stable while the terminal receives output or resizes;
+Select all and Copy work without command markers. The text is materialized only
+when requested, rather than mirrored on every output event. The dialog reuses the
+workbench's modal focus handling and copied-feedback hook.
+
+Touch key pointer-down preserves the existing input focus, while the header's
+keyboard button explicitly requests it. `terminal-input.ts` encodes modifier and
+cursor-mode sequences for both text and touch keys. Paste clears pending modifiers
+before entering xterm, and escape-sequence replies bypass the text-key latch.
+The native textarea listens for selection changes directly: React's synthetic
+selection event did not reliably update after touch selection.
 
 ## Streaming tool argument projection
 

@@ -543,7 +543,8 @@
   }
 }
 
-.terminal-view__status--connected > svg {
+.terminal-view__status--connected > svg,
+.terminal-view__keyboard {
   color: var(--success);
 }
 
@@ -567,6 +568,19 @@
 
 .terminal-view__overlays > * {
   pointer-events: auto;
+}
+
+.terminal-copy-confirmation {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-control);
+  padding: 6px 9px;
+  color: var(--body);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
+  font: 500 var(--text-xs) / var(--leading-ui) var(--font-sans);
 }
 
 .terminal-selection {
@@ -766,6 +780,7 @@
 
 .terminal-view__error {
   max-width: min(360px, 100%);
+  white-space: pre-line;
 }
 
 .terminal-pane__error {
@@ -900,6 +915,95 @@
 
 .terminal-touch-keys {
   display: none;
+}
+
+.overlay.terminal-text-overlay {
+  align-items: center;
+  padding: max(8px, var(--safe-top)) max(8px, var(--safe-right))
+    max(8px, var(--safe-bottom)) max(8px, var(--safe-left));
+}
+
+.dialog.terminal-text-dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-width: 100%;
+  height: min(720px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.terminal-text-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.terminal-text-dialog__header h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 600 var(--text-base) / 1.4 var(--font-sans);
+}
+
+.terminal-text-dialog__text {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 16px;
+  resize: none;
+  color: var(--terminal-fg);
+  background: var(--terminal-bg);
+  font: 400 16px / 1.5 var(--font-mono);
+  overscroll-behavior: contain;
+}
+
+.terminal-text-dialog__text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.terminal-text-dialog__actions,
+.terminal-text-dialog__copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-text-dialog__actions {
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+.terminal-text-dialog__actions .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.terminal-text-dialog__actions .terminal-text-dialog__copy {
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+}
+
+.terminal-text-dialog__actions .terminal-text-dialog__copy:hover {
+  background: var(--bg-control);
+}
+
+.terminal-text-dialog__error {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--error);
+  font: var(--text-sm) / var(--leading-ui) var(--font-sans);
 }
 
 .terminal-settings {
@@ -1070,6 +1174,28 @@
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 720px) {
+  .dialog.terminal-text-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
+    max-height: none;
+  }
+
+  .terminal-text-dialog__header,
+  .terminal-text-dialog__actions {
+    padding: 8px;
+  }
+
+  .terminal-text-dialog .button,
+  .terminal-text-dialog .icon-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .terminal-text-dialog__actions .button {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
   .terminal-pending__row > button {
     min-height: 44px;
   }
@@ -1176,7 +1302,7 @@
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     border: 0;
     border-top: 1px solid
       color-mix(in srgb, var(--terminal-fg) 12%, transparent);
@@ -1197,6 +1323,15 @@
     color: var(--terminal-fg);
     background: color-mix(in srgb, var(--terminal-fg) 6%, var(--terminal-bg));
     font: 500 var(--text-xs)/1 var(--font-sans);
+  }
+
+  .terminal-touch-keys button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .terminal-touch-keys button:disabled {
+    opacity: 0.45;
   }
 
   .terminal-touch-keys button.is-active {
