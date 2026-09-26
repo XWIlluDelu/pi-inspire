@@ -20,8 +20,10 @@
 
 ## Current work
 
-The Herdr boundary review is complete; no further implementation remains in that slice.
-Direct RPC remains the default and the optional Herdr setting uses the existing Host restart.
+[[follow-deep-review-repairs-2026-09-26]] records completed input ownership, detached-tool
+cleanup, Git inspection, and history I/O/transport repairs. The reconnect finding was
+withdrawn after verifying the public snapshot entry point. Enhanced workers use standard
+systemd user scopes; direct RPC remains unchanged and no reconnect fallback was added.
 
 ## Implemented capability
 
@@ -31,7 +33,8 @@ supplies real placement and environment capabilities while preserving the same G
 operation authority, and restart semantics. Latent capabilities are enough; Inspire does not
 inject model tools or collaboration instructions. [[pi-integration]] and [[herdr-enhancement]]
 define this boundary. [[follow-herdr-enhancement-2026-09-25]] records the original real-Pi,
-crash-recovery, and release checks.
+crash-recovery, and release checks. [[follow-pi-agent-boundary-2026-09-26]] records verification
+of the combined product boundary and quality constraints.
 
 Worker retirement preserves actual-stop fencing across exit, eviction, and failed provisional
 creation. External workspace closure recovers without uncertain retries. Herdr projects Runtime's
