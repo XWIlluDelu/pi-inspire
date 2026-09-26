@@ -8,13 +8,16 @@ import {
   readHerdrBridgeRecord,
   writeHerdrBridgeRecord,
 } from "./herdr-bridge-protocol.js";
-import { assertHerdrBridgeGroup } from "./herdr-process-group.js";
+import {
+  captureHerdrBridgeGroup,
+  stopHerdrProcessGroup,
+} from "./herdr-process-group.js";
 
 async function run(): Promise<void> {
   const path = process.argv[2];
   if (!path || process.argv.length !== 3)
     throw new Error("A private launch file is required");
-  await assertHerdrBridgeGroup();
+  const group = await captureHerdrBridgeGroup();
   const info = await lstat(path);
   if (
     !info.isFile() ||
@@ -32,22 +35,22 @@ async function run(): Promise<void> {
   const stderr = connect(ticket.address);
   let child: ChildProcessWithoutNullStreams | null = null;
   let stopping = false;
-  const killGroup = (signal: NodeJS.Signals) =>
-    process.kill(-process.pid, signal);
+  const terminate = (graceful: boolean) => {
+    void stopHerdrProcessGroup(group, graceful, () => {}).catch(() => {
+      process.stderr.write("Inspire worker scope could not be stopped\n");
+      process.exitCode = 1;
+    });
+  };
   const stop = () => {
     if (stopping) return;
     stopping = true;
     rpc.destroy();
     stderr.destroy();
-    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) {
-      killGroup("SIGKILL");
-      return;
-    }
-    // We deliberately share the pane bridge's group, not a detached child's
-    // group. The Host can then fence every writer even if the bridge dies
-    // between spawn() and reporting the Pi PID.
-    killGroup("SIGTERM");
-    setTimeout(() => killGroup("SIGKILL"), 1_500);
+    // The same kernel-owned tree is available here after Host loss and to the
+    // Host after bridge loss. Pi's detached Bash tools remain in this scope.
+    const graceful =
+      !!child?.pid && child.exitCode === null && child.signalCode === null;
+    terminate(graceful);
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
@@ -90,7 +93,9 @@ async function run(): Promise<void> {
       detached: false,
     });
     child.once("error", stop);
-    child.once("exit", () => killGroup("SIGKILL"));
+    // An orderly Pi exit ends the grace period immediately. A killed Pi cannot
+    // run its own detached-child cleanup, so both cases still reap the scope.
+    child.once("exit", () => terminate(false));
     for (const stream of [child.stdin, child.stdout, child.stderr])
       stream.on("error", stop);
     if (!child.pid) {

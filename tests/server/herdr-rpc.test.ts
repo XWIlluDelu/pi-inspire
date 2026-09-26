@@ -3,6 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  assertHerdrWorkerScopesAvailable,
+  stopHerdrProcessGroup,
+} from "../../server/herdr-process-group.js";
 import { HerdrRpcTransport } from "../../server/herdr-rpc-transport.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
@@ -10,6 +14,12 @@ import { PiRpcProcess } from "../../server/pi-rpc.js";
 const roots: string[] = [];
 const workers: PiRpcProcess[] = [];
 const bridges: ChildProcess[] = [];
+const scopesAvailable =
+  process.platform === "linux" &&
+  (await assertHerdrWorkerScopesAvailable(process.env).then(
+    () => true,
+    () => false,
+  ));
 
 async function processCanRun(pid: number): Promise<boolean> {
   try {
@@ -23,7 +33,7 @@ async function processCanRun(pid: number): Promise<boolean> {
   }
 }
 
-async function harness() {
+async function harness(environment: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), "inspire-herdr-rpc-test-"));
   roots.push(root);
   const cliPath = join(root, "fake-pi.mjs");
@@ -99,6 +109,7 @@ process.stdin.on('data', chunk => {
       HERDR_PANE_ID: "wrong-parent-pane",
       HERDR_SESSION: "wrong-parent-session",
       USER_EXTENSION_TOKEN: "private-worker-capability",
+      ...environment,
     },
     createTransport: (launch) =>
       (transport = new HerdrRpcTransport(launch, {
@@ -132,7 +143,18 @@ afterEach(async () => {
   );
 });
 
-describe.skipIf(process.platform !== "linux")("Herdr RPC transport", () => {
+it.skipIf(process.platform !== "linux")(
+  "reports missing scope support before allocating a Herdr pane",
+  async () => {
+    const { rpc, client } = await harness({
+      PATH: "/missing-systemd-for-test",
+    });
+    await expect(rpc.start()).rejects.toThrow("running systemd user manager");
+    expect(client.createWorkerPane).not.toHaveBeenCalled();
+  },
+);
+
+describe.skipIf(!scopesAvailable)("Herdr RPC transport", () => {
   it("preserves RPC bytes, the user environment and real pane identity without exposing capabilities in argv", async () => {
     const { rpc, registry, client, getBridge } = await harness();
     await rpc.start();
@@ -156,6 +178,14 @@ describe.skipIf(process.platform !== "linux")("Herdr RPC transport", () => {
     const leases = await registry.list();
     expect(leases).toHaveLength(1);
     expect(leases[0]?.group?.pid).toBe(getBridge().pid);
+    const group = leases[0]!.group!;
+    // A stale retained path must not signal a different cgroup incarnation.
+    await stopHerdrProcessGroup(
+      { ...group, scope: { ...group.scope!, inode: "0" } },
+      false,
+      () => {},
+    );
+    expect(await processCanRun(Number(state.pid))).toBe(true);
     await rpc.stop();
     expect(await processCanRun(Number(state.pid))).toBe(false);
     expect(await registry.list()).toEqual([]);
