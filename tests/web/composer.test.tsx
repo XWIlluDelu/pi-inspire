@@ -36,6 +36,7 @@ let fileSearchFails: boolean;
 let slowSearchGate: Promise<void> | null;
 let historyEntries: ComposerHistoryEntry[];
 let historyRequests: number;
+let historyGate: Promise<void> | null = null;
 
 beforeAll(async () => {
   promptBodies = [];
@@ -57,13 +58,14 @@ beforeAll(async () => {
       const sessionId = requestUrl.searchParams.get("sessionId") ?? "s1";
       const start = Number(requestUrl.searchParams.get("start") ?? 0);
       const state = store.getState();
-      return {
+      const response = {
         body: {
           sessionId,
           revision: state.transcriptRevision,
           viewId: state.transcriptViewId,
           incarnation: state.transcriptIncarnation,
           effectiveLeafId: state.transcriptEffectiveLeafId,
+          composerHistoryVersion: state.composerHistoryVersion,
           historyId: `history-${JSON.stringify(historyEntries)}`,
           total: historyEntries.length,
           start,
@@ -71,6 +73,7 @@ beforeAll(async () => {
           nextStart: null,
         },
       };
+      return historyGate ? historyGate.then(() => response) : response;
     }
     if (url.startsWith("/api/sessions"))
       return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
@@ -255,6 +258,29 @@ describe("composer attachments", () => {
     clearLeftovers();
   });
 
+  it("shows a failed delivery immediately without replacing a newer draft", async () => {
+    clearLeftovers();
+    const first = deferred<RouteResponse>();
+    promptGates.push(first.promise);
+    render(<Composer />);
+    typeDraft("first delivery");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    typeDraft("newer draft");
+    await act(async () => {
+      first.resolve({ status: 400, body: { error: "Not delivered" } });
+      await first.promise;
+    });
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    expect(screen.getByText("Message not delivered")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toHaveValue("newer draft");
+    expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
+    typeDraft("");
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(screen.getByLabelText("Message")).toHaveValue("first delivery");
+    expect(screen.queryByText("Message not delivered")).not.toBeInTheDocument();
+    clearLeftovers();
+  });
+
   it("allows successive attachment-only and repeated project-only submissions", async () => {
     clearLeftovers();
     render(<Composer />);
@@ -409,8 +435,10 @@ describe("composer keyboard submission", () => {
     await waitFor(() => expect(textarea).toHaveValue("newly sent prompt"));
   });
 
-  it("recalls persisted prompt artifacts and sends their branch-scoped references", async () => {
+  it("reuses history across assistant leaves and recalls artifacts under the current leaf", async () => {
     clearLeftovers();
+    const historyResponse = deferred<void>();
+    historyGate = historyResponse.promise;
     historyEntries = [
       {
         text: "",
@@ -454,6 +482,27 @@ describe("composer keyboard submission", () => {
     await waitFor(() =>
       expect(historyRequests).toBeGreaterThan(requestsBefore),
     );
+    const hydratedRequests = historyRequests;
+    for (let index = 1; index <= 20; index += 1) {
+      await act(async () => {
+        socket.emit({
+          type: "snapshot",
+          data: activeSnapshot({
+            transcriptPage: {
+              viewId: "image-history-view",
+              incarnation: "image-history-projection",
+              effectiveLeafId: `assistant-leaf-${index}`,
+              revision: index + 1,
+            },
+          }),
+        });
+      });
+    }
+    expect(historyRequests).toBe(hydratedRequests);
+    await act(async () => {
+      historyResponse.resolve();
+    });
+    historyGate = null;
     await attachFile();
     expect(await screen.findByText("notes.txt")).toBeInTheDocument();
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -484,12 +533,32 @@ describe("composer keyboard submission", () => {
         historyArtifacts: {
           viewId: "image-history-view",
           incarnation: "image-history-projection",
-          effectiveLeafId: "image-history-leaf",
+          effectiveLeafId: "assistant-leaf-20",
           imageReferences: ["pi-embedded://4/1"],
           fileReferences: ["pi-file://4/0", "pi-file://4/1"],
         },
       }),
     );
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    historyEntries = [{ text: "new user prompt", images: [], files: [] }];
+    await act(async () => {
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          transcriptPage: {
+            viewId: "image-history-view",
+            incarnation: "image-history-projection",
+            effectiveLeafId: "new-user-leaf",
+            revision: 22,
+            composerHistoryVersion: "history-2",
+          },
+        }),
+      });
+    });
+    expect(historyRequests).toBe(hydratedRequests + 1);
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    await waitFor(() => expect(textarea).toHaveValue("new user prompt"));
+    clearLeftovers();
   });
 
   it("keeps software-keyboard Return as a line break on touch-first devices", async () => {

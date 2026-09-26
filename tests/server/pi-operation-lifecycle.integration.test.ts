@@ -523,6 +523,22 @@ afterEach(async () => {
 });
 
 describe("installed Pi operation lifecycle", () => {
+  it("returns to idle when an input hook handles the prompt without agent events", async () => {
+    const f = await fixture(false);
+    await expect(
+      f.api.prompt(f.delivery("Handled without a model turn.")),
+    ).resolves.toMatchObject({ accepted: true });
+    expect(f.modelRequests).toHaveLength(0);
+    expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
+    expect((await f.runtime.snapshot()).runState).toBe("idle");
+
+    await expect(
+      f.api.prompt(f.delivery("Continue with an ordinary prompt.")),
+    ).resolves.toMatchObject({ accepted: true });
+    await settled(f, 1);
+    expect(f.modelRequests).toHaveLength(1);
+  });
+
   it("holds follow-up behind a real Pi preflight auto-compaction and its original prompt", async () => {
     const f = await fixture(true, 1_000);
     const first = f.delivery("First prompt owns Pi's preflight.");

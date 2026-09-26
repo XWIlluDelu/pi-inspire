@@ -74,11 +74,13 @@ export const Composer = memo(function Composer() {
       transcriptViewId: source.transcriptViewId,
       transcriptIncarnation: source.transcriptIncarnation,
       transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
+      composerHistoryVersion: source.composerHistoryVersion,
       runState: source.runState,
       sessionSelectionPending: source.sessionSelectionPending,
       editorText: source.editorText,
       attachments: source.attachments,
       projectFiles: source.projectFiles,
+      failedDeliveryCount: source.failedDeliveryCount,
       workspaceShowHidden: source.workspaceShowHidden,
       model: source.model,
       availableModels: source.availableModels,
@@ -93,12 +95,15 @@ export const Composer = memo(function Composer() {
   const sessionId = state.sessionId;
   const historyScope = useMemo<ComposerHistoryScope | null>(
     () =>
-      sessionId && state.transcriptViewId
+      sessionId &&
+      state.transcriptViewId &&
+      state.composerHistoryVersion !== null
         ? {
             sessionId,
             viewId: state.transcriptViewId,
             incarnation: state.transcriptIncarnation,
             effectiveLeafId: state.transcriptEffectiveLeafId,
+            historyVersion: state.composerHistoryVersion,
           }
         : null,
     [
@@ -106,6 +111,7 @@ export const Composer = memo(function Composer() {
       state.transcriptEffectiveLeafId,
       state.transcriptIncarnation,
       state.transcriptViewId,
+      state.composerHistoryVersion,
     ],
   );
   const historyKey = historyScope
@@ -208,7 +214,7 @@ export const Composer = memo(function Composer() {
         historyScope.sessionId,
         historyScope.viewId,
         historyScope.incarnation,
-        historyScope.effectiveLeafId,
+        historyScope.historyVersion,
       ),
     ).then((entries) => {
       if (!cancelled) setHistoryState({ key: historyKey, entries });
@@ -266,7 +272,6 @@ export const Composer = memo(function Composer() {
         state.attachments.length > 0 ||
         state.projectFiles.length > 0),
   );
-  const failedPrompt = store.failedComposerPrompt();
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
     : state.runState === "conflict"
@@ -374,7 +379,7 @@ export const Composer = memo(function Composer() {
         disabled={sessionOpening}
         onRemove={store.removeProjectFile}
       />
-      {failedPrompt ? (
+      {state.failedDeliveryCount > 0 ? (
         <div className="composer__failed-delivery" role="status">
           <span>Message not delivered</span>
           <button

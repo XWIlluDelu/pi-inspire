@@ -99,6 +99,8 @@ export class PreviewProjection
       viewId,
       ...(this.incarnation ? { incarnation: this.incarnation } : {}),
       effectiveLeafId: null,
+      composerHistoryVersion:
+        this.preview.transcriptPage.composerHistoryVersion,
       messages,
       hasOlder: false,
       olderCursor: null,
@@ -184,6 +186,8 @@ export class PreviewProjection
         sessionId: this.sessionId,
         revision: this.revision,
         viewId,
+        composerHistoryVersion:
+          this.preview.transcriptPage.composerHistoryVersion,
         ...(this.incarnation ? { incarnation: this.incarnation } : {}),
         effectiveLeafId,
       },

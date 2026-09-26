@@ -627,54 +627,74 @@ describe("RuntimeController new-session materialization", () => {
     }
   });
 
-  it("stops safely without making an accepted first prompt retryable when its file differs", async () => {
-    const fixture = await setupNewSession((worker) => {
-      const request = worker.request.bind(worker);
-      worker.request = async <T>(command: Record<string, unknown>) => {
-        if (command.type !== "prompt") return request<T>(command);
-        const result = await request<T>(command);
-        const lines = (await readFile(worker.sessionPath, "utf8"))
-          .trim()
-          .split("\n");
-        const injected = {
-          type: "custom",
-          customType: "external",
-          data: {},
-          id: "external-1",
-          parentId: "thinking-1",
-          timestamp: "2026-08-01T00:00:03.500Z",
+  it.each([false, true])(
+    "keeps an accepted first prompt non-retryable on projection conflict (stop fails: %s)",
+    async (stopFails) => {
+      const fixture = await setupNewSession((worker) => {
+        if (stopFails) {
+          worker.stop = async () => {
+            worker.stops += 1;
+            throw new Error("Fixture stop could not confirm exit");
+          };
+        }
+        const request = worker.request.bind(worker);
+        worker.request = async <T>(command: Record<string, unknown>) => {
+          if (command.type !== "prompt") return request<T>(command);
+          const result = await request<T>(command);
+          const lines = (await readFile(worker.sessionPath, "utf8"))
+            .trim()
+            .split("\n");
+          const injected = {
+            type: "custom",
+            customType: "external",
+            data: {},
+            id: "external-1",
+            parentId: "thinking-1",
+            timestamp: "2026-08-01T00:00:03.500Z",
+          };
+          lines.splice(3, 0, JSON.stringify(injected));
+          await writeFile(worker.sessionPath, `${lines.join("\n")}\n`);
+          return result;
         };
-        lines.splice(3, 0, JSON.stringify(injected));
-        await writeFile(worker.sessionPath, `${lines.join("\n")}\n`);
-        return result;
-      };
-    });
+      });
 
-    try {
-      const image = await fixture.attachments.add({
-        originalname: "first.png",
-        mimetype: "image/png",
-        size: 3,
-        buffer: Buffer.from("png"),
-      } as Express.Multer.File);
-      await fixture.runtime.newSession(fixture.directory);
-      await expect(
-        fixture.runtime.prompt({
-          sessionId: "new-session",
-          message: "first prompt",
-          attachmentIds: [image.id],
-          projectFiles: [],
-        }),
-      ).resolves.toBeNull();
-      await expect(
-        fixture.attachments.resolveForPrompt([image.id]),
-      ).rejects.toThrow(/expired/);
-      expect(fixture.worker.stops).toBe(1);
-      expect((await fixture.runtime.snapshot()).runState).toBe("conflict");
-    } finally {
-      await fixture.runtime.close();
-    }
-  });
+      try {
+        const image = await fixture.attachments.add({
+          originalname: "first.png",
+          mimetype: "image/png",
+          size: 3,
+          buffer: Buffer.from("png"),
+        } as Express.Multer.File);
+        await fixture.runtime.newSession(fixture.directory);
+        await expect(
+          fixture.runtime.prompt({
+            sessionId: "new-session",
+            message: "first prompt",
+            attachmentIds: [image.id],
+            projectFiles: [],
+          }),
+        ).resolves.toBeNull();
+        await expect(
+          fixture.attachments.resolveForPrompt([image.id]),
+        ).rejects.toThrow(/expired/);
+        expect(fixture.worker.stops).toBe(1);
+        expect((await fixture.runtime.snapshot()).runState).toBe("conflict");
+        await expect(
+          fixture.runtime.prompt({
+            sessionId: "new-session",
+            message: "retry",
+          }),
+        ).rejects.toMatchObject({ status: 409 });
+        expect(
+          fixture.worker.commands.filter(
+            (command) => command.type === "prompt",
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await fixture.runtime.close();
+      }
+    },
+  );
 });
 
 describe("RuntimeController projection ownership gate", () => {

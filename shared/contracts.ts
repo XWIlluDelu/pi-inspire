@@ -833,6 +833,8 @@ export interface TranscriptPage {
   appendFromRevision?: number;
   /** Branch view represented by this page; null is an empty session. */
   effectiveLeafId?: string | null;
+  /** Prompt-history invalidation token, stable across assistant/tool-only appends. */
+  composerHistoryVersion: string;
   messages: unknown[];
   /** Activity-only persisted messages skipped by response-oriented paging. */
   activityRanges?: TranscriptActivityRange[];
@@ -908,6 +910,8 @@ export interface ComposerHistoryPage {
   viewId: string;
   incarnation?: string;
   effectiveLeafId?: string | null;
+  /** Matches the transcript's history invalidation token; not an artifact authority. */
+  composerHistoryVersion: string;
   /** Stable content identity across pages, even when assistant-only appends advance revision. */
   historyId: string;
   total: number;

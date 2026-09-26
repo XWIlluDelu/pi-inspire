@@ -75,7 +75,7 @@ interface ComposerControllerState {
 export type ComposerSlice = Pick<
   ComposerPartition,
   "attachments" | "projectFiles" | "sending"
->;
+> & { failedDeliveryCount: number };
 
 interface ComposerControllerHost {
   state(): ComposerControllerState;
@@ -112,8 +112,14 @@ export class ComposerController {
           attachments: composer.attachments,
           projectFiles: composer.projectFiles,
           sending: composer.sending,
+          failedDeliveryCount: composer.failedDeliveries.length,
         }
-      : { attachments: [], projectFiles: [], sending: false };
+      : {
+          attachments: [],
+          projectFiles: [],
+          sending: false,
+          failedDeliveryCount: 0,
+        };
   }
 
   invalidateForTransportReplacement(): void {
