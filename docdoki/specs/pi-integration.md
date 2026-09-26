@@ -134,6 +134,11 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   worker even when Pi's ordinary abort cannot interrupt its hook. A prompt stopped before its receipt
   remains acceptance-unknown, rather than claiming that no side effects occurred.
 
+  An accepted prompt can finish inside an input hook without any agent lifecycle event. If its
+  admission is still queued, an idle/empty Pi state observation may retire that admission only
+  while the same worker and sole pending prompt still own it; it cannot clear newer or active work.
+  A failed post-acceptance observation is diagnostic, not a refusal of the accepted input.
+
   Read-only responses default to a 30-second observation window. A timeout retires only that caller;
   its exact id/command remains tracked for a valid late response. All tracked requests, including
   retired observers, share a 256-entry admission cap and are never evicted to make a late result

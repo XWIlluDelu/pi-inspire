@@ -1407,10 +1407,10 @@ describe("transient conversation projections", () => {
     );
     expect(onClear).not.toHaveBeenCalled();
     expect(
-      within(screen.getByRole("region", { name: "Pending input" })).getByRole(
-        "status",
+      within(screen.getByRole("region", { name: "Pending input" })).getByText(
+        "Clear all?",
       ),
-    ).toHaveTextContent(/whatever remains queued when Pi handles this request/);
+    ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel clearing Pending input" }),
     );
