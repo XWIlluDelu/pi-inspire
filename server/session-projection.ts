@@ -454,6 +454,28 @@ function isLinearAppend(
   return !entries.some((entry) => entry.type === "compaction");
 }
 
+function changesComposerHistory(entry: SessionEntry): boolean {
+  return (
+    (entry.type === "message" && entry.message.role === "user") ||
+    entry.type === "compaction" ||
+    entry.type === "branch_summary"
+  );
+}
+
+function composerHistoryAnchor(
+  entries: ReadonlyMap<string, SessionEntry>,
+  leafId: string | null,
+): string | null {
+  let id = leafId;
+  while (id !== null) {
+    const entry = entries.get(id);
+    if (!entry) break;
+    if (changesComposerHistory(entry)) return id;
+    id = entry.parentId;
+  }
+  return null;
+}
+
 function projectedMessageId(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const id = (value as Record<string, unknown>).__inspireMessageId;
@@ -889,6 +911,8 @@ export class SessionProjection
   private currentLeafId: string | null = null;
   private currentEntries: SessionEntry[] = [];
   private currentEntriesById = new Map<string, SessionEntry>();
+  private currentHistoryAnchor: string | null = null;
+  private historyReplacementRevision = 0;
   private readonly userTurnIndexes = new Map<
     string,
     { revision: number; turns: readonly UserTurnAnchor[] }
@@ -1419,6 +1443,21 @@ export class SessionProjection
         while (this.revisionFingerprints.size > 256) {
           this.revisionFingerprints.delete(
             this.revisionFingerprints.keys().next().value!,
+          );
+        }
+        if (kind !== "append")
+          this.historyReplacementRevision = this.currentRevision;
+        if (
+          appendedEntries &&
+          isLinearAppend(previousLeafId, appendedEntries)
+        ) {
+          for (const entry of appendedEntries)
+            if (changesComposerHistory(entry))
+              this.currentHistoryAnchor = entry.id;
+        } else {
+          this.currentHistoryAnchor = composerHistoryAnchor(
+            candidate.entriesById,
+            candidate.leafId,
           );
         }
         this.currentMessages = candidate.messages;
@@ -2076,6 +2115,16 @@ export class SessionProjection
     return page;
   }
 
+  private composerHistoryVersion(effectiveLeafId: string | null): string {
+    const anchor =
+      effectiveLeafId === this.currentLeafId
+        ? this.currentHistoryAnchor
+        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
+    // Entry ancestry is immutable during append. A rewrite may reuse IDs with
+    // changed content, so it starts a new history epoch even at the same leaf.
+    return JSON.stringify([this.historyReplacementRevision, anchor]);
+  }
+
   composerHistoryPage(
     start = 0,
     effectiveLeafId: string | null = this.currentLeafId,
@@ -2091,6 +2140,7 @@ export class SessionProjection
         viewId,
         incarnation: this.incarnation,
         effectiveLeafId,
+        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
       },
       start,
       cwd,
@@ -2228,6 +2278,7 @@ export class SessionProjection
       incarnation: this.incarnation,
       appendFromRevision: this.appendFromRevision,
       effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
       messages: nextMessages,
       ...(nextRanges.length > 0 ? { activityRanges: nextRanges } : {}),
       hasOlder: target > 0,
@@ -2352,6 +2403,7 @@ export class SessionProjection
         incarnation: this.incarnation,
         appendFromRevision: this.appendFromRevision,
         effectiveLeafId,
+        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
         messages,
         hasOlder: persistedStart > 0,
         olderCursor:
@@ -2418,6 +2470,7 @@ export class SessionProjection
       incarnation: this.incarnation,
       appendFromRevision: this.appendFromRevision,
       effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
       messages,
       ...(activityRanges.length > 0 ? { activityRanges } : {}),
       hasOlder: candidateStart > 0,

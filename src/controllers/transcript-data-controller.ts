@@ -257,7 +257,7 @@ export class TranscriptDataController {
     sessionId: string,
     viewId: string,
     incarnation: string | null,
-    effectiveLeafId: string | null,
+    historyVersion: string,
   ): Promise<ComposerHistoryEntry[] | null> => {
     const scope = this.captureScope();
     const ownsHistory = () =>
@@ -266,7 +266,7 @@ export class TranscriptDataController {
       scope.sessionId === sessionId &&
       scope.viewId === viewId &&
       scope.incarnation === incarnation &&
-      this.host.state().transcriptEffectiveLeafId === effectiveLeafId;
+      this.host.state().composerHistoryVersion === historyVersion;
     if (!scope || !ownsHistory()) return null;
     const { api } = scope;
 
@@ -286,7 +286,7 @@ export class TranscriptDataController {
             page.sessionId !== sessionId ||
             page.viewId !== viewId ||
             (page.incarnation ?? null) !== incarnation ||
-            (page.effectiveLeafId ?? null) !== effectiveLeafId
+            page.composerHistoryVersion !== historyVersion
           )
             return null;
           if (

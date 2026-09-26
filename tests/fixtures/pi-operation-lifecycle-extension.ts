@@ -7,6 +7,11 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("pi-operation-node", process.version);
   });
 
+  pi.on("input", (event) => ({
+    action:
+      event.text === "Handled without a model turn." ? "handled" : "continue",
+  }));
+
   pi.on("session_before_compact", async (event, ctx) => {
     const startedAt = performance.now();
     ctx.ui.setStatus("pi-operation-compaction", `waiting:${event.reason}`);

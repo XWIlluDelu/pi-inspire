@@ -19,6 +19,7 @@ const entry = (text: string): ComposerHistoryEntry => ({
 it("merges prompts accepted while history hydration is in flight", async () => {
   const scope: ComposerHistoryScope = {
     sessionId: "history-race",
+    historyVersion: "history-a",
     viewId: "view-a",
     incarnation: "projection-a",
     effectiveLeafId: null,
@@ -50,6 +51,7 @@ it("merges prompts accepted while history hydration is in flight", async () => {
 it("does not let an evicted hydration replace a newer partition", async () => {
   const scope: ComposerHistoryScope = {
     sessionId: "evicted-history",
+    historyVersion: "history-a",
     viewId: "view-original",
     incarnation: "projection-original",
     effectiveLeafId: null,

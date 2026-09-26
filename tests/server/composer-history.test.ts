@@ -16,6 +16,7 @@ const owner = {
   viewId: "view-a",
   incarnation: "projection-a",
   effectiveLeafId: "leaf-a",
+  composerHistoryVersion: "history-a",
 };
 
 describe("composer history projection", () => {

@@ -8,20 +8,24 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
-import { store } from "../../src/store";
+import { store, useAppState } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  type RouteResponse,
 } from "./helpers";
 
 let newSessionBody: Record<string, unknown> | null;
 let promptBody: Record<string, unknown> | null;
+let promptGate: Promise<RouteResponse> | null = null;
 const canonicalProjectCwd = "/canonical/proj";
 let defaultModelCwd: string | null;
 let defaultModelAvailable: boolean;
@@ -134,7 +138,7 @@ beforeAll(async () => {
       };
     if (url.startsWith("/api/prompt")) {
       promptBody = jsonBody(init);
-      return { status: 202, body: { accepted: true } };
+      return promptGate ?? { status: 202, body: { accepted: true } };
     }
     if (url.startsWith("/api/sessions/refresh")) return { body: { ok: true } };
     if (url.startsWith("/api/sessions"))
@@ -149,6 +153,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   defaultModelAvailable = true;
+  promptGate = null;
 });
 
 describe("new-session start surface", () => {
@@ -220,6 +225,73 @@ describe("new-session start surface", () => {
         attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
       }),
     );
+  });
+
+  it("hands off a mixed first message before its receipt and retries unknown delivery unchanged", async () => {
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    const receipt = deferred<RouteResponse>();
+    promptGate = receipt.promise;
+    promptBody = null;
+    function Surface() {
+      return useAppState((state) => state.sessionId) ? (
+        <Composer />
+      ) : (
+        <Welcome />
+      );
+    }
+    render(<Surface />);
+    fireEvent.change(screen.getByLabelText("Project directory"), {
+      target: { value: "/proj" },
+    });
+    fireEvent.change(screen.getByLabelText("First message"), {
+      target: { value: "Inspect the attached image" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Attach files", { selector: "input" }),
+      {
+        target: {
+          files: [new File(["png"], "image.png", { type: "image/png" })],
+        },
+      },
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(promptBody).not.toBeNull());
+    const original = promptBody;
+    expect(original).toMatchObject({
+      message: "Inspect the attached image",
+      attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
+    });
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(store.getState().sending).toBe(true);
+
+    await act(async () => {
+      receipt.reject(new TypeError("Lost receipt"));
+    });
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    expect(screen.getByLabelText("Message")).toHaveValue(
+      "Inspect the attached image",
+    );
+    expect(
+      screen.getByRole("button", { name: "Preview attached image" }),
+    ).toBeInTheDocument();
+    expect(store.getState().failedDeliveryCount).toBe(0);
+    promptGate = null;
+    promptBody = null;
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(promptBody).toEqual(original));
+    await waitFor(() => expect(store.getState().sending).toBe(false));
+    expect(screen.getByLabelText("Message")).toHaveValue("");
   });
 
   it("does not send the first prompt into a session selected during upload", async () => {

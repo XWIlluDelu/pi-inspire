@@ -347,8 +347,16 @@ export const Welcome = memo(function Welcome({
         sessionDraft(opened) !== message
       )
         return;
-      const sent = await store.sendPrompt(message);
-      if (!sent || sessionDraft(opened) !== message) return;
+      let handedOff = false;
+      const sent = await store.sendPrompt(message, undefined, () => {
+        handedOff = true;
+        if (sessionDraft(opened) !== message) return;
+        setSessionDraft(opened, "");
+        if (store.getState().sessionId === opened)
+          store.replaceComposerText("");
+        setDraft("");
+      });
+      if (!sent || handedOff || sessionDraft(opened) !== message) return;
       setSessionDraft(opened, "");
       if (store.getState().sessionId === opened) store.replaceComposerText("");
       setDraft("");

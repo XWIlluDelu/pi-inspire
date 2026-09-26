@@ -182,6 +182,7 @@ describe("ComposerController", () => {
       ],
       projectFiles: [],
       sending: false,
+      failedDeliveryCount: 0,
     });
   });
 
@@ -199,6 +200,7 @@ describe("ComposerController", () => {
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
       sending: false,
+      failedDeliveryCount: 0,
     });
   });
 
@@ -354,6 +356,7 @@ describe("ComposerController", () => {
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
       sending: false,
+      failedDeliveryCount: 0,
     });
   });
 
@@ -371,6 +374,7 @@ describe("ComposerController", () => {
       viewId: "view-a",
       incarnation: "projection-a",
       effectiveLeafId: "leaf-a",
+      historyVersion: "history-a",
     };
     const entry = {
       text: "recalled",
@@ -508,6 +512,7 @@ describe("ComposerController", () => {
       attachments: [],
       projectFiles: ["/workspace/kept.ts"],
       sending: false,
+      failedDeliveryCount: 0,
     });
     expect(harness.clearVisibleError).not.toHaveBeenCalled();
   });

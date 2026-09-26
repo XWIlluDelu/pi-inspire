@@ -234,6 +234,7 @@ async function previewSnapshot(
       sessionId: session.id,
       revision: 1,
       viewId: `view-${session.id}`,
+      composerHistoryVersion: "history-1",
       messages: [
         { role: "user", content: `preview:${session.id}`, timestamp: 1 },
       ],
@@ -2364,9 +2365,21 @@ describe("RuntimeController concurrent sessions", () => {
       MAX_IDLE_WORKERS + 1,
     );
 
+    expect(slots.has(ids[0]!)).toBe(false);
+    const workerCount = workers.length;
+    const restored = await runtime.snapshot(ids[0]!);
+    expect(restored.active?.sessionId).toBe(ids[0]);
+    expect(workers).toHaveLength(workerCount);
+    expect(previewCalls.get(ids[0]!)).toBe(2);
+    expect((await runtime.snapshot()).active?.sessionId).toBe(ids.at(-1));
+
     const reopened = await runtime.openSession(ids[0]!);
     expect(reopened.active?.sessionId).toBe(ids[0]);
-    await vi.waitFor(() => expect(previewCalls.get(ids[0]!)).toBe(2));
+    await vi.waitFor(() =>
+      expect(
+        workers.filter((worker) => worker.sessionId === ids[0]),
+      ).toHaveLength(2),
+    );
     await vi.waitFor(() =>
       expect(slots.size).toBeLessThanOrEqual(MAX_IDLE_WORKERS + 1),
     );

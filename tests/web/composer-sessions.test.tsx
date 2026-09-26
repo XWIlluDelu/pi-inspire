@@ -15,14 +15,16 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  jsonBody,
 } from "./helpers";
 
 let promptGate: Promise<void> | null = null;
 let promptsSettled = 0;
+const promptBodies: Record<string, unknown>[] = [];
 
 beforeAll(async () => {
   installFakeWebSocket();
-  installFetch(async (url) => {
+  installFetch(async (url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
     if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
@@ -35,6 +37,7 @@ beforeAll(async () => {
     if (url.startsWith("/api/sessions"))
       return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
     if (url.startsWith("/api/prompt")) {
+      promptBodies.push(jsonBody(init));
       if (promptGate) await promptGate;
       promptsSettled += 1;
       return { status: 202, body: { accepted: true } };
@@ -111,9 +114,9 @@ describe("composer drafts across sessions", () => {
 });
 
 describe("project-file send ownership", () => {
-  it("freezes chips during delivery and clears only the delivered canonical paths", async () => {
+  it("hands off only the delivered canonical paths and preserves new editable chips", async () => {
     render(<Composer />);
-    store.addProjectFile("src/owned.ts");
+    act(() => store.addProjectFile("src/owned.ts"));
     fireEvent.change(screen.getByLabelText("Message"), {
       target: { value: "send with file" },
     });
@@ -124,16 +127,24 @@ describe("project-file send ownership", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(store.getState().sending).toBe(true);
     expect(
-      screen.getByRole("button", { name: "Remove src/owned.ts" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Remove src/owned.ts" }),
+    ).not.toBeInTheDocument();
+    expect(promptBodies.at(-1)?.projectFiles).toEqual(["src/owned.ts"]);
 
-    store.removeProjectFile("src/owned.ts");
-    store.addProjectFile("src/racing.ts");
-    expect(store.getState().projectFiles).toEqual(["src/owned.ts"]);
+    act(() => {
+      store.removeProjectFile("src/owned.ts");
+      store.addProjectFile("src/racing.ts");
+    });
+    expect(store.getState().projectFiles).toEqual(["src/racing.ts"]);
+    expect(
+      screen.getByRole("button", { name: "Remove src/racing.ts" }),
+    ).toBeEnabled();
 
     release();
     await waitFor(() => expect(store.getState().sending).toBe(false));
-    expect(store.getState().projectFiles).toEqual([]);
+    expect(store.getState().projectFiles).toEqual(["src/racing.ts"]);
+    expect(promptBodies.at(-1)?.projectFiles).toEqual(["src/owned.ts"]);
+    act(() => store.removeProjectFile("src/racing.ts"));
   });
 });
 

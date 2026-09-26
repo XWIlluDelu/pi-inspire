@@ -103,7 +103,10 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   recalled draft.
 
   The Host pages exact entries under a serialized byte bound and binds every page to one content
-  identity so assistant-only revision advances cannot corrupt newest-first offsets.
+  identity so assistant-only revision advances cannot corrupt newest-first offsets. A lightweight
+  Host history version invalidates the browser's payload cache only for history-relevant changes,
+  not every assistant/tool leaf append. Cache reuse never substitutes an old effective leaf for
+  the current artifact authority.
 
 ### Project files and command completion
 
@@ -292,7 +295,8 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   mutation.
 
 - Submitting transfers that exact draft and its staged artifacts into an independently owned
-  operation, leaving the editor available for the next message. A definitively failed or
+  operation, leaving the editor available for the next message. This synchronous handoff also
+  applies to the first message from Welcome; a delayed receipt cannot clear a later draft. A definitively failed or
   acceptance-unknown delivery restores its input if the editor is empty; otherwise a Restore action
   retains it without replacing newer work. Explicitly cleared Pending releases its attachments
   instead of inviting a duplicate retry. Every prompt delivery carries a random
@@ -327,12 +331,14 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   on that operation's confirmed acceptance, explicit clear, or user withdrawal after restoration. Pi acceptance remains a successful, non-retryable send even if the
   subsequent disk-projection reconciliation discovers a conflict: the owning sent draft clears, the
   affected worker stops accepting writes, and the conflict remains explicitly recoverable instead of
-  inviting duplicate delivery. Attachment uploads still in flight, failed attachment chips, and
+  inviting duplicate delivery. Failure to confirm worker termination retains its writer fence but
+  cannot undo that accepted delivery. Attachment uploads still in flight, failed attachment chips, and
   attachment/project-reference caps prevent submission or staging with non-blocking warning notices
   rather than replacing the session-wide error banner.
 
   A delayed completion may update its originating session's draft/attachment/status partition, but
   it sets or clears the visible global error only when that session still owns the visible surface.
+  Retained failures update the Restore affordance immediately, without waiting for another edit.
 
 ### Model controls and new sessions
 

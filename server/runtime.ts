@@ -1222,16 +1222,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         error,
         "accepted_persistence_projection_failed",
       );
-      const newlyConflicted = !slot.conflict;
+      let publishConflict = !slot.conflict;
       const conflict =
         slot.conflict ??
         this.setProjectionConflict(
           slot,
           "projection-failure",
-          `Pi accepted ${operation}, but INSΠRE could not verify the resulting session projection; the worker was stopped safely`,
+          `Pi accepted ${operation}, but INSΠRE could not verify the resulting session projection. Recover before writing again`,
         );
-      await this.stopWriter(slot);
-      if (newlyConflicted)
+      try {
+        await this.stopWriter(slot);
+      } catch (stopError) {
+        // Retirement logs the failure and retains its writer fence. Neither
+        // cleanup failure nor projection failure can undo prompt acceptance.
+        if (!acceptedIsSuccess) throw stopError;
+        publishConflict = true;
+      }
+      if (publishConflict)
         this.emitSlotEvent(slot, {
           type: "session_projection_conflict",
           conflict,
@@ -2367,15 +2374,37 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : {}),
             });
             accepted = true;
-            // A registered extension's handler has finished at this receipt.
-            // Ordinary prompts stay queued until Pi supplies lifecycle events.
-            if (
-              slot.runState === "queued" &&
-              invocation &&
-              runtimeResourceOwnsCommand(slot, invocation.name, "extension")
-            ) {
-              slot.runState = previousRunState;
-              this.emitSlotEvent(slot, { type: "prompt_finished" });
+            // Commands and input hooks can handle a prompt without starting
+            // an agent. Only Pi's idle state can retire that silent admission;
+            // a receipt alone must not clear queued or newer work.
+            if (slot.runState === "queued") {
+              try {
+                const state = await readyProcess.request<{
+                  isStreaming: boolean;
+                  isCompacting: boolean;
+                  pendingMessageCount: number;
+                }>({ type: "get_state" });
+                await slot.eventTail;
+                if (
+                  slot.process === readyProcess &&
+                  slot.runState === "queued" &&
+                  slot.pendingPromptCount === 1 &&
+                  state.isStreaming === false &&
+                  state.isCompacting === false &&
+                  state.pendingMessageCount === 0
+                ) {
+                  slot.runState = isBusyRunState(previousRunState)
+                    ? "idle"
+                    : previousRunState;
+                  this.emitSlotEvent(slot, { type: "prompt_finished" });
+                }
+              } catch (error) {
+                this.logRuntimeError(
+                  slot.id,
+                  error,
+                  "accepted_prompt_state_read_failed",
+                );
+              }
             }
             if (
               await this.reconcileAcceptedPersistence(slot, "the prompt", true)

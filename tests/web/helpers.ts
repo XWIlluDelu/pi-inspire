@@ -228,6 +228,7 @@ export function activeSnapshot(
       sessionId,
       revision: 1,
       viewId: `view-${sessionId}`,
+      composerHistoryVersion: "history-1",
       incarnation: "projection-1",
       appendFromRevision: 1,
       messages: pageMessages,
