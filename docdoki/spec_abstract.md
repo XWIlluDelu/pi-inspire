@@ -18,10 +18,10 @@
 | Connectivity | [[connection-modules]] | Detachable local connection modules add ingress paths to the same loopback host without becoming Pi or browser-state authority. |
 | Input | [[composer]] | One composer accepts text, project-file references, images, files, steering messages, and follow-ups. |
 
-## Current work
+## Runtime boundary
 
-The Herdr boundary review is complete; no further implementation remains in that slice.
-Direct RPC remains the default and the optional Herdr setting uses the existing Host restart.
+Session-addressed snapshots recover through the public runtime entry point without a separate
+browser reopen fallback. Enhanced workers use systemd user scopes; direct RPC remains unchanged.
 
 ## Implemented capability
 
