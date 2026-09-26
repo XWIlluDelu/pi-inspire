@@ -1,85 +1,72 @@
 ---
-purpose: Separate Pi's interactive command ownership and model context from browser dispatch, chronological history, and observable operation feedback.
+purpose: Explain native-command dispatch, compaction presentation, and input ownership at the Pi RPC boundary.
 ---
 
 # Native command compatibility
 
-## Boundaries corrected
+Contracts: [[pi-integration]], [[composer]], and [[conversation]]. The supported command table is
+in `README.md`; the remaining presentation proposal is in [[follow-native-command-surface-2026-09-04]].
 
-Pi's interactive submit handler handles built-ins before calling `AgentSession.prompt()`. The RPC
-`get_commands` resource list describes a different layer: extensions, prompts, and skills. INSΠRE
-must not infer interactive precedence from that list. All built-in names now have their registered
-browser or terminal-only owner; namespaced runtime commands and first-wire resource collisions
-still work. A first-message composer hides unavailable native names, including colliding resources.
-The Host repeats the ownership check after acquiring a fresh writer, uses exact case-sensitive
-names, and normalizes command separators before Pi's literal-space dispatcher. This also closes a
-reload race in which an admitted resource disappears before actual dispatch.
+## Command ownership
 
-Pi's `buildContextEntries()` prepends the latest compaction for model consumption. The transcript
-retains exactly those selected entries but restores persisted append order before deriving message
-and user-turn identities. It does not sort timestamps, modify model context, resurrect discarded
-context, import unrelated branches, or rewrite the session file. Thus a compaction follows retained
-prior messages and precedes subsequent messages on live update, reopening, and branch inspection.
+Pi's interactive submit handler resolves built-ins before `AgentSession.prompt()`. RPC
+`get_commands` lists extensions, prompts, and skills instead. `shared/commands.ts` therefore
+reserves built-in names for their browser or terminal-only handler; namespaced extension commands
+remain available. First-message completion hides native commands that need an existing session,
+including colliding resource names.
 
-Compaction failure and cancellation notices follow observed Pi outcomes for every trigger. A manual
-trigger is not evidence that the observing browser still owns a local HTTP receipt. Successful
-summaries are never invented from events; they come from persisted history. Errors remain transient
-attention rather than a new durable error log. A local failure receipt may coexist with that notice;
-there is no guessed operation correlation that could suppress another browser's error.
+The Host repeats the ownership check after acquiring a fresh writer. Names are case-sensitive,
+and separators are normalized for Pi's literal-space dispatcher. This prevents a resource removed
+by reload from reaching the model as an ordinary prompt. `/compact` also has a Host-owned
+first-message path. Terminal guidance opens a separate shell; it does not attach that shell to
+the active Pi session.
 
-Summarization retry details are independent of ordinary agent retries and of the enclosing run
-state. Host snapshots retain validated attempt counts and a bounded reason while work is active.
-Attempt-start, retry-finished, compaction-end, settlement, and worker loss retire those details.
-Backoff does not change `compacting` to `retrying`, preserving standalone compaction cancellation.
-No countdown or percentage is inferred from token occupancy.
+## Compaction and feedback
 
-Local receipts retain `createdAt` for lifecycle metadata but no longer display request time in
-headers. Successful compact receipts stop occupying the composer dock once later agent work or
-compaction starts; persistent checkpoints remain in the transcript. Simple command success
-(`/copy`, argument-bearing `/name`, exact `/model`, valid `/thinking`) uses a short notice and
-retires its running receipt; failure retains a receipt with the actual cause, without a second
-control-level warning. Control invocations still own their own warning notices. Mutation outcomes
-separate success, actual failure, and lost ownership; background command failures update their
-originating receipt without showing a notice over another session.
-Terminal-only capability is part of the option description rather than an inaccessible group label.
-Reload explicitly says that the worker was replaced; terminal guidance does not imply that opening
-a shell transfers ownership of the current session.
+Pi's `buildContextEntries()` puts the latest compaction first for model context. The transcript
+uses the same selected entries in persisted append order: retained messages, checkpoint, later
+messages. This changes presentation only; model context and the session file remain intact.
 
-## Compaction-time delivery boundary
+Summaries come from persisted history. Failure and cancellation notices follow Pi events, including
+operations started by another browser. These notices are transient. A local failure receipt can
+coexist with one because the event does not identify which browser operation it belongs to.
 
-Pi TUI's compaction input queue is not the public RPC prompt surface. The Host instead holds a
-bounded transient queue attached to the same session, worker instance, and explicit branch-selection
-identity. Compaction can legitimately renew the browser view while retaining that selection. Its Pending
-projection composes that queue with Pi's public text arrays. Clear owns both at the operation
-boundary, and worker/branch replacement rejects undelivered input for browser recovery rather than
-writing to another history. Actual Pi streaming state, not a Host `queued` label, decides whether
-Steer/Queue joins a live agent or must wait behind the original preflight/extension command.
+Summarization retries have their own snapshot-backed attempt count and bounded reason. Attempt
+start, retry finish, compaction end, settlement, and worker loss clear them. Backoff retains the
+`compacting` state so standalone cancellation remains available. Occupancy is not progress, and
+historical after-token counts are shown only when Pi recorded them.
 
-Each browser delivery has an independent operation record and attachment handoff. A slow receipt
-cannot block later input, and a failed older delivery cannot clear a newer editor or in-flight
-partition. The original prompt operation identity continues through the Host's 20-second receipt
-observation window; uncertain outcome retains its retry identity. This does not invent a durable
-shadow conversation or claim that a Host-held item is already Pi history.
+Command headers omit time; `createdAt` remains metadata. A successful compact receipt retires when
+later agent work or compaction starts, while its checkpoint stays in the transcript. Simple success
+(`/copy`, argument-bearing `/name`, exact `/model`, valid `/thinking`) uses a short notice; failure
+keeps one attributable receipt. Lost response ownership retains an unknown outcome. Control
+invocations own their warnings separately. A background command updates its own receipt without
+posting a notice over another session.
 
-## Deliberate limits
+## Compaction-time delivery
 
-HTML export, worker-based reload, and worker-based compact cancellation remain bounded existing
-operations. This change does not add JSONL import/export, session clone, authentication, trust,
-sharing, scoped-model configuration, or context-integrated shell execution to the browser. It does
-not persist an estimated after-token count that Pi did not record, and does not automatically
-replay missed transient failures after reconnect. These limits are described in the README.
+Pi TUI's compaction queue is separate from RPC prompt admission. The Host holds bounded input for
+the same session, worker, and explicit branch selection, and combines it with Pi's public queues
+in Pending. Compaction can renew the browser view without replacing that selection.
+
+Pi's actual streaming state decides delivery: an active agent can receive Steer/Queue while an
+earlier receipt is pending; otherwise input waits behind the existing preflight or command. Clear
+removes undispatched Host input and clears Pi's queue. Worker or branch replacement returns
+undelivered input for recovery rather than sending it to another history.
+
+Each delivery owns its operation identity and attachment handoff. An older receipt cannot block
+later input or clear a newer draft. The Host's 20-second HTTP observation window retains that
+identity; an unknown outcome keeps it for recovery. Host-held input becomes conversation history
+only when Pi persists it.
 
 ## Regression evidence
 
-- Server projection: skewed timestamps, retained-before/checkpoint/after ordering, disk reopen,
-  repeated compaction, historical branch selection, and byte-preserving read-only projection.
-- Command routing: every installed development-baseline built-in is classified; collisions,
-  namespaced commands, exact casing, pasted separators, and queued reload retirement are covered.
-- Feedback: manual outcomes without local receipts, live and snapshot-restored compaction backoff,
-  invalid counters, detail bounding and retirement, and receipt time/lifecycle are covered.
-- Offline real-Pi integration covers the public SDK/RPC preflight boundary without a paid provider.
-  Focused fake-worker and browser tests cover Host-held Pending, Clear, long extension receipts,
-  separate operation identities, and composer command presentation; they do not claim a provider
-  compaction quality result.
-
-Relevant contracts: [[pi-integration]], [[composer]]. Historical background: [[state-authority-review]].
+- Projection tests cover persisted ordering despite skewed timestamps, repeated compaction,
+  reopening, branch selection, and unchanged source bytes.
+- Routing tests classify the development-baseline built-ins and cover collisions, namespaces,
+  casing, separators, and resource changes during reload.
+- Feedback tests cover outcomes without local receipts, snapshot-restored retry state, bounded
+  counters/reasons, and receipt lifecycle.
+- The real-Pi fixture uses a local synthetic provider to exercise preflight compaction. Runtime and
+  browser tests cover Pending/Clear, long extension receipts, independent input ownership, and
+  command presentation. [[state-authority-review]] records the earlier presentation repairs.
