@@ -47,15 +47,33 @@ const leaseSchema = z
           resolve(value) === value &&
           /^inspire-herdr-[A-Za-z0-9]{6}$/u.test(basename(value)),
       ),
-    group: processIdentitySchema.nullable(),
+    group: processIdentitySchema
+      .extend({
+        scope: z
+          .object({
+            path: z
+              .string()
+              .refine(
+                (value) =>
+                  value.startsWith("/sys/fs/cgroup/") &&
+                  resolve(value) === value &&
+                  /^inspire-pi-[a-f0-9-]{36}\.scope$/u.test(basename(value)),
+              ),
+            device: z.string().regex(/^\d+$/u),
+            inode: z.string().regex(/^\d+$/u),
+          })
+          .strict()
+          .optional(),
+      })
+      .nullable(),
   })
   .strict();
 
 export type HerdrWorkerLease = z.infer<typeof leaseSchema>;
 
-/** Launch ownership only, never a session store. Publishing the process-group
- * identity precedes the bridge's permission to spawn a Pi writer, so a new Host
- * can fence an old writer even when no ready response ever arrived.
+/** Launch ownership only, never a session store. Publishing the group and kernel
+ * scope identity precedes permission to spawn Pi, so recovery owns detached
+ * tools even when their Pi parent died before cleanup.
  */
 export class HerdrWorkerRegistry {
   private owner: Promise<HerdrProcessIdentity> | null = null;

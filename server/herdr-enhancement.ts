@@ -3,6 +3,7 @@ import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import { HerdrClient } from "./herdr-client.js";
 import {
+  assertHerdrWorkerScopesAvailable,
   herdrProcessIsLive,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
@@ -51,6 +52,7 @@ export class HerdrEnhancement {
   private initialization: Promise<void> | null = null;
   private initialized = false;
   private recoveryIssue: string | undefined;
+  private scopeCheck: Promise<void> | null = null;
   private closed = false;
   private readonly diagnostics: DiagnosticLogger;
 
@@ -120,11 +122,25 @@ export class HerdrEnhancement {
       }
     } catch (error) {
       this.recoveryIssue =
-        "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
+        (error as NodeJS.ErrnoException | null)?.code ===
+        "HERDR_LEGACY_WORKER_LEASE"
+          ? "Previous-version Herdr workers have no retained tool scope, so detached tool exit cannot be verified. Shut down the old environment, then reboot this machine to clear the old boot's ownership fence"
+          : "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
       this.recordError("herdr_recovery_failed", error);
     } finally {
       this.initialized = true;
     }
+  }
+
+  private checkWorkerScopes(refresh = false): Promise<void> {
+    if (this.scopeCheck && !refresh) return this.scopeCheck;
+    const attempt = assertHerdrWorkerScopesAvailable(process.env);
+    this.scopeCheck = attempt;
+    void attempt.catch(() => {
+      // A repaired user manager must be usable without restarting the Host.
+      if (this.scopeCheck === attempt) this.scopeCheck = null;
+    });
+    return attempt;
   }
 
   createProcess(options: PiRpcOptions): PiRpcProcess {
@@ -151,6 +167,7 @@ export class HerdrEnhancement {
           client: this.client,
           registry: this.options.registry,
           label: "Inspire Pi",
+          assertScopesAvailable: () => this.checkWorkerScopes(),
           ...(sessionFile
             ? {
                 assertWritable: () =>
@@ -196,13 +213,34 @@ export class HerdrEnhancement {
       };
     }
     const probe = await this.client.probe();
+    let scopeIssue: string | undefined;
+    if (
+      supported &&
+      probe.installed &&
+      !probe.issue &&
+      probe.compatible !== false
+    ) {
+      try {
+        // Explicit availability inspection is current; worker starts reuse its
+        // successful result, but still verify their own scope before grant.
+        await this.checkWorkerScopes(true);
+      } catch (error) {
+        scopeIssue =
+          error instanceof Error
+            ? error.message
+            : "Herdr worker scope support could not be checked";
+      }
+    }
     const issue =
       this.recoveryIssue ??
       (!this.initialized
         ? "The Host is still stopping previous enhanced sessions"
         : undefined) ??
       (!supported ? "Herdr enhancement currently requires Linux" : undefined) ??
-      (!probe.installed ? "Herdr is not installed on this Host" : probe.issue);
+      (!probe.installed
+        ? "Herdr is not installed on this Host"
+        : probe.issue) ??
+      scopeIssue;
     return {
       enabled,
       supported,

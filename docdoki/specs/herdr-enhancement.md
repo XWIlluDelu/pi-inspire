@@ -46,11 +46,12 @@ The bridge owns transport and child-process cleanup only. It does not implement 
 
 - The local endpoint and any launch material are private to the current user and authenticated per launch. No provider credentials or launch capabilities enter browser state, command text, public diagnostics, or terminal history.
 - RPC bytes remain ordered and bounded by the existing protocol limits. Transport honors backpressure; terminal output is not parsed to reconstruct JSON records.
-- A lost bridge/socket is not proof that Pi exited. Replacement and recovery writes remain fenced until the module proves the old writer can no longer run and completes its process-tree termination responsibility. Runtime retains that actual-stop barrier for explicit stop, unexpected exit, and idle reclamation; a rejected stop does not release it. Failed new-session setup retains its provisional reservation until exit is confirmed, including when the worker has not yet reported its native file.
+- Each worker runs inside one standard systemd user scope, preserving the pane's environment and RPC pipes. Pi's independently grouped Bash processes inherit that scope. Its boot/path/device/inode identity is retained before the launch grant; termination uses the opened cgroup directory and waits for `populated=0`, including after Pi or bridge death. Cooperative SIGTERM remains first for ordinary stop; forced cleanup uses the kernel's recursive `cgroup.kill`, not a racy scan of detached descendants.
+- A lost bridge/socket is not proof that Pi exited. Replacement and recovery writes remain fenced until the module proves the old worker scope is empty and completes its process-tree termination responsibility. Runtime retains that actual-stop barrier for explicit stop, unexpected exit, and idle reclamation; a rejected stop does not release it. Failed new-session setup retains its provisional reservation until exit is confirmed, including when the worker has not yet reported its native file.
 - Ownership is established before permission to start Pi. Interrupted startup and a previous Host crash must not leave an untracked worker that a later Host can accidentally duplicate. Retained launch ownership is process metadata, not a second session store.
 - Host shutdown/restart still ends Inspire-owned Pi workers. Herdr does not make old Pi runtimes survive configuration updates. Ordinary project terminals and unrelated Herdr work remain outside that scope; [[host-lifecycle]] continues to define restart behavior.
 - A shared Herdr server started from a Linux Host service belongs to a separate systemd user unit, not the Host's cgroup. Startup does not silently fall back to a child that the next Host restart would kill.
-- Recovery checks retained worker leases even when enhancement is now disabled. Boot and process birth identity bind cleanup; a live previous Host is not adopted or terminated. A new writer is admitted only after the previous owned group is confirmed gone.
+- Recovery checks retained worker leases even when enhancement is now disabled. Boot and process birth identity bind cleanup; a live previous Host is not adopted or terminated. A new writer is admitted only after the previous owned scope is confirmed empty. A same-boot legacy granted lease without scope evidence cannot be released as though detached tools were verified; its ownership remains blocked.
 - An enabled but unavailable backend reports a concrete failure; it does not silently create another worker using a different backend or repeat an uncertain launch.
 - Once Pi's stop is verified, a definite `pane_not_found` retires local cleanup ownership. A cached `workspace_not_found` response invalidates that topology and permits one fresh allocation; connection failures and uncertain layout results never authorize that retry. Cleanup of older panes cannot discard a newer workspace.
 
@@ -64,7 +65,9 @@ The bridge owns transport and child-process cleanup only. It does not implement 
 
 ## Initial platform scope
 
-The enhanced worker backend requires Linux, including `/proc` process-birth and group evidence.
+The enhanced worker backend requires Linux, `/proc` process-birth evidence, a working
+systemd user manager, and writable cgroup v2 scopes with `cgroup.kill` support. Availability
+reports a concrete missing prerequisite; there is no process-group-only fallback.
 Other platforms keep the direct backend; they are not advertised as supporting enhanced workers.
 Disabling enhancement requires no Herdr process/API calls during ordinary startup or worker use;
 an explicit Settings availability query may probe installation status.

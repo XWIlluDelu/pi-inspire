@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
+import * as workerScopes from "../../server/herdr-process-group.js";
 import { HerdrWorkerObserver } from "../../server/herdr-worker-observer.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
 
@@ -78,6 +79,38 @@ describe.skipIf(process.platform !== "linux")(
       expect(probe).toHaveBeenCalledOnce();
     });
 
+    it("reports unavailable scopes, retries failures, and reuses a successful check for workers", async () => {
+      const { enhancement, root, client } = await harness(true);
+      const check = vi
+        .spyOn(workerScopes, "assertHerdrWorkerScopesAvailable")
+        .mockRejectedValueOnce(new Error("Scope manager unavailable"))
+        .mockResolvedValue();
+      vi.spyOn(client, "createWorkerPane").mockRejectedValue(
+        new Error("Test stops at pane allocation"),
+      );
+      try {
+        await enhancement.initialize();
+        expect(await enhancement.status()).toMatchObject({
+          issue: "Scope manager unavailable",
+        });
+        for (let i = 0; i < 2; i++) {
+          const worker = enhancement.createProcess({ cwd: root });
+          await expect(worker.start()).rejects.toThrow(
+            "Test stops at pane allocation",
+          );
+          await worker.stop();
+        }
+        expect(check).toHaveBeenCalledTimes(2);
+        check.mockRejectedValue(new Error("Scope manager stopped"));
+        expect(await enhancement.status()).toMatchObject({
+          issue: "Scope manager stopped",
+        });
+        expect(check).toHaveBeenCalledTimes(3);
+      } finally {
+        check.mockRestore();
+      }
+    });
+
     it("projects only its own live worker and disposes projection on retirement", async () => {
       const { enhancement, root } = await harness(true);
       const projection = {
@@ -142,6 +175,29 @@ describe.skipIf(process.platform !== "linux")(
         readFile(join(owned.launchDirectory, "launch.json")),
       ).rejects.toMatchObject({ code: "ENOENT" });
       expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
+    });
+
+    it("retains legacy granted leases rather than claiming detached tools exited", async () => {
+      const { enhancement, root, lease, registry, closePane } = await harness();
+      const owned = await lease();
+      const legacy = {
+        ...owned,
+        owner: { ...owned.owner, birth: "0" },
+        group: owned.owner,
+      };
+      await writeFile(
+        join(registry.directory, `${legacy.id}.json`),
+        JSON.stringify(legacy),
+      );
+      await enhancement.initialize();
+      expect(() => enhancement.createProcess({ cwd: root })).toThrow(
+        "Previous-version Herdr workers have no retained tool scope",
+      );
+      expect(await enhancement.status()).toMatchObject({
+        issue: expect.stringContaining("reboot this machine"),
+      });
+      expect(closePane).not.toHaveBeenCalled();
+      expect(await registry.list()).toEqual([legacy]);
     });
 
     it("refuses unverifiable ownership instead of silently starting a direct writer", async () => {
