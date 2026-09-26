@@ -659,14 +659,14 @@ export class PiRpcProcess extends EventEmitter {
     });
   }
 
-  /** A write failure stops the protocol stream. Notify
-   * the owner after the child is gone: delivery can no longer be trusted,
-   * so keeping the wrapper in a runtime slot would make later reads or writes
-   * appear usable when they are not. Deliberate host shutdown still uses
-   * `stop()` directly and does not emit an unexpected-exit event. */
+  /** A write failure retires the protocol stream. Notify the owner when the
+   * stop attempt settles, even if it fails: the rejected stop fence still
+   * forbids replacement, but the failed worker must leave normal service.
+   * Deliberate host shutdown uses `stop()` directly without an exit event. */
   private stopForProtocolFailure(error: Error): Promise<void> {
     const stopped = this.stop();
-    void stopped.then(() => this.emit("exit", error));
+    const notify = () => this.emit("exit", error);
+    void stopped.then(notify, notify);
     return stopped;
   }
 
