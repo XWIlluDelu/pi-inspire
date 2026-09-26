@@ -366,7 +366,7 @@ describe("bounded diff contract", () => {
           "diff --git a/a b/a",
           "--- a/a",
           "+++ b/a",
-          "@@ -2 +2,2 @@",
+          "@@ -2,2 +2,3 @@",
           " old",
           "-gone",
           "+new",
@@ -404,6 +404,45 @@ describe("bounded diff contract", () => {
     expect(truncated.lines.some((line) => line.text === "+incomplete")).toBe(
       false,
     );
+  });
+
+  it("distinguishes marker-like hunk content from the next file's headers", () => {
+    const parsed = parseUnifiedDiff(
+      Buffer.from(
+        [
+          "--- a/first.md",
+          "+++ b/first.md",
+          "@@ -1,3 +1,3 @@",
+          " before",
+          "----",
+          "++++",
+          " after",
+          "--- a/second.md",
+          "+++ b/second.md",
+          "@@ -0,0 +1 @@",
+          "+new",
+        ].join("\n"),
+      ),
+    );
+    expect(
+      parsed.lines.map(({ kind, oldLine, newLine }) => [
+        kind,
+        oldLine,
+        newLine,
+      ]),
+    ).toEqual([
+      ["meta", null, null],
+      ["meta", null, null],
+      ["hunk", null, null],
+      ["context", 1, 1],
+      ["delete", 2, null],
+      ["add", null, 2],
+      ["context", 3, 3],
+      ["meta", null, null],
+      ["meta", null, null],
+      ["hunk", null, null],
+      ["add", null, 1],
+    ]);
   });
 
   it("caps the projected diff line cardinality through the service contract", async () => {
@@ -975,6 +1014,73 @@ describe("real temporary repository", () => {
       ).rejects.toMatchObject({ status: 409 });
     },
   );
+
+  it("compares both sides of a staged rename without inventing added source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-rename-"));
+    directories.push(root);
+    await exec("git", ["init", "-q", root]);
+    await exec("git", [
+      "-C",
+      root,
+      "config",
+      "user.email",
+      "test@example.invalid",
+    ]);
+    await exec("git", ["-C", root, "config", "user.name", "Test"]);
+    const source = Array.from(
+      { length: 10 },
+      (_, index) => `line ${index}\n`,
+    ).join("");
+    await writeFile(join(root, "old name.txt"), source);
+    await exec("git", ["-C", root, "add", "."]);
+    await exec("git", ["-C", root, "commit", "-qm", "base"]);
+    await exec("git", ["-C", root, "mv", "old name.txt", "new name.txt"]);
+    const service = new GitInspectionService();
+    const pathId = Buffer.from("new name.txt").toString("base64url");
+
+    const pureRename = await service.diff(root, pathId, "staged");
+    expect(pureRename).toMatchObject({
+      kind: "text",
+      additions: 0,
+      deletions: 0,
+    });
+    if (pureRename.kind === "text") {
+      expect(pureRename.lines.every((line) => line.kind === "meta")).toBe(true);
+      expect(pureRename.lines.map((line) => line.text)).toContain(
+        "rename from old name.txt",
+      );
+    }
+
+    await writeFile(
+      join(root, "new name.txt"),
+      source.replace("line 2\n", "staged\n"),
+    );
+    await exec("git", ["-C", root, "add", "new name.txt"]);
+    await writeFile(
+      join(root, "new name.txt"),
+      source.replace("line 2\n", "working\n"),
+    );
+    const staged = await service.diff(root, pathId, "staged");
+    const working = await service.diff(root, pathId, "unstaged");
+    for (const diff of [staged, working]) {
+      expect(diff).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
+    }
+    if (staged.kind === "text" && working.kind === "text") {
+      expect(
+        staged.lines
+          .filter((line) => line.kind === "delete" || line.kind === "add")
+          .map((line) => line.text),
+      ).toEqual(["-line 2", "+staged"]);
+      expect(
+        working.lines
+          .filter((line) => line.kind === "delete" || line.kind === "add")
+          .map((line) => line.text),
+      ).toEqual(["-staged", "+working"]);
+      expect(
+        working.lines.some((line) => line.text.startsWith("rename from")),
+      ).toBe(false);
+    }
+  });
 
   it("parses a real merge conflict", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-conflict-"));
