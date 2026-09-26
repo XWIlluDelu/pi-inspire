@@ -80,6 +80,7 @@ The launcher never kills an arbitrary process merely because it owns the configu
 | Native desktop Trash for session deletion | Freedesktop Trash | `~/.Trash` | Recycle Bin |
 | Project PTY terminal | Supported | Supported | Supported |
 | Persistent systemd user service | Supported | Not applicable | Not applicable |
+| Optional Herdr enhancement | Requires Herdr, a systemd user manager, and cgroup v2 | Not available | Not available |
 | Reverse-SSH systemd connection module | Supported | Not applicable | Not applicable |
 
 ### Persistent Linux host service
@@ -93,7 +94,12 @@ The optional persistent service uses Linux systemd. Core lifecycle commands rema
 
 Installation writes separate `inspire-host.service` and `inspire-terminal.service` units plus the idle-maintenance timer. After enabling them, the same launcher commands delegate to the matching Host service. `inspire restart` prepares the next runtime before restarting only the Host, leaving terminal PTYs running. `inspire restart --all` also restarts the terminal service and ends its processes; use it for terminal-service upgrades. Explicit stop or disable also shuts down both services. No `systemctl` syntax is needed. The services are verified against the current checkout before delegation, and a checkout without them continues to use direct-launcher mode (Host-only restart).
 
-**Settings → Updates → Restart** offers the same two scopes for an installed Linux service. Confirmation is followed by build/runtime preparation and a fresh idle check; preparation failure leaves the current Host running. A pending restart is observed rather than automatically resent after a disconnect. These checks reduce restart risk, but are not a guarantee against startup failure or an automatic rollback. The reverse-tunnel service is not restarted.
+**Settings → Updates → Restart** offers the same two scopes for an installed Linux service.
+After confirmation, Inspire prepares the build/runtime and checks for unfinished Pi work; an idle
+live session does not block restart. A workload refusal offers **Stop work and restart**, whose
+confirmation authorizes interrupting Pi work and discarding Pending input. Preparation failure
+leaves the current Host running. After a disconnect, the page observes the submitted operation
+rather than resending it. Both scopes leave the reverse-tunnel service running.
 
 Equivalent npm entry points remain available (`npm start`, `npm run start:mock`, `npm run dev`). On first use the launcher passes a one-time bearer to the browser, which exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the bearer from the URL. Later launches for the same checkout, host, and port reuse the private persisted host token; the browser never stores that bearer durably in JavaScript. Generated tokens contain 48 cryptographic random bytes, encoded as 64 base64url characters (384 bits); earlier generated token lengths rotate on the next host start.
 
@@ -137,6 +143,16 @@ in another terminal tab. Project terminal tabs still run their own shell initial
 
 An ordinary Host-only restart leaves existing terminal processes and their environment unchanged.
 After verifying normal command lookup, any temporary per-tool PATH symlinks can be removed.
+
+## Optional Herdr enhancement
+
+On Linux, enable **Settings → Behavior → Herdr enhancement** to run Inspire's Pi workers in real
+Herdr panes while continuing to use the same GUI. Herdr must be installed, with a working systemd
+user manager and writable cgroup v2 scopes supporting `cgroup.kill`. Settings reports availability;
+the saved choice takes effect after a Host restart.
+
+Pi keeps your existing tools, extensions, and prompts. The enhancement supplies the pane environment
+for them to use; Pi still runs in RPC mode. Host-only restart continues to preserve project terminals.
 
 ## Pi native commands
 

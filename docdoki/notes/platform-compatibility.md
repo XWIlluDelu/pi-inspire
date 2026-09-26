@@ -2,50 +2,61 @@
 
 ## Explicit restart controls
 
-### Contract and implementation
+### Scope and preparation
 
-[[host-lifecycle]] keeps ordinary and scheduled restart Host-only. Full restart is explicit (`inspire
-restart --all` or Settings → Updates → Restart all), requires installed Linux services, and ends
-terminal processes. Confirmations remain concise, with no always-visible or command-palette control.
+The contract is in [[host-lifecycle]]. Host-only restart replaces Pi workers and preserves project
+terminals. Restart all also ends terminal processes and requires this installation's Linux systemd
+Host and terminal services. Scheduled maintenance remains Host-only and idle-gated.
 
-`inspire.mjs` runs dependency/client-build preparation and `server/restart-preflight.ts` imports
-runtime modules plus the external Pi SDK before any stop. This probe does not open sessions, run
-extensions, bind a Host, or attach to a terminal. Browser preparation inherits the running Host's
-environment; bounded subprocess diagnostics expose preparation failures without stopping it.
+`inspire.mjs` prepares dependencies and the client build; `server/restart-preflight.ts` imports the
+next runtime and external Pi SDK before the current Host stops. Browser preparation uses the
+running Host's environment. A preparation failure leaves it running.
 
-`HostRestartController` owns one active intent and up to 32 retained identities per Host incarnation.
-Preparation precedes a fresh runtime idle reservation. `requestBrowserRestart` rechecks exact unit
-and invocation ownership before committing the existing non-expiring drain. Systemd receives a
-single full-restart transaction, with Host ordered after terminal startup. There is no full-to-Host-only
-fallback and no connection-service restart. Unknown submission retains the drain; it is not a refusal.
+### Restart admission
 
-When an idle-only page restart is rejected for active or in-flight Pi work, Settings offers a
-separate confirmed **Stop work and restart** under the rejected scope. The new operation identity
-carries `interruptWork: true`; a retry cannot upgrade an idle-only identity, and the server rejects
-same-identity permission changes. The runtime lease bypasses workload idle checks (run/dialog/Pending,
-active operations and maintenance counters), retaining preflight, exclusive restart lease and final
-service-owner checks.
-The existing Host close path stops all worker process groups on successful Host replacement;
-Host-only leaves project terminals independent, while all-services restart ends terminal processes.
-The prior refusal is labelled as a last-attempt result rather than a live busy diagnosis.
+`HostRestartController` owns one active request and retains up to 32 operation identities for the
+Host incarnation. Each identity fixes its scope and interruption permission. The browser stores
+that identity before POST, observes it through GET, and uses it for explicit retry.
 
-The browser persists delivery identity before POST, restores it on reload, rechecks read-only, and
-retries only the same identity explicitly. A new Host retires that old identity without claiming that
-all terminal work restarted successfully. Current authoritative preparation outranks old reconnection
-notices. Concurrent status observers share an in-flight service inspection.
+After preparation, an ordinary page request acquires a fresh idle restart lease. An idle live Pi
+is allowed; runs, dialogs, Pending input, startup, unfinished operations, and unconfirmed stops
+block admission. A busy refusal offers **Stop work and restart**. Confirmation creates a new
+operation with `interruptWork: true`, bypassing workload checks while retaining preparation,
+exclusive lease ownership, and service checks. Retrying the refused operation cannot add permission.
+The UI labels a refusal as the last attempt because the workload may have changed since then.
 
-### Limits
+`requestBrowserRestart` rechecks the exact systemd unit and invocation before committing the drain
+and submitting the restart. Restart all uses one transaction, with Host ordered after terminal
+readiness. A confirmed failure to issue releases admission; uncertain submission keeps the drain
+for operator recovery. [[state-ownership]] explains the owner-bound maintenance lease.
+The CLI checks service readiness; the browser reports reconnection to a new Host.
 
-No daily service was stopped or restarted, and no real conversation/terminal body was inspected.
-Browser restart outcomes were intercepted synthetic API responses; installed service dispatch was
-verified with fake systemctl, not a live remote restart. Local execution was Linux; Windows/macOS
-page/full restart is deliberately unavailable, not claimed tested here.
+### Failed-startup cleanup
 
-Preflight is not a full boot rehearsal, immutable deployment, or rollback mechanism. Source can
-change, CLI/service environments can differ, and ports or runtime startup can fail after preparation.
-The CLI verifies systemd's readiness hook after restart; the browser observes a new Host rather than
-asserting end-to-end tunnel or full-terminal success. A submitted operation that cannot be established
-as unissued retains its drain and requires operator service recovery.
+A failed startup previously left `startupPhase = "starting"`; a startup dialog could also retain
+an already-settled `startupStop` promise. Both looked like unfinished work after Pi had stopped.
+
+`RuntimeWorkerLifecycle.stop` now returns startup to idle only after confirmed retirement. The
+startup error latch interrupts a rejected handshake once, without a second stop promise. The
+original failure remains available, while a pending or rejected stop continues to block ordinary
+restart and replacement. A fresh request can succeed after cleanup; the old refusal stays unchanged.
+
+### Source-checkout handoff
+
+A running source Host can load extension entrypoints when it starts a later worker. Removing or
+renaming a referenced file can therefore break new sessions before the Host restarts. Preserve
+those paths through the handoff, or prepare the new source in a separate directory. Preflight
+validates the files it sees; it does not freeze a mutable checkout for the running Host.
+
+### Regression coverage
+
+| Area | Evidence |
+| --- | --- |
+| CLI preparation and scope | `tests/restart-launcher.test.ts` checks failed preparation, scoped systemd submission, and flag validation in a packaged-runtime fixture. |
+| Host admission and identity | `tests/server/host-restart*.test.ts` covers authentication, scope/permission mismatch, retained receipts, busy rejection, non-issuance, and unknown submission. |
+| Browser recovery | `tests/web/host-restart*.test.{ts,tsx}` covers confirmation, storage, read-only recheck, retry identity, and Host replacement. |
+| Service ownership | `tests/deploy/systemd-control.test.mjs` checks exact invocation, final commit ordering, and the full-restart transaction with synthetic systemctl. |
+| Startup retirement | `tests/server/runtime.test.ts` covers pending and rejected stops; `tests/server/pi-startup-retirement.integration.test.ts` uses real Pi with temporary configuration for idle, missing-extension, and startup-dialog cases. |
 
 ## User execution environment
 
