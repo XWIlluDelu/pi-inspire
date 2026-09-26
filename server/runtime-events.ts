@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
@@ -22,6 +21,7 @@ import {
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
+import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
 import { pendingQueuesFromTexts } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
@@ -617,9 +617,9 @@ export class RuntimeEventController {
       slot.startupError = requestError(PI_STARTUP_RESPONSE_UI_ERROR, 503, {
         code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
       });
-    }
-    if (!slot.startupStop) {
-      slot.startupStop = rpc.stop().catch((error) => {
+      // Break the startup handshake once. Startup's catch owns retirement and
+      // its actual-stop fence; a second retained stop promise is not work.
+      void rpc.stop().catch((error) => {
         this.host.logRuntimeError(slot.id, error);
       });
     }

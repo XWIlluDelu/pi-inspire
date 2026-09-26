@@ -81,6 +81,25 @@ notices. Concurrent status observers share an in-flight service inspection.
   `output/playwright/restart-stop-work-narrow.png`. The dialog fits inside the 390px viewport and
   names Pi work, Pending input, terminal processes, and scope. No installed service was restarted.
 
+## Startup retirement evidence (2026-09-26)
+
+Failed startup previously left `startupPhase` at `starting`; a response-bearing startup dialog
+also retained an already-settled `startupStop` promise. Both were counted as in-flight work after
+Pi had stopped. Shared retirement now ends the startup phase only after actual stop succeeds.
+Startup UI rejection uses the existing error latch to interrupt the handshake once, without a
+second retained stop promise. The original error and an unconfirmed actual-stop fence are preserved.
+
+- Runtime/controller regressions cover startup error, transport exit, and startup-dialog failure:
+  ordinary restart refuses while retirement is pending, then a fresh ordinary request succeeds.
+  The old rejected request remains immutable. Failed retirement still blocks restart and replacement.
+- `tests/server/pi-startup-retirement.integration.test.ts` runs real Pi with isolated configuration
+  and no model calls: an idle live worker, missing extension, and startup dialog all reach valid idle
+  restart admission once work/retirement has settled. Existing new-session, branching, RPC lifecycle,
+  explicit-interruption, maintenance-lease, restart API and Web restart regressions also passed.
+- 249 tests across 11 selected files, server TypeScript, and targeted Biome checks passed. These
+  checks used an isolated worktree; service submission in controller tests was synthetic, and no
+  installed service was restarted.
+
 ## Limits
 
 No daily service was stopped or restarted, and no real conversation/terminal body was inspected.
