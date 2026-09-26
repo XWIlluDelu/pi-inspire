@@ -8,11 +8,13 @@ covers:
   - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
   - server/user-environment.{mjs,d.mts}
   - server/runtime-event-sockets.ts
+  - server/{runtime,runtime-worker-lifecycle,runtime-events}.ts
   - server/{host-restart,host-restart-systemd,restart-preflight}.ts
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
   - tests/restart-launcher.test.ts
+  - tests/server/{runtime,pi-startup-retirement.integration}.test.ts
   - tests/{server,web}/host-restart*.{ts,tsx}
   - server/{file-lock,static-asset-cache}.mjs
   - server/*diagnostic*.ts
@@ -204,48 +206,47 @@ adopting a virtual environment from another terminal tab. Rationale and verifica
 
 ### Explicit restart controls
 
-- `inspire restart` prepares required dependencies/client build and imports the next runtime and
-  external Pi SDK before stopping the current Host. Preparation failure leaves that Host running.
-  Ordinary restart preserves the independent terminal daemon and reports that scope explicitly.
-- `inspire restart --all` is an explicit destructive scope for this installation's verified Linux
-  systemd Host and terminal units. Both restart in one systemd transaction with the Host ordered
-  after terminal readiness. Unsupported/foreign services are refused before stopping anything;
-  there is no partial Host-only fallback. Connection services are never included.
-- Page controls live only in Settings → Updates. Both scopes have concise confirmation; full
-  restart states that terminal processes end. No command-palette or always-visible restart action
-  is added. Page control requires the exact running systemd invocation, not merely a matching root.
-- Authenticated page restart requests bind a UUID operation, scope, and optional explicit
-  Pi-interruption grant to one Host incarnation. Changing that grant under the same identity is
-  refused; an idle-only request cannot become forceful through retry. Preparation and outcomes
-  are observable through GET by late/other browsers. Up to 32 operation
-  identities remain for that Host's lifetime; repeated same identities cannot restart twice.
-  A different pending intent is refused, and identities from a previous Host cannot restart its
-  replacement. No HTTP deadline cancels or proves the outcome of a submitted restart.
-- Page preparation does not reserve Pi for the duration of a build. After preparation, an ordinary
-  request must freshly prove every slot idle and grant the existing exclusive restart lease. A
-  rejection caused by active or in-flight Pi work offers a separate **Stop work and restart** action
-  under the same Host-only or all-services scope; its confirmation explicitly authorizes interrupting
-  all Pi work and discarding Pending input in one operation, not stopping sessions one by one. Host-only
-  preserves independent project terminals; full restart also ends their processes. The grant bypasses
-  runtime work-idle checks, including an in-flight manual compaction or session operation; preparation,
-  Host/service ownership, another restart lease, and the final non-expiring commit remain mandatory.
-  Completed failed startups do not count as in-flight work: after confirmed worker retirement,
-  ordinary restart is available again without interruption consent. Pending or rejected actual-stop
-  acknowledgements remain blockers even when the worker no longer appears live. The original
-  startup failure remains available for diagnosis; clearing stale startup state must not erase it.
-  The existing
-  Host shutdown stops its workers after restart issuance; no work is stopped at preflight failure.
-  The exact current service invocation is inspected again before commit and submission. A proven
-  failure to issue releases admission; ambiguous submission keeps the committed drain and reports
-  recovery required. Automatic maintenance remains update/idle-gated and Host-only.
-- Rejected-operation copy is identified as the **last attempt**, not a claim that work is still
-  active. Browser delivery identities persist before POST in tab-session storage; invalid/unavailable
-  storage blocks writes. Recheck is read-only and explicit retry retains the same request.
-  Reconnection to a new Host is reported as reconnection, not proof that every terminal restarted
-  successfully. Preparation is not a full boot rehearsal or guaranteed rollback: mutable source,
-  service-environment differences, port contention, and runtime startup failures remain possible.
+#### Scope and preparation
 
-Implementation evidence and limits: [[explicit-restart-controls]].
+- `inspire restart` prepares dependencies/client build and imports the next runtime and external
+  Pi SDK before stopping the Host. Preparation failure leaves it running. Host-only restart
+  preserves the independent terminal daemon.
+- `inspire restart --all` requires this installation's verified Linux systemd Host and terminal
+  units. It ends terminal processes and restarts both in one transaction, with Host ordered after
+  terminal readiness. Unsupported or foreign services are refused before stopping anything;
+  connection services are outside the scope, and a failed full restart cannot fall back to Host-only.
+- Page controls live in Settings → Updates, with concise confirmation for each scope. Full restart
+  names the terminal-process impact. Page control requires the exact running systemd invocation.
+  Restart stays out of the command palette and always-visible controls.
+
+#### Identity and admission
+
+- An authenticated request binds its UUID, scope, and optional `interruptWork: true` grant to one
+  Host incarnation. Scope and permission are immutable under that identity. Retain up to 32
+  identities for the Host lifetime; repeats return the same operation. Admit only one pending
+  intent, and reject identities from a previous Host. GET exposes preparation and outcomes to all
+  observers; HTTP deadlines end observation, not the submitted restart.
+- Preparation leaves Pi admission open. Afterwards, an ordinary page request must acquire a fresh
+  exclusive idle lease. Idle live workers are allowed. A failed startup ceases to block once its
+  worker has retired; preserve the original error for diagnosis. Pending or rejected actual-stop
+  acknowledgements still block ordinary admission, even if the worker no longer appears live.
+- A workload refusal offers a separate confirmed **Stop work and restart** under the same scope.
+  The new operation authorizes interrupting all Pi work and discarding Pending input. It bypasses
+  workload checks, including active compaction and session operations, while retaining preparation,
+  service ownership, lease exclusivity, and final commit. Automatic maintenance stays update/idle-gated
+  and Host-only.
+
+#### Submission and recovery
+
+- Recheck the current service invocation before committing the non-expiring drain and submitting
+  the restart. The existing Host shutdown retires its workers. Proven non-issuance releases
+  admission; uncertain submission retains the drain and reports recovery required.
+- The browser persists identity in tab-session storage before POST; invalid or unavailable storage
+  blocks dispatch. Recheck is read-only and explicit retry keeps the same identity. A rejected
+  receipt is labelled **last attempt**, because it is historical rather than a current busy check.
+- The CLI checks readiness after restart; the browser reports reconnection to a new Host. Preflight
+  checks dependencies, build, and imports in its execution environment. Source-checkout handoff and
+  verification evidence are documented in [[explicit-restart-controls]].
 
 ### Atomic browser-build publication
 

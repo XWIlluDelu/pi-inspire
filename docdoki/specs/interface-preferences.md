@@ -27,10 +27,12 @@ presentation is detailed in [[activity-presentation]].
   than consuming the session-navigation column. Its navigation groups are Display (theme, palette,
   content text size, shared transcript/composer reading width, project-location form), Conversation
   (reasoning detail, tool activity, activity groups, assistant-turn details, desktop send key),
-  Behavior (launch routing, completion alerts), and Updates. Updates keeps Pi plus user-scoped
-  configured extensions separate from INSΠRE: each has an explicit cache-bypassing check, concise
-  current/available/unavailable state, and only a command or release link rather than installing,
-  updating, or restarting anything.
+  Behavior (launch routing, completion alerts, Pi delivery/compaction/retry controls, and the
+  optional Herdr setting), and Updates. Pi runtime controls follow [[pi-integration]]; the Herdr
+  choice takes effect on Host restart under [[herdr-enhancement]]. Updates separates Pi and
+  user-scoped extensions from INSΠRE, with explicit cache-bypassing checks and concise results.
+  Update results offer commands or release links; separate Host/Restart all controls use the
+  confirmation and execution rules in [[host-lifecycle]].
 
   The first prompt successfully accepted by a Host deployment after 08:00 Host-local time each day
   invokes those same checks through their cache-aware path; the deployment persists that daily gate

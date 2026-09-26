@@ -1,29 +1,12 @@
 ---
 scope:
-  - docdoki/specs/composer.md
-  - docdoki/specs/conversation.md
-  - docdoki/specs/pi-integration.md
-  - shared/commands.ts
-  - shared/contracts.ts
-  - server/app.ts
-  - server/pi-rpc.ts
-  - server/runtime.ts
-  - server/runtime-events.ts
-  - server/session-projection.ts
-  - src/api.ts
-  - src/app-state.ts
-  - src/store.ts
-  - src/controllers/composer-controller.ts
-  - src/controllers/runtime-event-controller.ts
-  - src/components/AppTopbar.tsx
-  - src/components/CommandPalette.tsx
-  - src/components/Composer.tsx
-  - src/components/ComposerInput.tsx
-  - src/components/Transcript.tsx
-  - src/components/transcript-cards.tsx
-  - src/components/transcript-row-projection.tsx
-  - src/components/transcript-rows.tsx
-  - src/components/Welcome.tsx
+  - docdoki/specs/{composer,conversation,pi-integration}.md
+  - shared/{commands,contracts}.ts
+  - server/{app,pi-rpc,runtime,runtime-events,session-projection}.ts
+  - src/{api,app-state,store}.ts
+  - src/controllers/{composer,runtime-event}-controller.ts
+  - src/components/{AppTopbar,CommandPalette,Composer,ComposerInput,Transcript,Welcome}.tsx
+  - src/components/{transcript-cards,transcript-row-projection,transcript-rows}.tsx
   - src/styles/*.css
   - tests/server/**
   - tests/web/**
@@ -34,71 +17,34 @@ scope:
 
 ## Objective
 
-Make Pi's built-in command syntax a first-class Web interaction: supported commands invoke the existing authoritative capability, unsupported terminal-only commands fail locally with useful direction, and asynchronous Host commands communicate current work, cancellation, and their result without masquerading as ordinary model prompts.
+Adapt Pi's native commands to the browser while keeping command dispatch, operation feedback,
+and ordinary prompt delivery distinct. Contracts: [[composer]], [[conversation]], [[pi-integration]].
 
-## Current state
+## Implemented
 
-- **Completed:** The shared registry covers Pi 0.84's interactive built-ins while preserving runtime extension/prompt/skill precedence (with `/compact` as the deliberate Host override). Browser-native commands reuse model, thinking, settings, sessions, History, naming, copy, update, and new-session surfaces. Host-native compact, HTML export, and resource reload have typed authenticated routes and named lifecycle receipts. Terminal-only commands point to the persistent project terminal, and unknown slash or bang commands cannot consume a model turn.
-- **Completed:** Manual compaction acknowledges immediately in Composer, runs outside the prompt timeout, accepts temporary Host-held Steer/Queue with the same Pending and Clear surface as Pi queues, and can be cancelled by replacing only its owning worker. Durable compaction and branch summaries render as searchable dedicated cards. Settings expose Pi's auto-compaction, auto-retry, steering, and follow-up modes.
-- **Completed in the delivery follow-up:** A long `registerCommand()` handler or prompt preflight does not freeze later Steer/Queue and Clear. A real streaming agent receives queued direction independently of the earlier operation's receipt; before Pi starts its agent the original command/prompt keeps its place, and Host-held input waits. Composer operations own independent input/artifact partitions and retry identities. Export can read the current Pi state during an active run; reload and manual compact remain busy-gated.
-- **Modified files:** shared command/contracts; Host runtime/RPC/routes; Web store, Composer, command palette, Settings, transcript projection/styles; focused server/Web tests and owning specs. The delivery follow-up also changes Host Pending projection/worker lifecycle, Composer operation ownership, the isolated Pi fixture, and their focused tests.
+- `shared/commands.ts` reserves built-in names before extension/prompt/skill resources, matching
+  Pi's interactive client. Browser controls reuse existing surfaces; compact/export/reload use
+  typed Host operations; terminal-only and unknown commands stay out of model prompts.
+- Manual compaction has immediate running feedback and worker-scoped cancellation. Its durable
+  summary is a chronological transcript card. Retry reasons wrap, and activity headers omit clocks.
+- Host-held Steer/Queue and Clear remain available through compaction and long command receipts.
+  Each input owns its draft, attachments, and retry identity; export and local controls remain
+  available during active work where their operation permits it.
+- Simple command success uses a short notice; failure retains its attributable receipt. A successful
+  compact receipt currently remains until dismissed or later agent work/compaction starts.
 
-## User review: command copy and compaction UX
+Mechanisms and regression coverage are in [[native-command-compatibility]]. The 2026-09-25 delivery
+review passed 181 focused tests, a real-Pi preflight-compaction fixture, TypeScript, and formatting.
+Earlier card/layout checks passed 64 focused tests and six Chromium cases across light/dark and
+1280/390/320px widths.
 
-- Removed the browser-authored running explanations for compact/export/reload and the command-specific “keep writing” editor placeholders. Running receipts retain command identity and phase; Host results and error diagnostics remain. Focused store/Composer tests pass (136 tests), as does TypeScript checking.
-- Source inspection distinguished Pi TUI's `queueCompactionMessage` from RPC's ordinary prompt path, which rejects input during manual compaction. The Host now holds bounded input owned by the worker, slot incarnation, and explicit branch selection instead of pretending the public RPC itself accepts it; it drains only after real Pi compaction/agent state permits delivery. No extra copy promises a waiting interval.
-- Proposed, not yet decided or implemented: successful compaction should retain only its authoritative chronological context-summary row, without a second persistent Composer result requiring dismissal. Running feedback, command failures, and export paths need their own lifecycle treatment rather than moving every transient notice into durable conversation history. The user requested a transcript inventory before choosing broader visual unification.
+## Pending presentation review
 
-## Checkpoint card consistency
-
-Command receipts now follow the same no-clock header convention; their request time remains
-metadata. Simple successful commands retire their receipt in favor of a short notice; actual
-failures retain one attributable receipt. Retry reasons wrap below compact phase labels, and
-composer-adjacent scrollports reuse the visible overlay rail without narrowing their cards.
-
-Context-summary cards no longer add clock-time metadata to their headers, matching Thinking,
-tool, and extension-message cards. Token counts, Markdown summaries, disclosure, copy, and
-canonical timestamps remain unchanged; the separate assistant-round Details preference is
-unaffected. The obsolete desktop and narrow-layout time styles were removed.
-
-Verification: 64 focused Web/configuration tests, TypeScript, Web build, and six Chromium
-checkpoint cases passed. The browser cases cover light/dark at 1280, 390, and 320 pixels,
-including reload, source order, keyboard disclosure/copy, overflow, and accessibility.
-
-## Delivery follow-up evidence
-
-- A private offline Pi fixture demonstrates real threshold auto-compaction in the first prompt's
-  preflight (`isCompacting=true`, `isStreaming=false`), Host Pending for its follow-up, and Pi
-  persisted user text in original-then-follow-up order after compaction. It does not call a paid
-  provider. Fake-worker checks cover manual compact consume/Clear/abort, long extension handler
-  Steer/Queue and Clear before its receipt, and slow-steer receipt concurrency.
-- Review verification: 181 tests passed across the focused runtime, stream-budget, Composer,
-  controller, and store files; the separate real-Pi preflight case passed. TypeScript checking
-  and formatting checks passed. The review repaired the Pending mode type, test-harness wiring,
-  and two Composer ownership bugs: an old receipt cannot clear a later identical draft, and
-  successive attachment-only or repeated project-only submissions retain independent input
-  identities. Component checks also include a delayed compact HTTP receipt; store checks include
-  live model/thinking/export and local commands. This work has not been deployed or restarted in
-  the user's service.
+The proposed immediate retirement of a successful compact receipt is **not decided or implemented**.
+The user requested a transcript inventory before broader visual unification. Keep the current
+lifecycle while evaluating which results belong in history and which remain transient feedback.
 
 ## Next actions
 
-- [x] Define a shared native-command registry, parser, argument contract, and capability mapping without claiming terminal-only behavior.
-- [x] Separate Host-native command execution from ordinary prompt delivery and give it accepted/running/succeeded/failed/cancelled presentation.
-- [x] Reuse existing Web surfaces for model, thinking, settings, sessions, naming, History, copy, and new-session actions; add bounded Host operations only where Pi RPC is authoritative.
-- [x] Give compaction named progress, truthful uncertain-outcome state, real cancellation semantics, and a dedicated summary result.
-- [x] Reject unknown and terminal-only command syntax before it can consume a model turn, with specific recovery guidance.
-- [x] Preserve extension/prompt/skill dispatch and collision semantics.
-- [x] Verify parser, routing, lifecycle, accessibility, responsive presentation, Pi projection behavior, and the ordinary prompt/queue path.
-- [x] Use existing prompt operation identities to preserve long-handler receipt observation while allowing independent Steer/Queue and Clear; do not extend the RPC confirmation timeout or cancel unrelated extension commands.
-
-## Decisions
-
-- A slash command is an explicit operation, not conversational text. Once the active command token matches a built-in name, it cannot silently fall through to the model.
-- Web-native surfaces replace terminal layout while preserving Pi capability and authority; INSΠRE does not emulate terminal selectors or renderers.
-- The command's compact lifecycle receipt is the signature presentation: one stable semantic surface names the command, shows its current phase, and retains only results that remain useful after settlement.
-- Commands that Pi exposes only in interactive TUI receive an honest unavailable result or a mapped existing Web action; they are never advertised as executable RPC commands.
-
-## Handoff
-
-The built-in command surface and the follow-up delivery changes are implemented. Long extension handlers still own their original command/prompt operation and can be explicitly stopped only through existing session cancellation; this change does not invent an extension-specific completion or cancellation API.
+- Inventory transcript rows and transient command results, including their data authority and lifecycle.
+- Use that inventory to decide the compact-success proposal and any broader presentation change.
