@@ -2,8 +2,9 @@ import headless from "@xterm/headless";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type TerminalCommandOutput,
+  terminalBufferText,
   terminalCommandOutput,
-} from "../../src/terminal-command-output";
+} from "../../src/terminal-output";
 
 type Terminal = InstanceType<typeof headless.Terminal>;
 const terminals: Terminal[] = [];
@@ -78,11 +79,34 @@ describe("last completed terminal output", () => {
     );
   });
 
+  it("retains the same command range through height-only changes", async () => {
+    const { terminal, range } = await completedOutput("first\r\nsecond\r\n");
+    for (const rows of [6, 28, 10]) {
+      terminal.resize(terminal.cols, rows);
+      expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
+        "first\nsecond",
+      );
+    }
+  });
+
   it("refuses a range whose start was evicted", async () => {
     const { terminal, range } = await completedOutput("old output\r\n");
     await write(terminal, "later\r\n".repeat(40));
     expect(range.start.isDisposed).toBe(true);
     expect(terminalCommandOutput(terminal.buffer.normal, range)).toBeNull();
+  });
+
+  it("reads all retained text without command markers, joining wraps and preserving Unicode", async () => {
+    const text = "hello  中文 e\u0301 🙂 1234567890 ".repeat(3);
+    const { terminal } = await completedOutput(
+      `\u001b[31m${text}\u001b[0m\r\n`,
+      "",
+      16,
+    );
+    expect(terminalBufferText(terminal.buffer.active)).toBe(`${text}\nnext$`);
+    await write(terminal, "\u001b[?1049h\u001b[HTUI content");
+    expect(terminalBufferText(terminal.buffer.active)).toBe("TUI content");
+    expect(terminalBufferText(terminal.buffer.normal)).toBe(`${text}\nnext$`);
   });
 
   it("refuses an explicitly retired output range", async () => {
