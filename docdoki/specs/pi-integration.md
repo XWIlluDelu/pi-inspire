@@ -99,11 +99,11 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   their PTYs, metadata, and optional history, the Host is only their authenticated gateway, and no
   Pi prompt or Extension receives implicit authority to read or write a human terminal.
 
-- Local-file preview requests are authenticated and bound to the addressed open Pi session and its
-  projection view, independently of the Host's default selection or another browser's navigation. A
-  path requires either an exact reference in that session's authoritative message projection or
-  membership in its workspace index, and relative paths resolve against the session’s project
-  directory.
+- Local-file previews are authenticated and bound to the addressed Pi session and projection view.
+  Authorization comes from an exact transcript reference or current workspace realpath containment,
+  independently of Git and discovery-index membership. Relative conversation references resolve
+  against the session's project directory; document links resolve against the opened document.
+  [[resource-preview]] defines the path and opened-file checks.
 
 ### RPC delivery and ownership
 
@@ -146,11 +146,12 @@ Use Pi as the sole agent runtime while keeping privileged local capabilities out
   its worker. Actual stdin/stream failure or child loss retires the worker and exposes a real stop
   fence; neither a null fence nor a rejected wait proves exit.
 
-  Stop signals, escalation timers, and watchdogs are requests/observations, not death certificates.
-  Only confirmed leader exit (or proven spawn failure) plus completion of process-tree signaling
-  releases the writer barrier. Failed or indefinitely delayed termination keeps replacement and
-  recovery writes fenced; metadata-only watchdogs report that state without inventing completion.
-  Coarse diagnostic phase labels never become execution authority. Evidence: [[operation-lifecycle-ownership]].
+  Direct-worker retirement requires observed leader exit (or proven spawn failure) and completed
+  process-tree signaling. Herdr additionally verifies an empty worker scope under
+  [[herdr-enhancement]]. Runtime keeps replacement and recovery writes fenced while termination is
+  pending or rejected. Protocol failure notifies Runtime on either stop outcome while retaining the
+  original stop result. Timers and diagnostic phase labels report progress, not permission to replace
+  a writer. Evidence: [[operation-lifecycle-ownership]].
 
 - Pending combines Pi's public `queue_update` text arrays with bounded, worker/branch-selection-bound Host
   input waiting for a safe prompt boundary. The latter is transient delivery ownership, not
