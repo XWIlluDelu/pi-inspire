@@ -150,7 +150,12 @@ function historyIdentity(entries: readonly ComposerHistoryEntry[]): string {
 
 type ComposerHistoryOwner = Pick<
   ComposerHistoryPage,
-  "sessionId" | "revision" | "viewId" | "incarnation" | "effectiveLeafId"
+  | "sessionId"
+  | "revision"
+  | "viewId"
+  | "incarnation"
+  | "effectiveLeafId"
+  | "composerHistoryVersion"
 >;
 
 export function projectComposerHistoryPage(

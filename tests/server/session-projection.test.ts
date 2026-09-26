@@ -85,6 +85,49 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("invalidates composer history on user append, branch change, and same-ID rewrite", async () => {
+    const first = message("u1", null, "user", "first", 1);
+    const { path, projection } = await fixture([first]);
+    try {
+      const original = projection.latestPage().composerHistoryVersion;
+      const second = message("u2", "u1", "user", "second", 2);
+      await appendFile(path, `${JSON.stringify(second)}\n`);
+      await projection.reconcile(true);
+      const appended = projection.latestPage().composerHistoryVersion;
+      expect(appended).not.toBe(original);
+      expect(projection.composerHistoryPage().composerHistoryVersion).toBe(
+        appended,
+      );
+      expect(projection.latestPage([], "u1").composerHistoryVersion).toBe(
+        original,
+      );
+
+      const branch = message("u3", "u1", "user", "alternate", 3);
+      await appendFile(path, `${JSON.stringify(branch)}\n`);
+      await projection.reconcile(true);
+      const branched = projection.latestPage().composerHistoryVersion;
+      expect(branched).not.toBe(appended);
+      expect(
+        projection.composerHistoryPage().entries.map((entry) => entry.text),
+      ).toEqual(["alternate", "first"]);
+
+      await writeFile(
+        path,
+        `${[header(), { ...first, message: { ...first.message, content: "rewritten" } }, second, branch].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      );
+      await projection.reconcile(true);
+      expect(projection.latestPage().composerHistoryVersion).not.toBe(branched);
+      expect(projection.latestPage([], "u1").composerHistoryVersion).not.toBe(
+        original,
+      );
+      expect(
+        projection.composerHistoryPage().entries.map((entry) => entry.text),
+      ).toEqual(["alternate", "rewritten"]);
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("accepts only working-directory aliases for the catalogued project", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-projection-cwd-"));
     directories.push(directory);
@@ -1415,6 +1458,12 @@ describe("SessionProjection bounded paging", () => {
       expect(
         projection.page(cursor, projection.leafId, "view-a").messages.length,
       ).toBeGreaterThan(0);
+      expect(projection.latestPage().composerHistoryVersion).toBe(
+        latest.composerHistoryVersion,
+      );
+      expect(projection.composerHistoryPage().composerHistoryVersion).toBe(
+        latest.composerHistoryVersion,
+      );
 
       await appendFile(
         path,
@@ -1435,6 +1484,12 @@ describe("SessionProjection bounded paging", () => {
       expect(() =>
         projection.page(cursor, projection.leafId, "view-a"),
       ).toThrow(/stale/);
+      expect(projection.latestPage().composerHistoryVersion).not.toBe(
+        latest.composerHistoryVersion,
+      );
+      expect(projection.latestPage([], "m120").composerHistoryVersion).toBe(
+        latest.composerHistoryVersion,
+      );
     } finally {
       await projection.close();
     }
