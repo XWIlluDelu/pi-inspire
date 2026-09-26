@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -17,6 +17,7 @@ import {
 import type { HerdrClient, HerdrWorkerPane } from "./herdr-client.js";
 import {
   assertHerdrGroupMember,
+  assertHerdrWorkerScopesAvailable,
   captureHerdrProcessGroup,
   type HerdrProcessGroup,
   stopHerdrProcessGroup,
@@ -36,9 +37,13 @@ interface HerdrRpcTransportOptions {
   registry: HerdrWorkerRegistry;
   label: string;
   assertWritable?: () => Promise<void>;
+  assertScopesAvailable?: () => Promise<void>;
 }
 
-function workerCommand(path: string): { entry: string; argv: string[] } {
+function workerCommand(
+  path: string,
+  scopeName: string,
+): { entry: string; argv: string[] } {
   const source = fileURLToPath(import.meta.url).endsWith(".ts");
   const entry = fileURLToPath(
     new URL(
@@ -55,7 +60,24 @@ function workerCommand(path: string): { entry: string; argv: string[] } {
         pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href,
       ]
     : [];
-  return { entry, argv: [process.execPath, ...loader, entry, path] };
+  return {
+    entry,
+    argv: [
+      "systemd-run",
+      "--user",
+      "--scope",
+      "--quiet",
+      "--collect",
+      `--unit=${scopeName}`,
+      "--property=KillMode=control-group",
+      "--property=TimeoutStopSec=1500ms",
+      "--",
+      process.execPath,
+      ...loader,
+      entry,
+      path,
+    ],
+  };
 }
 
 /** Two private sockets carry Pi's existing stdin/stdout and stderr bytes.
@@ -73,6 +95,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
   private stopPromise: Promise<void> | null = null;
   private readonly startup = new AbortController();
   private readonly token = randomBytes(32).toString("hex");
+  private readonly scopeName = `inspire-pi-${randomUUID()}.scope`;
   private server: Server | null = null;
   private directory: string | null = null;
   private pane: HerdrWorkerPane | null = null;
@@ -136,6 +159,9 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     );
     try {
       this.assertStarting();
+      await (this.options.assertScopesAvailable?.() ??
+        assertHerdrWorkerScopesAvailable(this.launch.env));
+      this.assertStarting();
       await this.options.assertWritable?.();
       this.assertStarting();
       this.directory = await mkdtemp(join(tmpdir(), "inspire-herdr-"));
@@ -146,7 +172,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
           "The temporary directory path is too long for a Herdr worker socket",
         );
       const ticket = join(this.directory, "launch.json");
-      const command = workerCommand(ticket);
+      const command = workerCommand(ticket, this.scopeName);
       this.server = createServer((socket) =>
         this.accept(socket, command.entry, ticket),
       );
@@ -250,7 +276,12 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
   private async grant(entry: string, ticket: string): Promise<void> {
     const rpc = this.rpc!;
     const errors = this.errors!;
-    this.group = await captureHerdrProcessGroup(this.bridgePid!, entry, ticket);
+    this.group = await captureHerdrProcessGroup(
+      this.bridgePid!,
+      entry,
+      ticket,
+      this.scopeName,
+    );
     this.assertStarting();
     this.lease = await this.options.registry.grant(this.lease!, this.group);
     this.assertStarting();
