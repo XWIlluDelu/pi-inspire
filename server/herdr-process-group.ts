@@ -1,5 +1,14 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { constants } from "node:fs";
+import {
+  access,
+  type FileHandle,
+  open,
+  readFile,
+  stat,
+} from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import type { PiRpcStopDiagnostic } from "./pi-rpc-transport.js";
 
 export interface HerdrProcessIdentity {
@@ -8,7 +17,58 @@ export interface HerdrProcessIdentity {
   boot: string;
 }
 
-export type HerdrProcessGroup = HerdrProcessIdentity;
+export interface HerdrWorkerScope {
+  path: string;
+  device: string;
+  inode: string;
+}
+
+export interface HerdrProcessGroup extends HerdrProcessIdentity {
+  // Absent only on leases from before scope-based tool ownership.
+  scope?: HerdrWorkerScope;
+}
+
+/** Probe the same user-manager operation used by pane launch. No privileged
+ * daemon, delegated hierarchy, resource policy, or direct-backend dependency.
+ */
+export async function assertHerdrWorkerScopesAvailable(
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  try {
+    await promisify(execFile)(
+      "systemd-run",
+      [
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "--",
+        process.execPath,
+        "-e",
+        `const fs = require('node:fs');
+try {
+  const path = /^0::(.+)$/m.exec(fs.readFileSync('/proc/self/cgroup', 'utf8'))?.[1];
+  if (!path) throw new Error('cgroup v2 is unavailable');
+  fs.accessSync('/sys/fs/cgroup' + path + '/cgroup.kill', fs.constants.W_OK);
+} catch (error) {
+  process.stderr.write(error.message + '\\n');
+  process.exitCode = 1;
+}`,
+      ],
+      { env, timeout: 5_000, maxBuffer: 16_384 },
+    );
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stderr?: string };
+    const reason =
+      failure.code === "ENOENT"
+        ? "systemd-run was not found on PATH"
+        : failure.stderr?.trim().split("\n")[0]?.slice(0, 300) ||
+          "the scope probe did not complete";
+    throw new Error(
+      `Herdr worker scopes are unavailable: ${reason}. A running systemd user manager and writable cgroup v2 with cgroup.kill are required`,
+    );
+  }
+}
 
 interface LinuxProcess {
   group: number;
@@ -58,14 +118,49 @@ export async function herdrProcessIsLive(
   );
 }
 
-export async function assertHerdrBridgeGroup(): Promise<void> {
-  if (
-    process.platform !== "linux" ||
-    (await inspectProcess(process.pid))?.group !== process.pid
-  )
+export async function captureHerdrBridgeGroup(): Promise<HerdrProcessGroup> {
+  const identity = await captureHerdrHostIdentity();
+  if ((await inspectProcess(process.pid))?.group !== process.pid)
     throw new Error(
       "The Herdr bridge must own an isolated Linux process group",
     );
+  return { ...identity, scope: await captureWorkerScope(process.pid) };
+}
+
+async function captureWorkerScope(
+  pid: number,
+  expectedName?: string,
+): Promise<HerdrWorkerScope> {
+  // Unlike a PGID, this kernel membership survives Pi's detached Bash groups,
+  // setsid(), and either Pi or its bridge dying before cleanup.
+  const cgroup = await readFile(`/proc/${pid}/cgroup`, "utf8");
+  const path = /^0::(\/[^\n]*)$/mu.exec(cgroup)?.[1];
+  if (
+    !path ||
+    !/\/inspire-pi-[a-f0-9-]{36}\.scope$/u.test(path) ||
+    (expectedName && !path.endsWith(`/${expectedName}`))
+  )
+    throw new Error("The Herdr bridge did not enter its owned systemd scope");
+  const directory = await open(
+    `/sys/fs/cgroup${path}`,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    const info = await directory.stat({ bigint: true });
+    await access(`/proc/self/fd/${directory.fd}/cgroup.kill`, constants.W_OK);
+    return {
+      path: `/sys/fs/cgroup${path}`,
+      device: String(info.dev),
+      inode: String(info.ino),
+    };
+  } catch (error) {
+    throw new Error(
+      "Herdr workers require a writable cgroup v2 scope with cgroup.kill support",
+      { cause: error },
+    );
+  } finally {
+    await directory.close();
+  }
 }
 
 /** Verify the exact executable invocation before a private launch grant can
@@ -75,6 +170,7 @@ export async function captureHerdrProcessGroup(
   pid: number,
   entryPath: string,
   launchPath: string,
+  scopeName: string,
 ): Promise<HerdrProcessGroup> {
   if (!Number.isSafeInteger(pid) || pid <= 1 || pid === process.pid)
     throw new Error("Invalid Herdr worker process identity");
@@ -94,7 +190,12 @@ export async function captureHerdrProcessGroup(
     !args.includes(launchPath)
   )
     throw new Error("The Herdr bridge does not own the expected worker group");
-  return { pid, birth: info.birth, boot };
+  return {
+    pid,
+    birth: info.birth,
+    boot,
+    scope: await captureWorkerScope(pid, scopeName),
+  };
 }
 
 export async function assertHerdrGroupMember(
@@ -108,34 +209,51 @@ export async function assertHerdrGroupMember(
     throw new Error("Pi did not start in its owned Herdr worker group");
 }
 
-function groupExists(pid: number): boolean {
+async function openOwnedScope(
+  scope: HerdrWorkerScope,
+): Promise<FileHandle | null> {
+  let directory: FileHandle;
   try {
-    process.kill(-pid, 0);
-    return true;
+    directory = await open(
+      scope.path,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const info = await directory.stat({ bigint: true });
+    if (String(info.dev) === scope.device && String(info.ino) === scope.inode)
+      return directory;
+  } catch (error) {
+    await directory.close();
+    throw error;
+  }
+  await directory.close();
+  return null;
+}
+
+async function scopePopulated(directory: FileHandle): Promise<boolean> {
+  try {
+    const events = await readFile(
+      `/proc/self/fd/${directory.fd}/cgroup.events`,
+      "utf8",
+    );
+    const populated = /^populated ([01])$/mu.exec(events)?.[1];
+    if (populated === undefined)
+      throw new Error("Unable to inspect Herdr worker scope");
+    return populated === "1";
+  } catch (error) {
+    // A cgroup can only be removed after its last process has left.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 }
 
-async function hasLiveGroupMember(pid: number): Promise<boolean> {
-  if (!groupExists(pid)) return false;
-  // An orphan can remain a zombie until its reaper runs. Zombies cannot write;
-  // neither a reusable PID nor a pending reaping obligation is a live writer.
-  const entries = await readdir("/proc");
-  for (const name of entries) {
-    if (!/^\d+$/u.test(name)) continue;
-    const info = await inspectProcess(Number(name));
-    if (info?.group === pid && info.state !== "Z" && info.state !== "X")
-      return true;
-  }
-  return false;
-}
-
-/** Linux reserves a process-group ID until its last member is gone. A
- * different boot or a reused leader PID therefore proves this old group ended.
- * Otherwise retain its fence until no member can execute, even if the bridge
- * died before it could report its Pi child's PID.
+/** Stop one kernel-owned worker tree, including detached tools. The directory
+ * FD binds cleanup to the recorded cgroup incarnation; path reuse cannot aim a
+ * kill at a new scope. Socket/Pi/bridge exit never substitutes for populated=0.
  */
 export async function stopHerdrProcessGroup(
   group: HerdrProcessGroup,
@@ -143,41 +261,66 @@ export async function stopHerdrProcessGroup(
   diagnostic: PiRpcStopDiagnostic,
 ): Promise<void> {
   if ((await bootIdentity()) !== group.boot) return;
-  const stillOwned = async () => {
-    const leader = await inspectProcess(group.pid);
-    return !leader || leader.birth === group.birth;
-  };
-  const stillLive = async () =>
-    (await stillOwned()) && (await hasLiveGroupMember(group.pid));
-  if (!(await stillLive())) return;
-
-  const signal = async (name: NodeJS.Signals) => {
-    if (!(await stillOwned())) return;
-    diagnostic("worker_stop_signal", { signal: name, groupPid: group.pid });
-    try {
-      process.kill(-group.pid, name);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  };
+  if (!group.scope)
+    throw Object.assign(
+      new Error(
+        "This legacy Herdr worker has no retained tool scope; detached tool exit cannot be verified",
+      ),
+      { code: "HERDR_LEGACY_WORKER_LEASE" },
+    );
+  const directory = await openOwnedScope(group.scope);
+  if (!directory) return;
   const started = Date.now();
-  if (graceful) {
-    await signal("SIGTERM");
-    while (Date.now() - started < 1_500) {
-      if (!(await stillLive())) return;
+  try {
+    if (!(await scopePopulated(directory))) return;
+    if (graceful) {
+      const leader = await inspectProcess(group.pid);
+      if (leader?.birth === group.birth && leader.group === group.pid) {
+        diagnostic("worker_stop_signal", {
+          signal: "SIGTERM",
+          groupPid: group.pid,
+        });
+        try {
+          process.kill(-group.pid, "SIGTERM");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+        while (Date.now() - started < 1_500) {
+          if (!(await scopePopulated(directory))) return;
+          await delay(50);
+        }
+      }
+    }
+    diagnostic("worker_stop_signal", {
+      signal: "SIGKILL",
+      groupPid: group.pid,
+    });
+    try {
+      const killer = await open(
+        `/proc/self/fd/${directory.fd}/cgroup.kill`,
+        "w",
+      );
+      try {
+        // Kernel-recursive and fork-race-safe: no user-space /proc tree scan.
+        await killer.write("1");
+      } finally {
+        await killer.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let nextWarning = Date.now() + 2_500;
+    while (await scopePopulated(directory)) {
+      if (Date.now() >= nextWarning) {
+        diagnostic("worker_stop_overdue", {
+          groupPid: group.pid,
+          elapsedMs: Date.now() - started,
+        });
+        nextWarning = Date.now() + 2_500;
+      }
       await delay(50);
     }
-  }
-  await signal("SIGKILL");
-  let nextWarning = Date.now() + 2_500;
-  while (await stillLive()) {
-    if (Date.now() >= nextWarning) {
-      diagnostic("worker_stop_overdue", {
-        groupPid: group.pid,
-        elapsedMs: Date.now() - started,
-      });
-      nextWarning = Date.now() + 2_500;
-    }
-    await delay(50);
+  } finally {
+    await directory.close();
   }
 }
