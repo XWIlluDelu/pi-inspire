@@ -764,6 +764,7 @@ export function createApi(token: string | null = null) {
     ) => fetchResourceContent(token, id, sessionId, options),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
+    preferences: () => request<InspirePreferences>(token, "/api/preferences"),
     savePreferences: (patch: Partial<InspirePreferences>) =>
       request<InspirePreferences>(token, "/api/preferences", {
         method: "PATCH",

@@ -6,7 +6,7 @@ covers:
   - src/controllers/session-management-controller.ts
   - src/components/{HiddenClearDialog,SessionDeleteDialog}.tsx
   - tests/server/{session-delete,runtime}.test.ts
-  - tests/web/{store-deletion,nav-render}.test.ts*
+  - tests/web/{store-deletion,session-deletion-recovery,nav-render}.test.ts*
 ---
 
 # Confirmed session deletion
@@ -27,7 +27,7 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   navigation context, and separates the Trash outcome, permanent-delete fallback, and non-cascading
   fork/project-file scope into three explicit lines. The browser sends only the bounded session id;
   the host resolves it from its last complete catalog projection and keeps a catalog-wide scan out
-  of the individual interaction path, then relies on the deletion adapter's path-local
+  of the normal individual interaction path, then relies on the deletion adapter's path-local
   inode/version/header revalidation immediately before its Trash-first operation.
 
   It rejects ownership that is selected, selection-reserved, running, queued, compacting, retrying,
@@ -36,8 +36,11 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   deletion lane instead of producing a transient opening error. After deletion, the host removes the
   id from persistent hidden and pinned metadata so navigation state cannot outlive the session. The
   catalog-authorized path must be a non-symlink `.jsonl` regular file whose first record is the
-  matching Pi session header and whose device, inode, size, mtime, and ctime remain unchanged
-  through validation.
+  matching Pi session header. For individual deletion, the catalog pins device/inode rather than
+  historical size/timestamps: after writer retirement, inspection pins the current version so normal
+  conversation writes do not require a browser refresh. Device, inode, size, mtime, and ctime must
+  then remain unchanged through validation. Hidden batch deletion instead retains the exact catalog
+  version authorized by its all-target preflight.
 
   The inspected public `.jsonl` directory entry is atomically renamed into a private sibling
   quarantine on the same filesystem and its moved inode/version is revalidated. Desktop Trash
@@ -74,3 +77,11 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   it reports an exact committed subset if a later filesystem failure prevents completion; full
   success removes the reviewed individual and folder curation, while a partial result removes only
   committed session identities and keeps folder curation for what remains.
+
+  A changed reviewed set, missing or replaced deletion source, or partial batch result retires the
+  current confirmation. The browser refreshes the catalog and authoritative curation while preserving
+  newer field-owned preference edits and the consumed chronological extent. The dialog offers
+  **Review Hidden** instead of another destructive attempt against its old targets; deletion requires
+  a new target-naming confirmation. An already absent session disappears from the refreshed list
+  without claiming a Trash or permanent-delete outcome. Recovery never automatically repeats a
+  DELETE or clear request, and ordinary busy/ownership refusals retain their existing protections.

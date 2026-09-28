@@ -38,6 +38,18 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   metadata carried in addressed snapshots as well as live events; non-retry phases retire those
   details. Missing or malformed details do not hide a valid `retrying` state or invent attempt counts.
 
+- An addressed reconnect to a session confirmed absent falls back once to bootstrap with no detail
+  interest. It keeps the Host reachable, explains the missing session, and never adopts another
+  browser's Host selection. Recovery uses the same transport owner and deadline; newer committed or
+  pending navigation remains authoritative. Authentication, ambiguity, projection corruption, and
+  unclassified read failures do not count as proof that a session was deleted.
+
+  Initial read-only hydration uses the cached catalog on the normal path. If its pinned source has
+  disappeared, moved, or changed identity, it refreshes the catalog once and revalidates the new
+  record before opening. Ambiguous identity and continuing source changes still refuse the read;
+  recovery neither replaces a live owned projection nor retries a write. A missing open target
+  refreshes the browser list without replacing the currently visible conversation.
+
 - Refreshing or reconnecting reconciles live events against an authoritative Pi snapshot without
   duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap
   and the WebSocket's first snapshot carry one process-lifetime Host authority plus a SHA-256

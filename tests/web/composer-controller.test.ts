@@ -482,6 +482,116 @@ describe("ComposerController", () => {
     });
   });
 
+  it("keeps a ready upload usable after reconnecting to the same Host", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [{ id: "upload", fileName: "draft.txt", kind: "file" }],
+    });
+    await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
+    harness.replaceTransport();
+    harness.controller.reconcileAuthority(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    expect(harness.slice().attachments[0]?.status).toBe("ready");
+    harness.prompt.mockResolvedValue(acceptedPrompt);
+    await expect(harness.controller.send("send")).resolves.toEqual(
+      acceptedPrompt,
+    );
+    expect(harness.prompt).toHaveBeenCalledOnce();
+  });
+
+  it.each(["staged", "history draft", "failed delivery"])(
+    "invalidates a %s upload in an inactive partition after Host replacement",
+    async (location) => {
+      const harness = createHarness();
+      harness.uploadAttachments.mockResolvedValue({
+        attachments: [
+          { id: "old-upload", fileName: "draft.txt", kind: "file" },
+        ],
+      });
+      await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
+      if (location === "history draft") {
+        harness.controller.previewHistoryEntry(
+          {
+            sessionId: "session-a",
+            viewId: "view-a",
+            incarnation: null,
+            effectiveLeafId: null,
+            historyVersion: "history-a",
+          },
+          { text: "recalled", images: [], files: [] },
+        );
+      } else if (location === "failed delivery") {
+        harness.restoreDraftIfEmpty.mockReturnValue(false);
+        harness.prompt.mockRejectedValue(new ApiError(409, "not sent"));
+        await harness.controller.send("send");
+      }
+      harness.activate("session-b");
+      const nextAuthority = "22222222-2222-4222-8222-222222222222";
+      harness.replaceAuthority(nextAuthority);
+      harness.controller.reconcileAuthority(nextAuthority);
+      harness.controller.cancelHistoryPreview("session-a");
+      harness.restoreDraftIfEmpty.mockReturnValue(true);
+      harness.controller.restoreFailedPrompt("session-a");
+      expect(harness.slice().attachments[0]).toMatchObject({
+        status: "error",
+        uploadedId: "old-upload",
+        error: expect.stringContaining("Host restarted"),
+      });
+      harness.activate("session-a");
+      harness.prompt.mockClear();
+      await expect(harness.controller.send("send")).resolves.toBe(false);
+      expect(harness.prompt).not.toHaveBeenCalled();
+      harness.controller.removeAttachment(
+        harness.slice().attachments[0]!.localId,
+      );
+      harness.uploadAttachments.mockResolvedValue({
+        attachments: [
+          { id: "new-upload", fileName: "draft.txt", kind: "file" },
+        ],
+      });
+      await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
+      harness.prompt.mockResolvedValue(acceptedPrompt);
+      await expect(harness.controller.send("send")).resolves.toEqual(
+        acceptedPrompt,
+      );
+      expect(harness.prompt.mock.calls[0]![0]).toMatchObject({
+        authorityId: nextAuthority,
+        attachmentIds: ["new-upload"],
+      });
+    },
+  );
+
+  it("marks only refused expired uploads invalid rather than repeatedly sending them", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: ["expired", "valid"].map((id) => ({
+        id,
+        fileName: `${id}.txt`,
+        kind: "file",
+      })),
+    });
+    await harness.controller.addFiles([
+      new File(["old"], "expired.txt"),
+      new File(["new"], "valid.txt"),
+    ]);
+    harness.prompt.mockRejectedValue(
+      new ApiError(
+        409,
+        "Attachments expired",
+        ["expired"],
+        "ATTACHMENTS_EXPIRED",
+      ),
+    );
+    await expect(harness.controller.send("send")).resolves.toBe(false);
+    expect(harness.slice().attachments.map((item) => item.status)).toEqual([
+      "error",
+      "ready",
+    ]);
+    await expect(harness.controller.send("send")).resolves.toBe(false);
+    expect(harness.prompt).toHaveBeenCalledOnce();
+  });
+
   it("refuses prompt delivery while an attachment remains in an error state", async () => {
     const harness = createHarness();
     harness.uploadAttachments.mockRejectedValue(new Error("upload failed"));
