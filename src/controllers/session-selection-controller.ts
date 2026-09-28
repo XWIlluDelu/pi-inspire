@@ -139,10 +139,13 @@ export class SessionSelectionController {
       if (this.host.ownsOpening(ticket, api, transportGeneration)) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
-        else
+        else {
           this.host.setActionError(
             error instanceof Error ? error.message : fallbackMessage,
           );
+          if (error instanceof ApiError && error.code === "SESSION_NOT_FOUND")
+            this.host.refreshSessionCatalog();
+        }
       }
       return staleResult;
     } finally {

@@ -20,7 +20,7 @@ through the same RPC and GUI, preserving ordinary send, stop, restart, and termi
 | Conversation | [[conversation]], [[activity-presentation]] | Typed text/activity flow, adjustable detail, compaction checkpoints, and reply errors. |
 | Rich content | [[rich-rendering]], [[tool-presentations]] | Shared streaming Markdown/math rendering and typed native/custom tool cards. |
 | Sessions | [[session-continuity]], [[session-persistence]] | Native Pi records, concurrent background workers, bounded history, and verified persistence. |
-| Session operations | [[session-transport]], [[session-branches]], [[session-deletion]] | Addressed reconnect, same-file branch navigation, independent fork, and desktop Trash. |
+| Session operations | [[session-transport]], [[session-branches]], [[session-deletion]] | Addressed reconnect and stale-state recovery, same-file branch navigation, independent fork, and desktop Trash. |
 | Input | [[composer]] | Text, references, images/files, Steer/Queue, independent draft handoff, and recoverable delivery. |
 | Pi integration | [[pi-integration]] | Installed Pi configuration, adapted native commands, extension dialogs/status/text widgets. |
 | Host | [[host-lifecycle]] | Pairing, installation, user environment, diagnostics, build publication, and explicit restart. |

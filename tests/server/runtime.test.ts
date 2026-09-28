@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -34,9 +35,10 @@ import {
   safeProjection,
 } from "../../server/runtime.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
+import {
+  SessionCatalog,
+  type SessionCatalogLike,
+  type SessionRecord,
 } from "../../server/session-catalog.js";
 import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import { SessionProjection } from "../../server/session-projection.js";
@@ -328,6 +330,95 @@ afterEach(async () => {
 });
 
 describe("browser-safe runtime projection", () => {
+  it.each(["moved", "replaced", "removed", "ambiguous"] as const)(
+    "refreshes a %s catalog source once before restoring read-only detail",
+    async (change) => {
+      const original = await persistedRecord("a");
+      let discovered = [original];
+      const list = vi.fn(async () => discovered);
+      const source = new SessionCatalog(fixtureWorkspace, { list });
+      await source.refresh();
+      await mkdir(join(fixtureWorkspace, "moved"));
+      const movedPath = join(fixtureWorkspace, "moved", "a.jsonl");
+      await rename(original.path, movedPath);
+      const replacement =
+        change === "replaced" || change === "ambiguous"
+          ? await persistedRecord("a")
+          : { ...original, path: movedPath };
+      discovered =
+        change === "removed"
+          ? []
+          : change === "ambiguous"
+            ? [replacement, { ...original, path: movedPath }]
+            : [replacement];
+      const createProcess = vi.fn(
+        (options: PiRpcOptions) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+      );
+      const runtime = new RuntimeController(
+        source,
+        trackedAttachmentStore(),
+        createProcess,
+      );
+      try {
+        if (change === "removed") {
+          await expect(runtime.snapshot("a")).rejects.toMatchObject({
+            status: 404,
+            code: "SESSION_NOT_FOUND",
+          });
+        } else if (change === "ambiguous") {
+          await expect(runtime.openSession("a")).rejects.toMatchObject({
+            status: 409,
+          });
+        } else {
+          const snapshot = await runtime.snapshot("a");
+          expect(snapshot.active?.sessionFile).toBe(replacement.path);
+          expect(snapshot.active?.projectionHealth).toMatchObject({
+            status: "ok",
+          });
+        }
+        expect(list).toHaveBeenCalledTimes(2);
+        expect(runtime.activeSessionId).toBeNull();
+        expect(createProcess).not.toHaveBeenCalled();
+        if (change === "moved" || change === "replaced") {
+          await runtime.openSession("a");
+          await waitForReady(runtime);
+          expect(list).toHaveBeenCalledTimes(2);
+          expect(createProcess).toHaveBeenCalledOnce();
+        }
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("does not loop when a refreshed catalog source is still stale", async () => {
+    const session = await persistedRecord("a");
+    await rename(session.path, `${session.path}.old`);
+    await persistedRecord("a");
+    const source = catalog([session]);
+    const refresh = vi.spyOn(source, "refresh");
+    const createProcess = vi.fn(
+      (options: PiRpcOptions) =>
+        new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const runtime = new RuntimeController(
+      source,
+      trackedAttachmentStore(),
+      createProcess,
+    );
+    try {
+      await expect(runtime.openSession("a")).rejects.toMatchObject({
+        code: "SESSION_CATALOG_STALE",
+      });
+      expect(refresh).toHaveBeenCalledExactlyOnceWith(true);
+      expect(createProcess).not.toHaveBeenCalled();
+      expect(runtime.activeSessionId).toBeNull();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("requires a real workspace even with an injected projection factory", async () => {
     const session = record("a", join(fixtureWorkspace, "missing"));
     const openProjection = vi.fn(preview);
@@ -4141,6 +4232,7 @@ describe("RuntimeController concurrent sessions", () => {
     });
     expect(remove).toHaveBeenCalledWith(
       expect.objectContaining({ id: "a", path: resolve("/sessions/a.jsonl") }),
+      "current",
     );
     expect(source.refresh).not.toHaveBeenCalled();
     expect(source.invalidate).toHaveBeenCalledOnce();
@@ -4217,8 +4309,15 @@ describe("RuntimeController concurrent sessions", () => {
     });
     expect(source.refresh).toHaveBeenCalledOnce();
     expect(remove).toHaveBeenCalledTimes(3);
+    for (const id of ["a", "b", "c"]) {
+      expect(remove).toHaveBeenCalledWith(
+        expect.objectContaining({ id }),
+        "catalog",
+      );
+    }
     expect(remove).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: "ordinary" }),
+      expect.anything(),
     );
     await runtime.close();
   });
@@ -4297,6 +4396,7 @@ describe("RuntimeController concurrent sessions", () => {
     ).rejects.toMatchObject({
       status: 409,
       message: "Hidden changed; review it before clearing",
+      code: "HIDDEN_SELECTION_CHANGED",
     });
     expect(remove).not.toHaveBeenCalled();
     await runtime.close();
@@ -4539,6 +4639,10 @@ describe("RuntimeController concurrent sessions", () => {
     expect(workers.get("a")?.stops).toBe(1);
     expect(runtime.sessionCwd("a")).toBeNull();
     expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "a" }),
+      "current",
+    );
     await runtime.close();
   });
 

@@ -639,11 +639,26 @@ export class AppStore {
     const preferenceOwners = this.preferences.captureBootstrapOwners();
     const snapshotGeneration = this.snapshotGeneration;
     const autoContinueIntent = this.selectionIntentGeneration;
+    const detailSessionId = this.state.bootstrapped
+      ? this.state.sessionId
+      : undefined;
+    let missingDetail = false;
     try {
-      const boot = await api.bootstrap(
-        bootstrapRequest.signal,
-        this.state.bootstrapped ? this.state.sessionId : undefined,
-      );
+      const boot = await api
+        .bootstrap(bootstrapRequest.signal, detailSessionId)
+        .catch((error: unknown) => {
+          if (
+            !ownsBootstrap() ||
+            !detailSessionId ||
+            !(error instanceof ApiError) ||
+            error.code !== "SESSION_NOT_FOUND"
+          )
+            throw error;
+          // A deleted detail owner is not an offline Host. Reconnect without
+          // detail, never to another browser's globally selected session.
+          missingDetail = true;
+          return api.bootstrap(bootstrapRequest.signal, null);
+        });
       if (!ownsBootstrap()) return;
       if (
         typeof boot.authorityId !== "string" ||
@@ -686,9 +701,18 @@ export class AppStore {
         connectionProblem: null,
       });
       this.hostAuthorityId = boot.authorityId;
+      this.composer.reconcileAuthority(boot.authorityId);
       if (this.snapshotGeneration === snapshotGeneration) {
         this.applySnapshot(boot.snapshot);
         this.snapshotDigest = boot.snapshotDigest;
+        if (missingDetail) {
+          this.autoContinued = true;
+          if (!this.state.sessionSelectionPending)
+            this.notify(
+              "info",
+              "The previous session no longer exists. Choose another session or start a new one.",
+            );
+        }
       } else {
         // A selection or resync already committed on this API. Bootstrap still
         // supplies host metadata, but its digest cannot attest that newer view.
