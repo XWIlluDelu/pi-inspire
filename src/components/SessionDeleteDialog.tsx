@@ -10,10 +10,11 @@ export function SessionDeleteDialog({
   session: SessionSummary;
   onClose: () => void;
 }) {
-  const { deletingSessionId, error } = useAppState(
+  const { deletingSessionId, error, reviewRequired } = useAppState(
     (state) => ({
       deletingSessionId: state.deletingSessionId,
       error: state.sessionDeleteError,
+      reviewRequired: state.sessionDeleteReviewRequired,
     }),
     shallowEqual,
   );
@@ -93,17 +94,21 @@ export function SessionDeleteDialog({
           </button>
           <button
             type="button"
-            className="button button--danger"
-            onClick={() => void confirm()}
+            className={`button ${reviewRequired ? "button--primary" : "button--danger"}`}
+            onClick={reviewRequired ? onClose : () => void confirm()}
             disabled={deleting}
             aria-busy={deleting}
           >
             {deleting ? (
               <Loader2 size={14} className="spin" aria-hidden />
-            ) : (
+            ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
-            )}
-            {deleting ? "Deleting…" : "Delete session"}
+            ) : null}
+            {deleting
+              ? "Deleting…"
+              : reviewRequired
+                ? "Review Hidden"
+                : "Delete session"}
           </button>
         </footer>
       </div>

@@ -90,7 +90,53 @@ export class SessionManagementController {
   };
 
   clearSessionDeleteError = (): void =>
-    this.host.patch({ sessionDeleteError: null });
+    this.host.patch({
+      sessionDeleteError: null,
+      sessionDeleteReviewRequired: false,
+    });
+
+  private needsFreshReview(error: unknown): boolean {
+    return (
+      error instanceof ApiError &&
+      [
+        "SESSION_NOT_FOUND",
+        "SESSION_FILE_MISSING",
+        "SESSION_CATALOG_STALE",
+        "HIDDEN_SELECTION_CHANGED",
+      ].includes(error.code ?? "")
+    );
+  }
+
+  /** Rebuild metadata and the consumed list, but never repeat destructive I/O.
+   * Local preference edits made during this read retain their field ownership. */
+  private async refreshDeletionReview(
+    api: Api,
+    ownsTransport: () => boolean,
+    extent: readonly [query: string, offset: number, total: number],
+  ): Promise<void> {
+    this.host.patch({ sessionDeleteReviewRequired: true });
+    const owners = this.host.capturePreferenceOwners();
+    try {
+      const [preferences] = await Promise.all([
+        api.preferences(),
+        api.refreshSessions(),
+      ]);
+      if (!ownsTransport()) return;
+      this.host.patch({
+        prefs: this.host.reconcilePreferences(preferences, owners),
+      });
+      await this.host.preserveLoadedSessions(...extent);
+    } catch (error) {
+      if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.host.handleAuthFailure();
+      else
+        this.host.notify(
+          "warning",
+          "Could not refresh Hidden. Refresh the session list before confirming again.",
+        );
+    }
+  }
 
   private preferencesWithoutSessions(
     sessionIds: ReadonlySet<string>,
@@ -126,6 +172,7 @@ export class SessionManagementController {
       !api ||
       this.host.state().deletingSessionId ||
       this.host.state().clearingHidden ||
+      this.host.state().sessionDeleteReviewRequired ||
       sessionId === this.host.state().sessionId ||
       !hidden
     )
@@ -150,6 +197,7 @@ export class SessionManagementController {
         this.host.patch({
           sessionDeleteError:
             "The session must remain in Hidden before it can be deleted",
+          sessionDeleteReviewRequired: true,
         });
         return null;
       }
@@ -192,6 +240,12 @@ export class SessionManagementController {
           sessionDeleteError:
             error instanceof Error ? error.message : "Failed to delete session",
         });
+        if (this.needsFreshReview(error))
+          await this.refreshDeletionReview(api, ownsTransport, [
+            preserveQuery,
+            preserveOffset,
+            preserveTotal,
+          ]);
       }
       return null;
     } finally {
@@ -213,6 +267,7 @@ export class SessionManagementController {
       sessionIds.length === 0 ||
       this.host.state().deletingSessionId ||
       this.host.state().clearingHidden ||
+      this.host.state().sessionDeleteReviewRequired ||
       this.host.state().sessionQuery.trim() ||
       this.host.state().sessionListLoading ||
       this.host.state().sessionListLoadingOlder ||
@@ -250,6 +305,11 @@ export class SessionManagementController {
         this.host.patch({
           sessionDeleteError: "Hidden changed; review it before clearing",
         });
+        await this.refreshDeletionReview(api, ownsTransport, [
+          preserveQuery,
+          preserveOffset,
+          preserveTotal,
+        ]);
         return null;
       }
 
@@ -294,11 +354,12 @@ export class SessionManagementController {
             ? `${count} ${count === 1 ? "session" : "sessions"} moved to Trash`
             : `${count} ${count === 1 ? "session" : "sessions"} deleted`,
         );
-        void this.host.preserveLoadedSessions(
-          preserveQuery,
-          preserveOffset,
-          preserveTotal,
-        );
+        if (!result.failure)
+          void this.host.preserveLoadedSessions(
+            preserveQuery,
+            preserveOffset,
+            preserveTotal,
+          );
       }
       if (result.preferenceCleanupFailed) {
         this.host.notify(
@@ -310,6 +371,11 @@ export class SessionManagementController {
         this.host.patch({
           sessionDeleteError: `Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "session" : "sessions"}; stopped at ${result.failure.sessionId}: ${result.failure.message}`,
         });
+        await this.refreshDeletionReview(api, ownsTransport, [
+          preserveQuery,
+          preserveOffset,
+          preserveTotal,
+        ]);
       }
       return result;
     } catch (error) {
@@ -321,6 +387,12 @@ export class SessionManagementController {
           sessionDeleteError:
             error instanceof Error ? error.message : "Failed to clear Hidden",
         });
+        if (this.needsFreshReview(error))
+          await this.refreshDeletionReview(api, ownsTransport, [
+            preserveQuery,
+            preserveOffset,
+            preserveTotal,
+          ]);
       }
       return null;
     } finally {

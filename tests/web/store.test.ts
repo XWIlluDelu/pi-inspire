@@ -270,6 +270,142 @@ describe("websocket lifecycle", () => {
     }
   });
 
+  it("reconnects without detail when the previously viewed session no longer exists", async () => {
+    let missing = false;
+    const reads: string[] = [];
+    const empty = {
+      active: null,
+      runState: "idle" as const,
+      sessionStatuses: {},
+    };
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap")) {
+        reads.push(url);
+        const detail = new URL(url, "http://host").searchParams.get("detail");
+        if (missing && detail === "s1")
+          return {
+            status: 404,
+            body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
+          };
+        if (detail === "")
+          return { body: bootstrapPayload({ snapshot: empty }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    missing = true;
+    await store.init(null);
+    FakeWebSocket.instances.at(-1)!.open(empty);
+    expect(reads.slice(-2)).toEqual([
+      "/api/bootstrap?detail=s1",
+      "/api/bootstrap?detail=",
+    ]);
+    expect(store.getState()).toMatchObject({
+      sessionId: null,
+      connection: "open",
+      connectionProblem: null,
+    });
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "previous session no longer exists",
+    );
+  });
+
+  it.each(["committed", "pending"])(
+    "preserves a newer %s selection during missing-detail recovery",
+    async (phase) => {
+      const fallback = deferred<RouteResponse>();
+      const opening = deferred<RouteResponse>();
+      const next = { body: activeSnapshot({ sessionId: "s2" }) };
+      const empty = {
+        active: null,
+        runState: "idle" as const,
+        sessionStatuses: {},
+      };
+      let missing = false;
+      let recovering = false;
+      installFetch((url, init) => {
+        if (url === "/api/bootstrap?detail=s1" && missing)
+          return {
+            status: 404,
+            body: { error: "gone", code: "SESSION_NOT_FOUND" },
+          };
+        if (url === "/api/bootstrap?detail=") {
+          recovering = true;
+          return fallback.promise;
+        }
+        if (url === "/api/sessions/open") return opening.promise;
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      missing = true;
+      const reconnecting = store.init(null);
+      await vi.waitFor(() => expect(recovering).toBe(true));
+      const selecting = store.openSession("s2");
+      if (phase === "committed") {
+        opening.resolve(next);
+        await selecting;
+      }
+      fallback.resolve({ body: bootstrapPayload({ snapshot: empty }) });
+      await reconnecting;
+      if (phase === "pending") {
+        expect(store.getState()).toMatchObject({
+          sessionId: null,
+          openingSessionId: "s2",
+          sessionSelectionPending: true,
+        });
+        const socket = FakeWebSocket.instances.at(-1)!;
+        socket.readyState = FakeWebSocket.OPEN;
+        socket.onopen?.({});
+        // Match the real addressed handshake, not a legacy selection push.
+        socket.emit({
+          type: "snapshot",
+          detailSessionId: null,
+          detailRevision: 0,
+          data: empty,
+        });
+        opening.resolve(next);
+        await selecting;
+      }
+      expect(store.getState().sessionId).toBe("s2");
+      expect(
+        store
+          .getState()
+          .notices.some((notice) =>
+            notice.text.includes("previous session no longer exists"),
+          ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([404, 409])(
+    "does not discard a selected session for an unclassified %s bootstrap refusal",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        let refused = false;
+        const reads: string[] = [];
+        installFetch((url, init) => {
+          if (url.startsWith("/api/bootstrap") && refused) {
+            reads.push(url);
+            return { status, body: { error: "Read refused" } };
+          }
+          return baseRoutes(url, init);
+        });
+        const { store } = await initStore();
+        refused = true;
+        await store.init(null);
+        expect(reads).toEqual(["/api/bootstrap?detail=s1"]);
+        expect(store.getState()).toMatchObject({
+          sessionId: "s1",
+          connection: "offline",
+        });
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("returns an established view to Pair when reconnect authentication expires", async () => {
     vi.useFakeTimers();
     try {

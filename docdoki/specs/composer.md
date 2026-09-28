@@ -207,7 +207,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - Uploaded attachments have a bounded host-side lifetime: withdrawing a staged attachment deletes
   its host cache copy, image bytes are reclaimed once a delivered prompt has consumed them, and
   ordinary files persist for the host’s lifetime because their host paths are referenced by the
-  conversation text.
+  conversation text. Browser upload handles belong to the issuing Host authority, not a WebSocket
+  connection. Same-Host reconnect preserves ready uploads; a changed authority marks old handles
+  invalid immediately, including inactive session partitions, saved history drafts, and failed
+  deliveries. A definitive expiry refusal marks only the named uploads invalid. Invalid attachments
+  explain how to remove and re-add them and block another send; recovery never silently reuploads
+  a file or resends a message whose delivery outcome is unknown.
 
 ### Delivery, native commands, and error ownership
 

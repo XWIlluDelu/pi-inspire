@@ -71,6 +71,42 @@ describe("thinking level control", () => {
 describe("composer session partitions", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("invalidates ready attachment handles only when bootstrap confirms a different Host", async () => {
+    let authorityId = "11111111-1111-4111-8111-111111111111";
+    const prompt = vi.fn();
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: {
+            ...bootstrapPayload({ snapshot: activeSnapshot() }),
+            authorityId,
+          },
+        };
+      if (url === "/api/attachments")
+        return {
+          body: {
+            attachments: [
+              { id: "upload", fileName: "notes.txt", kind: "file" },
+            ],
+          },
+        };
+      if (url === "/api/prompt") prompt();
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.addFiles([new File(["notes"], "notes.txt")]);
+    await store.init(null);
+    expect(store.getState().attachments[0]?.status).toBe("ready");
+    authorityId = "22222222-2222-4222-8222-222222222222";
+    await store.init(null);
+    expect(store.getState().attachments[0]).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("Host restarted"),
+    });
+    await store.sendPrompt("send");
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("keeps staged artifacts with their session across switches and sends", async () => {
     let uploads = 0;
     const promptBodies: Record<string, unknown>[] = [];

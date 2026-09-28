@@ -69,7 +69,10 @@ export class RuntimeSessionDeletionController {
     sessionId: string,
   ): Promise<SessionRecord> {
     const session = await this.host.catalogGet(sessionId);
-    if (!session) throw requestError("Session not found", 404);
+    if (!session)
+      throw requestError("Session not found", 404, {
+        code: "SESSION_NOT_FOUND",
+      });
     return session;
   }
 
@@ -191,10 +194,14 @@ export class RuntimeSessionDeletionController {
     }
     // The catalog lookup established one unambiguous id/path. The destructive
     // adapter revalidates that exact file before moving it to a private
-    // quarantine for desktop Trash. Another global scan would not strengthen
-    // this path-local authority.
+    // quarantine for desktop Trash. Single deletion pins its current version
+    // after writer retirement: normal writes can outdate the catalog metadata.
+    // Hidden batches retain the exact version authorized by their preflight.
     try {
-      const disposition = await this.host.deleteSessionRecord(initial);
+      const disposition = await this.host.deleteSessionRecord(
+        initial,
+        authorizedSession ? "catalog" : "current",
+      );
       return { sessionId, disposition };
     } finally {
       this.host.invalidateCatalog();
@@ -310,7 +317,9 @@ export class RuntimeSessionDeletionController {
         individualIds.has(session.id) || projectCwds.has(session.cwd),
     );
     if (records.length === 0)
-      throw requestError("No sessions remain in Hidden", 404);
+      throw requestError("No sessions remain in Hidden", 404, {
+        code: "HIDDEN_SELECTION_CHANGED",
+      });
     const ids = new Set(records.map((session) => session.id));
     const expected = new Set(expectedSessionIds);
     if (
@@ -318,7 +327,9 @@ export class RuntimeSessionDeletionController {
       ids.size !== expected.size ||
       [...ids].some((sessionId) => !expected.has(sessionId))
     ) {
-      throw requestError("Hidden changed; review it before clearing", 409);
+      throw requestError("Hidden changed; review it before clearing", 409, {
+        code: "HIDDEN_SELECTION_CHANGED",
+      });
     }
     if (
       ids.size !== records.length ||

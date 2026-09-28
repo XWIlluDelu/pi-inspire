@@ -310,6 +310,10 @@ export class AttachmentStore {
       throw requestError(
         "One or more attachments expired; add them again",
         409,
+        {
+          code: "ATTACHMENTS_EXPIRED",
+          matches: unique.filter((id) => !this.values.has(id)),
+        },
       );
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {

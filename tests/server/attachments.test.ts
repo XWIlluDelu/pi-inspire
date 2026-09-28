@@ -93,6 +93,8 @@ describe("attachment consumption lifecycle", () => {
     await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
       status: 409,
       message: expect.stringMatching(/expired/),
+      code: "ATTACHMENTS_EXPIRED",
+      matches: [doc.id],
     });
   });
 

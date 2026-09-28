@@ -388,7 +388,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     private readonly openForkProjection: (
       session: SessionRecord,
     ) => Promise<SessionProjectionView> = SessionProjection.open,
-    private readonly deleteSessionRecord: DeleteSessionRecord = deleteSessionFile,
+    private readonly deleteSessionRecord: DeleteSessionRecord = (
+      session,
+      version,
+    ) => deleteSessionFile(session, undefined, undefined, version),
     private readonly diagnostics: DiagnosticLogger = nullDiagnosticLogger(),
     private readonly validateSessionRecord: ValidateSessionRecord = validateSessionFile,
     private readonly stageFork: StageSessionFork = stageSessionFork,
@@ -429,7 +432,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       catalogRefresh: (force) => this.catalog.refresh(force),
       invalidateCatalog: () => this.catalog.invalidate(),
       validateSessionRecord: (session) => this.validateSessionRecord(session),
-      deleteSessionRecord: (session) => this.deleteSessionRecord(session),
+      deleteSessionRecord: (session, version) =>
+        this.deleteSessionRecord(session, version),
     });
     this.extensionUi = new RuntimeExtensionUiController({
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
@@ -1629,6 +1633,30 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.projectionCoordinator.attach(slot, projection);
   }
 
+  /** Read-only admission can refresh a stale catalog once. Never retry a
+   * destructive operation or replace an already-owned live projection here. */
+  private async prepareCatalogSlot(id: string): Promise<RuntimeSlot> {
+    for (let attempt = 0; ; attempt += 1) {
+      const session = await this.catalog.get(id);
+      if (session) {
+        try {
+          return await this.prepareSlot(session);
+        } catch (error) {
+          if (
+            attempt > 0 ||
+            (error as { code?: string })?.code !== "SESSION_CATALOG_STALE"
+          )
+            throw error;
+        }
+      } else if (attempt > 0) {
+        throw requestError("Session not found", 404, {
+          code: "SESSION_NOT_FOUND",
+        });
+      }
+      await this.catalog.refresh(true);
+    }
+  }
+
   private async prepareSlot(session: SessionRecord): Promise<RuntimeSlot> {
     this.assertNotClosing();
     if (this.deletions.isDeleting(session.id)) {
@@ -1791,9 +1819,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       (this.selectionReservations.get(id) ?? 0) + 1,
     );
     try {
-      const session = await this.catalog.get(id);
-      if (!session) throw requestError("Session not found", 404);
-      const slot = await this.prepareSlot(session);
+      const slot = await this.prepareCatalogSlot(id);
       const ready = Boolean(slot.process && slot.ready);
       const snapshot = ready
         ? await this.snapshotSlot(slot)
@@ -3676,9 +3702,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // restore its own read-only view without selecting it for other clients
       // or starting a worker merely to satisfy a subscription.
       if (!slot || (!slot.projection && !slot.process)) {
-        const session = await this.catalog.get(sessionId);
-        if (!session) throw requestError("Session not found", 404);
-        await this.prepareSlot(session);
+        await this.prepareCatalogSlot(sessionId);
       }
     }
     return this.reads.snapshot(sessionId);
