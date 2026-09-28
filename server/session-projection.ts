@@ -905,6 +905,7 @@ export class SessionProjection
   private readonly revisionFingerprints = new Map<number, string>();
   private currentHealth: ProjectionHealth = { status: "ok" };
   private currentFailureStatus: number | null = null;
+  private currentFailureCode: string | undefined;
   private currentMessages: unknown[] = [];
   private currentModel: unknown = null;
   private currentThinkingLevel = "off";
@@ -982,6 +983,9 @@ export class SessionProjection
       throw requestError(
         projection.health.message ?? "Session projection could not be loaded",
         projection.currentFailureStatus ?? 422,
+        projection.currentFailureCode
+          ? { code: projection.currentFailureCode }
+          : undefined,
       );
     }
     projection.startWatching();
@@ -1478,6 +1482,7 @@ export class SessionProjection
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
       this.currentHealth = { status: "ok" };
       this.currentFailureStatus = null;
+      this.currentFailureCode = undefined;
       const sourceChanged =
         previousSourceVersion !== this.sourceVersion ||
         previousUncommittedBytes !== this.uncommittedBytes ||
@@ -1514,6 +1519,7 @@ export class SessionProjection
       ) {
         this.currentHealth = { status: "ok" };
         this.currentFailureStatus = null;
+        this.currentFailureCode = undefined;
         return {
           changed: false,
           initialMaterialization,
@@ -1533,6 +1539,13 @@ export class SessionProjection
         };
       }
       this.currentHealth = healthError(error);
+      const code = (error as { code?: string } | null)?.code;
+      this.currentFailureCode =
+        code === "SESSION_CATALOG_STALE" ||
+        (this.currentRevision === 0 &&
+          (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP"))
+          ? "SESSION_CATALOG_STALE"
+          : undefined;
       this.currentFailureStatus =
         error &&
         typeof error === "object" &&
@@ -1726,6 +1739,7 @@ export class SessionProjection
           throw requestError(
             "The session changed since the catalog was loaded",
             409,
+            { code: "SESSION_CATALOG_STALE" },
           );
         }
         const hash = createHash("sha256");
@@ -1818,7 +1832,9 @@ export class SessionProjection
         if (!validSessionHeader(header))
           throw new Error("Session file has an invalid Pi session header");
         if (header.id !== this.sessionId)
-          throw new Error("Session file belongs to another session");
+          throw requestError("Session file belongs to another session", 409, {
+            code: "SESSION_CATALOG_STALE",
+          });
         if (
           header.cwd !== this.initialCwd &&
           !(await sameDirectory(header.cwd, this.initialCwd))
@@ -1826,6 +1842,7 @@ export class SessionProjection
           throw requestError(
             "The session working directory changed since the catalog was loaded",
             409,
+            { code: "SESSION_CATALOG_STALE" },
           );
         }
         if (

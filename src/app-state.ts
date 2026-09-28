@@ -202,6 +202,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   sessionActionError: string | null;
   /** Destructive-action failures stay inside the confirmation dialog. */
   sessionDeleteError: string | null;
+  sessionDeleteReviewRequired: boolean;
   /** Authoritative per-session runtime status for every live session worker,
    * keyed by session id. Drives nav attention indicators. */
   sessionStatuses: Record<string, SessionRuntimeStatus>;
@@ -349,6 +350,7 @@ export function createInitialAppState(): AppState {
     sessionListError: null,
     sessionActionError: null,
     sessionDeleteError: null,
+    sessionDeleteReviewRequired: false,
     sessionStatuses: {},
     attentionSessionIds: [],
     openingSessionId: null,

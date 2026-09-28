@@ -20,6 +20,38 @@ import { baseRoutes, initStore } from "./store-fixture";
 describe("session switching guard", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("refreshes a missing open target out of the list without changing the visible session", async () => {
+    let missing = false;
+    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s9" })];
+    installFetch((url, init) => {
+      if (url === "/api/sessions/open") {
+        missing = true;
+        return {
+          status: 404,
+          body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
+        };
+      }
+      if (url.startsWith("/api/sessions")) {
+        const sessions = missing ? rows.slice(0, 1) : rows;
+        return {
+          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+    await store.openSession("s9");
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.map((row) => row.id)).toEqual(["s1"]),
+    );
+    expect(store.getState()).toMatchObject({
+      sessionId: "s1",
+      openingSessionId: null,
+      sessionActionError: "Session not found",
+    });
+  });
+
   it("clears the pending state and surfaces the error when the open fails", async () => {
     installFetch(baseRoutes);
     const store = new AppStore();

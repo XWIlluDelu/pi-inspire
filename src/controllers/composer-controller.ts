@@ -34,6 +34,7 @@ export interface PendingAttachment {
   previewUrl?: string;
   status: "uploading" | "ready" | "error";
   uploadedId?: string;
+  uploadedAuthorityId?: string;
   recalledArtifact?: RecalledHistoryArtifact;
   error?: string;
 }
@@ -167,6 +168,47 @@ export class ComposerController {
       );
   }
 
+  /** Upload handles belong to one Host process, unlike a dropped event socket.
+   * Include hidden partitions and saved/failed drafts so restoring them cannot
+   * resurrect a ready-looking handle from a retired Host. */
+  reconcileAuthority(authorityId: string): void {
+    let changed = false;
+    const reconcile = (items: PendingAttachment[]): PendingAttachment[] =>
+      items.map((item) => {
+        if (
+          !item.uploadedId ||
+          item.status === "error" ||
+          item.uploadedAuthorityId === authorityId
+        )
+          return item;
+        changed = true;
+        return {
+          ...item,
+          status: "error",
+          error: "The Host restarted; remove this attachment and add it again",
+        };
+      });
+    for (const composer of this.composers.values()) {
+      composer.attachments = reconcile(composer.attachments);
+      if (composer.historyDraft)
+        composer.historyDraft.attachments = reconcile(
+          composer.historyDraft.attachments,
+        );
+      for (const record of [
+        ...composer.deliveries.values(),
+        ...composer.failedDeliveries,
+      ]) {
+        record.attachments = reconcile(record.attachments);
+        if (record.historyDraft)
+          record.historyDraft.attachments = reconcile(
+            record.historyDraft.attachments,
+          );
+      }
+    }
+    const sessionId = this.host.state().sessionId;
+    if (changed && sessionId) this.publish(sessionId);
+  }
+
   discard(sessionId: string): void {
     for (const confirmation of this.confirmations.get(sessionId)?.values() ??
       [])
@@ -210,6 +252,7 @@ export class ComposerController {
     const api = this.host.api();
     const authorityId = this.host.authorityId();
     if (!api || !sessionId || !authorityId) return false;
+    this.reconcileAuthority(authorityId);
     const generation = this.host.transportGeneration();
     const requestEpoch = this.requestEpoch;
     const ownsTransport = (): boolean =>
@@ -390,6 +433,21 @@ export class ComposerController {
           this.releaseAttachments(record.historyDraft.attachments);
         return false;
       }
+      if (
+        error instanceof ApiError &&
+        error.code === "ATTACHMENTS_EXPIRED" &&
+        !acceptanceUnknown
+      ) {
+        record.attachments = record.attachments.map((item) =>
+          item.uploadedId && error.matches?.includes(item.uploadedId)
+            ? {
+                ...item,
+                status: "error",
+                error: "This attachment expired; remove it and add it again",
+              }
+            : item,
+        );
+      }
       composer.failedDeliveries.push(record);
       this.restoreFailedIfEmpty(sessionId, composer);
       if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
@@ -550,7 +608,8 @@ export class ComposerController {
   async addFiles(files: File[]): Promise<void> {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
-    if (!api || !sessionId || files.length === 0) return;
+    const authorityId = this.host.authorityId();
+    if (!api || !sessionId || !authorityId || files.length === 0) return;
     const generation = this.host.transportGeneration();
     const requestEpoch = this.requestEpoch;
     const ownsTransport = (): boolean =>
@@ -615,6 +674,7 @@ export class ComposerController {
                 ...item,
                 status: "ready" as const,
                 uploadedId: result.id,
+                uploadedAuthorityId: authorityId,
                 fileName: result.fileName,
                 kind: result.kind,
               }

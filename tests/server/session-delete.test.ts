@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 
@@ -65,6 +65,17 @@ async function fixture(
 }
 
 describe("session file deletion", () => {
+  it("classifies a missing source without touching Trash", async () => {
+    const { path, session } = await fixture();
+    await rm(path);
+    const trash = vi.fn();
+    await expect(deleteSessionFile(session, trash)).rejects.toMatchObject({
+      status: 404,
+      code: "SESSION_FILE_MISSING",
+    });
+    expect(trash).not.toHaveBeenCalled();
+  });
+
   it("passes an identity-bound quarantine payload and separate restore path to Trash", async () => {
     const { dir, path, session } = await fixture();
     const trashDir = join(dir, "Trash");
@@ -152,6 +163,65 @@ describe("session file deletion", () => {
       status: 409,
     });
     await expect(readFile(path, "utf8")).resolves.toContain('"external"');
+  });
+
+  it("deletes the current version of the catalog object after normal writes", async () => {
+    const { dir, path, session } = await fixture();
+    await appendFile(path, '{"type":"message","id":"new-message"}\n');
+    const trashed = join(dir, "trashed.jsonl");
+
+    await expect(
+      deleteSessionFile(
+        session,
+        async (payload) => rename(payload, trashed),
+        undefined,
+        "current",
+      ),
+    ).resolves.toBe("trashed");
+    expect(await readFile(trashed, "utf8")).toContain('"new-message"');
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not authorize a replacement inode when pinning the current version", async () => {
+    const { dir, path, session } = await fixture();
+    const content = await readFile(path);
+    await rename(path, join(dir, "original.jsonl"));
+    await writeFile(path, content);
+
+    await expect(
+      deleteSessionFile(
+        session,
+        async () => {
+          throw new Error("must not reach Trash");
+        },
+        undefined,
+        "current",
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "The session changed since the catalog was loaded",
+    });
+    expect(await readFile(path)).toEqual(content);
+  });
+
+  it("revalidates the header when pinning the current version", async () => {
+    const { path, session } = await fixture();
+    await writeFile(path, '{"type":"session","id":"other","cwd":"/other"}\n');
+
+    await expect(
+      deleteSessionFile(
+        session,
+        async () => {
+          throw new Error("must not reach Trash");
+        },
+        undefined,
+        "current",
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "The session file identity does not match the catalog",
+    });
+    expect(await readFile(path, "utf8")).toContain('"other"');
   });
 
   it("refuses a mismatched session header without invoking Trash", async () => {

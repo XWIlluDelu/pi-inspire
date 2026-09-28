@@ -9,10 +9,11 @@ export function HiddenClearDialog({
   sessionIds: string[];
   onClose: () => void;
 }) {
-  const { deleting, error } = useAppState(
+  const { deleting, error, reviewRequired } = useAppState(
     (state) => ({
       deleting: state.clearingHidden,
       error: state.sessionDeleteError,
+      reviewRequired: state.sessionDeleteReviewRequired,
     }),
     shallowEqual,
   );
@@ -98,17 +99,21 @@ export function HiddenClearDialog({
           </button>
           <button
             type="button"
-            className="button button--danger"
-            onClick={() => void confirm()}
+            className={`button ${reviewRequired ? "button--primary" : "button--danger"}`}
+            onClick={reviewRequired ? onClose : () => void confirm()}
             disabled={deleting}
             aria-busy={deleting}
           >
             {deleting ? (
               <Loader2 size={14} className="spin" aria-hidden />
-            ) : (
+            ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
-            )}
-            {deleting ? "Clearing…" : `Delete ${sessionsLabel}`}
+            ) : null}
+            {deleting
+              ? "Clearing…"
+              : reviewRequired
+                ? "Review Hidden"
+                : `Delete ${sessionsLabel}`}
           </button>
         </footer>
       </div>

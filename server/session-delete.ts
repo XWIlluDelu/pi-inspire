@@ -81,8 +81,11 @@ type TrashSessionPath = (
   payloadPath: string,
   originalPath: string,
 ) => Promise<void>;
+export type SessionDeletionVersion = "catalog" | "current";
+
 export type DeleteSessionRecord = (
   session: SessionRecord,
+  version?: SessionDeletionVersion,
 ) => Promise<SessionDeleteDisposition>;
 export type ValidateSessionRecord = (session: SessionRecord) => Promise<void>;
 
@@ -112,13 +115,16 @@ async function existingSessionStats(path: string): Promise<BigIntStats> {
     return await lstat(path, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      throw requestError("Session not found", 404);
+      throw requestError("Session not found", 404, {
+        code: "SESSION_FILE_MISSING",
+      });
     throw error;
   }
 }
 
 async function inspectSessionFile(
   session: SessionRecord,
+  version: SessionDeletionVersion = "catalog",
 ): Promise<SessionFileIdentity> {
   const path = resolve(session.path);
   if (extname(path).toLowerCase() !== ".jsonl") {
@@ -131,9 +137,18 @@ async function inspectSessionFile(
   }
   if (
     !session.source ||
-    !sameFileVersion(fileIdentity(before), session.source)
+    !(version === "current" ? sameFileObject : sameFileVersion)(
+      fileIdentity(before),
+      session.source,
+    )
   ) {
-    throw requestError("The session changed since the catalog was loaded", 409);
+    throw requestError(
+      "The session changed since the catalog was loaded",
+      409,
+      {
+        code: "SESSION_CATALOG_STALE",
+      },
+    );
   }
 
   // O_NOFOLLOW closes the lstat/open symlink swap on the local Linux host.
@@ -142,7 +157,10 @@ async function inspectSessionFile(
     constants.O_RDONLY |
       (process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0)),
   ).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") throw requestError("Session not found", 404);
+    if (error.code === "ENOENT")
+      throw requestError("Session not found", 404, {
+        code: "SESSION_FILE_MISSING",
+      });
     if (error.code === "ELOOP") {
       throw requestError(
         "The catalog entry is not a regular session file",
@@ -199,6 +217,7 @@ async function inspectSessionFile(
       throw requestError(
         "The session file identity does not match the catalog",
         409,
+        { code: "SESSION_CATALOG_STALE" },
       );
     }
     return currentIdentity;
@@ -353,9 +372,10 @@ export async function deleteSessionFile(
   session: SessionRecord,
   moveToTrash: TrashSessionPath = moveToDesktopTrash,
   removeDirectory: RemoveEmptyDirectory = removeEmptyDirectory,
+  version: SessionDeletionVersion = "catalog",
 ): Promise<SessionDeleteDisposition> {
   const path = resolve(session.path);
-  const inspected = await inspectSessionFile(session);
+  const inspected = await inspectSessionFile(session, version);
   const quarantine = await quarantineSession(path, inspected);
   let trashError: unknown;
   try {
