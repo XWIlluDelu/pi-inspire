@@ -515,6 +515,134 @@ describe("ordinary HTTP observation", () => {
   });
 });
 
+describe("attachment upload observation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const files = () => [
+    new File(["body"], "attachment.txt", { type: "text/plain" }),
+  ];
+
+  it("posts one multipart batch without overriding its boundary", async () => {
+    const attachments = [
+      { id: "uploaded", fileName: "attachment.txt", kind: "file" },
+    ];
+    const fetch = vi.fn(async () => Response.json({ attachments }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      createApi("token").uploadAttachments(files()),
+    ).resolves.toEqual({ attachments });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]).toEqual([
+      "/api/attachments",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+        signal: expect.any(AbortSignal),
+        headers: { Authorization: "Bearer token" },
+      }),
+    ]);
+  });
+
+  it.each(["headers", "error body", "result body"] as const)(
+    "bounds stalled %s without resending the upload",
+    async (phase) => {
+      vi.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        if (phase === "headers") return new Promise<Response>(() => {});
+        const response = new Response("", {
+          status: phase === "error body" ? 401 : 200,
+        });
+        vi.spyOn(response, "json").mockImplementation(
+          () => new Promise<never>(() => {}),
+        );
+        return response;
+      });
+      vi.stubGlobal("fetch", fetch);
+      const result = createApi()
+        .uploadAttachments(files())
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(
+        LONG_HTTP_OBSERVATION_TIMEOUT_MS + 1_000,
+      );
+      expect(await result).toMatchObject({
+        name: "ApiTransportError",
+        timedOut: true,
+        outcomeUnknown: true,
+      });
+      expect(signal?.aborted).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("adds a size-dependent transfer allowance to the upload budget", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    const result = createApi()
+      .uploadAttachments([new File([new Uint8Array(1_048_576)], "one-mib.bin")])
+      .catch((error: unknown) => error);
+    const completed = vi.fn();
+    void result.then(completed);
+    await vi.advanceTimersByTimeAsync(LONG_HTTP_OBSERVATION_TIMEOUT_MS);
+    expect(completed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(await result).toMatchObject({ timedOut: true });
+  });
+
+  it.each(["timeout", "cancellation"] as const)(
+    "reclaims late upload handles after %s even when the transport ignores abort",
+    async (interruption) => {
+      vi.useFakeTimers();
+      let finish!: (value: { attachments: Array<{ id: string }> }) => void;
+      const body = new Promise((resolve) => {
+        finish = resolve;
+      });
+      const fetch = vi.fn(async (url: unknown) => {
+        if (String(url).startsWith("/api/attachments/"))
+          return Response.json({ ok: true });
+        const response = new Response("");
+        vi.spyOn(response, "json").mockImplementation(() => body);
+        return response;
+      });
+      vi.stubGlobal("fetch", fetch);
+      const owner = new AbortController();
+      const result = createApi()
+        .uploadAttachments(files(), owner.signal)
+        .catch((error: unknown) => error);
+      if (interruption === "timeout")
+        await vi.advanceTimersByTimeAsync(
+          LONG_HTTP_OBSERVATION_TIMEOUT_MS + 1_000,
+        );
+      else owner.abort();
+      expect(await result).toBeInstanceOf(
+        interruption === "timeout"
+          ? ApiTransportError
+          : ApiRequestCancelledError,
+      );
+      finish({ attachments: [{ id: "late-handle" }] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch.mock.calls[1]).toEqual([
+        "/api/attachments/late-handle",
+        expect.objectContaining({ method: "DELETE" }),
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(
+        createApi().uploadAttachments(files(), AbortSignal.abort()),
+      ).rejects.toMatchObject({ outcomeUnknown: false });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+});
+
 describe("host directory browsing", () => {
   afterEach(() => vi.unstubAllGlobals());
 

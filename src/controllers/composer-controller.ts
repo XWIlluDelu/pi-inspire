@@ -5,7 +5,7 @@ import {
   type PromptAcceptedResponse,
   type PromptDeliveryRequest,
 } from "../../shared/contracts";
-import { type Api, ApiError } from "../api";
+import { type Api, ApiError, ApiTransportError } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import {
   type ComposerHistoryScope,
@@ -102,6 +102,7 @@ export class ComposerController {
     string,
     Map<string, AbortController>
   >();
+  private readonly uploads = new Map<string, AbortController>();
   private requestEpoch = 0;
 
   constructor(private readonly host: ComposerControllerHost) {}
@@ -128,6 +129,8 @@ export class ComposerController {
     for (const confirmations of this.confirmations.values())
       for (const confirmation of confirmations.values()) confirmation.abort();
     this.confirmations.clear();
+    for (const upload of new Set(this.uploads.values())) upload.abort();
+    this.uploads.clear();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
       deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
@@ -643,10 +646,15 @@ export class ComposerController {
       };
     });
     composer.attachments = [...composer.attachments, ...pending];
+    const upload = new AbortController();
+    for (const item of pending) this.uploads.set(item.localId, upload);
     this.publish(sessionId);
 
     try {
-      const { attachments: uploaded } = await api.uploadAttachments(accepted);
+      const { attachments: uploaded } = await api.uploadAttachments(
+        accepted,
+        upload.signal,
+      );
       if (!ownsTransport()) {
         await Promise.all(
           uploaded.map((item) =>
@@ -708,7 +716,14 @@ export class ComposerController {
         this.host.handleAuthFailure();
         return;
       }
-      const message = error instanceof Error ? error.message : "Upload failed";
+      const message =
+        error instanceof ApiTransportError
+          ? error.timedOut
+            ? "Upload timed out; remove this attachment and add it again"
+            : "Upload could not be confirmed; remove this attachment and add it again"
+          : error instanceof Error
+            ? error.message
+            : "Upload failed";
       const failPending = (items: PendingAttachment[]) =>
         items.map((item) =>
           pending.some((candidate) => candidate.localId === item.localId)
@@ -721,7 +736,16 @@ export class ComposerController {
           composer.historyDraft.attachments,
         );
       this.publish(sessionId);
+    } finally {
+      for (const item of pending) this.uploads.delete(item.localId);
     }
+  }
+
+  private withdrawUpload(localId: string): void {
+    const upload = this.uploads.get(localId);
+    if (!upload) return;
+    this.uploads.delete(localId);
+    if (![...this.uploads.values()].includes(upload)) upload.abort();
   }
 
   removeAttachment(localId: string): void {
@@ -733,6 +757,7 @@ export class ComposerController {
     const target = composer.attachments.find(
       (item) => item.localId === localId,
     );
+    if (target) this.withdrawUpload(target.localId);
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
     composer.attachments = composer.attachments.filter(
       (item) => item.localId !== localId,
@@ -786,6 +811,7 @@ export class ComposerController {
 
   private releaseAttachments(items: readonly PendingAttachment[]): void {
     for (const attachment of items) {
+      this.withdrawUpload(attachment.localId);
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       if (attachment.uploadedId) {
         void this.host
