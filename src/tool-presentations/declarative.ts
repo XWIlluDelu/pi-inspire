@@ -7,8 +7,8 @@ import type {
 } from "../../shared/tool-presentation-config";
 import { stripTerminalSequences } from "../ansi";
 import { toolResultText } from "../events";
+import { isToolImageMimeType, mergeSearchContext } from "./model";
 import type {
-  ToolImageMimeType,
   ToolListItem,
   ToolPresentation,
   ToolPresentationBlock,
@@ -29,12 +29,6 @@ const MAX_METADATA_CHARS = 4_096;
 const MAX_PROPERTY_VALUE_CHARS = 4_096;
 const MAX_BLOCK_TEXT_CHARS = 100_000;
 const MAX_STRUCTURED_ITEMS = 1_000;
-const IMAGE_MIME_TYPES = new Set<ToolImageMimeType>([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
 
 type SelectedValue =
   | { state: "value"; raw: unknown; text: string }
@@ -433,7 +427,7 @@ function searchBlocks(
     {
       type: "search",
       ...(declaration.label ? { label: declaration.label } : {}),
-      groups,
+      groups: mergeSearchContext(groups),
       ...(groups.length === 0
         ? { emptyText: declaration.emptyText ?? (empty ? text : "No matches") }
         : {}),
@@ -533,8 +527,7 @@ function compileBlock(
         ? { state: "ok", blocks: [] }
         : { state: "incompatible" };
     }
-    if (!IMAGE_MIME_TYPES.has(mimeType.text as ToolImageMimeType))
-      return { state: "incompatible" };
+    if (!isToolImageMimeType(mimeType.text)) return { state: "incompatible" };
     return {
       state: "ok",
       blocks: [
@@ -542,7 +535,7 @@ function compileBlock(
           type: "image",
           ...(declaration.label ? { label: declaration.label } : {}),
           data: data.text,
-          mimeType: mimeType.text as ToolImageMimeType,
+          mimeType: mimeType.text,
           alt: alt.text,
         },
       ],

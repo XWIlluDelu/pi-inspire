@@ -37,6 +37,7 @@ import {
   type StaticVisibility,
   ThinkingCard,
   ToolCard,
+  ToolResultCard,
 } from "./transcript-cards";
 
 export function relativeTime(timestamp: number | string): string {
@@ -435,20 +436,17 @@ export const AssistantTurn = memo(function AssistantTurn({
 
 export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
   activityItemId = "unpaired-tool-result",
-  toolName,
+  message,
   visibility,
 }: {
   activityItemId?: string;
-  toolName?: string;
+  message: ChatMessage;
   visibility: StaticVisibility;
 }) {
   return (
     <div className="turn">
       <ActivityItemBoundary id={activityItemId}>
-        <GenericCard
-          item={{ type: `toolResult:${toolName ?? "unknown"}` }}
-          visibility={visibility}
-        />
+        <ToolResultCard result={message} visibility={visibility} />
       </ActivityItemBoundary>
     </div>
   );
