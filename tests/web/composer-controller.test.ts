@@ -645,6 +645,55 @@ describe("ComposerController", () => {
     ]);
   });
 
+  it("marks a timed-out upload failed and allows sending after user withdrawal", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockRejectedValue(
+      new ApiTransportError("request", true, true),
+    );
+    await harness.controller.addFiles([new File(["body"], "attachment.txt")]);
+    expect(harness.slice().attachments[0]).toMatchObject({
+      status: "error",
+      error: "Upload timed out; remove this attachment and add it again",
+    });
+    expect(harness.uploadAttachments).toHaveBeenCalledOnce();
+    await expect(harness.controller.send("message")).resolves.toBe(false);
+    harness.controller.removeAttachment(
+      harness.slice().attachments[0]!.localId,
+    );
+    harness.prompt.mockResolvedValue(acceptedPrompt);
+    await expect(harness.controller.send("message")).resolves.toEqual(
+      acceptedPrompt,
+    );
+  });
+
+  it("cancels a batch only after all its attachments are withdrawn", async () => {
+    const harness = createHarness();
+    const pending = deferred<{
+      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
+    }>();
+    harness.uploadAttachments.mockReturnValue(pending.promise);
+    const uploading = harness.controller.addFiles([
+      new File(["one"], "one.txt"),
+      new File(["two"], "two.txt"),
+    ]);
+    const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
+    const [first, second] = harness.slice().attachments;
+    harness.controller.removeAttachment(first!.localId);
+    expect(signal.aborted).toBe(false);
+    harness.controller.removeAttachment(second!.localId);
+    expect(signal.aborted).toBe(true);
+    pending.resolve({
+      attachments: ["one", "two"].map((id) => ({
+        id,
+        fileName: `${id}.txt`,
+        kind: "file" as const,
+      })),
+    });
+    await uploading;
+    expect(harness.deleteAttachment).toHaveBeenCalledTimes(2);
+    expect(harness.slice().attachments).toEqual([]);
+  });
+
   it("reclaims an upload that completes on a replaced transport", async () => {
     const pending = deferred<{
       attachments: Array<{ id: string; fileName: string; kind: "file" }>;
@@ -655,7 +704,9 @@ describe("ComposerController", () => {
     const uploading = harness.controller.addFiles([
       new File(["late"], "late.txt", { type: "text/plain" }),
     ]);
+    const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
     harness.replaceTransport();
+    expect(signal.aborted).toBe(true);
     pending.resolve({
       attachments: [{ id: "late-file", fileName: "late.txt", kind: "file" }],
     });

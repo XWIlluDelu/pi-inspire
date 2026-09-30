@@ -136,7 +136,9 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   reports typed uncertainty, and explicit observer cancellation remains available. Bounded deadlines
   abort only the HTTP observer and never stop a worker or retry a write. An operation may still
   complete after its observer expires; the browser reports an unconfirmed outcome, not a definitive
-  execution failure. Prompt and terminal receipts retain their separate identity semantics.
+  execution failure. Attachment upload uses the same observation/cancellation boundary, with its
+  size-dependent transfer budget and late-handle cleanup defined in [[composer]]. Prompt and terminal
+  receipts retain their separate identity semantics.
 
 - Explicit cancellation is distinct from transport failure. A superseded open/new/deselect aborts
   its observer immediately, including replacement by bootstrap. Pending-open deduplication lasts

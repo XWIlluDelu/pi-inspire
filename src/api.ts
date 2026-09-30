@@ -363,18 +363,45 @@ async function fetchResourceContent(
 async function uploadFiles(
   token: string | null,
   files: File[],
+  signal?: AbortSignal,
 ): Promise<{ attachments: UploadedAttachment[] }> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
-  // No Content-Type header: the browser sets the multipart boundary.
-  const response = await applicationFetch("/api/attachments", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: authorizationHeader(token),
-    body: form,
-  });
-  await ensureOk(response);
-  return responseJson<{ attachments: UploadedAttachment[] }>(response);
+  // Allow two minutes of overhead plus transfer time at 128 KiB/s. The raw
+  // attachment cap also bounds this budget; uploads never inherit Pi's
+  // completion-driven command waits.
+  const bytes = files.reduce((total, file) => total + file.size, 0);
+  const timeoutMs =
+    LONG_HTTP_OBSERVATION_TIMEOUT_MS + Math.ceil(bytes / 131_072) * 1_000;
+  return observeRequest(
+    signal,
+    { mutation: true, timeoutMs },
+    async (signal) => {
+      // No Content-Type header: the browser sets the multipart boundary.
+      const response = await applicationFetch("/api/attachments", {
+        method: "POST",
+        signal,
+        credentials: "same-origin",
+        headers: authorizationHeader(token),
+        body: form,
+      });
+      await ensureOk(response);
+      const result = await responseJson<{ attachments: UploadedAttachment[] }>(
+        response,
+      );
+      // A transport may ignore abort and finish after its observer is gone.
+      // Those staged handles must not be returned to a composer or leak bytes.
+      if (signal.aborted)
+        await Promise.all(
+          result.attachments.map((item) =>
+            request(token, `/api/attachments/${encodeURIComponent(item.id)}`, {
+              method: "DELETE",
+            }).catch(() => undefined),
+          ),
+        );
+      return result;
+    },
+  );
 }
 
 function post<T>(
@@ -778,7 +805,8 @@ export function createApi(token: string | null = null) {
         sessionId,
         mode,
       }),
-    uploadAttachments: (files: File[]) => uploadFiles(token, files),
+    uploadAttachments: (files: File[], signal?: AbortSignal) =>
+      uploadFiles(token, files, signal),
     deleteAttachment: (id: string) =>
       request<{ ok: boolean }>(
         token,

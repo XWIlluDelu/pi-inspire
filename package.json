@@ -107,7 +107,7 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "express": "^5.2.1",
-    "multer": "^2.2.0",
+    "multer": "^2.4.0",
     "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
