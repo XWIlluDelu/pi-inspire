@@ -27,8 +27,8 @@ function PlainRichText({
 }
 
 /** Show exact safe text immediately, then upgrade when the deferred chunk is
- * available. RichText owns streaming reuse of stable math/code leaves; this
- * boundary only owns loading/failure and never delays or drops text deltas. */
+ * available. RichText owns parsing and stable math/code reuse; this boundary
+ * only owns loading/failure and never delays or drops text deltas. */
 export const ProgressiveRichText = memo(function ProgressiveRichText(
   props: RichTextProps,
 ) {
