@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import type { Api } from "../../src/api";
+import {
+  type Api,
+  ApiError,
+  ApiRequestCancelledError,
+  ApiTransportError,
+} from "../../src/api";
 import {
   SessionSelectionController,
   type SessionSelectionState,
@@ -37,6 +42,8 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
   const rememberModel = vi.fn();
   const refreshSessionCatalog = vi.fn();
   const notify = vi.fn();
+  const handleAuthFailure = vi.fn();
+  const confirmUncertainCreation = vi.fn(() => false);
   const controller = new SessionSelectionController({
     state: () => state,
     api: () => currentApi,
@@ -82,7 +89,8 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     rememberModel,
     refreshSessionCatalog,
     notify,
-    handleAuthFailure: vi.fn(),
+    handleAuthFailure,
+    confirmUncertainCreation,
   });
   return {
     controller,
@@ -96,6 +104,8 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     rememberModel,
     refreshSessionCatalog,
     notify,
+    handleAuthFailure,
+    confirmUncertainCreation,
     replaceTransport: () => {
       transportGeneration += 1;
       currentApi = {
@@ -125,7 +135,10 @@ describe("SessionSelectionController", () => {
       expect(harness.state().openingSessionId).toBeNull();
       expect(harness.state().sessionSelectionPending).toBe(true);
       const latest = harness.controller.open("visible");
-      expect(harness.openSession).toHaveBeenCalledWith("visible");
+      expect(harness.openSession).toHaveBeenCalledWith(
+        "visible",
+        expect.any(AbortSignal),
+      );
 
       // An older completion must neither publish nor release the newer owner.
       pending.resolve(snapshot(operation === "create" ? "created" : null));
@@ -140,6 +153,93 @@ describe("SessionSelectionController", () => {
       expect(harness.state().sessionSelectionPending).toBe(false);
     },
   );
+
+  it("aborts superseded observations without letting a stale 401 retire the new owner", async () => {
+    const old = deferred<ActiveSnapshot>();
+    const current = deferred<ActiveSnapshot>();
+    const harness = createHarness();
+    harness.openSession
+      .mockReturnValueOnce(old.promise)
+      .mockReturnValueOnce(current.promise);
+    const first = harness.controller.open("first");
+    const signal = harness.openSession.mock.calls[0]![1] as AbortSignal;
+    const second = harness.controller.open("second");
+    expect(signal.aborted).toBe(true);
+    old.reject(new ApiError(401, "old pairing"));
+    await first;
+    expect(harness.handleAuthFailure).not.toHaveBeenCalled();
+    expect(harness.state().openingSessionId).toBe("second");
+    current.reject(new ApiError(401, "current pairing"));
+    await second;
+    expect(harness.handleAuthFailure).toHaveBeenCalledOnce();
+    expect(harness.state().sessionSelectionPending).toBe(false);
+  });
+
+  it("requires explicit consent to create again after an unknown outcome, even after replacement", async () => {
+    const harness = createHarness();
+    harness.newSession.mockRejectedValueOnce(
+      new ApiTransportError("request", true, true),
+    );
+    await harness.controller.create("/workspace");
+    expect(harness.state().sessionSelectionPending).toBe(false);
+    expect(harness.setActionError).toHaveBeenCalledWith(
+      expect.stringContaining("may still complete"),
+    );
+    harness.controller.invalidateForReplacement();
+    await harness.controller.create("/workspace");
+    expect(harness.confirmUncertainCreation).toHaveBeenCalledOnce();
+    expect(harness.newSession).toHaveBeenCalledOnce();
+    harness.confirmUncertainCreation.mockReturnValue(true);
+    harness.newSession.mockResolvedValueOnce(snapshot("created"));
+    await expect(harness.controller.create("/workspace")).resolves.toBe(
+      "created",
+    );
+    expect(harness.newSession).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])(
+    "requires creation confirmation only if cancelled work may have dispatched (%s)",
+    async (outcomeUnknown) => {
+      const harness = createHarness();
+      harness.newSession.mockRejectedValueOnce(
+        new ApiRequestCancelledError(outcomeUnknown),
+      );
+      await harness.controller.create("/workspace");
+      harness.newSession.mockResolvedValueOnce(snapshot("created"));
+      const result = await harness.controller.create("/workspace");
+      expect(harness.confirmUncertainCreation).toHaveBeenCalledTimes(
+        outcomeUnknown ? 1 : 0,
+      );
+      expect(harness.newSession).toHaveBeenCalledTimes(outcomeUnknown ? 1 : 2);
+      expect(result).toBe(outcomeUnknown ? null : "created");
+    },
+  );
+
+  it("does not treat a gateway timeout as proof that creation failed", async () => {
+    const harness = createHarness();
+    harness.newSession.mockRejectedValueOnce(
+      new ApiError(504, "Gateway timed out"),
+    );
+    await harness.controller.create("/workspace");
+    await harness.controller.create("/workspace");
+    expect(harness.confirmUncertainCreation).toHaveBeenCalledOnce();
+    expect(harness.newSession).toHaveBeenCalledOnce();
+  });
+
+  it("does not duplicate pending creation and does not require consent after a definitive refusal", async () => {
+    const pending = deferred<ActiveSnapshot>();
+    const harness = createHarness();
+    harness.newSession.mockReturnValueOnce(pending.promise);
+    const first = harness.controller.create("/workspace");
+    await harness.controller.create("/workspace");
+    expect(harness.newSession).toHaveBeenCalledOnce();
+    pending.reject(new ApiError(400, "Invalid directory"));
+    await first;
+    harness.newSession.mockResolvedValueOnce(snapshot("created"));
+    await harness.controller.create("/workspace");
+    expect(harness.confirmUncertainCreation).not.toHaveBeenCalled();
+    expect(harness.newSession).toHaveBeenCalledTimes(2);
+  });
 
   it("keeps reselecting an idle visible session a no-op", async () => {
     const harness = createHarness();
@@ -192,6 +292,9 @@ describe("SessionSelectionController", () => {
 
     const opening = harness.controller.open("pending");
     harness.controller.invalidateForReplacement();
+    expect((harness.openSession.mock.calls[0]![1] as AbortSignal).aborted).toBe(
+      true,
+    );
     expect(harness.state().openingSessionId).toBeNull();
     pending.resolve(snapshot("pending"));
     await opening;

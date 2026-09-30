@@ -63,7 +63,13 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   A missing first snapshot, application-frame inactivity, failed server ping/pong, stale visibility
   return, online transition, or BFCache restoration replaces the old transport through that same
   resume-or-bootstrap boundary. Server heartbeats never overtake a joining snapshot, and both
-  snapshot and reconnect attempts remain bounded by deadlines and backoff. Established sockets
+  snapshot and reconnect attempts remain bounded by deadlines and backoff. WebSocket connection
+  establishment has a 10-second bound; once open, the first authoritative snapshot gets a separate
+  45-second observation window, allowing Pi's 30-second read budget plus transfer time. Bootstrap
+  (initial or addressed reconnect) and changed detail interest reuse that observation budget;
+  missing-detail bootstrap fallback stays within the original bootstrap deadline. Neither heartbeats
+  nor stale snapshots extend it; expired sockets cannot apply late frames or close callbacks to a
+  replacement owner. Established sockets
   receive ordered Host-coalesced assistant deltas rather than repeated cumulative messages, while a
   socket joining behind snapshot synchronization receives complete idempotent message replacements.
   The Host flushes a same-message batch after 16ms or before a lifecycle/identity boundary; the
@@ -120,6 +126,41 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   projection only moved to an external source is a persistent yellow attention state that still
   blocks writes and offers recovery; incomplete persistence, projection failure, and
   acceptance-unknown outcomes remain red blocking errors.
+
+### HTTP observation ownership
+
+- Ordinary JSON requests bound the complete response (headers and body) to 45 seconds. New-session
+  and one-shot fork observations allow 120 seconds for startup and publication. Native commands
+  (including compaction/export) and branch navigation remain completion-driven with no observation
+  deadline: Pi hooks, dialogs, and long work may legitimately take longer. Real transport loss still
+  reports typed uncertainty, and explicit observer cancellation remains available. Bounded deadlines
+  abort only the HTTP observer and never stop a worker or retry a write. An operation may still
+  complete after its observer expires; the browser reports an unconfirmed outcome, not a definitive
+  execution failure. Prompt and terminal receipts retain their separate identity semantics.
+
+- Explicit cancellation is distinct from transport failure. A superseded open/new/deselect aborts
+  its observer immediately, including replacement by bootstrap. Pending-open deduplication lasts
+  only for that bounded observation. Success, failure, and cleanup still require the selection,
+  API, and transport owner; a cancelled request's late response or 401 cannot replace the current
+  view or retire its authentication. Ordinary socket loss alone does not supersede a current HTTP
+  selection; a subsequent bootstrap replacement does.
+
+- A transport failure cannot establish whether a mutation happened. Read-only POSTs use read
+  uncertainty rather than mutation-outcome language. Session creation has no retained receipt:
+  concurrent creates are suppressed, and another create after an unconfirmed outcome requires an
+  explicit warning/confirmation to inspect the session list first. That guard survives selection
+  and transport replacement within the current page; it is not a durable operation identity or
+  an exactly-once guarantee across page reloads. Gateway timeouts do not count as definitive
+  creation refusals. Pre-dispatch cancellation is known not to have created a session and does not
+  require that confirmation. A lost error-response body is transport uncertainty, not an
+  authoritative application refusal; non-JSON HTTP error pages retain their status and edge markers
+  for ordinary connection-error presentation.
+
+Checks: API/controller tests cover stalled headers and bodies, cancellation, late replies,
+read/write uncertainty, successful commands/navigation beyond 120 seconds, and bounded
+connect/snapshot/bootstrap blackholes.
+`store-async-ownership.test.ts` also exercises a blackholed open with healthy heartbeats, release
+and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-create warning.
 
 ### Prompt observation ownership
 

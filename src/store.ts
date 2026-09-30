@@ -42,6 +42,7 @@ import {
   ApiError,
   ApiTransportError,
   createApi,
+  HTTP_OBSERVATION_TIMEOUT_MS,
   type ProjectFileSearchResult,
 } from "./api";
 import {
@@ -87,7 +88,6 @@ export type {
 } from "./app-state";
 
 const NOTICE_TTL_MS = 8_000;
-const BOOTSTRAP_TIMEOUT_MS = 15_000;
 const MAX_COMMAND_ACTIVITIES = 4;
 const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
   accepted: true,
@@ -291,6 +291,10 @@ export class AppStore {
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
+    confirmUncertainCreation: () =>
+      window.confirm(
+        "The previous session creation was not confirmed and may still complete. Inspect the session list before continuing. Create another session anyway?",
+      ),
   });
   private readonly runtimeEvents = new RuntimeEventController({
     state: () => this.state,
@@ -629,8 +633,9 @@ export class AppStore {
     const bootstrapRequest = new AbortController();
     this.bootstrapRequest = bootstrapRequest;
     const bootstrapTimeout = setTimeout(
-      () => bootstrapRequest.abort(),
-      BOOTSTRAP_TIMEOUT_MS,
+      () =>
+        bootstrapRequest.abort(new DOMException("Deadline", "TimeoutError")),
+      HTTP_OBSERVATION_TIMEOUT_MS,
     );
     this.authToken = token;
     this.api = api;

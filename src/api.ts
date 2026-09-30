@@ -107,16 +107,27 @@ export class ApiError extends Error {
   }
 }
 
-/** The request did not produce a trustworthy application response. A write's
- * outcome is therefore unknown until its operation identity is checked. */
 export const PROMPT_CONFIRMATION_TIMEOUT_MS = 30_000;
+// Leave room for the Host's 30-second Pi reads and response transfer.
+export const HTTP_OBSERVATION_TIMEOUT_MS = 45_000;
+export const LONG_HTTP_OBSERVATION_TIMEOUT_MS = 120_000;
 
+/** No trustworthy application response. A mutation may still complete; an
+ * observation failure is never permission to replay it. */
 export class ApiTransportError extends Error {
-  constructor(public phase: "request" | "response") {
+  constructor(
+    public phase: "request" | "response",
+    public outcomeUnknown = false,
+    public timedOut = false,
+  ) {
     super(
-      phase === "request"
-        ? "The INSΠRE address did not return a response"
-        : "The INSΠRE address returned an invalid response",
+      outcomeUnknown
+        ? "INSΠRE could not confirm this operation's outcome. It may still complete. Inspect the current state before trying again."
+        : timedOut
+          ? "The INSΠRE response deadline expired. Try the read again."
+          : phase === "request"
+            ? "The INSΠRE address did not return a response"
+            : "The INSΠRE address returned an invalid response",
     );
     this.name = "ApiTransportError";
   }
@@ -168,8 +179,12 @@ async function ensureOk(response: Response): Promise<void> {
     if (Array.isArray(body.matches)) matches = body.matches.map(String);
     if (typeof body.code === "string") code = body.code;
     outcomeUnknown = body.outcomeUnknown === true;
-  } catch {
-    // keep status-based message
+  } catch (error) {
+    if (aborted(error)) throw error;
+    // A non-JSON HTTP error still has a useful status. Losing the body in
+    // transit, however, is not an authoritative application refusal.
+    if (!(error instanceof SyntaxError))
+      throw new ApiTransportError("response");
   }
   throw new ApiError(
     response.status,
@@ -192,24 +207,92 @@ function authorizationHeader(token: string | null): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Cancellation retires an observer, not a Host operation. Keep it distinct
+ * from a failed transport, even when the abandoned write may have committed. */
+export class ApiRequestCancelledError extends Error {
+  constructor(public outcomeUnknown: boolean) {
+    super("Request observation cancelled");
+    this.name = "AbortError";
+  }
+}
+
+interface ObservationOptions {
+  /** null keeps Pi-owned long operations completion-driven. */
+  timeoutMs?: number | null;
+  mutation?: boolean;
+}
+
+async function observeRequest<T>(
+  signal: AbortSignal | null | undefined,
+  {
+    timeoutMs = HTTP_OBSERVATION_TIMEOUT_MS,
+    mutation = false,
+  }: ObservationOptions,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  // A pre-cancelled request has never been dispatched.
+  if (signal?.aborted) throw new ApiRequestCancelledError(false);
+  const controller = new AbortController();
+  let cancel!: () => void;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    cancel = () => {
+      reject(
+        signal?.reason?.name === "TimeoutError"
+          ? new ApiTransportError("request", mutation, true)
+          : new ApiRequestCancelledError(mutation),
+      );
+      controller.abort();
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (timeoutMs !== null)
+      timer = setTimeout(() => {
+        reject(new ApiTransportError("request", mutation, true));
+        controller.abort();
+      }, timeoutMs);
+  });
+  try {
+    // Bound body consumption too, and settle even if a transport ignores abort.
+    return await Promise.race([run(controller.signal), interrupted]);
+  } catch (error) {
+    // Fetch/body aborts without an owner cancellation are transport loss too.
+    if (aborted(error) && !(error instanceof ApiRequestCancelledError))
+      throw new ApiTransportError("request", mutation);
+    if (error instanceof ApiTransportError && mutation && !error.outcomeUnknown)
+      throw new ApiTransportError(error.phase, true, error.timedOut);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
 async function request<T>(
   token: string | null,
   path: string,
   init: RequestInit = {},
+  options: ObservationOptions = {},
 ): Promise<T> {
-  const response = await applicationFetch(path, {
-    ...init,
-    credentials: "same-origin",
-    headers: {
-      ...authorizationHeader(token),
-      ...(init.body !== undefined
-        ? { "Content-Type": "application/json" }
-        : {}),
-      ...init.headers,
+  return observeRequest(
+    init.signal,
+    { mutation: Boolean(init.method && init.method !== "GET"), ...options },
+    async (signal) => {
+      const response = await applicationFetch(path, {
+        ...init,
+        signal,
+        credentials: "same-origin",
+        headers: {
+          ...authorizationHeader(token),
+          ...(init.body !== undefined
+            ? { "Content-Type": "application/json" }
+            : {}),
+          ...init.headers,
+        },
+      });
+      await ensureOk(response);
+      return responseJson<T>(response);
     },
-  });
-  await ensureOk(response);
-  return responseJson<T>(response);
+  );
 }
 
 interface ResourceContentOptions {
@@ -299,12 +382,18 @@ function post<T>(
   path: string,
   body?: unknown,
   init: RequestInit = {},
+  options: ObservationOptions = {},
 ): Promise<T> {
-  return request<T>(token, path, {
-    ...init,
-    method: "POST",
-    body: JSON.stringify(body ?? {}),
-  });
+  return request<T>(
+    token,
+    path,
+    {
+      ...init,
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    },
+    options,
+  );
 }
 
 async function observePrompt(
@@ -494,10 +583,24 @@ export function createApi(token: string | null = null) {
         token,
         `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
       ),
-    navigateBranch: (body: BranchNavigateRequest) =>
-      post<BranchNavigateResponse>(token, "/api/branches/navigate", body),
+    navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
+      post<BranchNavigateResponse>(
+        token,
+        "/api/branches/navigate",
+        body,
+        { signal },
+        { timeoutMs: null },
+      ),
     forkBranch: (body: BranchForkRequest) =>
-      post<BranchForkResponse>(token, "/api/branches/fork", body),
+      post<BranchForkResponse>(
+        token,
+        "/api/branches/fork",
+        body,
+        {},
+        {
+          timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
+        },
+      ),
     sessions: (query: string, offset = 0, limit = 40) =>
       request<SessionListResponse>(
         token,
@@ -510,19 +613,37 @@ export function createApi(token: string | null = null) {
         token,
         "/api/sessions/by-id",
         { ids },
+        {},
+        { mutation: false },
       ),
     sessionsByCwds: (cwds: string[]) =>
       post<{ sessions: SessionListResponse["sessions"] }>(
         token,
         "/api/sessions/by-cwd",
         { cwds },
+        {},
+        { mutation: false },
       ),
-    openSession: (id: string) =>
-      post<ActiveSnapshot>(token, "/api/sessions/open", { id }),
-    deselectSession: () =>
-      post<ActiveSnapshot>(token, "/api/sessions/deselect"),
-    newSession: (cwd: string, options: NewSessionOptions = {}) =>
-      post<ActiveSnapshot>(token, "/api/sessions/new", { cwd, ...options }),
+    openSession: (id: string, signal?: AbortSignal) =>
+      post<ActiveSnapshot>(token, "/api/sessions/open", { id }, { signal }),
+    deselectSession: (signal?: AbortSignal) =>
+      post<ActiveSnapshot>(token, "/api/sessions/deselect", undefined, {
+        signal,
+      }),
+    newSession: (
+      cwd: string,
+      options: NewSessionOptions = {},
+      signal?: AbortSignal,
+    ) =>
+      post<ActiveSnapshot>(
+        token,
+        "/api/sessions/new",
+        { cwd, ...options },
+        { signal },
+        {
+          timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
+        },
+      ),
     newSessionDefaults: (cwd: string) =>
       request<NewSessionDefaults>(
         token,
@@ -614,11 +735,13 @@ export function createApi(token: string | null = null) {
       withTransportMeasure("prompt-confirmation", () =>
         deliverPrompt(token, body, signal),
       ),
-    nativeCommand: (body: HostNativeCommandRequest) =>
+    nativeCommand: (body: HostNativeCommandRequest, signal?: AbortSignal) =>
       post<HostNativeCommandResponse>(
         token,
         "/api/control/native-command",
         body,
+        { signal },
+        { timeoutMs: null },
       ),
     abort: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
@@ -705,6 +828,7 @@ export function createApi(token: string | null = null) {
         "/api/git/diff",
         { sessionId, pathId, side },
         { signal },
+        { mutation: false },
       ),
     browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
     browseHostDirs: (path?: string, showHidden = false) => {
@@ -729,6 +853,7 @@ export function createApi(token: string | null = null) {
           ...(options.limit ? { limit: options.limit } : {}),
         },
         { signal: options.signal },
+        { mutation: false },
       ),
     probeResources: (
       sessionId: string,
@@ -740,6 +865,7 @@ export function createApi(token: string | null = null) {
         "/api/resources/probe",
         { sessionId, references },
         { signal },
+        { mutation: false },
       ),
     resolveResource: (
       sessionId: string,
@@ -756,6 +882,7 @@ export function createApi(token: string | null = null) {
           ...(workspacePath !== undefined ? { workspacePath } : {}),
         },
         { signal },
+        { mutation: false },
       ),
     resourceContent: (
       id: string,
