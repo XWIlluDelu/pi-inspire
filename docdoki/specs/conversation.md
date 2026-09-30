@@ -249,8 +249,9 @@ custom messages remain independent readable boundaries in this contract.
 - Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is
   modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and
   remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry
-  timers; expiry, settle, abort, worker replacement/exit, and close remove stale requests, and
-  snapshots restore only live requests.
+  timers; expiry, explicit Stop, worker replacement/exit, and close remove stale requests.
+  Model settlement does not end an independent extension command or its dialog. Snapshots retain
+  pending requests with their owning worker.
 
 - The user can send steering input during work and queue follow-up input for after completion.
   Pending is a quiet, bounded, text-only projection of public Pi `queue_update` events with separate

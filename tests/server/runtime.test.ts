@@ -3694,7 +3694,7 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
-  it("preserves concurrent dialogs, mirrors expiry, and clears every request at lifecycle boundaries", async () => {
+  it("preserves dialogs across model settlement and clears them on expiry, response, Stop, or worker loss", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const emitted: Array<Record<string, unknown>> = [];
@@ -3787,7 +3787,25 @@ describe("RuntimeController concurrent sessions", () => {
       method: "confirm",
     });
     worker.emit("event", { type: "agent_settled" });
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    expect(
+      (await runtime.snapshot()).pendingExtensionUiRequests?.map(
+        (request) => request.id,
+      ),
+    ).toEqual(["settle-a", "settle-b"]);
+    await runtime.extensionUiResponse({
+      sessionId: "a",
+      id: "settle-a",
+      confirmed: true,
+    });
+    expect(worker.uiResponses).toContainEqual({
+      id: "settle-a",
+      confirmed: true,
+    });
+    expect(
+      (await runtime.snapshot()).pendingExtensionUiRequests?.map(
+        (request) => request.id,
+      ),
+    ).toEqual(["settle-b"]);
 
     worker.emit("event", {
       type: "extension_ui_request",

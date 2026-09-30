@@ -1,65 +1,55 @@
-# Adapting Pi Extensions to INSΠRE
+# Adapting Pi extensions to Inspire
 
-INSΠRE is an extension-neutral Web frontend for Pi. Pi remains the authority for an Extension's commands, tools, state, and lifecycle; INSΠRE projects the parts of Pi's RPC protocol that have Web meaning. It does not recognize third-party Extension package names or translate terminal components into React.
+Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their RPC-visible data in the browser. Start with commands, dialogs, and text widgets; use [tool-presentation rules](tool-presentations.md) for custom cards. Dedicated buttons, panels, and shortcuts currently require source changes.
 
-The only Extension shipped by INSΠRE is a private branch-operation bridge used by the Host. It has no user-facing presentation. The rich cards shipped for `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` describe Pi-native tool shapes, not particular third-party Extensions.
+Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `grep`, `find`, and `ls`. Other tools get generic cards with arguments, output, images, and expandable structured details. The only bundled Pi extension is an internal branch-navigation command; it adds no model tools.
 
-This guide is for light adaptation: keep the Extension as the behavioral owner, use existing generic projections where possible, and make a small source change only when a dedicated GUI surface is genuinely better. Replacing the whole workbench is outside this guide.
+The Host uses your installed Pi for both SDK calls and RPC workers. `package.json` pins the development test version, not the runtime installation.
 
-## What works without an INSΠRE patch
+## What works through RPC
 
-The supported Pi version is the one pinned by this project. Its RPC behavior is the compatibility authority.
-
-| Pi Extension feature | INSΠRE behavior | Adaptation advice |
+| Extension feature | Browser behavior | Adaptation |
 | --- | --- | --- |
-| `registerCommand()` | Commands appear in the command palette and Composer `/` completion. | Prefer this for occasional actions. No dedicated button is normally needed. |
-| `registerTool()` | The tool runs in Pi. Unknown tools receive a complete generic card. | Add a data-only Tool Presentation when the arguments or result have a stable useful shape. |
-| `select`, `confirm`, `input`, `editor` | Native INSΠRE modal dialog. | Use for interactions that must block the Extension until the user answers. |
-| `notify` | Transient notice. | Use for a completed event, warning, or failure—not durable state. |
-| `setStatus` | Compact text in the desktop top bar. The Host retains at most 1,024 characters per value; the top bar may visually truncate that retained value further and expose it in a tooltip. Current keyed values survive a browser reconnect and clear with the owning worker. | Keep it short and clear it with the same key. Mobile intentionally omits Extension status text. |
-| `setWidget(key, string[], placement)` | Native bounded text widget immediately above or below the Composer. Updates replace the same key; `undefined` clears it. | Best generic surface for Todo lists, quotas, and session state that informs the next prompt. |
-| `setWidget(key, componentFactory)` | Ignored by Pi in RPC mode. | Supply a string-array branch when `ctx.mode === "rpc"`; retain the factory for TUI mode. |
+| `registerCommand()` | Command palette and Composer `/` completion. | Use for occasional actions. Native command names take precedence; namespaced commands avoid collisions. |
+| `registerTool()` | Runs in Pi and receives a native, configured, or generic card. | Add a presentation rule for a useful stable data shape. |
+| `select`, `confirm`, `input`, `editor` | Modal dialogs after worker startup. | Move interactive setup into a command; see [startup](#startup). |
+| `notify` | Transient notice. | Use for completion, warning, or failure. |
+| `setStatus` | Keyed desktop top-bar text; retained up to 1,024 characters with visual truncation and a tooltip. Restored on reconnect, cleared with the worker. | Keep it short. Mobile omits this text. |
+| `setWidget(key, string[], options)` | Bounded text above or below the Composer. Reusing a key replaces it; `undefined` clears it. | Use for Todo lists, quotas, or next-prompt context. |
+| `setWidget(key, componentFactory)` | Ignored by Pi in RPC mode. | Supply a string-array branch for RPC. |
 | `setTitle` | Browser document title. | Treat it as transient session presentation. |
-| `setEditorText` | Replaces the current Composer draft through Pi's RPC request. | Use sparingly; never assume ownership of a draft after the user edits it. |
-| `custom()` | Returns `undefined` in RPC mode. | Replace it with the standard dialogs or a command-driven Web path. |
-| `setFooter`, `setHeader`, `setEditorComponent`, `setWorkingMessage`, `setWorkingIndicator`, `setToolsExpanded` | Pi RPC makes these no-ops or fixed defaults. | Do not infer a Web placement from a terminal layout. Choose a semantic Web surface below. |
-| TUI message/tool renderers and component factories | Not serialized by Pi RPC. | Keep them as TUI presentation; INSΠRE uses its native or generic Web renderer. |
-| `registerShortcut()` and raw terminal input | No browser shortcut contribution is created. | Register a command first. Add a Web shortcut only in a source customization with conflict and focus handling. |
+| `setEditorText` | Replaces the Composer draft. | Account for user edits before replacing it again. |
+| `custom()` | Returns `undefined` in RPC mode. | Use standard dialogs or commands. |
+| `setFooter`, `setHeader`, `setEditorComponent`, `setWorkingMessage`, `setWorkingIndicator`, `setToolsExpanded` | No-ops or fixed defaults in Pi RPC. | Present the information as status, a widget, or a command. |
+| TUI message/tool renderers | Terminal components are not serialized. | Keep the TUI renderer and add a Web projection. |
+| `registerShortcut()` and terminal input handlers | No browser shortcut is created. | Expose a command first; a Web shortcut needs source-level focus/conflict handling. |
 
-Component factories are the most common source of a misleading result: the Extension is running, but there is nothing Pi can send to the browser. Branch on `ctx.mode`, not `ctx.hasUI`; both TUI and RPC report UI availability.
+Branch on `ctx.mode`, not `ctx.hasUI`: both TUI and RPC report UI availability.
 
-## Choose the smallest adapter
+## Startup
 
-Use this order. Stop at the first level that expresses the behavior honestly.
+RPC startup must finish before Pi can consume a dialog response. Awaiting `select`, `confirm`, `input`, or `editor` in `session_start` therefore fails with `PI_STARTUP_RESPONSE_UI_UNSUPPORTED`, and Inspire stops that worker. Startup notices, status, and text widgets work.
 
-1. **Existing RPC projection** — commands, dialogs, notices, status, and text widgets require no INSΠRE change.
-2. **Tool Presentation configuration** — describe a custom or overridden Tool with INSΠRE's bounded data-only rule format.
-3. **Small source adaptation** — add a dedicated button or panel only when the interaction is frequent and its data cannot be represented by the first two levels.
-4. **New shared protocol** — propose this only when several real Extensions need the same missing semantics. A private event convention or arbitrary browser code injection is not a substitute for a protocol.
+For interactive setup, register a command and advertise it in a startup notice or widget. The command can open dialogs once the worker is ready. Retain the existing interactive startup path in TUI mode if needed.
 
-INSΠRE has no runtime React plugin API. Source-level UI adaptations require a source checkout and carry their own merge responsibility. The installed npm package contains the built application, not an editable frontend SDK.
+## Session lifecycle
 
-## Place UI by meaning
+GUI navigation uses independent workers rather than switching one TUI process between every conversation:
 
-Do not group unrelated features merely because they came from Extensions.
+| GUI action | Extension lifecycle |
+| --- | --- |
+| Select a conversation | Changes the browser view. A cached worker keeps running; selection does not call its `session_before_switch` or rerun `session_start`. Starting or restoring a worker runs normal startup. |
+| New session | Starts an independent worker. |
+| Navigate within a session tree | Uses Pi's `navigateTree` operation and native hooks through the internal command bridge. |
+| Fork | Copies a verified snapshot through Pi's `SessionManager` into a separate session. Source `session_before_fork` / `session_fork` hooks do not run and cannot veto it. Persisted extension entries follow Pi branch semantics; process memory and pending dialogs stay with the source. The destination loads extensions during startup. |
 
-| Information or action | Preferred surface | Avoid |
-| --- | --- | --- |
-| Occasional action | Existing Pi command in the command palette | Permanent top-bar button |
-| Frequent session-wide action | One quiet icon button in `AppTopbar` | Text button competing with session identity |
-| State relevant to the next prompt | `setWidget(..., { placement: "aboveEditor" })` | A transcript message repeated on every update |
-| Secondary status or quota detail | Short `setStatus`; command-toggled text widget for detail | Replacing INSΠRE's run-state chip or footer |
-| Tool invocation and result | Tool card / Tool Presentation | Separate global panel duplicating the result |
-| Project files, changes, or branch-shaped data | A Resources-pane mode | Squeezing a large panel beside the Composer |
-| Blocking choice | Existing Extension dialog methods | Hand-built overlay or `window.confirm()` |
-| Transient completion or warning | `notify` | Persistent widget |
-| Durable conversational fact | Pi message or Extension-owned persistence | Browser `localStorage` as a second authority |
+Keep state scoped to its Pi session and reconstruct it from persisted entries during `session_start` where appropriate. An extension relying on source-runtime switch/fork hooks needs to account for these GUI actions separately.
 
-Settings is for persisted INSΠRE preferences. Runtime diagnostics, Todo state, and quotas do not belong there merely because space is available.
+## Text-widget recipes
 
-## Recipe: preserve a TUI Todo widget and add the Web projection
+### Todo widget
 
-Keep the Todo model and mutations in the Extension. Only the rendering branch changes:
+Keep one Todo model and provide a renderer for each mode:
 
 ```ts
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -69,18 +59,6 @@ type Todo = {
   status: "pending" | "in_progress" | "completed";
 };
 
-function todoLines(todos: Todo[]): string[] {
-  return todos.map((todo) => {
-    const mark =
-      todo.status === "completed"
-        ? "✓"
-        : todo.status === "in_progress"
-          ? "→"
-          : "·";
-    return `${mark} ${todo.content}`;
-  });
-}
-
 function updateTodoPresentation(ctx: ExtensionContext, todos: Todo[]) {
   const visible = todos.filter((todo) => todo.status !== "completed");
   if (visible.length === 0) {
@@ -89,26 +67,28 @@ function updateTodoPresentation(ctx: ExtensionContext, todos: Todo[]) {
   }
 
   if (ctx.mode === "rpc") {
-    ctx.ui.setWidget("example.todos", todoLines(visible), {
-      placement: "aboveEditor",
-    });
+    ctx.ui.setWidget(
+      "example.todos",
+      visible.map((todo) =>
+        `${todo.status === "in_progress" ? "→" : "·"} ${todo.content}`,
+      ),
+      { placement: "aboveEditor" },
+    );
     return;
   }
 
-  // Keep the Extension's existing TUI component factory here.
+  // Your extension's existing TUI component factory.
   ctx.ui.setWidget("example.todos", createTodoComponent(visible), {
     placement: "aboveEditor",
   });
 }
 ```
 
-Use one stable, namespaced key; every update replaces that widget. Keys longer than 240 characters are rejected rather than truncated into a different identity. Clear it when empty and during the Extension lifecycle that invalidates its state. Send plain semantic text in RPC mode. INSΠRE strips terminal control sequences rather than reproducing ANSI styling.
+Use a stable namespaced key and clear the widget when its state expires. Keys longer than 240 characters are rejected. Send plain text in RPC mode; Inspire strips terminal control sequences.
 
-Do not parse the TUI component's rendered lines back into a Todo model. Both renderers must read the same Extension-owned state.
+### Usage footer
 
-## Recipe: adapt a quota or usage footer
-
-A TUI footer factory cannot cross RPC. Split the compact fact from optional detail:
+A TUI footer factory cannot cross RPC. Use `setStatus` for the compact fact and a command-toggled widget for detail:
 
 ```ts
 function publishUsage(ctx: ExtensionContext, usage: Usage) {
@@ -117,117 +97,55 @@ function publishUsage(ctx: ExtensionContext, usage: Usage) {
     `5h ${usage.fiveHourPercent}% · week ${usage.weekPercent}%`,
   );
 
-  if (ctx.mode === "rpc" && usageDetailsOpen) {
+  if (ctx.mode === "rpc") {
     ctx.ui.setWidget(
       "example.usage-details",
-      [
-        `5 hour window   ${usage.fiveHourPercent}%`,
-        `Weekly window   ${usage.weekPercent}%`,
-        `Resets          ${usage.resetLabel}`,
-      ],
+      usageDetailsOpen
+        ? [
+            `5 hour window   ${usage.fiveHourPercent}%`,
+            `Weekly window   ${usage.weekPercent}%`,
+            `Resets          ${usage.resetLabel}`,
+          ]
+        : undefined,
       { placement: "belowEditor" },
     );
-  } else if (ctx.mode === "rpc") {
-    ctx.ui.setWidget("example.usage-details", undefined);
   }
 }
 ```
 
-Register a `/usage` command to toggle `usageDetailsOpen`; it is automatically discoverable in INSΠRE. Keep the status short, and keep fetching, caching, and reset calculations in the Extension.
+Register `/usage` to toggle `usageDetailsOpen`. Fetching, caching, and calculations stay in the extension.
 
-## Recipe: present a custom or overridden Tool
+## Custom cards and source changes
 
-Use the ignored local configuration described in [Custom tool presentations](tool-presentations.md). The minimum useful configuration maps an exact RPC tool name to a namespaced rule:
+A [tool-presentation rule](tool-presentations.md#example) maps an exact tool name to a summary and typed blocks. It can also replace a native-name mapping when an extension overrides that tool. Rules customize content within the existing card; they cannot inject React, HTML, CSS, or JavaScript.
 
-```json
-{
-  "version": 1,
-  "rules": {
-    "user.example.search": {
-      "summary": [
-        { "value": { "path": "args.query", "prefix": "/", "suffix": "/" } }
-      ],
-      "blocks": [
-        {
-          "type": "search",
-          "label": "Matches",
-          "source": { "path": "result.text" },
-          "format": "grouped-lines"
-        }
-      ]
-    }
-  },
-  "mappings": {
-    "my_search": "user.example.search"
-  }
-}
-```
+For interactions that need a dedicated control, modify the relevant source owner:
 
-The rule owns summary content and typed blocks. INSΠRE owns card layout, typography, disclosure, truncation, resource behavior, accessibility, and responsive presentation. Rules cannot inject React, HTML, CSS, JavaScript, filesystem reads, or network requests. A missing or incompatible value falls back to the generic raw card rather than inventing output.
+| Surface | Source |
+| --- | --- |
+| Command discovery | `src/components/CommandPalette.tsx` — registered Pi commands already appear here. |
+| Frequent session-wide action | `src/components/AppTopbar.tsx` |
+| Composer-adjacent RPC widgets | `src/components/ExtensionDisplays.tsx` |
+| Unknown one-way display messages | `src/components/transcript-rows.tsx` |
+| Project/session detail | `src/components/ContextPane.tsx` and its Files, preview, and Changes children |
+| State and event projection | `src/store.ts`, `src/events.ts` |
+| Layout composition | `src/App.tsx` |
+| Dialog focus | `src/use-modal-focus.ts` |
+| Styling | Tokens in `src/styles/foundation.css` and the relevant `src/styles/*.css` component sheet |
 
-## Source-level adaptation
+A pinned command button should reuse command dispatch, for example `store.sendPrompt("/goal")`, and be disabled when that command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
-First confirm that an existing command or widget is insufficient. Then modify the narrowest current owner:
+Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Match neighboring controls' accessible labels and keyboard behavior, retain 44px coarse-pointer targets, and respect reduced motion.
 
-- `src/components/CommandPalette.tsx` — discoverable actions. Pi commands already enter automatically.
-- `src/components/AppTopbar.tsx` — only frequent session-wide navigation or actions.
-- `src/components/ExtensionDisplays.tsx` — generic RPC text-widget presentation beside the Composer.
-- `src/components/transcript-rows.tsx` — inspectable fallback for unknown one-way display methods.
-- `src/components/ContextPane.tsx` and its Files, preview, and Changes children — persistent project/session detail with its own navigation mode.
-- `src/App.tsx` — composition and placement, not feature state.
-- `src/store.ts` and `src/events.ts` — browser projection and lifecycle; do not put product state in components.
-- `shared/contracts.ts` and `server/runtime.ts` — only when the Host must validate or project new data.
-- `src/use-modal-focus.ts` — the sole modal ownership mechanism.
-- `src/styles.css` — existing tokens and component classes remain the visual authority.
+Inspire has no runtime React plugin API. Source customization needs a checkout and a rebuilt frontend; the npm package contains the built application.
 
-A justified pinned command button should reuse the same execution path as the command palette:
+## Reload and verify
 
-```tsx
-<button
-  type="button"
-  className="icon-button"
-  aria-label="Open goals"
-  title="Open goals"
-  disabled={!state.commands.some((command) => command.name === "goal")}
-  onClick={() => void store.sendPrompt("/goal")}
->
-  <Target size={15} aria-hidden />
-</button>
-```
+| Changed content | Apply it |
+| --- | --- |
+| Pi extension, skill, prompt, or context file | Run `/reload` in the idle session. It replaces that worker and resets its in-memory extension state. |
+| Selected tool-presentation JSON | Save and refresh the browser; authenticated bootstrap revalidates it. |
+| Host environment or configuration-file path | Restart the Host. |
+| React, CSS, or contract source | Rebuild. In a checkout, `./inspire restart` detects changed browser inputs and rebuilds before restarting. |
 
-Place it in `topbar__actions` only if the action is frequent enough to justify permanent chrome. Keep the registered Pi command as the fallback and source of behavior. Commands requiring free-form arguments should remain in the Composer rather than opening an ad hoc prompt.
-
-### Reload boundaries
-
-- Pi loads Extensions into each worker. An Extension source change is not a live frontend update; a fresh Host restart is the definitive reload after active work has settled.
-- Tool Presentation configuration is revalidated on authenticated bootstrap/refresh and does not require rebuilding INSΠRE.
-- React, contract, or CSS changes require a source build. In a source checkout, the launcher detects changed browser-build inputs; `./inspire restart` rebuilds when needed and then starts fresh workers. An installed npm package does not contain the TypeScript source to patch.
-
-## Visual and interaction rules
-
-A source adaptation should look like INSΠRE, not like a mini-application mounted inside it.
-
-- Reuse CSS variables and existing classes; do not add raw theme colors or duplicate light/dark branches.
-- Use Lucide icons at the neighboring control's size and stroke. An icon-only control needs both `aria-label` and `title`.
-- Use accent for selection/action, violet for Thinking, cyan for tool activity, and semantic warning/error/success colors only for those states.
-- Keep top-bar actions quiet and icon-only. Keep long text in a bounded panel or widget, not navigation chrome.
-- Preserve the current reading width. A new wide data view belongs in Resources rather than widening Transcript.
-- At the narrow-workbench boundary, use the existing drawer/overlay model; do not squeeze side panels into the center. Touch targets must remain at least 44 by 44 CSS pixels where coarse-pointer controls are exposed.
-- Reuse `useModalFocus` for dialogs. Only the top modal handles Escape and Tab; shell shortcuts must not fire through it.
-- Respect reduced motion and existing duration/easing tokens. Add motion only to explain state or spatial change.
-- Keep extension state session-scoped when Pi scopes it to a session. Clear or replace stale projections on session and worker lifecycle boundaries.
-
-## Verification checklist
-
-For a light adaptation, verify only the states its semantics require:
-
-- Extension absent, loading, active, updated, cleared, and failed where applicable.
-- TUI mode still uses the original presentation; RPC mode emits only serializable data.
-- Switching sessions does not show another session's widget or status.
-- Reconnect or worker replacement does not leave stale browser-only authority.
-- The command remains usable from the command palette when a dedicated control is absent.
-- Long text is bounded; complete Tool arguments/results remain available through the ordinary card copy behavior.
-- Keyboard focus, Escape, screen-reader labels, dark/light themes, and a 390-pixel viewport remain usable.
-- No credential or private payload is copied into frontend configuration, fixtures, screenshots, or committed documentation.
-
-If several adaptations repeatedly require the same missing capability, document the common semantics before adding a shared contribution point. The next step should be a bounded, versioned, data-oriented contract—not arbitrary executable frontend injection.
+Verify the adaptation's update/clear/failure paths, switching between sessions, and reconnect. Check both RPC and retained TUI behavior, plus long content, keyboard focus, light/dark themes, and a narrow viewport. Use synthetic data in committed fixtures and screenshots.

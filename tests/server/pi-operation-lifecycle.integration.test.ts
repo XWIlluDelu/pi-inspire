@@ -119,7 +119,11 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function fixture(autoCompaction: boolean, compactionDelayMs = 35_000) {
+async function fixture(
+  autoCompaction: boolean,
+  compactionDelayMs = 35_000,
+  modelReplyGate?: Promise<void>,
+) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-pi-operation-")),
   );
@@ -208,6 +212,8 @@ async function fixture(autoCompaction: boolean, compactionDelayMs = 35_000) {
         response.writeHead(400).end("Unexpected synthetic provider request");
         return;
       }
+      await modelReplyGate;
+      if (response.destroyed) return;
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -761,6 +767,50 @@ describe("installed Pi operation lifecycle", () => {
       expect.arrayContaining([expect.objectContaining({ role: "system" })]),
     );
   }, 90_000);
+
+  it("keeps an independent command's dialog answerable when the model settles", async () => {
+    let releaseModel!: () => void;
+    const modelReplyGate = new Promise<void>((resolveReply) => {
+      releaseModel = resolveReply;
+    });
+    try {
+      const f = await fixture(false, 0, modelReplyGate);
+      await f.api.prompt(
+        f.delivery("Reply after the command opens its dialog."),
+      );
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const command = f.api.prompt(f.delivery("/await"));
+      void command.catch(() => {});
+      await vi.waitFor(async () =>
+        expect(
+          (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        ).toHaveLength(1),
+      );
+      const dialog = (await f.runtime.snapshot())
+        .pendingExtensionUiRequests![0]!;
+      releaseModel();
+      await settled(f, 1);
+      expect(f.workers[0]!.hasPendingRequest("prompt")).toBe(true);
+      expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual([
+        dialog,
+      ]);
+      expect(eventsOf(f.runtimeEvents, "extension_ui_clear")).toEqual([]);
+      await f.runtime.extensionUiResponse({
+        sessionId: f.sessionId,
+        id: dialog.id,
+        confirmed: true,
+      });
+      await expect(command).resolves.toMatchObject({ accepted: true });
+      expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual(
+        [],
+      );
+      expect(f.workers).toHaveLength(1);
+      expect(f.workers[0]!.stop).not.toHaveBeenCalled();
+      expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+    } finally {
+      releaseModel();
+    }
+  }, 20_000);
 
   it("keeps /await pending until a UI answer and lets explicit Stop interrupt the next preflight outside the writer FIFO", async () => {
     const f = await fixture(false);

@@ -458,8 +458,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.persistenceOwnership.updateOverlay(slot, message, phase, delta),
       addPendingExtensionUi: (slot, event, rpc) =>
         this.extensionUi.add(slot, event, rpc),
-      clearPendingExtensionUi: (slot, reason) =>
-        this.extensionUi.clear(slot, reason),
       invalidateCatalog: () => this.catalog.invalidate(),
       scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),

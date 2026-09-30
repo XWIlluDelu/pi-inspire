@@ -1,213 +1,154 @@
 ---
-purpose: A trusted local host runs the user’s actual Pi environment and exposes only the typed controls and projections needed by the replaceable web interface.
+purpose: The Host runs the user's installed Pi and adapts its runtime, commands, and extension UI for the browser.
 covers:
-  - inspire
-  - deploy/systemd/**
-  - scripts/source-build-hash.mjs
-  - scripts/write-build-stamp.mjs
-  - server/**
-  - shared/contracts.ts
-  - src/api.ts
-  - src/store.ts
-  - src/events.ts
-  - src/components/AppTopbar.tsx
-  - src/components/ExtensionDisplays.tsx
-  - src/components/ExtensionUiDialog.tsx
-  - docs/extensions.md
-  - tests/server/**
-  - tests/web/app.test.tsx
-  - tests/web/events.test.ts
-  - tests/web/store*.test.ts
-  - tests/web/transcript-inspection.test.tsx
+  - server/pi-*.ts
+  - server/runtime*.ts
+  - server/session-projection.ts
+  - server/extensions/**
+  - shared/{contracts,commands}.ts
+  - src/{api,store,events}.ts
+  - src/components/{AppTopbar,ExtensionDisplays,ExtensionUiDialog}.tsx
+  - tests/server/pi-*.test.ts
+  - tests/server/runtime*.test.ts
+  - tests/web/{app,transcript-inspection}.test.tsx
+  - tests/web/{store*,events}.test.ts
 ---
 
 # Pi integration
 
 ## Goal
 
-Use Pi as the sole agent runtime while keeping privileged local capabilities out of the browser.
+Use Pi as the agent runtime and keep privileged local operations in the Host.
 
-## Contract map
+## Related contracts
 
-- [[host-lifecycle]] — pairing, installed-runtime distribution, process/service ownership, diagnostics, and build publication.
-- [[session-persistence]] — exact worker-startup and persistence trust boundary.
-- [[session-branches]] — the same-file RPC bridge and processless source-independent fork.
+- [[host-lifecycle]] — pairing, installation, services, diagnostics, and deployment.
+- [[session-persistence]] — startup attestation, persisted entries, and writer admission.
+- [[session-transport]] — HTTP/WebSocket observations and browser ownership.
+- [[session-branches]] — same-file navigation and independent fork.
+- [[composer]] — command feedback, input delivery, and Pending.
+
+## Runtime and agent ownership
+
+Pi and user configuration own model tools, prompts, extensions, and execution policy. Inspire adds
+GUI projections and explicit user controls, not LLM tools, system prompts, or delegation policy.
+Its internal branch-navigation extension registers a non-model command for GUI navigation.
+Explicit attachments and selected prompt resources remain user input.
+
+The Host resolves the external `pi` executable, imports its public SDK, and starts RPC workers from
+that same package root. Startup checks the APIs it calls; version metadata is diagnostic. The
+checkout's pinned development dependency is not a production fallback. Pi's normal agent directory,
+project directory, settings, credentials, models, extensions, skills, prompts, and sessions remain
+authoritative. Workers inherit the user environment defined by [[host-lifecycle]].
+
+Direct RPC pipes are the default. [[herdr-enhancement]] can change worker placement through a private
+byte transport while preserving native command execution and the same session authority. It adds no
+separate session list, collaboration scheduler, or message-routing service; direct mode remains
+independent of Herdr.
+
+Project terminals belong to the separate [[terminal]] daemon. They are human shells, outside Pi's
+runtime and history; a Pi prompt or extension receives no implicit terminal-control authority.
+Session-bound file previews follow [[resource-preview]].
+
+## Settings and native commands
+
+The browser receives model availability and runtime state, not stored credential values. Typed
+settings controls cover auto-compaction, auto-retry, and steering/follow-up delivery. Pi's worker and
+`SettingsManager` own those values. Browser optimism is per field and selection/transport owner:
+a stale failure cannot roll back a newer request, and a current failure reconciles against Pi.
+
+Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
+`shared/commands.ts` reserves built-in names before resource dispatch, matching Pi's interactive
+client. Namespaced extension commands remain available. Browser commands reuse existing surfaces;
+Host commands perform compaction, HTML export, and resource reload. Terminal-only commands expose
+copy/open guidance. `/bug` does not upload a report or submit its description as a model prompt.
+The public command inventory is [Pi commands](../../docs/pi-commands.md).
+
+The Host rejects unknown command-shaped text and shell syntax at the prompt boundary, normalizes
+resource-command separators, and revalidates command ownership after reload/worker replacement.
+`/compact` also has a first-message path using its standalone operation lifecycle.
+
+Compaction completes according to Pi, outside browser prompt deadlines. Because Pi has no public
+`abort_compaction` RPC, cancellation stops only its worker and classifies that compact operation as
+cancelled. A fresh worker resumes from JSONL on demand. Reload replaces an idle worker and invalidates
+resource/model inventories. Export and reload share writer admission; [[composer]] specifies their
+availability and user feedback.
+
+## RPC transport and observations
+
+- JSONL framing accepts bounded valid-UTF-8 objects and assembles lines without repeatedly copying
+  prefixes. An oversized unterminated line retires its worker, limiting Host memory and loop work.
+- A response must match a pending ID, exact command, and explicit success value. Malformed,
+  mismatched, oversized, or unexpectedly closed streams retire the worker rather than skipping
+  frames with ambiguous ordering.
+- Startup and stdin delivery have admission/transport bounds. Pi mutations have no generic response
+  deadline: preflight compaction, authentication, hooks/dialogs, export, and branch handlers may
+  take arbitrarily longer than ordinary reads.
+- Read-only waits default to 30 seconds. Expiry retires the caller but retains the exact ID/command
+  for a valid late response. All tracked requests, including expired observers, share a 256-entry
+  cap; entries are not evicted to admit more work.
+- An explicitly bounded mutation wait reports an unknown outcome without stopping the worker.
+  Actual stream/stdin failure or child loss initiates retirement. A response deadline alone does
+  not establish stream failure or process exit.
+
+Explicit Stop bypasses a blocked persistence lane and can retire a preflight worker when Pi's ordinary
+abort cannot interrupt a hook. A prompt stopped before its receipt remains acceptance-unknown.
+An input hook can also accept a prompt without agent lifecycle events: an idle/empty Pi observation
+may clear that queued admission only while the same worker and sole pending prompt still own it.
+Failure of this observation does not reject an accepted prompt.
+
+Direct-worker retirement requires observed leader exit (or proven spawn failure) and completed
+process-tree signaling. Herdr additionally requires its worker scope to be empty. Replacement and
+recovery writes stay fenced while termination is pending or rejected. Protocol failure notifies
+Runtime in either case and retains the original stop result. [[operation-lifecycle-ownership]]
+records these observation/execution/retirement distinctions.
+
+## Persistence and worker identity
+
+Pi message, tool, queue, retry, compaction, session, extension UI, and `entry_appended` events cross
+the validated Host interface. Persistence expectations include extension `custom`, system/tool-loadout,
+and `usage` entries even when they are not transcript rows. Pi statistics remain authoritative for
+cache-warming and unknown usage kinds.
+
+Every claimed persisted entry is matched exactly. If disk observation arrives first, bounded worker
+`get_entries` may attest only an exact persisted-JSON prefix of its contiguous chain from the trusted
+leaf. Worker-only trailing entries wait for disk observation; claims arriving during lookup are
+consumed only through the observed prefix. Diagnostics record identities/counts, not entry payloads.
+The complete reconciliation and startup rules are in [[session-persistence]].
+
+Replacing a worker retires its subscriptions. New-session startup retains a provisional slot until
+the public session identity is finalized. Independent fork leaves the source worker running.
+
+## Extension interactions
+
+Standard dialogs use browser modals. Each request belongs to its session and originating worker.
+Responses travel through a per-slot FIFO separate from persistence mutations; the Host rechecks
+request ID, session, process instance, expiry, and conflict state before sending once and removing it.
+Expiry and explicit abort, replacement, stop, or close also remove pending requests. Model settlement
+leaves them intact because independent extension commands may still await an answer. Fork leaves source
+requests with their worker. Startup restrictions follow [[session-persistence]] and the
+[adaptation guide](../../docs/extensions.md#startup).
+
+Keyed status text is bounded at Host retention, restored on reconnect, ordered in the desktop topbar,
+and cleared with its worker. String-array widgets preserve their key and above/below-Composer
+placement, replacing or clearing by key. Oversized keys are rejected to avoid identity collisions;
+terminal control sequences are display-cleaned.
+
+TUI component factories stay terminal-only. Malformed, oversized, and unknown one-way displays retain
+bounded attributable raw inspection. Unknown response-bearing methods use the cancellable dialog
+fallback. Persisted generic extension content uses available extension attribution, otherwise
+**Extension**, with raw method/type/payload inside the body. Displayed custom messages follow
+[[conversation]]. Extension failures retain their originating lifecycle/operation diagnostic.
+
+The public [adaptation guide](../../docs/extensions.md) covers commands, dialogs, text widgets,
+custom cards, lifecycle differences, and source customization. Inspire does not inspect third-party
+package names or provide arbitrary executable frontend plugins.
 
 ## Checks
 
-### Agent ownership
-
-- Pi and the user's configuration own model tools, prompts, extensions, and execution policy.
-  Inspire does not add LLM tools, append system prompts, or inject delegation instructions.
-  User-configured communication extensions remain Pi extensions, not an Inspire-owned workflow.
-- GUI support is limited to rendering native state and translating explicit user operations.
-  The branch-navigation bridge is an internal non-model command for a GUI action; it must not
-  register model tools or change prompt construction. Explicitly attached files and selected
-  prompt resources remain user input, not permission to introduce background agent policy.
-- Both worker backends preserve that boundary. Herdr supplies real environment capabilities;
-  no visible agent feature is required to demonstrate the enhancement. Its module does not
-  define a second session list, message-routing service, collaboration receipt store, or scheduler.
-- Keep one operation/session authority and narrow backend interfaces. Normal mode remains
-  independent of Herdr; enabled-mode costs and failure paths belong to its environment module.
-  Performance, reliable failure handling, clear code, and maintainability constrain the design,
-  rather than minimum patch size or the number of exposed features.
-
-### Installed runtime and typed controls
-
-- The local host resolves the user's separately installed `pi` executable, loads the public SDK from
-  that executable's package root, and starts every RPC worker from the same package root. Pi version
-  metadata is reported but does not gate startup; the concrete public APIs INSΠRE calls are the
-  compatibility boundary. The INSΠRE checkout's development dependency is never a production runtime
-  fallback.
-
-- The normal Pi agent directory and project working directory remain authoritative for settings,
-  credentials, models, extensions, skills, prompts, context files, and sessions. Pi and its tools
-  inherit the user's exported execution environment under [[host-lifecycle]], not a reduced
-  service-only PATH or an Inspire-injected NODE_ENV. Direct RPC pipes remain the default;
-  [[herdr-enhancement]] may change worker placement through a private byte transport, but neither
-  backend changes Pi's native command execution semantics or replaces RPC with terminal frames.
-
-- The browser receives model availability and runtime state but never stored credential values. Its
-  Settings surface can change Pi's auto-compaction, auto-retry, steering-delivery, and
-  follow-up-delivery settings through typed authenticated controls; the worker and Pi
-  `SettingsManager` remain the authorities. Optimistic changes have per-field request ownership
-  scoped to the current browser selection and transport; an older failure cannot roll back a newer
-  request even when their values match, and a current failure reconciles with Pi rather than
-  trusting an optimistic predecessor.
-
-- Pi RPC `get_commands` enumerates extension, prompt, and skill resources but not Pi's interactive
-  built-ins. A shared explicit registry therefore classifies built-ins as browser-native, bounded
-  Host/RPC operations, informational, or terminal-only. Like Pi's interactive submit handler,
-  built-ins own their names before SDK resource dispatch; namespaced runtime commands remain
-  available. The Host independently rejects built-in or unknown command-shaped text and shell
-  syntax at the ordinary prompt boundary, normalizes resource-command separators, and revalidates
-  resource ownership after a queued reload or worker replacement. A stale or non-browser client
-  must not accidentally turn a retired command into a model prompt. `/compact` also has a
-  Host-owned first-message prompt path, using the same standalone operation lifecycle.
-  `/bug [description]` is terminal-only: INSΠRE offers an explicit terminal/copy action, never
-  invokes Pi's report upload or sends the description as an ordinary model prompt.
-
-- Manual compaction is a standalone Host operation whose completion belongs to Pi, not a fixed
-  three-minute allowance or the browser prompt-confirmation window. Because stock Pi exposes no `abort_compaction` RPC,
-  cancelling a standalone compaction stops only its owning worker, classifies the interrupted
-  compact request as cancelled rather than outcome-unknown, and starts a fresh worker on demand
-  while the JSONL projection remains authoritative. HTML export and resource reload use the same
-  serialized writer authority; reload invalidates resource/model inventories before worker
-  replacement.
-
-- Project terminals remain outside Pi's runtime and session history: a separate terminal daemon owns
-  their PTYs, metadata, and optional history, the Host is only their authenticated gateway, and no
-  Pi prompt or Extension receives implicit authority to read or write a human terminal.
-
-- Local-file previews are authenticated and bound to the addressed Pi session and projection view.
-  Authorization comes from an exact transcript reference or current workspace realpath containment,
-  independently of Git and discovery-index membership. Relative conversation references resolve
-  against the session's project directory; document links resolve against the opened document.
-  [[resource-preview]] defines the path and opened-file checks.
-
-### RPC delivery and ownership
-
-- Pi message, tool, queue, retry, compaction, session, extension-interaction, and persistent
-  `entry_appended` events cross a typed, validated host interface. Every entry that Pi reports as
-  persisted contributes an exact expectation, including extension `custom` entries; if disk
-  observation wins that event race, a bounded worker `get_entries` delta may attest only when the
-  entire observed append is an exact persisted-JSON prefix of the worker's contiguous chain from the
-  trusted leaf. Worker-only trailing entries remain unaccepted until disk observation, and claims
-  arriving during the lookup are consumed only through the observed prefix. Privacy-safe diagnostics
-  record the observed and worker counts, immutable leaves, and worker-ahead delta without entry
-  payloads. System prompt/tool-loadout messages and standalone `usage` entries participate in
-  this same exact ownership boundary even though they are not conversation rows. Pi's statistics
-  remain authoritative for cache-warming and unknown usage kinds.
-
-  RPC JSONL input is line-bounded and assembled without repeated prefix copying: a child emitting an
-  oversized unterminated line loses only its own worker instead of growing or stalling the
-  long-lived host without limit.
-
-- The Pi RPC stream accepts only bounded valid-UTF-8 JSON object frames. A correlated response must
-  carry the pending request id, exact command, and explicit success value; malformed, mismatched,
-  oversized, or unexpectedly closed streams retire the whole worker instead of dropping a frame and
-  continuing with ambiguous ordering. Startup and stdin delivery retain bounded admission/transport
-  checks; a response-wait deadline is not proof that the stream failed. Pi-owned mutations have no
-  generic response deadline: prompt preflight may include automatic compaction, authentication, and
-  extension hooks/dialogs; compaction, export, and branch handlers likewise finish according to Pi.
-  Explicit Stop remains independent of the blocked persistence lane and can retire a preflight
-  worker even when Pi's ordinary abort cannot interrupt its hook. A prompt stopped before its receipt
-  remains acceptance-unknown, rather than claiming that no side effects occurred.
-
-  An accepted prompt can finish inside an input hook without any agent lifecycle event. If its
-  admission is still queued, an idle/empty Pi state observation may retire that admission only
-  while the same worker and sole pending prompt still own it; it cannot clear newer or active work.
-  A failed post-acceptance observation is diagnostic, not a refusal of the accepted input.
-
-  Read-only responses default to a 30-second observation window. A timeout retires only that caller;
-  its exact id/command remains tracked for a valid late response. All tracked requests, including
-  retired observers, share a 256-entry admission cap and are never evicted to make a late result
-  appear new. An explicitly bounded mutation wait also reports unknown without implicitly stopping
-  its worker. Actual stdin/stream failure or child loss retires the worker and exposes a real stop
-  fence; neither a null fence nor a rejected wait proves exit.
-
-  Direct-worker retirement requires observed leader exit (or proven spawn failure) and completed
-  process-tree signaling. Herdr additionally verifies an empty worker scope under
-  [[herdr-enhancement]]. Runtime keeps replacement and recovery writes fenced while termination is
-  pending or rejected. Protocol failure notifies Runtime on either stop outcome while retaining the
-  original stop result. Timers and diagnostic phase labels report progress, not permission to replace
-  a writer. Evidence: [[operation-lifecycle-ownership]].
-
-- Pending combines Pi's public `queue_update` text arrays with bounded, worker/branch-selection-bound Host
-  input waiting for a safe prompt boundary. The latter is transient delivery ownership, not
-  persisted conversation: a real active agent can receive selected steering/follow-up while an
-  earlier extension/preflight receipt is still pending; without an active agent, the first existing
-  prompt or command must settle before a Host-held input can begin a new prompt. Explicit confirmed
-  Clear removes not-yet-dispatched Host input and invokes Pi's `clear_queue`. Unsupported pause/resume,
-  per-item deletion/conversion, text-fetch RPCs, and startup capability probes remain absent. A
-  clear receipt does not claim that a racing already-consumed entry was retracted; authoritative
-  queue events own Pi's resulting display.
-
-- Worker replacement retires its event ownership and outstanding extension requests. A new-session
-  worker keeps its existing provisional slot while its public session identity is finalized; an
-  independent fork never transfers subscriptions or dialogs from the source worker.
-
-- Extension dialog responses are non-persisting and use a per-slot FIFO independent of persistence
-  mutations. The host revalidates request id, source session, current process instance, expiry, and
-  conflict state inside that lane, sends once, then removes the pending request. Fork leaves this
-  lane and every unresolved source request attached to the source worker.
-
-- The installed-Pi boundary is executable without paid model inference: an isolated test proves
-  byte-preserving read-only preview plus real RPC state—including text-only Pending queue events and
-  the real public `clear_queue` operation—bounded incremental entries, tree, model selection,
-  commands, statistics, all dialog and fire-and-forget extension UI methods, extension-supplied
-  offline compaction, session-directory replacement, switch, and Pi's native fork capability.
-  Runtime tests independently prove same-file navigation and isolated SessionManager fork while a
-  source worker remains active.
-
-### Extension presentation
-
-- Dialog-style extension interaction has a web-native presentation or a clear fallback. Generic
-  persisted extension content uses available extension attribution as its normal-font title, falls
-  back to the neutral label `Extension`, and keeps raw method/type and payload inside the
-  inspectable body instead of presenting `custom` as product language.
-
-- Short keyed Pi status values are bounded before Host retention, restored by authoritative
-  snapshots after browser reconnect, deterministically ordered in quiet desktop top-bar text, and
-  cleared with the owning worker rather than surviving as browser-only state.
-
-- Pi RPC string-array widgets retain their stable key, update/clear lifecycle, and
-  `aboveEditor`/`belowEditor` placement in a bounded, native surface immediately around the
-  Composer. Oversized keys are rejected rather than truncated into a colliding identity. Terminal
-  control sequences are display-cleaned rather than interpreted. Component factories remain
-  terminal-only; malformed, oversized, and explicitly one-way unknown display events use the bounded
-  attributable raw fallback.
-
-- Terminal-only extension components do not prevent the underlying tool or command from working when
-  a generic web presentation is possible. INSΠRE does not identify third-party Extension packages or
-  expose arbitrary browser code/style injection; the public adaptation guide explains the exact RPC
-  compatibility boundary, semantic and visual placement rules, source-level seams, and
-  representative Todo, usage, and custom-Tool recipes.
-
-- Extension failures remain attributable to their originating lifecycle and operation; the host does
-  not silently suppress, retry, or reinterpret them through extension-specific catch-all behavior.
-
-## Non-goals
-
-- Complete visual compatibility with every third-party TUI component is not required.
-- Pi integration is not itself a shell or direct filesystem client; the explicitly selected [[terminal]] surface is the sole general-shell boundary.
+The installed-Pi integration tests exercise read-only preview, real RPC state/queues and `clear_queue`,
+incremental entries, tree/model/command/statistics APIs, dialog and one-way UI methods, offline
+extension-supplied compaction, session-directory replacement, switch, and native fork. Runtime tests
+cover same-file navigation and independent SessionManager fork with an active source worker.
+[[dependency-boundaries]] records tested Pi versions; [[native-command-compatibility]] records
+command and delivery evidence.
