@@ -1,6 +1,6 @@
 import hljs from "highlight.js/lib/common";
 
-const MAX_HIGHLIGHTED_CHARACTERS = 512 * 1024;
+const MAX_HIGHLIGHTED_CHARACTERS = 64 * 1024;
 
 /** Filename recognition complements highlight.js's language/extension aliases. */
 export function languageForFile(name: string): string {

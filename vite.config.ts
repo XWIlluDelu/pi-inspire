@@ -21,6 +21,12 @@ export default defineConfig({
     // browser consumes that exact module without pulling in the terminal UI.
     alias: [
       { find: /^@earendil-works\/pi-tui$/, replacement: piTuiFuzzyModule },
+      // Markdown runs in both the page and a worker. The package's browser
+      // export needs document; its default decoder is DOM-independent.
+      {
+        find: /^decode-named-character-reference$/,
+        replacement: require.resolve("decode-named-character-reference"),
+      },
     ],
   },
   server: {

@@ -70,18 +70,26 @@ try {
   await page.waitForFunction(
     () => typeof window.benchmarkRichText === "function",
   );
+  const semantics = await page.evaluate(() =>
+    window.benchmarkRichTextSemantics(),
+  );
+  if (semantics.some((result) => !result.correct || !result.equivalent))
+    throw new Error(`Markdown semantics failed: ${JSON.stringify(semantics)}`);
   const results = [];
   for (let round = 1; round <= rounds; round++) {
     for (const [kind, size] of [
       ["mixed", 16_000],
       ["mixed", 32_000],
       ["mixed", 64_000],
+      ["mixed", 128_000],
+      ["mixed", 256_000],
       ["plain", 64_000],
     ]) {
       const result = await page.evaluate(
         ([kind, size]) => window.benchmarkRichText(kind, size),
         [kind, size],
       );
+      if (errors.length) throw new Error(errors.join("\n"));
       if (!result.equivalent) throw new Error("Streamed/fresh DOM differs");
       results.push({ round, ...result });
     }
@@ -94,6 +102,7 @@ try {
         richTextRevision: baseline ?? "working-tree",
         warmups: 3,
         samples: 9,
+        semantics,
         results,
       },
       null,

@@ -1,7 +1,10 @@
 ---
-purpose: One defensive rendering pipeline turns Pi text into stable Markdown, mathematical notation, code, tables, and links during and after streaming.
+purpose: Shared streaming Markdown, mathematics, code, tables, and links for Pi content.
 covers:
   - src/components/RichText.tsx
+  - src/{rich-text-parser,rich-text-parser-client,rich-text-worker}.ts
+  - vite.config.ts
+  - package.json
   - src/components/RichTextMath.tsx
   - src/components/ProgressiveRichText.tsx
   - src/components/Transcript.tsx
@@ -11,6 +14,9 @@ covers:
   - src/styles/*.css
   - tests/web/rich-text.test.tsx
   - tests/web/rich-text-streaming.test.tsx
+  - tests/web/rich-text-worker.test.tsx
+  - tests/web/rich-text-parser-client.test.ts
+  - tests/browser/{tool-presentations,filesystem-files}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
 ---
@@ -19,39 +25,59 @@ covers:
 
 ## Goal
 
-Render technical and scientific answers accurately enough that the GUI materially improves on terminal presentation.
+Render Pi content accurately during streaming and after completion. User messages, assistant messages,
+thinking, documents, and extension Markdown share one rendering authority with deliberate variants.
+
+### Content semantics
+
+- Support CommonMark-style Markdown, GFM tables and task lists, links, images, inline mathematics,
+  and display mathematics. Streaming keeps incomplete fences, links, tables, and math readable.
+- Code blocks preserve whitespace, identify their language when available, highlight syntax, and
+  copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
+  and incomplete fences retain block/copy behavior. Only inline code can become a file-reference button.
+- Final rendering equals a fresh render of the complete source. Parse the whole document so later
+  reference definitions, footnotes, and open fence/list/math structure can update earlier content.
+- Reuse unchanged math and code subtrees without delaying source updates. Reuse stays bounded by
+  mounted content; source-safety and sanitization precede math interpretation and memoization.
+
+### Safety and navigation
+
+- Disable raw HTML by default. Any interpreted HTML requires an explicit allowlist; reject unsafe
+  URLs and active inline content. TeX rendering uses `trust:false`.
+- External links open safely in a new tab. Explicit local conversation links and images open the
+  session-bound resource preview. Document readers resolve file targets from the document directory,
+  render independently authorized local images, and keep heading fragments within the reader under
+  [[resource-preview]]. External image URLs appear as links; unrecognized conversation image paths
+  remain unavailable. Arbitrary data URLs stay disabled.
+- A rendering failure stays within the affected block and leaves its source readable.
+
+## Parsing and update ownership
+
+`rich-text-parser.ts` owns the whole-document remark/rehype pipeline: Markdown, GFM/math,
+source-safety, conversion, and sanitization. Sources below 32,000 characters parse synchronously;
+at or above that threshold, one shared worker returns sanitized HAST without unused source positions.
+Both paths use the same DOM-independent named-entity decoder. `RichText` converts their HAST to React
+on the main thread.
+
+The parser client runs one active job overall and retains only the latest pending source per mounted
+reader. A compatible completed prefix stays formatted while the appended tail appears immediately as
+safe text. A replacement source displays its own text while awaiting parsing. Unmounting retires that
+reader's work; the last reader terminates the worker.
+
+Sanitized `code`/`pre` renderers pass primitive source and mode/language props to memoized leaves.
+`RichTextMath` runs trust-disabled rehype-katex and HAST-to-React conversion when an expression changes;
+`CodeBlock` retains highlighting through unrelated updates and clipboard feedback.
+
+`ProgressiveRichText` owns lazy loading and readable failure fallback. Parsing and reuse belong to
+`RichText`, independent of transport streaming state.
 
 ## Checks
 
-- Settled assistant text supports CommonMark-style Markdown, GitHub-flavored tables and task lists, fenced code, links, images, inline mathematics, and display mathematics.
-- Mathematical notation renders ordinary inline expressions such as `$E=mc^2$` and `$\pi r^2$`, plus display expressions, without exposing trusted TeX commands.
-- Code blocks preserve whitespace, identify their language when available, highlight syntax, and remain copyable as source text. Block identity comes from the parsed `pre` structure, not a language label: unlabeled fences, indented code, and incomplete fences retain block/copy behavior. Only inline code can become a file-reference button.
-- Streaming output keeps incomplete fences, links, tables, inline mathematics, and display mathematics readable until they become complete constructs.
-- Final rendering after message completion is equivalent to rendering the complete source once. Streaming must preserve whole-document reference and footnote resolution and open fence/list/math structure; source must not be independently parsed in blank-line fragments.
-- Reuse unchanged expensive math and code subtrees during streaming without delaying source updates. Keep reuse state bounded by currently mounted content, not accumulated source versions. Run source-safety and sanitization before interpreting math markers; memoization must not bypass these boundaries.
-- Raw HTML is disabled or sanitized under an explicit allowlist; unsafe URLs and active inline content are rejected.
-- External web links retain safe new-tab behavior. In conversation content, explicit local file links and images delegate to the session-bound resource preview instead of navigating the browser to an unusable host-relative URL. Document readers supply a scoped resource context to this same pipeline: independently authorized local images render inline, file targets resolve from the document directory, and heading fragments stay within that reader, as specified in [[resource-preview]]. Neither remote/protocol-relative images nor unrecognized image paths load automatically; raw HTML and arbitrary data URLs remain disabled.
-- Rendering failure is contained to the affected block and leaves its source readable.
-- User messages, assistant messages, thinking, and extension-provided Markdown use deliberate variants of the same rendering authority rather than unrelated parsers.
+Web tests compare streamed and fresh DOM, exercise delimiter boundaries and late references, and count
+math/highlighting work for unchanged leaves. Parser-client tests cover coalescing, reader retirement,
+and worker failure. Chromium flows exercise composer typing during large-response updates and scoped
+document navigation. Reproducible component measurements: [[rich-rendering-reuse]].
 
-## Rendering work ownership
+## Boundaries
 
-ReactMarkdown remains the single whole-document Markdown parser. Its GFM/math,
-source-safety, and sanitization passes run for each changed source. The sanitized
-`code`/`pre` renderers pass primitive source and mode/language props to memoized
-leaves. `RichTextMath` runs the existing trust-disabled rehype-katex transformer
-and its HAST-to-React conversion only when an expression changes; `CodeBlock`
-reuses highlighting, including across clipboard-feedback updates. React owns
-leaf lifetimes. There is no stream-history cache or second Markdown parser.
-
-`ProgressiveRichText` owns lazy loading and readable failure fallback, not
-throttling. Reuse applies equally to transcript, document, thinking, and extension
-variants without requiring streaming state from transport or store.
-
-Work-counter, semantic-equivalence, and local browser measurement details:
-[[rich-rendering-reuse]].
-
-## Non-goals
-
-- Arbitrary TeX document compilation is outside the conversation renderer.
-- Active HTML artifacts are not rendered in the conversation DOM.
+TeX document compilation and active HTML artifacts are outside the conversation renderer.

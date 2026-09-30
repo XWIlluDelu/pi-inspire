@@ -21,7 +21,7 @@ describe("source highlighting", () => {
     expect(highlightSource(unsafe, "not-a-language")).toBe(
       "&lt;script title=&quot;x&quot;&gt;&amp;&lt;/script&gt;",
     );
-    const large = `${" ".repeat(512 * 1024)}${unsafe}`;
+    const large = `${" ".repeat(64 * 1024)}${unsafe}`;
     expect(highlightSource(large, "html")).not.toContain("<");
   });
 });
