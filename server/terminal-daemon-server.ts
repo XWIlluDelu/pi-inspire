@@ -1,11 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { chmod, lstat, mkdir, rm } from "node:fs/promises";
-import {
-  createConnection,
-  createServer,
-  type Server,
-  type Socket,
-} from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
   decodeTerminalInputFrame,
@@ -30,6 +25,7 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
+import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import type {
@@ -66,26 +62,6 @@ function tokenMatches(expected: string, candidate: unknown): boolean {
     expectedBytes.byteLength === candidateBytes.byteLength &&
     timingSafeEqual(expectedBytes, candidateBytes)
   );
-}
-
-async function addressAcceptsConnections(address: string): Promise<boolean> {
-  return new Promise<boolean>((resolvePromise) => {
-    const socket = createConnection(address);
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      resolvePromise(false);
-    }, 250);
-    timeout.unref?.();
-    socket.once("connect", () => {
-      clearTimeout(timeout);
-      socket.destroy();
-      resolvePromise(true);
-    });
-    socket.once("error", () => {
-      clearTimeout(timeout);
-      resolvePromise(false);
-    });
-  });
 }
 
 async function prepareUnixSocket(address: string): Promise<void> {

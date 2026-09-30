@@ -1,40 +1,21 @@
 ---
-purpose: Project-scoped PTYs live in an independent private daemon and appear as ordered xterm tabs that paired local or remote browsers can detach from and resume without making the browser or Pi authoritative.
+purpose: Project-scoped terminals survive browser and Host interruptions, with explicit input ownership and ordered xterm tabs.
 covers:
   - package.json
   - package-lock.json
   - inspire
   - inspire.mjs
   - deploy/systemd/**
-  - scripts/build-release.mjs
-  - scripts/start-browser-test-host.mjs
-  - scripts/verify-release-package.mjs
-  - server/app.ts
-  - server/terminal-gateway.ts
-  - server/index.ts
-  - server/terminal-*.ts
+  - scripts/{build-release,start-browser-test-host,verify-release-package}.mjs
+  - server/{app,index,terminal-*}.ts
   - shared/terminal-*.ts
-  - src/api.ts
-  - src/App.tsx
-  - src/app-state.ts
-  - src/store.ts
-  - src/terminal-*.ts
+  - src/{api,App,app-state,store,terminal-*,use-copied}.ts*
   - src/controllers/terminal-operation-controller.ts
-  - src/components/CommandPalette.tsx
-  - src/components/ContextPane.tsx
-  - src/components/RichText.tsx
-  - src/components/TerminalPane.tsx
-  - src/components/TerminalSettingsDialog.tsx
-  - src/components/TerminalTextDialog.tsx
-  - src/components/TerminalView.tsx
-  - src/use-copied.ts
+  - src/components/{CommandPalette,ContextPane,RichText,TerminalPane,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
   - src/styles.css
-  - src/styles/terminal.css
-  - src/styles/responsive.css
-  - src/styles/workbench.css
+  - src/styles/{terminal,responsive,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/workbench.spec.ts
-  - tests/browser/operation-lifecycles.spec.ts
+  - tests/browser/{workbench,operation-lifecycles}.spec.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -44,42 +25,179 @@ covers:
 
 ## Goal
 
-Provide complete interactive shells inside the contextual workbench, including through `ssh-reverse`, while preserving terminal processes across browser, tunnel, and ordinary Host interruptions and making their full-user authority explicit.
+Provide interactive project shells inside the workbench, including through `ssh-reverse`. Terminals
+have the operating-system user's full authority; Pi and browser presentation do not own their processes.
 
-## Checks
+## Process ownership
 
-- Each absolute project working directory owns one ordered set of up to 32 terminal tabs, within a global limit of 128. Opening or hiding the pane only attaches or detaches views; explicit close terminates the process tree, exited tabs retain their output until closed or restarted, and reopening a recently closed tab creates a fresh process from the same profile rather than pretending to restore the old process.
-- Browser terminal control intents carry one immutable operation identity through the Host to the daemon. Concurrent or uncertain same-content retries share the daemon's in-flight operation or retained result; changing method or parameters under that identity is refused. Lost responses, deadlines, disconnects, and unconfirmed process exit never imply cancellation. Read-only catalog/settings requests and attachment/input continuity remain independent.
-- The daemon bounds control receipts to 2,048 entries and 16 MiB of serialized results (256 KiB per result), retaining results for up to ten minutes and tombstones for up to one hour. Running operations are never evicted. Before forgetting any identity, retention/capacity reclamation fences its admission epoch; daemon replacement also changes that epoch. An unknown old identity is refused rather than executed again. The browser retains up to 128 unresolved identities in tab-session storage across pane/project/reload generations, offers explicit same-operation checks, and releases an identity only on a confirmed result or definite refusal. Storage failure blocks untracked writes. Legacy HTTP callers without identities retain one-new-intent-per-call behavior; identified requests never fall back to an unprotected service.
-- An in-process terminal owner provides the same bounded mutation receipts as the independent daemon; mock/development mode never bypasses identified execution. Protocol upgrades do not authorize an ordinary Host launch to replace a listening incompatible daemon or stop its independent PTYs. The Host reports that explicit terminal-service upgrade is required, without killing work, and points installed-service users to Settings → Updates → Restart all or `inspire restart --all`. Receipt discovery preserves that concrete refusal rather than replacing it with a generic unavailable message. Malformed browser receipt storage also fails closed before any new dispatch.
-- Close and restart require confirmed PTY exit, not merely a successful kill request. A bounded output-drain allowance follows hard termination, the Host's lifecycle RPC deadline must cover the daemon's full stop budget, and an unconfirmed exit reports failure while retaining the tab. POSIX process signals must not be passed to Windows native PTY kill calls.
-- A private terminal daemon, not the Inspire Host or Pi runtime, owns PTYs, bounded output rings, headless terminal state, tab metadata, and optional output history. It uses an installation-scoped authenticated local IPC endpoint with current-user permissions. Host restart reconnects to that daemon; machine restart restores known tabs as exited, never reruns their commands, and never claims their processes survived. Live and restored tabs use the same headless-state setup; failed PTY creation disposes allocated emulator resources without publishing a tab.
-- The independent daemon receives the user's exported environment under [[host-lifecycle]], through both installed-service and direct/transient launch paths. Inspire does not force NODE_ENV on the daemon or its PTYs; user-supplied values remain authoritative. Ordinary Host restart never refreshes or changes the environment of already running terminals.
-- Available shell profiles are discovered by their owner from the user's environment. POSIX shells and Windows PowerShell, Command Prompt, and WSL run through `node-pty` with true-color xterm environment metadata; supported shell wrappers preserve normal initialization and emit advisory working-directory and command-boundary markers, while unsupported or failed integration falls back to an ordinary PTY.
-- Raw terminal output carries an epoch, monotonic byte offset, and resize revision. A retained matching client resumes with only its missing bytes; any stale epoch, evicted offset, or incompatible size receives a bounded serialization of the daemon's headless terminal followed by the exact live tail. Client continuity checks fail closed into a fresh snapshot rather than rendering an ambiguous stream.
-- Ticket acquisition, WebSocket opening, and attachment each have a ten-second deadline; replay has a thirty-second deadline and must complete before the transport is connected. Ready clients send application pings every ten seconds and retire a transport after thirty seconds without incoming application frames, including stale visibility/BFCache returns. Retirement invalidates old callbacks before reconnecting, cancels pending ticket work, retains valid output/input continuity, and discards incomplete snapshots rather than resuming from a partial screen.
-- File-link hit regions map UTF-16 regex offsets through xterm buffer cells, preserving wide, combining, and supplementary characters rather than treating string indices as columns.
-- Input uses monotonically acknowledged frames so a reconnect can resend only unacknowledged bytes without duplicating accepted input. One attachment owns input and PTY dimensions at a time; other paired browsers remain live read-only viewers, explicit takeover revokes the previous writer, and a disconnected writer may reclaim its lease with an opaque token only during the bounded grace period.
-- Terminal HTTP controls require the existing paired cookie or explicit API bearer. The dedicated `/terminal` WebSocket accepts only an exact same-origin paired cookie and a short-lived single-use attach ticket; terminal identifiers and forwarded query tokens are not credentials. Terminal count, dimensions, titles, paths, message sizes, replay storage, IPC connections, browser pending input, and outbound buffers are bounded; a slow viewer detaches without blocking its PTY or other viewers. Diagnostics omit terminal input, output, and internal path-bearing failures.
-- The lazy contextual Terminal mode provides tab creation, profile choice, renaming, drag/keyboard ordering, restart, close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and a searchable all-project terminal navigator. One compact header owns tabs, new/profile, connection/control state, search, focus, and more. Duplicate and a separate browser command-history interface are deliberately omitted; shell history remains native to the shell. Focus mode and a same-origin focused window attach the same terminal rather than spawning another shell.
-- Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects (including A→B→A), reloading, or unmounting retires old response, error, loading, selection, and rollback writebacks without undoing successful server-side work. Full catalogs validate project ownership and daemon epoch/revision; partial descriptors merge by ID only within their epoch and never suppress an equal-revision full reconciliation. A new daemon epoch requires a complete catalog before partial receipts can be merged, and retired epochs cannot replace it. Failed optimistic ordering rolls back only its exact still-current state, never a newer catalog or mutation.
-- Recovery rows identify unresolved controls and retain uncertainty during same-operation checks. New catalog tabs link only to actually mounted lazy terminal panels. Automatic keyboard focus belongs to a fresh terminal activation and is abandoned if another control takes focus; font loading, replay completion, reconnect, and writer-state changes do not reclaim it. Explicit Take control keeps its own user-gesture focus behavior.
-- Profile and more menus share one pane-scoped owner: opening one closes the other. More contains clipboard/output actions, inline display/management groups, the all-project navigator, and settings; those groups do not create independent floating menus. Escape closes an open group before its containing menu, restores the corresponding summary, and never closes a narrow Context drawer in the same gesture; a newer modal retains priority. Menus fit the available pane and scroll instead of clipping actions. Header controls share vertical alignment on desktop and touch layouts, and hidden terminal views never publish controls into the shared header.
-- The xterm client supports ANSI/true color, alternate screen and mouse-capable TUIs, Unicode and IME input, selection, safe HTTP links, authenticated project-file links, search options, selected-text, whole-buffer and last-command-output copy, paste protection, reset, clear, WebGL with renderer fallback, theme/font refitting, screen-reader mode, configurable cursor/font/scrollback/shortcuts, and a touch key row on narrow screens. Search opens on demand without changing PTY dimensions. The view does not offer direct command reruns. Workbench shortcut mode preserves selected-copy, native paste, and terminal search while shell mode yields those control keys to the PTY; `Ctrl+Shift+Escape` exits terminal focus.
-- In the live terminal, selection actions appear only with selected text, without adding a persistent toolbar row. Terminal selection can be copied or sent to the current Composer as inert fenced text. A Composer code block may be inserted into the controlled terminal but is never submitted automatically. Shell completion coalesces a Git refresh; optional user-gesture-authorized bell and long-task notifications describe terminal outcome without exposing output content.
-- More offers Copy all and Select text directly, without requiring shell integration. Copy all reads the retained active buffer: scrollback in the normal screen, screen content in alternate-screen applications. Select text captures that text in a read-only native selection view with Select all, Copy, and inert quoting. The capture stays stable while the terminal continues running; selecting or copying does not request the software keyboard. Clipboard failures remain visible alongside the available manual selection path.
-- Last-output copy uses the latest completed shell-marker range in the normal buffer, including cell columns rather than guessed line offsets. It excludes the next prompt, joins soft wraps without corrupting Unicode or real spaces, and becomes unavailable on marker eviction, buffer replacement/reset, or column reflow. Height-only changes preserve valid ranges. This is a bounded view capability, not a durable command log; the other copy paths remain independent.
-- Touch keys preserve the current input focus; navigation and the direct Ctrl+C key also work without opening the software keyboard. The header keyboard button explicitly focuses input. Ctrl/Alt are one-shot terminal modifiers, cleared by blur or loss of control and before paste. They modify user keystrokes, not pasted text or terminal-generated replies. The terminal retains shell shortcut semantics; the read-only text view uses native selection shortcuts.
-- Asynchronous menu paste belongs to its originating view activation and control epoch. Switching away and back, losing control, or replacing the connection retires the pending completion and its error/focus effects. A fresh paste returns focus from its dismissed menu without taking a newer focus choice away from another control.
-- Tab metadata and Host-wide history settings persist in current-user-private state. Raw output persistence is off by default, opt-in history is size- and age-bounded, disabling it clears retained logs, and the settings surface provides explicit clearing. A log exceeding 32 MiB is trimmed to a 24 MiB tail with a terminal reset prefix, leaving append headroom rather than rewriting the full cap for every small batch. Browser-local presentation preferences never become terminal or process authority.
-- Source, npm-release, direct-launch, and installed Linux service paths all include the daemon entrypoint and runtime dependencies. The installed terminal user service is separate from `inspire-host.service`; stopping or restarting only the Host leaves PTYs alive, while explicitly disabling the terminal service owns their shutdown. An explicit full restart through the CLI or Settings restarts the verified installed terminal and Host services in one ordered systemd transaction; ordinary and automatic maintenance restarts remain Host-only.
+A private daemon owns PTYs, bounded output rings, headless terminal state, tab metadata, and optional
+history. Its installation-scoped IPC endpoint authenticates current-user clients. Each absolute project
+cwd owns an ordered set of up to 32 tabs, within a global limit of 128.
 
-## Implementation evidence
+Opening or hiding the pane attaches or detaches views. Explicit close terminates the process tree;
+exited tabs retain output until closed or restarted. Reopening a recently closed tab creates a fresh
+process from its profile. Host restart reconnects to the daemon. Machine restart restores known tabs
+as exited, without rerunning commands. Live and restored tabs share headless-state setup; failed PTY
+creation disposes emulator resources before publishing a tab.
 
-[[terminal-ci-portability]] records the runtime baseline, portable regression fixtures, and cross-platform exit-acknowledgement rationale. [[operation-lifecycle-ownership]] records mutation receipts, supported upgrade behavior, and uncertainty/retry verification. [[terminal-controls-redesign]] records the compact header, retained/removed interactions, output and clipboard ownership repairs, and browser evidence.
+The daemon receives the user's exported environment through direct and installed-service launch paths
+under [[host-lifecycle]]. User-supplied `NODE_ENV` remains authoritative. Host restart leaves existing
+terminal environments unchanged.
 
-## Non-goals
+Shell profiles are discovered from that environment. POSIX shells, PowerShell, Command Prompt, and WSL
+use `node-pty` with true-color xterm metadata. Supported wrappers preserve normal shell initialization
+and emit cwd/command markers. Unsupported or failed integration still provides an ordinary PTY.
 
-- Terminal splitting, simultaneous multi-writer input, anonymous sharing, and public terminal-only links are excluded.
-- Pi prompts and Extensions do not implicitly inspect, type into, or execute a human terminal.
-- Sixel, Kitty/iTerm image protocols, OSC 52 clipboard control, session recording, command replay after reboot, containers, and `tmux`-specific attachment remain optional future extensions rather than foundation behavior.
+Close and restart require confirmed PTY exit. A bounded output-drain allowance follows hard
+termination, and the Host RPC deadline covers the daemon's stop budget. Unconfirmed exit retains the
+tab and reports failure. Windows native PTY kill calls receive no POSIX signal argument.
+
+## Identified controls and recovery
+
+Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
+share the running operation or retained result; reuse with different parameters is refused. Lost
+responses, deadlines, and disconnects leave the outcome unresolved, rather than cancelling work.
+Read-only catalog/settings reads and attachment/input continuity remain independent.
+
+| Receipt bound | Value |
+| --- | --- |
+| Daemon entries / serialized storage | 2,048 / 16 MiB |
+| Individual result | 256 KiB |
+| Result / tombstone retention | Ten minutes / one hour |
+| Browser unresolved identities | 128 in tab-session storage |
+
+Running operations are not evicted. Before forgetting an identity, reclamation fences its admission
+epoch; daemon replacement also changes the epoch. Unknown old identities are refused. The browser
+retains unresolved controls across pane, project, and reload generations, offers same-operation checks,
+and releases them after a confirmed result or definite refusal. Unavailable or malformed storage blocks
+untracked writes. Legacy callers without identities retain one-new-intent-per-call behavior; identified
+requests require receipt support.
+
+The in-process development owner follows the same mutation contract. An incompatible listening daemon
+requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running and reports
+Settings → Updates → Restart all or `inspire restart --all`. Receipt discovery preserves that diagnosis.
+
+Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
+reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
+server work remains effective. Full catalogs validate project and daemon epoch/revision; partial receipts
+merge by ID within that epoch and do not suppress equal-revision full reconciliation. A new epoch needs
+a complete catalog, and retired epochs cannot replace it. Optimistic-order rollback applies only to its
+still-current state. Recovery rows retain uncertainty during checks; tab relationships target mounted
+lazy panels.
+
+## Stream, input, and authentication
+
+Output carries an epoch, byte offset, and resize revision. Matching retained clients receive missing
+bytes; stale epochs, evicted offsets, or incompatible dimensions receive a bounded headless-terminal
+snapshot followed by the exact live tail. Ambiguous continuity requests a fresh snapshot. Interrupted
+replay discards its incomplete screen.
+
+| Transport observation | Deadline / cadence |
+| --- | --- |
+| Ticket, WebSocket opening, attachment | Ten seconds each |
+| Replay before connected state | Thirty seconds |
+| Application ping / receive silence | Ten / thirty seconds |
+
+Retirement invalidates callbacks before reconnect, cancels pending ticket work, and retains valid
+output/input continuity. Visibility and BFCache returns also retire stale transports.
+
+Monotonically acknowledged input frames let reconnect resend only unacknowledged bytes. One attachment
+owns input and PTY dimensions; other paired browsers remain live read-only viewers. Explicit takeover
+revokes the previous writer. A disconnected writer can reclaim its lease with an opaque token during
+the bounded grace period.
+
+HTTP controls require the paired cookie or explicit API bearer. `/terminal` WebSocket attachment
+requires an exact same-origin paired cookie and short-lived, single-use ticket; IDs and query tokens
+are not credentials. Dimensions, titles, paths, messages, replay, IPC connections, pending input, and
+outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
+Diagnostics omit terminal input, output, and internal path-bearing failures.
+
+## Tabs, menus, and settings
+
+The lazy Terminal mode provides profile choice, creation, rename, drag/keyboard ordering, restart,
+close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and an
+all-project navigator. One header owns tabs, new/profile, connection/control state, search, focus, and
+More. At pane widths up to 360px, Focus moves into More to leave room for the active tab and its close
+control. Focus remains available with an empty catalog. Focus mode and a same-origin focused window
+attach the existing terminal.
+
+Selected tabs are revealed on selection or strip resize without stealing focus. Catalog reconciliation
+restores saved selection before persisting a new value. Automatic focus belongs to a fresh activation
+and yields if another control takes focus; font loading, replay, reconnect, and writer-state changes do
+not reclaim it. Explicit Take control retains its user-gesture focus behavior.
+
+Profile and More menus share one pane owner. More contains clipboard/output actions, inline display
+and management groups, the navigator, and settings. Escape closes the innermost group first and restores
+its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
+within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
+
+Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
+visible around the scrolling body. Settings and Select text restore focus to the visible More summary;
+modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore browser defaults**
+resets local presentation/interaction preferences, not Host history. Narrow settings controls have 44px
+hit areas.
+
+## Rendering and input
+
+The xterm client supports ANSI/true color, alternate screens and mouse-capable TUIs, Unicode/IME,
+selection, safe HTTP links, authenticated project-file links, search options, paste protection, reset,
+clear, WebGL with renderer fallback, theme/font refitting, screen-reader mode, and configurable
+cursor/font/scrollback/shortcuts. File-link hit regions map UTF-16 offsets through xterm cells, preserving
+wide, combining, and supplementary characters.
+
+Search opens without changing PTY dimensions. Workbench shortcut mode retains selected-copy, native
+paste, and terminal search; shell mode yields those keys to the PTY. `Ctrl+Shift+Escape` exits terminal
+focus when the event belongs to that pane. Shell history remains native; the view adds neither command
+reruns nor a separate history interface.
+
+Touch keys preserve input focus. Navigation and direct Ctrl+C also work with the software keyboard
+closed; the header keyboard button explicitly focuses input. Ctrl/Alt are one-shot modifiers for user
+keystrokes, cleared by blur, loss of control, or paste. They do not modify pasted text or terminal replies.
+
+Pending menu paste belongs to its originating activation and control epoch. Switching views, losing
+control, or replacing the connection retires its completion/error/focus effects. A current paste returns
+focus from the dismissed menu while respecting a newer focus choice.
+
+## Selection and output
+
+Selection actions appear with selected text, without a permanent toolbar row. Copy uses that selection;
+quote sends inert fenced text to the current Composer. A Composer code block can be inserted into the
+controlled terminal without submitting it.
+
+More exposes Copy all and Select text independently of shell integration. Copy all reads retained
+scrollback in the normal screen or screen content in an alternate-screen application. Select text
+captures a stable read-only native selection view with Select all, Copy, and quote. Selection/copy does
+not request the software keyboard; failed clipboard access remains visible beside manual selection.
+
+Last-output copy uses the latest completed shell-marker range in the normal buffer, including cell
+columns. It excludes the next prompt and joins soft wraps while preserving Unicode and actual spaces.
+Marker eviction, buffer replacement/reset, or column reflow invalidates that range; height-only changes
+preserve it. Other copy paths remain independent.
+
+Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task notifications
+describe the outcome without exposing output content.
+
+## Persistence and installation
+
+Tab metadata and Host-wide history settings live in current-user-private state. Raw output persistence
+defaults off. Opt-in history has size/age bounds, disabling it clears retained logs, and Settings offers
+explicit clearing. Logs above 32 MiB trim to a 24 MiB tail with a reset prefix, leaving append headroom.
+Browser-local preferences never become process authority.
+
+Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
+dependencies. The terminal user service is separate from `inspire-host.service`: Host-only stop/restart
+preserves PTYs; disabling the terminal service owns their shutdown. Explicit Restart all uses one ordered
+systemd transaction for the verified installed services. Ordinary and automatic maintenance restart only
+the Host.
+
+## Boundaries and evidence
+
+Terminal splitting, simultaneous writers, anonymous sharing, and public terminal-only links are outside
+this design. Pi prompts/extensions gain no implicit ability to inspect or operate the human terminal.
+Image protocols, OSC 52, recording, reboot command replay, containers, and tmux-specific attachment remain
+future options.
+
+[[terminal-ci-portability]] records cross-platform runtime and exit checks.
+[[operation-lifecycle-ownership]] covers receipts, upgrade behavior, and uncertainty.
+[[terminal-controls-redesign]] and [[follow-interface-review-2026-09-29]] record controls, clipboard,
+settings, and browser verification.
