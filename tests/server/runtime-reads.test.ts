@@ -34,6 +34,14 @@ function fixture() {
 }
 
 describe("addressed resource read lifecycle", () => {
+  it("validates ordinary transcript reads without forcing unchanged bytes to be reread", async () => {
+    const f = fixture();
+    await expect(f.reads.lastAssistantText("a", "view-a")).resolves.toEqual({
+      text: null,
+    });
+    expect(f.host.reconcileSlot).toHaveBeenCalledExactlyOnceWith(f.slot, false);
+  });
+
   it.each(["before", "during"])(
     "rejects a slot replaced %s context reconciliation",
     async (when) => {
@@ -74,5 +82,9 @@ describe("addressed resource read lifecycle", () => {
     });
     const context = await f.reads.resourceContext("a");
     await expect(context.loadMessages!()).resolves.toEqual(["message-a"]);
+    expect(f.host.reconcileSlot.mock.calls).toEqual([
+      [f.slot, false],
+      [f.slot, false],
+    ]);
   });
 });

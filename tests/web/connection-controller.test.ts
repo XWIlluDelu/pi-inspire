@@ -4,6 +4,7 @@ import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream
 import {
   ConnectionController,
   FIRST_SNAPSHOT_TIMEOUT_MS,
+  SOCKET_CONNECT_TIMEOUT_MS,
   STREAM_INACTIVITY_TIMEOUT_MS,
 } from "../../src/controllers/connection-controller";
 
@@ -239,18 +240,89 @@ describe("ConnectionController", () => {
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("bounds a connection attempt that never supplies its first snapshot", () => {
+  it.each([false, true])("bounds a blackhole (socket opened: %s)", (opened) => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-
     controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
-    vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS);
-
+    if (opened) socket.open();
+    const deadline = opened
+      ? FIRST_SNAPSHOT_TIMEOUT_MS
+      : SOCKET_CONNECT_TIMEOUT_MS;
+    vi.advanceTimersByTime(deadline - 1);
+    expect(socket.closeCount).toBe(0);
+    vi.advanceTimersByTime(1);
     expect(socket.closeCount).toBe(1);
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    expect(host.reconnect).not.toHaveBeenCalled();
+    // Late callbacks cannot publish state or schedule an additional retry.
+    socket.open();
+    socket.emit(snapshot);
+    socket.onclose?.();
+    expect(host.applyEvent).not.toHaveBeenCalled();
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1_000);
+    expect(ImmediateCloseSocket.instances).toHaveLength(2);
+  });
+
+  it("gives a slow valid snapshot its own budget after a slow connection", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    vi.advanceTimersByTime(SOCKET_CONNECT_TIMEOUT_MS - 1);
+    socket.open();
+    vi.advanceTimersByTime(30_000);
+    expect(socket.closeCount).toBe(0);
+    expect(host.patch).not.toHaveBeenCalledWith({
+      connection: "open",
+      connectionProblem: null,
+    });
+    socket.emit(snapshot);
+    expect(host.patch).toHaveBeenLastCalledWith({
+      connection: "open",
+      connectionProblem: null,
+    });
+    expect(host.applyEvent).toHaveBeenCalledBefore(host.recordSnapshotDigest);
+    vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
+    expect(socket.closeCount).toBe(0);
+  });
+
+  it("allows slow selection snapshots but bounds a missing one despite healthy heartbeats", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    const state = { ...host.state() };
+    host.state.mockImplementation(() => state);
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.open();
+    socket.emit(snapshot);
+    state.sessionId = "b";
+    controller.updateDetailInterest();
+    vi.advanceTimersByTime(30_000);
+    socket.emit({ ...snapshot, detailSessionId: "b", detailRevision: 1 });
+    expect(socket.closeCount).toBe(0);
+    state.sessionId = "c";
+    controller.updateDetailInterest();
+    vi.advanceTimersByTime(30_000);
+    socket.emit({ type: "heartbeat" });
+    vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
+    expect(socket.closeCount).toBe(1);
+  });
+
+  it("retires a socket error without depending on a later close event", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    controller.connect("token");
+    const socket = ImmediateCloseSocket.instances[0]!;
+    socket.close = vi.fn();
+    socket.onerror?.();
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    socket.emit(snapshot);
+    expect(host.applyEvent).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1_000);
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
     expect(host.reconnect).not.toHaveBeenCalled();

@@ -217,6 +217,23 @@ permission to advance the current writer baseline must remain distinct. The deci
 - Empty overlays have an O(1) reconciliation path, avoiding a full persisted-message scan during
   unchanged polling observations.
 
+### Unchanged read reuse
+
+Ordinary snapshots, history pages, and resource reads no longer force a full byte scan when
+`lstat` still identifies the same healthy, verified regular-file version. Changed or unhealthy
+sources take the existing verification path; startup and writer admission still force verification.
+This reuses an unchanged observation, not an unverified external append or a metadata-only rewrite.
+
+`tests/server/session-projection-read-reuse.test.ts` checks zero content opens for unchanged reads,
+explicit forced validation, same-size rewrites, rewritten-prefix appends, atomic replacement,
+symlink substitution, and recovery from a transient read failure. Runtime read tests retain lazy
+resource slot/view/revision fencing.
+
+The reproducible `npm run benchmark:projection` uses a synthetic 16 MiB JSONL, three warmups,
+and nine alternating samples per mode. On the local Linux/Node 26 run, median reconciliation time
+was **7.426 ms forced versus 0.028 ms version-checked**. This measures only unchanged-file
+reconciliation, not first parsing, changed files, page serialization, or end-to-end browser latency.
+
 ### Content-equivalent metadata boundary
 
 The reader supplies `verifiedUnchangedContent` only after a stable, full-byte revalidation of the

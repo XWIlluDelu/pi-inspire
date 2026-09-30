@@ -58,7 +58,10 @@ import {
   type RuntimeLike,
   type RuntimeWorkerStatus,
 } from "./runtime.js";
-import { SessionCatalog, type SessionCatalogLike } from "./session-catalog.js";
+import {
+  createHostSessionCatalog,
+  type SessionCatalogLike,
+} from "./session-catalog.js";
 import {
   currentStaticAssetPaths,
   defaultStaticAssetCacheDirectory,
@@ -197,7 +200,7 @@ if (mock) {
   catalog = new MockCatalog();
   runtime = new MockRuntime({ streamIntervalMs: mockStreamIntervalMs });
 } else {
-  catalog = new SessionCatalog(process.cwd());
+  catalog = createHostSessionCatalog(process.cwd(), preferences);
   runtime = new RuntimeController(
     catalog,
     attachments,

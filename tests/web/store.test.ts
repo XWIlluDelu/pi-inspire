@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
@@ -439,6 +440,141 @@ describe("websocket lifecycle", () => {
     }
   });
 
+  it.each(["initial", "addressed reconnect"] as const)(
+    "allows a healthy slow %s bootstrap to finish after Pi reads",
+    async (phase) => {
+      vi.useFakeTimers();
+      try {
+        const pending = deferred<RouteResponse>();
+        let slow = phase === "initial";
+        let signal: AbortSignal | null | undefined;
+        const fetch = installFetch((url, init) => {
+          if (slow && url.startsWith("/api/bootstrap")) {
+            signal = init.signal;
+            return pending.promise;
+          }
+          return baseRoutes(url, init);
+        });
+        const store = new AppStore();
+        if (!slow) await store.init(null);
+        slow = true;
+        const initializing = store.init(null);
+        await vi.advanceTimersByTimeAsync(35_000);
+        expect(signal?.aborted).toBe(false);
+        pending.resolve({
+          body: bootstrapPayload({ snapshot: activeSnapshot() }),
+        });
+        await initializing;
+        FakeWebSocket.instances.at(-1)!.open(activeSnapshot());
+        expect(store.getState()).toMatchObject({
+          bootstrapped: true,
+          connection: "open",
+          needsToken: false,
+        });
+        expect(
+          fetch.mock.calls
+            .filter(([url]) => String(url).startsWith("/api/bootstrap"))
+            .at(-1)?.[0],
+        ).toBe(
+          phase === "initial" ? "/api/bootstrap" : "/api/bootstrap?detail=s1",
+        );
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([200, 401])(
+    "fences a late bootstrap %s after its deadline and successful replacement",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        const late = deferred<RouteResponse>();
+        let calls = 0;
+        const fetch = installFetch((url, init) => {
+          if (url.startsWith("/api/bootstrap") && ++calls === 1)
+            return late.promise;
+          return baseRoutes(url, init);
+        });
+        const store = new AppStore();
+        const first = store.init(null);
+        await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
+        await first;
+        expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+        expect(store.getState()).toMatchObject({
+          connection: "offline",
+          bootstrapped: false,
+          needsToken: false,
+        });
+        await store.init(null);
+        const socket = FakeWebSocket.instances.at(-1)!;
+        socket.open(activeSnapshot());
+        late.resolve(
+          status === 401
+            ? { status, body: { error: "Expired pairing" } }
+            : {
+                body: bootstrapPayload({
+                  version: "stale-host",
+                  snapshot: activeSnapshot({ sessionId: "stale" }),
+                }),
+              },
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(store.getState()).toMatchObject({
+          connection: "open",
+          sessionId: "s1",
+          needsToken: false,
+        });
+        expect(store.getState().version).not.toBe("stale-host");
+        expect(FakeWebSocket.instances).toEqual([socket]);
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps missing-detail fallback within the original bootstrap budget", async () => {
+    vi.useFakeTimers();
+    try {
+      let recovering = false;
+      const missing = deferred<RouteResponse>();
+      let fallbackSignal: AbortSignal | null | undefined;
+      installFetch((url, init) => {
+        if (recovering && url === "/api/bootstrap?detail=s1")
+          return missing.promise;
+        if (recovering && url === "/api/bootstrap?detail=") {
+          fallbackSignal = init.signal;
+          return new Promise<never>(() => {});
+        }
+        return baseRoutes(url, init);
+      });
+      const store = new AppStore();
+      await store.init(null);
+      recovering = true;
+      const reconnecting = store.init(null);
+      await vi.advanceTimersByTimeAsync(35_000);
+      missing.resolve({
+        status: 404,
+        body: { error: "Gone", code: "SESSION_NOT_FOUND" },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fallbackSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS - 35_000);
+      await reconnecting;
+      expect(fallbackSignal?.aborted).toBe(true);
+      expect(store.getState()).toMatchObject({
+        connection: "offline",
+        needsToken: false,
+        sessionId: "s1",
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("bounds a bootstrap that never produces an HTTP response", async () => {
     vi.useFakeTimers();
     try {
@@ -468,7 +604,7 @@ describe("websocket lifecycle", () => {
       const store = new AppStore();
       const initializing = store.init(null);
 
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
       await initializing;
 
       expect(bootstrapSignals[0]?.aborted).toBe(true);

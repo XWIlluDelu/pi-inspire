@@ -2,8 +2,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  ApiRequestCancelledError,
   ApiTransportError,
   createApi,
+  HTTP_OBSERVATION_TIMEOUT_MS,
+  LONG_HTTP_OBSERVATION_TIMEOUT_MS,
   PROMPT_CONFIRMATION_TIMEOUT_MS,
 } from "../../src/api";
 
@@ -223,6 +226,292 @@ describe("prompt delivery transport", () => {
       historyEntry: null,
     });
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("ordinary HTTP observation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["headers", "body"] as const)(
+    "bounds a blackholed read's %s, even if abort is ignored",
+    async (phase) => {
+      vi.useFakeTimers();
+      const never = new Promise<never>(() => {});
+      const fetch = vi.fn((_url: unknown, _init?: RequestInit) =>
+        phase === "headers"
+          ? never
+          : Promise.resolve({ ok: true, json: () => never }),
+      );
+      vi.stubGlobal("fetch", fetch);
+      const result = createApi()
+        .snapshot("s1")
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
+      expect(await result).toMatchObject({
+        name: "ApiTransportError",
+        timedOut: true,
+        outcomeUnknown: false,
+      });
+      expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("reports an unconfirmed write rather than a failed mutation, without replay", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(() => new Promise<never>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    const result = createApi()
+      .openSession("s2")
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
+    expect(await result).toMatchObject({
+      outcomeUnknown: true,
+      timedOut: true,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each(["network", "invalid-json"] as const)(
+    "keeps a write outcome unknown after %s failure",
+    async (failure) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          if (failure === "network") throw new TypeError("Network error");
+          return new Response("not JSON");
+        }),
+      );
+      await expect(createApi().newSession("/workspace")).rejects.toMatchObject({
+        name: "ApiTransportError",
+        outcomeUnknown: true,
+        timedOut: false,
+      });
+    },
+  );
+
+  it.each(["headers", "error body"] as const)(
+    "treats a transport-originated %s abort as uncertainty, not owner cancellation",
+    async (phase) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          const loseTransport = () => {
+            throw new DOMException("Connection lost", "AbortError");
+          };
+          if (phase === "headers") loseTransport();
+          return { ok: false, status: 401, json: loseTransport };
+        }),
+      );
+      await expect(
+        createApi().nativeCommand({ sessionId: "s1", command: "export" }),
+      ).rejects.toMatchObject({
+        name: "ApiTransportError",
+        outcomeUnknown: true,
+        timedOut: false,
+      });
+    },
+  );
+
+  it("preserves an explicit shorter observation deadline as uncertainty, not owner cancellation", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<never>(() => {})),
+    );
+    const controller = new AbortController();
+    const result = createApi()
+      .openSession("s2", controller.signal)
+      .catch((error: unknown) => error);
+    controller.abort(new DOMException("Deadline", "TimeoutError"));
+    expect(await result).toMatchObject({
+      name: "ApiTransportError",
+      timedOut: true,
+      outcomeUnknown: true,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("distinguishes owner cancellation from transport uncertainty and never dispatches pre-cancelled work", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(() => new Promise<never>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    const api = createApi();
+    const controller = new AbortController();
+    const result = api
+      .openSession("s2", controller.signal)
+      .catch((error: unknown) => error);
+    controller.abort();
+    expect(await result).toBeInstanceOf(ApiRequestCancelledError);
+    expect(await result).toMatchObject({ outcomeUnknown: true });
+    await expect(
+      api.openSession("s3", controller.signal),
+    ).rejects.toMatchObject({
+      name: "AbortError",
+      outcomeUnknown: false,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds a stalled error body and ignores a late 401 after cancellation", async () => {
+    vi.useFakeTimers();
+    let finish!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const result = createApi()
+      .openSession("s2", controller.signal)
+      .catch((error: unknown) => error);
+    controller.abort();
+    finish(Response.json({ error: "Expired" }, { status: 401 }));
+    expect(await result).toBeInstanceOf(ApiRequestCancelledError);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 401,
+        json: () => new Promise<never>(() => {}),
+      })),
+    );
+    const stalled = createApi()
+      .snapshot("s1")
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
+    expect(await stalled).toMatchObject({
+      timedOut: true,
+      outcomeUnknown: false,
+    });
+  });
+
+  it.each(["compact", "export", "navigation"] as const)(
+    "keeps %s completion-driven beyond 120s, with cancellation and real transport uncertainty",
+    async (operation) => {
+      vi.useFakeTimers();
+      let finish!: (value: Response) => void;
+      const fetch = vi.fn(
+        (_url: unknown, _init?: RequestInit) =>
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      vi.stubGlobal("fetch", fetch);
+      const api = createApi();
+      const invoke = (signal?: AbortSignal) =>
+        operation === "navigation"
+          ? api.navigateBranch(
+              {
+                sessionId: "s1",
+                revision: 1,
+                targetId: "t1",
+                mode: "switch",
+              },
+              signal,
+            )
+          : api.nativeCommand({ sessionId: "s1", command: operation }, signal);
+      const result = invoke();
+      const settled = vi.fn();
+      void result.then(settled, settled);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(settled).not.toHaveBeenCalled();
+      expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      const response = {
+        outcome: "completed",
+        details: [{ label: "Path", value: "/tmp/export.html" }],
+      };
+      finish(Response.json(response));
+      await expect(result).resolves.toEqual(response);
+
+      const controller = new AbortController();
+      const cancelled = invoke(controller.signal).catch(
+        (error: unknown) => error,
+      );
+      controller.abort();
+      expect(await cancelled).toBeInstanceOf(ApiRequestCancelledError);
+      expect(await cancelled).toMatchObject({ outcomeUnknown: true });
+      finish(Response.json({ error: "Late pairing error" }, { status: 401 }));
+      await expect(invoke(controller.signal)).rejects.toMatchObject({
+        outcomeUnknown: false,
+      });
+      fetch.mockRejectedValueOnce(new TypeError("Network lost"));
+      await expect(invoke()).rejects.toMatchObject({
+        name: "ApiTransportError",
+        timedOut: false,
+        outcomeUnknown: true,
+      });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(["create", "fork"] as const)(
+    "keeps %s observation bounded without replay",
+    async (operation) => {
+      vi.useFakeTimers();
+      const fetch = vi.fn(() => new Promise<never>(() => {}));
+      vi.stubGlobal("fetch", fetch);
+      const api = createApi();
+      const result = (
+        operation === "create"
+          ? api.newSession("/workspace")
+          : api.forkBranch({ sessionId: "s1", revision: 1, targetId: "t1" })
+      ).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(LONG_HTTP_OBSERVATION_TIMEOUT_MS);
+      expect(await result).toMatchObject({
+        timedOut: true,
+        outcomeUnknown: true,
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not turn a lost error body into a definitive creation refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        json: async () => {
+          throw new TypeError("Connection lost while reading body");
+        },
+      })),
+    );
+    await expect(createApi().newSession("/workspace")).rejects.toMatchObject({
+      name: "ApiTransportError",
+      phase: "response",
+      outcomeUnknown: true,
+    });
+  });
+
+  it("preserves non-JSON HTTP status and relay markers for ordinary error presentation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("<html>Bad gateway</html>", {
+            status: 502,
+            headers: { "X-Inspire-Edge": "ssh-reverse" },
+          }),
+      ),
+    );
+    await expect(createApi().bootstrap()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 502,
+      edge: "ssh-reverse",
+      message: "Request failed (502)",
+    });
   });
 });
 

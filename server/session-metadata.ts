@@ -349,22 +349,44 @@ async function sessionFiles(root: string, nested: boolean): Promise<string[]> {
 export class SessionMetadataIndex {
   private readonly cache = new Map<string, CachedSessionRecord>();
 
-  async list(customSessionDir?: string): Promise<SessionRecord[]> {
-    const configuredRoot = resolve(
-      customSessionDir ?? join(getAgentDir(), "sessions"),
-    );
-    let canonicalRoot: string;
-    try {
-      canonicalRoot = await realpath(configuredRoot);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
+  async list(
+    directories: string | readonly (string | undefined)[] = [undefined],
+  ): Promise<SessionRecord[]> {
+    const roots = typeof directories === "string" ? [directories] : directories;
+    const pathsByCanonical = new Map<string, string>();
+    // Enumerate every selected root before pruning metadata or publishing rows.
+    // One failing root must not make another project's sessions look deleted.
+    for (const customSessionDir of new Set(roots)) {
+      const configuredRoot = resolve(
+        customSessionDir ?? join(getAgentDir(), "sessions"),
+      );
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = await realpath(configuredRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const files = await sessionFiles(
+        configuredRoot,
+        customSessionDir === undefined,
+      );
+      for (const path of files) {
+        const canonical = resolve(
+          canonicalRoot,
+          relative(configuredRoot, path),
+        );
+        // Overlapping roots (or root aliases) describe one file, not duplicate
+        // Pi identities. Links within storage remain excluded by sessionFiles.
+        if (!pathsByCanonical.has(canonical))
+          pathsByCanonical.set(canonical, path);
+      }
     }
-    const files = await sessionFiles(
-      configuredRoot,
-      customSessionDir === undefined,
-    );
-    const present = new Set(files);
+    const files = [...pathsByCanonical].map(([canonical, path]) => ({
+      canonical,
+      path,
+    }));
+    const present = new Set(pathsByCanonical.values());
     for (const path of this.cache.keys()) {
       if (!present.has(path)) this.cache.delete(path);
     }
@@ -376,12 +398,9 @@ export class SessionMetadataIndex {
     const worker = async (): Promise<void> => {
       while (next < files.length) {
         const index = next++;
-        const path = files[index];
-        if (path) {
-          records[index] = await this.read(
-            path,
-            resolve(canonicalRoot, relative(configuredRoot, path)),
-          );
+        const file = files[index];
+        if (file) {
+          records[index] = await this.read(file.path, file.canonical);
         }
       }
     };

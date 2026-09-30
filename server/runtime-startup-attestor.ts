@@ -137,7 +137,7 @@ export class RuntimeStartupAttestor {
     if (
       state.sessionId !== slot.id ||
       typeof state.sessionFile !== "string" ||
-      resolve(state.sessionFile) !== resolve(slot.sessionPath!) ||
+      resolve(slot.cwd, state.sessionFile) !== resolve(slot.sessionPath!) ||
       typeof state.thinkingLevel !== "string"
     )
       fail();
