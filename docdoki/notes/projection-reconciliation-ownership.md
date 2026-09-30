@@ -42,6 +42,23 @@ permission to advance the current writer baseline must remain distinct. The deci
 - Empty overlays have an O(1) reconciliation path, avoiding a full persisted-message scan during
   unchanged polling observations.
 
+## Unchanged read reuse
+
+Ordinary snapshots, history pages, and resource reads no longer force a full byte scan when
+`lstat` still identifies the same healthy, verified regular-file version. Changed or unhealthy
+sources take the existing verification path; startup and writer admission still force verification.
+This reuses an unchanged observation, not an unverified external append or a metadata-only rewrite.
+
+`tests/server/session-projection-read-reuse.test.ts` checks zero content opens for unchanged reads,
+explicit forced validation, same-size rewrites, rewritten-prefix appends, atomic replacement,
+symlink substitution, and recovery from a transient read failure. Runtime read tests retain lazy
+resource slot/view/revision fencing.
+
+The reproducible `npm run benchmark:projection` uses a synthetic 16 MiB JSONL, three warmups,
+and nine alternating samples per mode. On the local Linux/Node 26 run, median reconciliation time
+was **7.426 ms forced versus 0.028 ms version-checked**. This measures only unchanged-file
+reconciliation, not first parsing, changed files, page serialization, or end-to-end browser latency.
+
 ## Content-equivalent metadata boundary
 
 The reader supplies `verifiedUnchangedContent` only after a stable, full-byte revalidation of the
@@ -62,8 +79,7 @@ pre-existing bounded new-file materialization handling is not broadened into a p
 
 ## Verification
 
-All session contents in the evidence are synthetic temporary fixtures. No live conversation JSONL,
-compaction summary, or remote provider content was read, and no daily-use service was restarted.
+Verification used synthetic temporary JSONL fixtures and isolated Pi workers.
 
 - The initial Node 22.19.0 regression run had 6 failures among 12 cases on the old production path:
   overlapping explicit reads, a late Stop witness, three metadata-state cases, and continuation
@@ -82,9 +98,5 @@ compaction summary, or remote provider content was read, and no daily-use servic
   (1,473 ordinary plus nine launcher tests); **17 portable checks** and **36 Chromium tests** passed.
   The suite includes real Pi's 35-second preflight compaction and subsequent same-worker prompt,
   plus extension confirmation and explicit Stop through the isolated API/Host/runtime.
-- DocDoki's private-boundary checker and `git diff --check` pass. These changes and the earlier
-  lifecycle repairs were validated together; loading the new Host code is a separate deployment action.
-
-The tests demonstrate the ordering repair and the full-reader metadata boundary. They do not claim
-that the original filesystem timing sequence or its actor has been identified, nor that all
-compaction failures from remote models or extensions are eliminated.
+These checks validated the ordering and metadata repairs together with the earlier operation
+lifecycle changes.

@@ -7,7 +7,8 @@ covers:
   - server/persisted-json.ts
   - server/resources.ts
   - tests/server/runtime*.test.ts
-  - tests/server/session-{projection,preview,jsonl}.test.ts
+  - tests/server/session-{projection*,preview,jsonl}.test.ts
+  - scripts/benchmark-projection-reads.mjs
   - tests/server/pi-{rpc,compat.integration}.test.ts
 ---
 
@@ -88,6 +89,13 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
   pending append claim, the projection extends its verified SHA-256 state and immutable normalized
   entry/message prefix; without that provenance it rereads and verifies the committed bytes before
   parsing a suffix.
+
+  Ordinary snapshots, history pages, and lazy resource-message reads may reuse a healthy verified
+  projection only after a fresh non-following check of the same regular file's device, inode, size,
+  modification time, and change time. Changed or unhealthy sources still undergo byte validation
+  in the same observation FIFO. This avoids rehashing an unchanged history on every page without
+  weakening forced startup, writer admission, fork, or explicit recovery validation. Lazy resource
+  reads still recheck their slot, view, and revision on both sides of reconciliation.
 
   A metadata-only observation may refresh the same worker's source version after a stable full-byte
   revalidation of the same filesystem object, with healthy complete contents, no unresolved tail,

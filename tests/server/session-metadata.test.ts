@@ -1,6 +1,7 @@
 import {
   appendFile,
   chmod,
+  mkdir,
   mkdtemp,
   rm,
   symlink,
@@ -51,6 +52,56 @@ afterEach(async () => {
 });
 
 describe("SessionMetadataIndex", () => {
+  it("deduplicates repeated roots and root aliases", async () => {
+    const root = await directory();
+    const alias = `${root}-alias`;
+    directories.push(alias);
+    await writeFile(
+      join(root, "session.jsonl"),
+      `${JSON.stringify(header())}\n`,
+    );
+    await symlink(
+      root,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const index = new SessionMetadataIndex();
+    expect(await index.list([root, root, alias])).toHaveLength(1);
+  });
+
+  it("retains every root's cached metadata and aborts on any failed root", async () => {
+    const root = await directory();
+    const first = join(root, "first");
+    const second = join(root, "second");
+    await mkdir(first);
+    await mkdir(second);
+    const firstPath = join(first, "one.jsonl");
+    await writeFile(firstPath, `${JSON.stringify(header("one"))}\n`);
+    await writeFile(
+      join(second, "two.jsonl"),
+      `${JSON.stringify(header("two"))}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+    await appendFile(firstPath, "malformed\n");
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+    const broken = join(root, "broken");
+    await writeFile(broken, "not a directory");
+    await expect(index.list([first, broken, second])).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+  });
+
   it("does not promote a symlinked JSONL into the session catalog", async () => {
     const root = await directory();
     const outside = await directory();

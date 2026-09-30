@@ -4,6 +4,8 @@ covers:
   - shared/contracts.ts
   - shared/assistant-stream.ts
   - server/session-catalog.ts
+  - server/pi-session-directory.ts
+  - server/project-directories.ts
   - server/session-metadata.ts
   - server/session-jsonl.ts
   - server/session-preview.ts
@@ -49,6 +51,11 @@ covers:
   - tests/server/mock.test.ts
   - tests/server/model-catalog.test.ts
   - tests/server/session-delete.test.ts
+  - tests/server/session-catalog.test.ts
+  - tests/server/session-metadata.test.ts
+  - tests/server/pi-session-directory*.test.ts
+  - tests/server/project-directories.test.ts
+  - tests/server/project-discovery.integration.test.ts
   - tests/server/runtime.test.ts
   - tests/server/runtime-branching.test.ts
   - tests/server/runtime-projection.test.ts
@@ -81,7 +88,29 @@ Let the user move between existing terminal Pi and inspire without losing histor
 ### Discovery and bounded catalog
 
 - inspire discovers sessions from the same Pi session storage selected by the user’s Pi
-  configuration.
+  configuration. For each known worker working directory, a nonempty inherited
+  `PI_CODING_AGENT_SESSION_DIR` precedes Pi's project/global `sessionDir` setting; an absent
+  or empty override falls through. Pi owns path normalization, and relative storage paths
+  resolve against that worker's working directory, not the Host's.
+
+  Discovery covers the Host startup directory, saved pinned/Hidden project directories, and
+  directories the Host has created or opened sessions in, including after Host reconstruction.
+  A private, lock-merged, atomically replaced cwd-only index beside the preferences file retains
+  these discovery roots independently of navigation curation. It stores no session identities,
+  storage paths, or history. New-session creation saves the resolved cwd before constructing Pi;
+  a failed or uncertain startup cannot orphan a possibly created session, and a failed index
+  write prevents creation. Opening an existing session also remembers its resolved cwd.
+  Legacy saved project folders seed the index, including before their first Unpin/Unhide or
+  deletion-cleanup mutation. Removing curation never removes discovery knowledge.
+
+  Each scan derives storage from current Pi environment/settings, not remembered storage paths.
+  Custom storage is flat; default storage scans Pi's project subdirectories. Shared or overlapping
+  roots contribute each file once. Saving project-folder curation invalidates discovery so newly
+  included project settings participate in the next scan. Missing storage contributes no sessions;
+  deleted files disappear on refresh, while missing project roots remain known for later return
+  or external storage. The Host never searches overridden storage as a fallback, nor traverses
+  arbitrary filesystem trees to find projects. Pi-reported relative session files resolve against
+  the worker cwd for creation, snapshots, and startup identity checks.
 
 - A session can be listed, searched, opened, continued, named, and switched using Pi’s identity and
   tree rather than copied into another conversation store.

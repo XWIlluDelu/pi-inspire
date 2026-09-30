@@ -6,7 +6,9 @@ import {
   type SessionListResponse,
   type SessionSummary,
 } from "../shared/contracts.js";
-import { SettingsManager } from "./pi-runtime.js";
+import { resolvePiSessionDirectory } from "./pi-session-directory.js";
+import type { PreferencesStore } from "./preferences.js";
+import type { ProjectDirectoryStore } from "./project-directories.js";
 import { requestError } from "./request-error.js";
 import {
   SessionMetadataIndex,
@@ -75,6 +77,8 @@ export interface SessionCatalogLike {
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
   listByCwds(cwds: readonly string[]): Promise<SessionSummary[]>;
   invalidate(): void;
+  /** Persist before Pi can create a session; mocks need no discovery index. */
+  rememberProjectCwds?(cwds: readonly string[]): Promise<void>;
 }
 
 export class SessionCatalog implements SessionCatalogLike {
@@ -96,7 +100,16 @@ export class SessionCatalog implements SessionCatalogLike {
       SessionMetadataIndex,
       "list"
     > = new SessionMetadataIndex(),
+    private readonly projectCwds: () => Promise<
+      readonly string[]
+    > = async () => [],
+    private readonly projects?: ProjectDirectoryStore,
   ) {}
+
+  async rememberProjectCwds(cwds: readonly string[]): Promise<void> {
+    await this.projects?.remember(cwds);
+    this.invalidate();
+  }
 
   async refresh(force = false): Promise<readonly SessionRecord[]> {
     if (force) this.invalidate();
@@ -133,10 +146,17 @@ export class SessionCatalog implements SessionCatalogLike {
       if (predecessor) await predecessor.catch(() => undefined);
       if (generation !== this.generation) return;
 
-      const sessionDir = SettingsManager.create(
-        this.startupCwd,
-      ).getSessionDir();
-      const sessions = await this.metadata.list(sessionDir);
+      const seeds = [this.startupCwd, ...(await this.projectCwds())];
+      await this.projects?.remember(seeds);
+      const cwds = new Set([
+        ...seeds,
+        ...((await this.projects?.read()) ?? []),
+      ]);
+      if (generation !== this.generation) return;
+      const directories = [
+        ...new Set([...cwds].map(resolvePiSessionDirectory)),
+      ];
+      const sessions = await this.metadata.list(directories);
       if (generation !== this.generation) return;
 
       // Pi storage enumeration is not an ordering contract. Page boundaries
@@ -279,4 +299,20 @@ export class SessionCatalog implements SessionCatalogLike {
     this.generation += 1;
     this.loadedAt = 0;
   }
+}
+
+/** Shared Host wiring: preferences seed discovery, but never own its lifetime. */
+export function createHostSessionCatalog(
+  startupCwd: string,
+  preferences: PreferencesStore,
+): SessionCatalog {
+  return new SessionCatalog(
+    startupCwd,
+    undefined,
+    async () => {
+      const saved = await preferences.read();
+      return [...saved.pinnedProjectCwds, ...saved.hiddenProjectCwds];
+    },
+    preferences.projectDirectories,
+  );
 }

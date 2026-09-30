@@ -1709,6 +1709,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
     const loading = (async () => {
       const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd);
+      await this.catalog.rememberProjectCwds?.([workspaceRoot]);
       const { projection, preview } = await this.openProjection(
         session,
         workspaceRoot,
@@ -1905,6 +1906,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
     const cwd = await resolveProjectDirectory(cwdInput);
+    // Persist discovery before constructing/starting Pi: even a failed startup
+    // response may leave a successfully created native session behind.
+    await this.catalog.rememberProjectCwds?.([cwd]);
     this.assertNotClosing();
 
     const name = options.name?.trim().slice(0, 160) || undefined;
@@ -1957,7 +1961,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         throw new Error("Pi reported an invalid session id");
       const reportedPath =
         typeof state.sessionFile === "string"
-          ? resolve(state.sessionFile)
+          ? resolve(cwd, state.sessionFile)
           : null;
       if (
         this.slots.has(sessionId) ||
@@ -3583,7 +3587,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot> {
     return this.useSlot(slot, async () => {
-      await this.reconcileSlot(slot, true);
+      await this.reconcileSlot(slot, false);
       const rpc = slot.process;
       if (!rpc || !slot.ready) return this.previewSnapshot(slot);
       const [state, extras] = await Promise.all([
@@ -3594,7 +3598,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         typeof state.sessionId === "string" ? state.sessionId : null;
       const runtimeSessionPath =
         typeof state.sessionFile === "string"
-          ? resolve(state.sessionFile)
+          ? resolve(slot.cwd, state.sessionFile)
           : null;
       if (
         slot.process !== rpc ||

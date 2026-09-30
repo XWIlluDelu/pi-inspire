@@ -13,6 +13,7 @@ import {
 import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
+import { ProjectDirectoryStore } from "./project-directories.js";
 
 // Field validators stay default-free here: `.partial()` keeps `.default()`,
 // so a patch schema derived from defaulted fields would fill absent keys and
@@ -124,10 +125,14 @@ function projectPreferences(value: unknown): {
 
 export class PreferencesStore {
   readonly path: string;
+  readonly projectDirectories: ProjectDirectoryStore;
   private writes: Promise<void> = Promise.resolve();
 
   constructor(path = join(inspireConfigDirectory(), "preferences.json")) {
     this.path = path;
+    this.projectDirectories = new ProjectDirectoryStore(
+      `${path}.projects.json`,
+    );
   }
 
   private async readDisk(): Promise<DiskPreferences> {
@@ -234,6 +239,14 @@ export class PreferencesStore {
         const preferences = preferencesSchema.parse(
           transform(current.preferences),
         );
+        // Curation can introduce discovery roots, never remove them. Save both
+        // sides before replacing legacy preferences, including deletion cleanup.
+        await this.projectDirectories.remember([
+          ...current.preferences.pinnedProjectCwds,
+          ...current.preferences.hiddenProjectCwds,
+          ...preferences.pinnedProjectCwds,
+          ...preferences.hiddenProjectCwds,
+        ]);
         await this.persist(preferences, assertOwned);
         return preferences;
       }),

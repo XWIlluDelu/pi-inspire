@@ -1432,7 +1432,14 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.preferences.read()),
   );
   app.patch("/api/preferences", async (request, response) => {
-    response.json(await deps.preferences.patch(request.body));
+    const preferences = await deps.preferences.patch(request.body);
+    if (
+      Object.hasOwn(request.body, "pinnedProjectCwds") ||
+      Object.hasOwn(request.body, "hiddenProjectCwds")
+    ) {
+      deps.catalog.invalidate();
+    }
+    response.json(preferences);
   });
   app.get("/api/snapshot", async (request, response) =>
     response.json(
