@@ -4,12 +4,11 @@ import "katex/dist/katex.min.css";
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import type { Root } from "mdast";
 import { decodeString } from "micromark-util-decode-string";
-import { memo, type ReactNode, useContext } from "react";
+import { memo, type ReactNode, useContext, useMemo } from "react";
 import ReactMarkdown, {
   type Components,
   defaultUrlTransform,
 } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math-extended";
@@ -20,14 +19,15 @@ import { isDocumentFileReference } from "../document-resources";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
+import { RichTextMath } from "./RichTextMath";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 
 // Shared sanitize schema for every variant. Raw HTML from model content is
 // never parsed (react-markdown drops it without rehype-raw), and the remaining
-// untrusted Markdown tree is sanitized before KaTeX runs. The two math marker
-// classes must survive that boundary so rehype-katex can replace them with
-// output generated under trust:false. This follows rehype-katex's documented
+// untrusted Markdown tree is sanitized before KaTeX runs. The math marker
+// classes survive that boundary so RichTextMath can run rehype-katex with
+// trust:false in a memoized leaf. This follows rehype-katex's documented
 // ordering and avoids maintaining an incomplete parallel allowlist of KaTeX's
 // MathML, HTML, SVG, and accessibility attributes.
 const schema = {
@@ -293,11 +293,21 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function CodeBlock({ language, code }: { language: string; code: string }) {
+const CodeBlock = memo(function CodeBlock({
+  language,
+  code,
+}: {
+  language: string;
+  code: string;
+}) {
   const { copied, copy } = useCopied();
-  const highlighted = hljs.getLanguage(language)
-    ? hljs.highlight(code, { language }).value
-    : escapeHtml(code);
+  const highlighted = useMemo(
+    () =>
+      language && hljs.getLanguage(language)
+        ? hljs.highlight(code, { language }).value
+        : escapeHtml(code),
+    [code, language],
+  );
 
   return (
     <div className="code-block">
@@ -335,46 +345,65 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       <pre className="code-block__pre" tabIndex={0}>
         {/* highlight.js escapes its input; the generated markup contains only span tags */}
         <code
-          className={`hljs language-${language}`}
+          className={language ? `hljs language-${language}` : "hljs"}
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       </pre>
     </div>
   );
-}
+});
 
 // Local file references carry data-file-path instead of navigation semantics;
 // the transcript's delegated click handler opens them in the resources pane.
 // Remote http(s)/mailto links keep ordinary safe external-link behavior.
 const components: Components = {
-  // Our CodeBlock renders its own <pre>; unwrap react-markdown's wrapper.
-  pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
-  code: ({
-    className,
-    children,
-  }: {
-    className?: string;
-    children?: ReactNode;
-  }) => {
-    const text = String(children ?? "").replace(/\n$/, "");
-    const match = /language-([\w+-]+)/.exec(className ?? "");
-    if (!match) {
-      // A credible inline-code path (known file extension or explicit relative
-      // prefix) opens the resource pane rather than sitting inert.
-      if (isLocalResourceReference(text)) {
-        return (
-          <button
-            type="button"
-            className="file-ref file-ref--code"
-            data-file-path={text}
-          >
-            <code className="inline-code">{text}</code>
-          </button>
-        );
-      }
-      return <code className="inline-code">{text}</code>;
+  // A <pre>, not a language class, establishes block semantics. Read the
+  // sanitized code node directly so unlabeled fences/indented code cannot
+  // accidentally become inline file-reference buttons. CodeBlock owns <pre>.
+  pre: ({ node, children }) => {
+    const code = node?.children[0];
+    if (code?.type !== "element" || code.tagName !== "code")
+      return <pre>{children}</pre>;
+    const classes = code.properties.className;
+    const classNames = Array.isArray(classes) ? classes.map(String) : [];
+    const value = code.children
+      .map((child) => (child.type === "text" ? child.value : ""))
+      .join("");
+    if (
+      classNames.includes("language-math") ||
+      classNames.includes("math-display")
+    )
+      return <RichTextMath value={value} display />;
+    const language =
+      classNames.find((name) => name.startsWith("language-"))?.slice(9) ?? "";
+    // mdast-to-hast adds one terminator; retain all source blank lines before it.
+    return <CodeBlock language={language} code={value.replace(/\n$/, "")} />;
+  },
+  code: ({ className, children }) => {
+    const text = String(children ?? "");
+    const classes = className?.split(/\s+/) ?? [];
+    if (
+      classes.some((name) =>
+        ["language-math", "math-inline", "math-display"].includes(name),
+      )
+    )
+      return (
+        <RichTextMath value={text} display={classes.includes("math-display")} />
+      );
+    // A credible inline-code path (known file extension or explicit relative
+    // prefix) opens the resource pane rather than sitting inert.
+    if (isLocalResourceReference(text)) {
+      return (
+        <button
+          type="button"
+          className="file-ref file-ref--code"
+          data-file-path={text}
+        >
+          <code className="inline-code">{text}</code>
+        </button>
+      );
     }
-    return <CodeBlock language={match[1]!} code={text} />;
+    return <code className="inline-code">{text}</code>;
   },
   a: function ResourceLink({
     href,
@@ -465,13 +494,15 @@ function urlTransform(url: string): string {
   return defaultUrlTransform(url);
 }
 
-// Memoized: settled Markdown/KaTeX/highlighting is expensive to reparse, and
-// stream deltas only change the trailing message's props.
 const inlineComponents: Components = {
   ...components,
   p: ({ children }: { children?: ReactNode }) => <>{children}</>,
 };
 
+/** Parse the whole current document on every source change: reference/footnote
+ * definitions and open block structure can change earlier Markdown. Expensive
+ * generated math/code subtrees are memoized separately with primitive props,
+ * after sanitization, so stable leaves survive trailing stream updates. */
 export const RichText = memo(function RichText({
   text,
   variant = "assistant",
@@ -498,10 +529,7 @@ export const RichText = memo(function RichText({
               ]
             : [remarkGfm, remarkMath, remarkMathSourceSafety]
         }
-        rehypePlugins={[
-          [rehypeSanitize, schema],
-          [rehypeKatex, { trust: false, strict: false, throwOnError: false }],
-        ]}
+        rehypePlugins={[[rehypeSanitize, schema]]}
         components={inline ? inlineComponents : components}
         urlTransform={urlTransform}
       >

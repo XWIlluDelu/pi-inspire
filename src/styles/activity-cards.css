@@ -408,7 +408,7 @@
 
 .card__section-label {
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--muted);
   letter-spacing: 0.04em;
   margin: var(--space-2) 0 var(--space-1);
 }
@@ -496,7 +496,7 @@
 
 .card__file-arg-key {
   flex: 0 0 auto;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .card__file-arg:hover {
@@ -589,11 +589,28 @@
 }
 
 .resource-path__visible {
-  display: block;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.resource-path__parent {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.resource-path__leaf {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  /* Elide the start only when the filename itself cannot fit. Its isolated
+     text keeps punctuation and mixed-script names in their native order. */
+  direction: rtl;
+  text-align: start;
+  text-overflow: ellipsis;
 }
 
 .tool-summary__resource:hover,
@@ -648,23 +665,26 @@
 .tool-properties__item {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   align-items: baseline;
   gap: var(--space-1);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xs);
-  background: var(--bg-inset);
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
 }
 
 .tool-properties__item dt {
-  color: var(--faint);
+  flex: 0 0 auto;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .tool-properties__item dd {
   min-width: 0;
   margin: 0;
   color: var(--body);
+  overflow-wrap: anywhere;
 }
 
 .tool-properties__item code,
@@ -687,13 +707,60 @@
 }
 
 .tool-code {
+  --tool-line-number-width: 4.5ch;
   overflow: auto;
   white-space: pre;
 }
 
+/* Long tool content stays inspectable without taking over the transcript.
+   The complete rendered content remains locally scrollable. */
+.tool-code,
+.tool-terminal,
+.tool-markdown,
+.tool-presentation .diff,
+.card--tool .card__mono {
+  max-height: min(32rem, 65vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.tool-terminal--live {
+  max-height: min(24rem, 45vh);
+}
+
+.tool-result-details > summary {
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.tool-result-details .card__mono {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--bg-inset);
+}
+
+span.tool-summary__resource,
+span.tool-block__path,
+span.tool-properties__resource,
+span.card__summary--file,
+span.card__file-arg {
+  color: var(--muted);
+  cursor: default;
+}
+
+.tool-code__lines {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
 .tool-code__line {
   display: grid;
-  grid-template-columns: 4.5ch minmax(max-content, 1fr);
+  grid-template-columns: var(--tool-line-number-width) minmax(max-content, 1fr);
   min-height: 20px;
 }
 
@@ -785,7 +852,7 @@
 
 .tool-list li {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) fit-content(45%);
   align-items: center;
   gap: var(--space-2);
   min-height: 28px;
@@ -814,8 +881,12 @@
 }
 
 .tool-list__detail {
-  color: var(--faint);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
   font-size: var(--text-reading-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-empty {
@@ -1094,7 +1165,7 @@
 .code-block__lang {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .code-block__actions {

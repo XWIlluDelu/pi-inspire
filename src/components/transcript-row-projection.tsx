@@ -791,7 +791,7 @@ export function useTranscriptRows({
               <UnpairedToolResultRow
                 key={key}
                 activityItemId={activityItemId}
-                toolName={message.toolName}
+                message={message}
                 visibility={
                   toolVisibility === "compact" ||
                   toolVisibility === "collapsed" ||

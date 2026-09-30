@@ -428,6 +428,91 @@ describe("message reconciliation", () => {
     expect(duplicate.changed).toBe(false);
   });
 
+  it("keeps an observed completed call queued until execution is observed", () => {
+    const message = {
+      role: "assistant",
+      timestamp: 7,
+      content: [
+        {
+          type: "toolCall",
+          id: "queued",
+          name: "write",
+          arguments: { path: "a.ts", content: "ready" },
+        },
+      ],
+    };
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message,
+    });
+    const ended = reduce(started.slice, new Set(), {
+      type: "message_end",
+      message,
+    });
+    expect(ended.slice.streaming).toBe(false);
+    expect(ended.slice.tools.queued).toEqual({
+      id: "queued",
+      name: "write",
+      phase: "queued",
+    });
+    const executing = reduce(ended.slice, new Set(), {
+      type: "tool_execution_update",
+      toolCallId: "queued",
+      toolName: "write",
+      partialResult: { content: [{ type: "text", text: "Writing…" }] },
+    });
+    expect(executing.slice.tools.queued?.phase).toBe("running");
+    const replayed = reduce(executing.slice, new Set(), {
+      type: "message_end",
+      message,
+    });
+    expect(replayed.slice.tools.queued?.phase).toBe("running");
+    const settled = reduce(ended.slice, new Set(), { type: "agent_settled" });
+    expect(settled.slice.tools).toEqual({});
+  });
+
+  it("does not infer a queued execution from unobserved or interrupted calls", () => {
+    const call = {
+      type: "toolCall",
+      id: "unobserved",
+      name: "write",
+      arguments: { path: "a.ts" },
+    };
+    const message = { role: "assistant", timestamp: 7, content: [call] };
+    expect(
+      reduce(emptyEventSlice(), new Set(), { type: "message_end", message })
+        .slice.tools,
+    ).toEqual({});
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message,
+    });
+    for (const stopReason of ["aborted", "error"]) {
+      const ended = reduce(started.slice, new Set(), {
+        type: "message_end",
+        message: { ...message, stopReason },
+      });
+      expect(ended.slice.tools).toEqual({});
+    }
+    const partial = reduce(started.slice, new Set(), {
+      type: "message_end",
+      message: {
+        ...message,
+        content: [
+          {
+            ...call,
+            __inspireToolCall: {
+              phase: "streaming",
+              characters: 12,
+              truncated: false,
+            },
+          },
+        ],
+      },
+    });
+    expect(partial.slice.tools).toEqual({});
+  });
+
   it("keeps the current assistant key through its tool batch and replaces it at the next LLM call", () => {
     const firstStart = reduce(emptyEventSlice(), new Set(), {
       type: "message_start",

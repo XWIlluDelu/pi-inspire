@@ -460,10 +460,8 @@ describe("new-session start surface", () => {
     expect(projectFileCwd).toBe("/proj");
     fireEvent.click(projectFile);
     expect(
-      within(
-        screen.getByRole("list", { name: "Referenced project files" }),
-      ).getByText("src/index.ts", { selector: ".resource-path__visible" }),
-    ).toBeInTheDocument();
+      screen.getByRole("list", { name: "Referenced project files" }),
+    ).toHaveTextContent("src/index.ts");
 
     fireEvent.change(screen.getByLabelText("First message"), {
       target: { value: "Use this file" },

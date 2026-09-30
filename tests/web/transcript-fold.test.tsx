@@ -252,7 +252,7 @@ describe("response activity folds", () => {
     ];
     const { rerender } = render(transcript(recent, "expanded"));
     const beta = screen.getByRole("button", {
-      name: "Expand Tool Result beta",
+      name: "Expand beta result details",
     });
     fireEvent.click(beta);
     expect(beta).toHaveAttribute("aria-expanded", "true");
@@ -275,7 +275,7 @@ describe("response activity folds", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Collapse Tool Result beta" }),
+      screen.getByRole("button", { name: "Collapse beta result details" }),
     ).toHaveAttribute("aria-expanded", "true");
   });
 
@@ -796,7 +796,7 @@ describe("response activity folds", () => {
     fold = container.querySelector("[data-activity-fold]") as HTMLElement;
     expect(fold).toHaveAttribute("data-activity-fold", "open");
     expect(
-      within(fold).getByRole("button", { name: "Expand Tool Result read" }),
+      within(fold).getByRole("button", { name: "Expand read result details" }),
     ).toBeVisible();
     await act(async () => Promise.resolve());
     expect(
