@@ -3,7 +3,7 @@ import type {
   ModelIdentity,
   NewSessionOptions,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError, ApiRequestCancelledError } from "../api";
 
 export interface SessionSelectionState {
   sessionId: string | null;
@@ -30,6 +30,7 @@ interface SessionSelectionControllerHost {
   refreshSessionCatalog(): void;
   notify(kind: "warning", text: string): void;
   handleAuthFailure(): void;
+  confirmUncertainCreation(): boolean;
 }
 
 /**
@@ -39,12 +40,17 @@ interface SessionSelectionControllerHost {
  * generation still match.
  */
 export class SessionSelectionController {
+  private observation: AbortController | null = null;
+  private creation: "pending" | "uncertain" | null = null;
+
   constructor(private readonly host: SessionSelectionControllerHost) {}
 
   /** A replacement bootstrap or unaddressed selection push supersedes every
    * in-flight selection, including one that may never answer on an old client. */
   invalidateForReplacement(): void {
     this.host.invalidateOpening();
+    this.observation?.abort();
+    this.observation = null;
   }
 
   async open(id: string): Promise<void> {
@@ -58,7 +64,7 @@ export class SessionSelectionController {
     await this.runSelection(
       id,
       api,
-      () => api.openSession(id),
+      (signal) => api.openSession(id, signal),
       "Failed to open session",
       undefined,
       (_snapshot, ticket) => {
@@ -76,7 +82,7 @@ export class SessionSelectionController {
     return this.runSelection(
       null,
       api,
-      () => api.deselectSession(),
+      (signal) => api.deselectSession(signal),
       "Failed to open New session",
       false,
       (snapshot) => snapshot.active === null,
@@ -102,34 +108,64 @@ export class SessionSelectionController {
       );
       return null;
     }
-    return this.runSelection(
-      null,
-      api,
-      () => api.newSession(target, options),
-      "Failed to create session",
-      null,
-      (snapshot) => {
-        const sessionId = snapshot.active?.sessionId ?? null;
-        if (sessionId) this.host.ensureSessionVisible(sessionId);
-        if (options.model) this.host.rememberModel(options.model);
-        this.host.refreshSessionCatalog();
-        return sessionId;
-      },
-    );
+    // Creation has no receipt/retry identity. Never turn an unconfirmed write
+    // into an ordinary retry button, including after navigation/reconnect.
+    if (this.creation === "pending") return null;
+    if (this.creation === "uncertain" && !this.host.confirmUncertainCreation())
+      return null;
+    this.creation = "pending";
+    try {
+      return await this.runSelection(
+        null,
+        api,
+        async (signal) => {
+          try {
+            return await api.newSession(target, options, signal);
+          } catch (error) {
+            // A gateway/server timeout is not proof that no session exists.
+            if (
+              (error instanceof ApiRequestCancelledError &&
+                !error.outcomeUnknown) ||
+              (error instanceof ApiError &&
+                !error.outcomeUnknown &&
+                error.status < 500 &&
+                error.status !== 408)
+            )
+              this.creation = null;
+            throw error;
+          }
+        },
+        "Failed to create session",
+        null,
+        (snapshot) => {
+          this.creation = null;
+          const sessionId = snapshot.active?.sessionId ?? null;
+          if (sessionId) this.host.ensureSessionVisible(sessionId);
+          if (options.model) this.host.rememberModel(options.model);
+          this.host.refreshSessionCatalog();
+          return sessionId;
+        },
+      );
+    } finally {
+      if (this.creation === "pending") this.creation = "uncertain";
+    }
   }
 
   private async runSelection<T>(
     openingSessionId: string | null,
     api: Api,
-    request: () => Promise<ActiveSnapshot>,
+    request: (signal: AbortSignal) => Promise<ActiveSnapshot>,
     fallbackMessage: string,
     staleResult: T,
     afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
   ): Promise<T> {
     const transportGeneration = this.host.transportGeneration();
     const ticket = this.host.beginOpening(openingSessionId);
+    this.observation?.abort();
+    const observation = new AbortController();
+    this.observation = observation;
     try {
-      const snapshot = await request();
+      const snapshot = await request(observation.signal);
       if (!this.host.ownsOpening(ticket, api, transportGeneration))
         return staleResult;
       this.host.applySnapshot(snapshot);
@@ -149,6 +185,7 @@ export class SessionSelectionController {
       }
       return staleResult;
     } finally {
+      if (this.observation === observation) this.observation = null;
       this.host.releaseOpening(ticket);
     }
   }

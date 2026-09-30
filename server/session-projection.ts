@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants, type FSWatcher, watch } from "node:fs";
-import { open, stat } from "node:fs/promises";
+import { lstat, open, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type {
   SessionEntry,
@@ -1356,15 +1356,17 @@ export class SessionProjection
     const previousUncommittedFingerprint = this.uncommittedFingerprint;
     const initialMaterialization = this.initialMaterializationPending;
     try {
-      if (!force && this.currentIdentity) {
-        const details = await stat(this.path, { bigint: true });
+      if (
+        !force &&
+        this.currentIdentity &&
+        this.currentHealth.status === "ok"
+      ) {
+        // Ordinary reads reuse a verified version, not merely a pathname or
+        // size. Do not follow a replacement symlink back to the former inode;
+        // changed or unhealthy sources still take the full verification path.
+        const details = await lstat(this.path, { bigint: true });
         const next = identity(details as never);
-        if (
-          sameObject(next, this.currentIdentity) &&
-          next.size === this.currentIdentity.size &&
-          next.mtimeNs === this.currentIdentity.mtimeNs &&
-          next.ctimeNs === this.currentIdentity.ctimeNs
-        ) {
+        if (details.isFile() && sameVersion(next, this.currentIdentity)) {
           return {
             changed: false,
             initialMaterialization,

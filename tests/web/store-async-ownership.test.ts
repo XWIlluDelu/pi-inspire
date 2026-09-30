@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  HTTP_OBSERVATION_TIMEOUT_MS,
+  LONG_HTTP_OBSERVATION_TIMEOUT_MS,
+} from "../../src/api";
+import {
   activeSnapshot,
   bootstrapPayload,
+  branchTree,
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
@@ -22,7 +27,212 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("completion-driven Pi operation observation", () => {
+  it.each(["compact", "export"] as const)(
+    "retains a successful /%s result after five minutes with a healthy connection",
+    async (command) => {
+      const pending = deferred<RouteResponse>();
+      let dispatches = 0;
+      installFetch((url, init) => {
+        if (url === "/api/control/native-command") {
+          dispatches += 1;
+          return pending.promise;
+        }
+        return baseRoutes(url, init);
+      });
+      const { store, socket } = await initStore();
+      await store.sendPrompt(`/${command}`);
+      for (let i = 0; i < 10; i += 1) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        socket.emit({ type: "heartbeat" });
+      }
+      expect(store.getState().connection).toBe("open");
+      expect(store.getState().commandActivities.s1?.at(-1)?.status).toBe(
+        "running",
+      );
+      pending.resolve({
+        body: {
+          command,
+          outcome: "completed",
+          message: "Pi completed",
+          details: [{ label: "Path", value: "/tmp/export.html" }],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+        status: "success",
+        message: "Pi completed",
+        ...(command === "export"
+          ? { action: { kind: "copy", value: "/tmp/export.html" } }
+          : {}),
+      });
+      expect(dispatches).toBe(1);
+    },
+  );
+
+  it("commits navigation after a five-minute extension dialog without redispatch", async () => {
+    const pending = deferred<RouteResponse>();
+    let dispatches = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/branches/tree")) return { body: branchTree() };
+      if (url === "/api/branches/navigate") {
+        dispatches += 1;
+        return pending.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    await store.loadBranchTree();
+    const navigating = store.navigateBranch("u1", "edit");
+    for (let i = 0; i < 10; i += 1) {
+      await vi.advanceTimersByTimeAsync(30_000);
+      socket.emit({ type: "heartbeat" });
+    }
+    expect(store.getState()).toMatchObject({
+      connection: "open",
+      branchActionId: "edit:u1",
+      branchTreeError: null,
+    });
+    pending.resolve({
+      body: {
+        snapshot: activeSnapshot({
+          transcriptPage: { viewId: "navigated-view" },
+        }),
+        editorText: "Returned editor text",
+      },
+    });
+    await expect(navigating).resolves.toBe(true);
+    expect(store.getState()).toMatchObject({
+      transcriptViewId: "navigated-view",
+      editorText: { text: "Returned editor text" },
+      branchActionId: null,
+    });
+    expect(dispatches).toBe(1);
+  });
+});
+
 describe("detail snapshots and selection intent", () => {
+  it("releases a blackholed open while the socket stays healthy and permits an explicit re-open", async () => {
+    const pending = deferred<RouteResponse>();
+    let calls = 0;
+    let signal: AbortSignal | null | undefined;
+    installFetch((url, init) => {
+      if (url === "/api/sessions/open") {
+        calls += 1;
+        if (calls === 1) {
+          signal = init.signal;
+          return pending.promise;
+        }
+        return { body: activeSnapshot({ sessionId: "s2" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const first = store.openSession("s2");
+    await store.openSession("s2");
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    socket.emit({ type: "heartbeat" });
+    await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS - 30_000);
+    await first;
+    expect(signal?.aborted).toBe(true);
+    expect(store.getState()).toMatchObject({
+      sessionId: "s1",
+      connection: "open",
+      sessionSelectionPending: false,
+      sessionActionError: expect.stringContaining("could not confirm"),
+    });
+    await store.openSession("s2");
+    expect(calls).toBe(2);
+    expect(store.getState().sessionId).toBe("s2");
+    pending.resolve({ body: activeSnapshot({ sessionId: "stale" }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().sessionId).toBe("s2");
+  });
+
+  it("cancels a superseded blackhole immediately and ignores its late 401", async () => {
+    const pending = deferred<RouteResponse>();
+    let signal: AbortSignal | null | undefined;
+    installFetch((url, init) => {
+      if (url === "/api/sessions/open") {
+        if (jsonBody(init).id === "s2") {
+          signal = init.signal;
+          return pending.promise;
+        }
+        return { body: activeSnapshot({ sessionId: "s3" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    const first = store.openSession("s2");
+    await store.openSession("s3");
+    await first;
+    expect(signal?.aborted).toBe(true);
+    pending.resolve({ status: 401, body: { error: "Stale pairing" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState()).toMatchObject({
+      sessionId: "s3",
+      needsToken: false,
+      sessionSelectionPending: false,
+    });
+  });
+
+  it("keeps a current HTTP selection through socket close but cancels it on bootstrap replacement", async () => {
+    const pending = deferred<RouteResponse>();
+    let signal: AbortSignal | null | undefined;
+    installFetch((url, init) => {
+      if (url === "/api/sessions/open") {
+        signal = init.signal;
+        return pending.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const first = store.openSession("s2");
+    socket.onclose?.();
+    expect(signal?.aborted).toBe(false);
+    await store.init(null);
+    await first;
+    expect(signal?.aborted).toBe(true);
+    pending.resolve({ status: 401, body: { error: "Old API" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState()).toMatchObject({
+      sessionId: "s1",
+      needsToken: false,
+      sessionSelectionPending: false,
+    });
+  });
+
+  it("warns instead of silently creating twice after a lost new-session response", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    let creates = 0;
+    installFetch((url, init) => {
+      if (url === "/api/sessions/new") {
+        creates += 1;
+        return new Promise<RouteResponse>(() => {});
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const creating = store.newSession("/proj");
+    for (
+      let elapsed = 0;
+      elapsed < LONG_HTTP_OBSERVATION_TIMEOUT_MS;
+      elapsed += 20_000
+    ) {
+      socket.emit({ type: "heartbeat" });
+      await vi.advanceTimersByTimeAsync(20_000);
+    }
+    await expect(creating).resolves.toBeNull();
+    await store.newSession("/proj");
+    expect(creates).toBe(1);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("may still complete"),
+    );
+    expect(store.getState().sessionSelectionPending).toBe(false);
+    confirm.mockRestore();
+  });
+
   it.each(["open", "new", "deselect"] as const)(
     "keeps a pending %s when the previous detail interest synchronizes",
     async (operation) => {

@@ -8,11 +8,14 @@ import {
   type SessionDetailInterest,
 } from "../../shared/contracts";
 import { structuralMessageIdentity } from "../../shared/message-identity";
-import { eventsUrl } from "../api";
+import { eventsUrl, HTTP_OBSERVATION_TIMEOUT_MS } from "../api";
 import type { WireEvent } from "../events";
 import { recordTransportMeasure, transportNow } from "../transport-performance";
 
-export const FIRST_SNAPSHOT_TIMEOUT_MS = 10_000;
+export const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
+// Snapshot projection can wait on Pi's 30-second reads. Connection setup and
+// snapshot observation are separate phases; neither extends execution in Pi.
+export const FIRST_SNAPSHOT_TIMEOUT_MS = HTTP_OBSERVATION_TIMEOUT_MS;
 export const STREAM_INACTIVITY_TIMEOUT_MS = 45_000;
 const SHORT_STREAM_RENDER_INTERVAL_MS = 16;
 const MEDIUM_STREAM_RENDER_INTERVAL_MS = 32;
@@ -252,14 +255,19 @@ export class ConnectionController {
     this.socket = socket;
     this.socketPhase = phase;
     socket.onopen = () => {
-      if (this.socket === socket) this.updateDetailInterest();
+      if (this.socket !== socket) return;
+      this.clearSnapshotTimer();
+      this.snapshotTimer = setTimeout(
+        () => this.failSocket(socket),
+        FIRST_SNAPSHOT_TIMEOUT_MS,
+      );
+      this.updateDetailInterest();
     };
-    // Bound the whole connection handshake, not only an already-open socket:
-    // a black-holed TCP/WebSocket negotiation may otherwise remain CONNECTING
-    // indefinitely without producing an error or close event.
+    // TCP/WebSocket negotiation must also be bounded when no open/error/close
+    // event arrives. An open socket gets its own snapshot observation budget.
     this.snapshotTimer = setTimeout(
       () => this.failSocket(socket),
-      FIRST_SNAPSHOT_TIMEOUT_MS,
+      SOCKET_CONNECT_TIMEOUT_MS,
     );
     socket.onmessage = (frame) => {
       if (this.socket !== socket) return;
@@ -363,7 +371,7 @@ export class ConnectionController {
         canResume ? "resume" : "bootstrap",
       );
     };
-    socket.onerror = () => socket.close();
+    socket.onerror = () => this.failSocket(socket);
   }
 
   stop(): void {

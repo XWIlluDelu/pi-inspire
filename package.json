@@ -94,6 +94,7 @@
     "typecheck": "tsc -b",
     "test:browser": "playwright test",
     "size:report": "npm run release:build && node scripts/size-report.mjs",
+    "benchmark:projection": "node --import tsx scripts/benchmark-projection-reads.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run check:unused && npm run build:web && npm run test:portable && npm test && npm run test:launcher",
     "ci": "npm run check && npm run test:browser",
     "test:browser:chromium": "playwright test --project=chromium",

@@ -1328,6 +1328,30 @@ describe("local host API", () => {
     expect(await readFile(path, "utf8")).toBe(raw);
   });
 
+  it("invalidates storage discovery only after saved project folders change", async () => {
+    const invalidate = vi.spyOn(MockCatalog.prototype, "invalidate");
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ theme: "dark" })
+      .expect(200);
+    expect(invalidate).not.toHaveBeenCalled();
+    for (const field of ["pinnedProjectCwds", "hiddenProjectCwds"]) {
+      await request(application.server)
+        .patch("/api/preferences")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ [field]: [temporary] })
+        .expect(200);
+    }
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pinnedProjectCwds: "invalid" })
+      .expect(400);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+  });
+
   it("persists field-scoped preference patches without losing concurrent fields", async () => {
     await request(application.server)
       .patch("/api/preferences")

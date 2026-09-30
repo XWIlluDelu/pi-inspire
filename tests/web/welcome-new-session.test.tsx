@@ -225,6 +225,9 @@ describe("new-session start surface", () => {
         attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
       }),
     );
+    // Welcome -> store -> selection does not pin the project. Storage
+    // continuity belongs to Host discovery, not navigation curation.
+    expect(store.getState().prefs.pinnedProjectCwds).not.toContain("/proj");
   });
 
   it("hands off a mixed first message before its receipt and retries unknown delivery unchanged", async () => {
