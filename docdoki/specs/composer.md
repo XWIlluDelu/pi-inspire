@@ -204,6 +204,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   contradictory 8 MiB cap. Dead process cache directories are reclaimed on startup, and shutdown
   removes this host's cache only after active HTTP uploads have drained.
 
+- Uploads observe headers and the response body within a size-dependent budget: 120 seconds plus
+  transfer allowance at 128 KiB/s. Replacing the transport cancels observation; withdrawing the last
+  remaining attachment in a batch cancels that batch. A timeout marks surviving chips failed with
+  remove/re-add guidance, without resending files or a prompt. Late handles from a transport that
+  ignores cancellation are reclaimed. Switching sessions preserves the originating upload owner.
+
 - Uploaded attachments have a bounded host-side lifetime: withdrawing a staged attachment deletes
   its host cache copy, image bytes are reclaimed once a delivered prompt has consumed them, and
   ordinary files persist for the host’s lifetime because their host paths are referenced by the
@@ -350,10 +356,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - The composer displays the selected model, thinking level, and context occupancy as quiet controls
   that do not crowd the writing surface; project identity lives in the topbar per [[workbench]]. Its
   message tools are ordered by decision scope — model, thinking effort, project files, then external
-  attachments — before the separate right-aligned context and send/abort state. At the 390px phone
-  target, model, thinking, project-file, attachment, context-usage, and send/abort controls remain
-  in one toolbar row: each retains a legible label or accessible name and stable hit area, and no
-  flex child may shrink into overlapping labels.
+  attachments — before the separate right-aligned context and send/abort state. The responsive
+  toolbar follows [[design-system]]: controls retain legible labels or accessible names and stable
+  hit areas, including unsupported-thinking and busy states.
 
   The model picker groups Pi-provided models by canonical provider identity, searches
   provider/id/display fields locally, labels active/recent/capability state, and keeps its search
@@ -378,10 +383,10 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   `unknown/unknown` absent-model sentinel as no model rather than a selectable worker target, rather
   than leaving a generic disabled button.
 
-  Model, thinking effort, project files, and attachments share the first tool row; a full-width
-  project address occupies the second row, with its host-directory browser embedded at the address’s
-  left edge. While it inherits the currently visible project, slash completion uses that selected Pi
-  worker's authoritative extension, prompt, and skill commands; after the user explicitly targets
+  Model, thinking effort, project files, and attachments use the shared toolbar; a full-width
+  project address follows below, with its host-directory browser embedded at the address’s left edge.
+  While it inherits the visible project, slash completion uses that Pi worker's authoritative extension,
+  prompt, and skill commands; after the user explicitly targets
   another directory, commands disappear because no Pi worker has loaded that project's resources
   yet. Session-bound browser-native built-ins appear only after the new session exists; the existing
   Host-owned `/compact` compatibility command remains available on the first-message surface.
