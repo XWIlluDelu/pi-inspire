@@ -25,6 +25,60 @@ async function openMockSession(
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
 }
 
+test("Settings activity menus remain clickable beyond their card and persist the choice", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  for (const viewport of [
+    { width: 1440, height: 960 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await dialog
+      .getByRole("button", { name: "Conversation", exact: true })
+      .click();
+    await dialog.getByRole("combobox", { name: "Activity groups" }).click();
+    await dialog
+      .getByRole("option", { name: "Collapsed", exact: false })
+      .click();
+    await expect(
+      dialog.getByRole("combobox", { name: "Activity groups" }),
+    ).toHaveText("Collapsed");
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/bootstrap");
+        return (await response.json()).preferences.activityFoldVisibility;
+      })
+      .toBe("collapsed");
+    await page.reload();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Conversation", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("combobox", { name: "Activity groups" }),
+    ).toHaveText("Collapsed");
+    const restored = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/preferences") &&
+        response.request().method() === "PATCH",
+    );
+    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await restored;
+    const activity = dialog.getByRole("combobox", { name: "Activity groups" });
+    await activity.click();
+    await page.keyboard.press("Escape");
+    await expect(dialog.getByRole("listbox")).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await expect(activity).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
+});
+
 test("project terminals survive browser detach and keep multiple tabs", async ({
   context,
   page,
@@ -1137,7 +1191,7 @@ test("project-file picker restores focus to its trigger", async ({ page }) => {
   await expect(trigger).toBeFocused();
 });
 
-test("files workbench searches, scrolls source, and isolates HTML previews", async ({
+test("files workbench searches, renders documents, and isolates active content", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -1182,6 +1236,130 @@ test("files workbench searches, scrolls source, and isolates HTML previews", asy
   );
   await expect(frame.locator("#status")).not.toHaveText("SCRIPT EXECUTED");
   expect(externalRequests).toEqual([]);
+
+  const activePdfContent: string[] = [];
+  page.on("dialog", async (dialog) => {
+    activePdfContent.push(dialog.message());
+    await dialog.dismiss();
+  });
+  page.on("popup", async (popup) => {
+    activePdfContent.push(popup.url());
+    await popup.close();
+  });
+  await resources
+    .getByRole("button", { name: "report.pdf", exact: true })
+    .click();
+  const pdf = page.getByRole("document", { name: "Preview report.pdf" });
+  const pdfPage = pdf.locator(".pdf-preview__page");
+  const textLayer = pdf.locator(".pdf-preview__text-layer");
+  await expect(textLayer).toContainText("Experiment summary");
+  await expect(pdfPage).toHaveAttribute("aria-busy", "false");
+  const ink = await pdf
+    .locator("canvas")
+    .evaluate((canvas: HTMLCanvasElement) => {
+      const pixels = canvas
+        .getContext("2d")!
+        .getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      for (let i = 0; i < pixels.length; i += 4)
+        if (
+          pixels[i + 3]! > 0 &&
+          Math.min(pixels[i]!, pixels[i + 1]!, pixels[i + 2]!) < 200
+        )
+          count++;
+      return count;
+    });
+  expect(ink).toBeGreaterThan(150);
+  await pdf.getByRole("button", { name: "Next PDF page" }).click();
+  await expect(textLayer).toContainText("Measurement details");
+  await expect(pdfPage).toHaveAttribute("aria-busy", "false");
+  await expect(
+    pdf.getByRole("button", { name: "Next PDF page" }),
+  ).toBeDisabled();
+  const selection = await textLayer.evaluate((layer) => {
+    const range = document.createRange();
+    range.selectNodeContents(layer);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection.toString();
+  });
+  expect(selection).toContain("Report page 2 - selectable text");
+  await page.screenshot({
+    path: "output/playwright/pdf-selection-desktop.png",
+  });
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 620 });
+  const scroll = pdf.getByRole("region", { name: "PDF page 2" });
+  await expect
+    .poll(() =>
+      pdf.evaluate((root) => {
+        const sheet = root.querySelector<HTMLElement>(".pdf-preview__sheet");
+        const scroll = root.querySelector<HTMLElement>(".pdf-preview__scroll");
+        return (
+          sheet &&
+          !sheet.hidden &&
+          scroll &&
+          Math.abs(
+            sheet.getBoundingClientRect().width - (scroll.clientWidth - 24),
+          ) < 1
+        );
+      }),
+    )
+    .toBe(true);
+  const position = await scroll.evaluate((element) => {
+    element.scrollTop = 80;
+    return element.scrollTop;
+  });
+  expect(position).toBeGreaterThan(50);
+  await pdf.getByRole("button", { name: "Zoom in PDF" }).click();
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await scroll.evaluate((element) => element.scrollTop)) -
+          position * 1.25,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  await pdf.getByRole("button", { name: "Fit PDF to width" }).click();
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await scroll.evaluate((element) => element.scrollTop)) - position,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  expect(
+    await scroll.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "output/playwright/pdf-narrow.png" });
+  await page.setViewportSize(viewport);
+
+  await resources
+    .getByRole("button", { name: "unsafe.pdf", exact: true })
+    .click();
+  const staticPdf = page.getByRole("document", { name: "Preview unsafe.pdf" });
+  await expect(staticPdf.locator(".pdf-preview__page")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(staticPdf).toContainText("Static safety fixture");
+  await expect(staticPdf.locator("a, form, iframe, object, embed")).toHaveCount(
+    0,
+  );
+  expect(activePdfContent).toEqual([]);
+  expect(externalRequests).toEqual([]);
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/page.html"]',
+    )
+    .click();
+  await expect(frame.locator("#status")).not.toHaveText("SCRIPT EXECUTED");
+  await expect.poll(() => page.workers().length).toBe(0);
 
   const workspaceIndex = resources.locator(".res__index");
   const workspaceIndexHeight = () =>
@@ -1455,6 +1633,56 @@ test("running composer exposes steer, queue, and abort controls", async ({
   await expect(
     page.getByRole("button", { name: "Abort running task" }),
   ).toBeHidden();
+});
+
+test("narrow workbench keeps model controls, Git status, and drawer dismissal reachable", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await page.route("**/api/bootstrap**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const model of body.availableModels ?? []) model.reasoning = false;
+    const active = body.snapshot?.active;
+    if (active?.model) active.model.reasoning = false;
+    for (const model of active?.availableModels ?? []) model.reasoning = false;
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "Thinking level" }),
+  ).toBeDisabled();
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const model = page
+      .locator(".composer__meta")
+      .getByRole("button", { name: "Model", exact: true });
+    await expect(model).toBeVisible();
+    expect((await model.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+    const labelFits = await model
+      .locator(".dropdown__value")
+      .evaluate((label) => label.scrollWidth <= label.clientWidth + 1);
+    expect(labelFits).toBe(true);
+    const meta = await page.locator(".topbar__workspace-meta").boundingBox();
+    const git = await page.locator(".topbar__git").boundingBox();
+    expect(git!.x + git!.width).toBeLessThanOrEqual(meta!.x + meta!.width + 1);
+    const toggle = page.getByRole("button", { name: "Toggle navigation" });
+    await toggle.click();
+    const navigation = page.getByRole("dialog", {
+      name: "Sessions",
+      exact: true,
+    });
+    await navigation.getByRole("button", { name: "Close navigation" }).click();
+    await expect(navigation).toBeHidden();
+    await expect(toggle).toBeFocused();
+  }
+
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "Context panel" });
+  await expect(history.getByRole("button", { name: /Refresh/ })).toHaveCount(1);
 });
 
 test("narrow workbench keeps runtime status readable to accessibility tooling", async ({

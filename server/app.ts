@@ -730,6 +730,7 @@ export function createInspireServer(deps: AppDependencies): {
         // Remote images stay out: untrusted transcript content must not be
         // able to fire network requests just by being rendered.
         "img-src 'self' data: blob:",
+        "media-src 'self' blob:",
         "connect-src 'self' ws: wss:",
         "frame-src 'self' blob:",
         "object-src 'none'",

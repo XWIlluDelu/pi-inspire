@@ -10,12 +10,7 @@ import {
 } from "./pi-rpc.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
-type ExtensionUiClearReason =
-  | "settled"
-  | "aborted"
-  | "replaced"
-  | "stopped"
-  | "closed";
+type ExtensionUiClearReason = "aborted" | "replaced" | "stopped" | "closed";
 
 interface RuntimeExtensionUiHost {
   withMaintenance<T>(operation: () => Promise<T>): Promise<T>;

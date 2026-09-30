@@ -46,7 +46,6 @@ function setup(incremental = true) {
         incremental ? delta : undefined,
       ),
     addPendingExtensionUi: () => null,
-    clearPendingExtensionUi: () => {},
     invalidateCatalog: () => {},
     scheduleIdleWorkerEviction: () => {},
     refreshPendingQueues: () => {},

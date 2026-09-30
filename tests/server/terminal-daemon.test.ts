@@ -7,7 +7,6 @@ import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import type { TerminalAttachmentSink } from "../../server/terminal-service.js";
 import {
-  type TerminalPty,
   type TerminalPtyFactory,
   TerminalSessionManager,
 } from "../../server/terminal-session-manager.js";
@@ -16,43 +15,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts.js";
 
-class FakePty implements TerminalPty {
-  readonly pid = 4321;
-  readonly process = "bash";
-  readonly writes: Buffer[] = [];
-  private readonly dataListeners = new Set<(data: string | Buffer) => void>();
-  private readonly exitListeners = new Set<
-    (event: { exitCode: number; signal?: number }) => void
-  >();
-  private exited = false;
-
-  onData(listener: (data: string | Buffer) => void) {
-    this.dataListeners.add(listener);
-    return { dispose: () => this.dataListeners.delete(listener) };
-  }
-
-  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
-    this.exitListeners.add(listener);
-    return { dispose: () => this.exitListeners.delete(listener) };
-  }
-
-  resize(): void {}
-
-  write(data: string | Buffer): void {
-    this.writes.push(Buffer.from(data));
-  }
-
-  kill(signal?: string): void {
-    if (this.exited) return;
-    this.exited = true;
-    for (const listener of this.exitListeners)
-      listener({ exitCode: 0, signal: signal === "SIGKILL" ? 9 : 1 });
-  }
-
-  emitData(data: string): void {
-    for (const listener of this.dataListeners) listener(data);
-  }
-}
+import { FakePty } from "./fixtures/terminal-pty.js";
 
 class Sink implements TerminalAttachmentSink {
   readonly controls: TerminalServerControlMessage[] = [];
@@ -91,7 +54,7 @@ async function setup(onProtocolReplacement: () => void = () => {}) {
       : join(directory, "terminal.sock");
   const ptys: FakePty[] = [];
   const ptyFactory: TerminalPtyFactory = () => {
-    const pty = new FakePty();
+    const pty = new FakePty(4321);
     ptys.push(pty);
     return pty;
   };

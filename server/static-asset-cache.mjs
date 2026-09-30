@@ -12,7 +12,11 @@ import {
 import { dirname, extname, isAbsolute, join } from "node:path";
 import { inspireCacheDirectory } from "./platform-paths.mjs";
 
-const CACHEABLE_EXTENSIONS = new Set([".css", ".js", ".wasm"]);
+// PDF readers opened by an older browser build still need its module worker,
+// CMaps and standard fonts after the installation publishes a new version.
+const CACHEABLE_EXTENSIONS = new Set([
+  ".css", ".js", ".mjs", ".wasm", ".bcmap", ".pfb", ".ttf",
+]);
 export const CURRENT_WEB_ASSETS_MANIFEST = ".inspire-current-assets.json";
 const MANIFEST_VERSION = 1;
 const STATIC_ASSET_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;

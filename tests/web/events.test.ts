@@ -816,6 +816,13 @@ describe("extension_ui_request mapping", () => {
       "second",
     ]);
     slice = reduce(slice, new Set(), { type: "agent_settled" }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "second",
+    ]);
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_clear",
+      reason: "stopped",
+    }).slice;
     expect(slice.extensionUiRequests).toEqual([]);
   });
 

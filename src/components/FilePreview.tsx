@@ -1,4 +1,3 @@
-import hljs from "highlight.js/lib/common";
 import {
   AlertTriangle,
   Check,
@@ -12,26 +11,16 @@ import type { ResourceDescriptor } from "../../shared/contracts";
 import { resourceReferenceLine } from "../../shared/resource-references";
 import { formatBytes } from "../format";
 import { store } from "../store";
+import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { ImagePreview } from "./ImagePreview";
 import { DocumentPreview } from "./DocumentPreview";
 import { NotebookPreview } from "./NotebookPreview";
+import { PdfPreview } from "./PdfPreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function languageFor(name: string): string {
-  return /\.([A-Za-z0-9]{1,12})$/.exec(name)?.[1]?.toLowerCase() ?? "plaintext";
-}
 
 export function PathCopyButton({ path }: { path: string }) {
   const { copied, copy } = useCopied();
@@ -71,8 +60,6 @@ interface LineJump {
   request: number;
 }
 
-const MAX_HIGHLIGHTED_SOURCE_CHARACTERS = 512 * 1024;
-
 function SourceCodePreview({
   text,
   language,
@@ -91,11 +78,7 @@ function SourceCodePreview({
     [lines],
   );
   const highlighted = useMemo(
-    () =>
-      text.length <= MAX_HIGHLIGHTED_SOURCE_CHARACTERS &&
-      hljs.getLanguage(language)
-        ? hljs.highlight(text, { language }).value
-        : escapeHtml(text),
+    () => highlightSource(text, language),
     [language, text],
   );
   useEffect(() => {
@@ -169,7 +152,7 @@ function sourceLanguage(descriptor: ResourceDescriptor): string {
   if (descriptor.kind === "markdown") return "markdown";
   if (descriptor.kind === "notebook") return "json";
   if (descriptor.mimeType === "image/svg+xml") return "xml";
-  return languageFor(descriptor.name);
+  return languageForFile(descriptor.name);
 }
 
 function TruncatedRenderedNotice() {
@@ -213,7 +196,7 @@ function ReadyResource({
     return (
       <SourceCodePreview
         text={preview.text}
-        language={languageFor(descriptor.name)}
+        language={languageForFile(descriptor.name)}
         jump={jump}
         truncated={preview.truncated}
       />
@@ -268,13 +251,12 @@ function ReadyResource({
         />
       </div>
     );
-  if (descriptor.kind === "pdf" && preview.objectUrl)
+  if (descriptor.kind === "pdf" && preview.pdfBlob)
     return (
-      <iframe
-        className="res__frame"
-        title={`Preview ${descriptor.name}`}
-        sandbox=""
-        src={preview.objectUrl}
+      <PdfPreview
+        key={descriptor.id}
+        blob={preview.pdfBlob}
+        name={descriptor.name}
       />
     );
   if (descriptor.kind === "audio" && preview.objectUrl)
@@ -404,7 +386,13 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     descriptor?.kind === "text" &&
     preview?.status === "ready" &&
     preview.text !== undefined;
-  const defaultView: FileViewMode = sourceOnly ? "source" : "preview";
+  const referencedLine = state.selectedResourceWorkspacePath
+    ? null
+    : resourceReferenceLine(
+        preview?.reference ?? state.selectedResourceReference ?? "",
+      );
+  const defaultView: FileViewMode =
+    sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
   const viewMode =
     descriptor && fileView?.resourceId === descriptor.id
       ? fileView.mode
@@ -414,11 +402,6 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       ? preview.text.split("\n").length
       : 0;
   useEffect(() => {
-    const referencedLine = state.selectedResourceWorkspacePath
-      ? null
-      : resourceReferenceLine(
-          preview?.reference ?? state.selectedResourceReference ?? "",
-        );
     if (!referencedLine || lineCount === 0) {
       setJump(null);
       return;
@@ -427,13 +410,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       line: Math.min(lineCount, referencedLine),
       request: (previous?.request ?? 0) + 1,
     }));
-  }, [
-    descriptor?.id,
-    lineCount,
-    preview?.reference,
-    state.selectedResourceReference,
-    state.selectedResourceWorkspacePath,
-  ]);
+  }, [descriptor?.id, lineCount, referencedLine]);
   const href =
     descriptor && state.sessionId
       ? downloadHref(descriptor, state.sessionId)

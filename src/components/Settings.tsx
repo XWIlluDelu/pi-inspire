@@ -498,13 +498,18 @@ export const SettingsContent = memo(function SettingsContent({
       setActiveCategory(categoryId);
       const target = document.getElementById(`settings-section-${categoryId}`);
       if (!target) return;
+      const scrollBehavior = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches
+        ? "instant"
+        : behavior;
       programmaticScroll.current = true;
-      target.scrollIntoView({ behavior, block: "start" });
+      target.scrollIntoView({ behavior: scrollBehavior, block: "start" });
       window.setTimeout(
         () => {
           programmaticScroll.current = false;
         },
-        behavior === "smooth" ? 450 : 0,
+        scrollBehavior === "smooth" ? 450 : 0,
       );
     },
     [],

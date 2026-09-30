@@ -74,10 +74,6 @@ interface RuntimeEventControllerHost {
     event: unknown,
     rpc: PiRpcProcess,
   ): ExtensionUiRequest | null;
-  clearPendingExtensionUi(
-    slot: RuntimeSlot,
-    reason: "settled" | "stopped" | "aborted" | "replaced",
-  ): void;
   invalidateCatalog(): void;
   scheduleIdleWorkerEviction(): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
@@ -535,7 +531,6 @@ export class RuntimeEventController {
         slot.activeAssistantCorrelation = null;
         slot.attention =
           this.host.selectedSessionId() === slot.id ? null : outcome;
-        this.host.clearPendingExtensionUi(slot, "settled");
         for (const expectation of slot.persistenceExpectations)
           expectation.settle(null);
         slot.persistenceExpectations = [];

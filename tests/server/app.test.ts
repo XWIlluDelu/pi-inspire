@@ -555,6 +555,9 @@ describe("local host API", () => {
     expect(response.headers["content-security-policy"]).not.toMatch(
       /img-src[^;]*https:/,
     );
+    expect(response.headers["content-security-policy"]).toContain(
+      "media-src 'self' blob:",
+    );
   });
 
   it("pairs a browser once with an HttpOnly same-site cookie for HTTP and WebSocket access", async () => {

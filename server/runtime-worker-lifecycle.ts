@@ -32,7 +32,7 @@ interface RuntimeWorkerLifecycleHost {
   ): Promise<ProjectionReconcileResult>;
   clearPendingExtensionUi(
     slot: RuntimeSlot,
-    reason: "settled" | "aborted" | "replaced" | "stopped" | "closed",
+    reason: "aborted" | "replaced" | "stopped" | "closed",
   ): void;
   clearWriterBaseline(slot: RuntimeSlot): void;
   captureWriterBaseline(slot: RuntimeSlot): void;

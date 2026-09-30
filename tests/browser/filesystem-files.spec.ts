@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
@@ -14,6 +14,11 @@ test.beforeAll(async () => {
     resolve(root, ".settings"),
   ])
     await mkdir(dir, { recursive: true });
+  await cp(
+    resolve("tests/browser/fixtures/file-previews/media"),
+    resolve(root, "media"),
+    { recursive: true },
+  );
   await writeFile(resolve(root, ".gitignore"), "dist/\n");
   await writeFile(
     resolve(root, ".settings/config.txt"),
@@ -32,6 +37,58 @@ test.beforeAll(async () => {
   );
   await promisify(execFile)("git", ["-C", root, "init", "-q"]);
   await writeFile(resolve(root, ".git/index"), "Corrupt synthetic index\n");
+});
+
+test("authorized audio and video previews play from local blobs", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Pair", exact: true }).click();
+  await expect(page.getByRole("main")).toBeVisible();
+  const created = await page.request.post("/api/sessions/new", {
+    data: { cwd: root, name: "Media fixture" },
+  });
+  expect(created.ok()).toBe(true);
+  await page.reload();
+  await expect(page.getByRole("main")).toBeVisible();
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const pane = page.locator(".ctx");
+  const tree = pane.getByRole("region", { name: "Workspace file tree" });
+  await tree.getByRole("button", { name: "media", exact: true }).click();
+
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const [file, tag] of [
+      ["audio.wav", "audio"],
+      ["video.webm", "video"],
+    ]) {
+      await tree.getByRole("button", { name: file, exact: true }).click();
+      const media = pane.locator(`.file-preview ${tag}`);
+      await expect
+        .poll(() =>
+          media.evaluate((element: HTMLMediaElement) => element.readyState),
+        )
+        .toBeGreaterThanOrEqual(2);
+      await media.evaluate(async (element: HTMLMediaElement) => {
+        element.muted = true;
+        await element.play();
+      });
+      await expect
+        .poll(() =>
+          media.evaluate((element: HTMLMediaElement) => element.currentTime),
+        )
+        .toBeGreaterThan(0);
+      await media.evaluate((element: HTMLMediaElement) => element.pause());
+      const bounds = (await media.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      await page.screenshot({
+        path: `output/playwright/media-${tag}-${width}.png`,
+      });
+    }
+  }
 });
 
 for (const narrow of [false, true]) {

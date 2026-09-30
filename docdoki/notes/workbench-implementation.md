@@ -17,23 +17,36 @@ The previous tool-style card, custom activity tiles, and automatic tool-density 
 
 ## Document-relative previews
 
- follow-up: [[workbench-implementation]] supersedes the ignored-file refusal in this original verification record. Document images/links still require independent authorization, now from workspace realpath containment or an exact citation, not Git index membership. Outside-target, view/object, remote-load and sandbox checks remain.
+### Directory and authority
 
-### Failure and repair
+`DocumentPreview` supplies the opened descriptor to the shared sanitized `RichText` pipeline. Document
+links and images resolve from that file's actual directory; conversation references use the session
+cwd and explicit preview controls.
 
-`FilePreview` and `NotebookPreview` reused the conversation renderer without a document context. Local Markdown images therefore became file-reference buttons, relative links opened from the session cwd, and Notebook Markdown cell attachments had no resolver. Heading fragments also followed browser navigation instead of the document reader.
+`documentResourceReference` separates URL escaping from literal workspace paths and prefixes
+project-relative targets with `./`. A missing sibling must remain missing rather than opening an
+unrelated same-basename file elsewhere.
 
-`DocumentPreview` now supplies the opened descriptor and a mounted-document image owner to the same sanitized `RichText` pipeline. Links and images use the document's resolved directory; conversation references keep their explicit-open behavior. `github-slugger` generates document heading identities before sanitization, and scoped fragment navigation uses the sanitizer's `user-content-` prefix. Incoming fragments wait for the deferred renderer and image layout: an initial document may be too short to scroll before its images arrive. Wheel, touch, pointer or keyboard interaction cancels this delayed automatic positioning rather than reclaiming the reader. `NotebookPreview` decodes cell-local raster attachment bundles without making `data:` URLs generally acceptable in Markdown.
+Linked files need independent authorization through workspace realpath containment or an exact
+transcript citation, as defined in [[resource-preview]]. Reading the parent document and Git index
+membership grant no additional access. [[workbench-implementation]] explains discovery and authority.
+`ResourceController.loadDocumentImage` uses the authenticated resolver/content route without changing
+the selected file or availability state.
 
-`documentResourceReference` keeps URL escaping separate from literal workspace paths and prefixes project-relative locations with `./`. That prefix is intentional: a missing sibling image must not silently open an unrelated same-basename file elsewhere. `ResourceController.loadDocumentImage` uses the existing authenticated resolver and content route without changing selected-file or availability state. A document reference is not a new source of filesystem authority.
+### Images and navigation
 
-`DocumentImageResources` owns deduplication, four-way transfer scheduling, a 64-reference/64-MiB retained-image budget, abort and URL revocation. The ordinary 32-MiB per-image cap remains. Late resolve/content results must still belong to the selected document, session, branch view, and browser transport. UI failures retain the authored description and never fall back to a raw URL.
+`DocumentImageResources` owns per-document deduplication, transfer scheduling, retained blobs, abort,
+and URL revocation. Limits live in [[resource-preview]]. Resolve/content completions must still belong
+to the selected document, session, branch view, and transport. Failures retain the authored description.
 
-The review also removed the generic `<img src>` fallback for unrecognized conversation paths and classified protocol-relative images as explicit external links. Raw HTML in Markdown, remote image autoloading, and arbitrary subresources in sandboxed HTML remain intentionally unsupported; they were not weakened to make previews look complete.
+Notebook cell attachments decode bounded canonical raster bundles within that cell; they do not enable
+arbitrary Markdown data URLs. Conversation images outside recognized local references retain their
+description, while remote and protocol-relative images appear as explicit links. HTML previews keep
+their isolated sandbox; Notebook cells remain static.
 
-### Limits
-
-The browser checks used isolated synthetic fixtures, not real Pi conversation content or the user's report. This work does not establish arbitrary image-format support, cross-browser parity, or access to images excluded by workspace/transcript authority. It does not change the HTML iframe sandbox or execute Notebook code. Unrelated in-progress restart controls were preserved.
+`github-slugger` assigns heading IDs before sanitization. Scoped fragment navigation uses the
+sanitizer's `user-content-` prefix and waits for deferred rendering and image layout. Wheel, touch,
+pointer, or keyboard interaction cancels pending automatic positioning, preserving the reader's choice.
 
 ## Filesystem and Git separation
 

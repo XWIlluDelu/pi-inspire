@@ -613,7 +613,6 @@ export function reduceEvent(
         slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.extensionUiRequests = [];
       slice.queue = emptyPendingQueues();
       changed = true;
       resync = true;

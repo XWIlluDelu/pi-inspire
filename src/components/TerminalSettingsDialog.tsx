@@ -151,7 +151,11 @@ export function TerminalSettingsDialog({
   }, [api]);
 
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
+    <div
+      className="overlay terminal-settings-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
       <div
         ref={dialogRef}
         className="dialog terminal-settings"
@@ -486,16 +490,14 @@ export function TerminalSettingsDialog({
         <footer className="terminal-settings__footer">
           {serviceError && serviceSettings ? (
             <span role="alert">{serviceError}</span>
-          ) : (
-            <span />
-          )}
+          ) : null}
           <button
             type="button"
             className="button"
             onClick={() => updateUi({ ...DEFAULT_TERMINAL_UI_SETTINGS })}
           >
             <RotateCcw size={13} aria-hidden />
-            Restore display defaults
+            Restore browser defaults
           </button>
         </footer>
       </div>
