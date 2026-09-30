@@ -853,6 +853,26 @@ describe("Files pane", () => {
     ).toBeNull();
   });
 
+  it.each(["notes.md#L12", "notes.md:12"])(
+    "opens explicit document line references in Source: %s",
+    async (reference) => {
+      render(<App />);
+      await act(async () => {
+        await store.openResource(reference);
+      });
+      const pane = await screen.findByRole("complementary", {
+        name: "Context panel",
+      });
+      expect(
+        await within(pane).findByRole("region", { name: "File source" }),
+      ).toHaveTextContent("# Previewed notes");
+      fireEvent.click(within(pane).getByRole("button", { name: "Preview" }));
+      expect(
+        await within(pane).findByRole("heading", { name: "Previewed notes" }),
+      ).toBeVisible();
+    },
+  );
+
   it("keeps a scrolled code preview without loading hidden Recent rows", async () => {
     render(<App />);
     await act(async () => {
@@ -1081,7 +1101,7 @@ describe("Files pane", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
   });
 
-  it("uses the same empty sandbox for PDF frames", async () => {
+  it("uses the static PDF reader rather than a native frame, retaining Download", async () => {
     render(<App />);
     await act(async () => {
       await store.openResource("document.pdf");
@@ -1090,8 +1110,14 @@ describe("Files pane", () => {
       name: "Context panel",
     });
     expect(
-      await within(pane).findByTitle("Preview document.pdf"),
-    ).toHaveAttribute("sandbox", "");
+      await within(pane).findByRole("document", {
+        name: "Preview document.pdf",
+      }),
+    ).toBeInTheDocument();
+    expect(pane.querySelector("iframe, object, embed")).toBeNull();
+    expect(
+      within(pane).getByRole("link", { name: "Download document.pdf" }),
+    ).toBeInTheDocument();
   });
 
   it("marks a truncated rendered preview and preserves the source boundary", async () => {
@@ -1148,7 +1174,9 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("heading", { name: "Notebook title" }),
     ).toBeInTheDocument();
-    expect(within(pane).getByText("print('hello')")).toBeInTheDocument();
+    expect(
+      pane.querySelector(".notebook-preview__cell--code code"),
+    ).toHaveTextContent("print('hello')");
     expect(within(pane).getByText("hello")).toBeInTheDocument();
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(

@@ -1,6 +1,6 @@
 import {
-  mkdtemp,
   mkdir,
+  mkdtemp,
   readFile,
   rm,
   stat,
@@ -114,6 +114,25 @@ describe("static asset generation cache", () => {
     await expect(stat(firstDirectory)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("retains PDF worker, CMaps and standard fonts with their reader generation", async () => {
+    const { source, cache } = await fixture();
+    const files = {
+      "pdf.worker-old.mjs": "worker",
+      "pdfjs-old/cmaps/Adobe-Japan1.bcmap": "cmap",
+      "pdfjs-old/standard_fonts/FoxitSerif.pfb": "font",
+      "pdfjs-old/standard_fonts/LiberationSans-Regular.ttf": "font",
+      "pdfjs-old/wasm/openjpeg_nowasm_fallback.js": "decoder",
+    };
+    await replaceSource(source, files);
+    const first = await prepareStaticAssetCache(source, cache);
+    await replaceSource(source, { "reader-new.js": "next generation" });
+    const next = await prepareStaticAssetCache(source, cache);
+    const retained = join(cache, "generations", first.currentGeneration);
+    expect(next.generationDirectories).toContain(retained);
+    for (const [path, bytes] of Object.entries(files))
+      await expect(readFile(join(retained, path), "utf8")).resolves.toBe(bytes);
   });
 
   it("keeps the newest whole generation within the stale byte budget", async () => {

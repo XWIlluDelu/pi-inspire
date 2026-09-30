@@ -1,32 +1,51 @@
 ---
-purpose: Explain document-scoped Markdown resources, related Notebook repairs, and their verification boundary.
+purpose: Document-scoped resource resolution, authorization, image ownership, and navigation.
 ---
 
 # Document-relative previews
 
-2026-09-10 follow-up: [[filesystem-git-separation]] supersedes the ignored-file refusal in this original verification record. Document images/links still require independent authorization, now from workspace realpath containment or an exact citation, not Git index membership. Outside-target, view/object, remote-load and sandbox checks remain.
+## Directory and authority
 
-## Failure and repair
+`DocumentPreview` supplies the opened descriptor to the shared sanitized `RichText` pipeline. Document
+links and images resolve from that file's actual directory; conversation references use the session
+cwd and explicit preview controls.
 
-`FilePreview` and `NotebookPreview` reused the conversation renderer without a document context. Local Markdown images therefore became file-reference buttons, relative links opened from the session cwd, and Notebook Markdown cell attachments had no resolver. Heading fragments also followed browser navigation instead of the document reader.
+`documentResourceReference` separates URL escaping from literal workspace paths and prefixes
+project-relative targets with `./`. A missing sibling must remain missing rather than opening an
+unrelated same-basename file elsewhere.
 
-`DocumentPreview` now supplies the opened descriptor and a mounted-document image owner to the same sanitized `RichText` pipeline. Links and images use the document's resolved directory; conversation references keep their explicit-open behavior. `github-slugger` generates document heading identities before sanitization, and scoped fragment navigation uses the sanitizer's `user-content-` prefix. Incoming fragments wait for the deferred renderer and image layout: an initial document may be too short to scroll before its images arrive. Wheel, touch, pointer or keyboard interaction cancels this delayed automatic positioning rather than reclaiming the reader. `NotebookPreview` decodes cell-local raster attachment bundles without making `data:` URLs generally acceptable in Markdown.
+Linked files need independent authorization through workspace realpath containment or an exact
+transcript citation, as defined in [[resource-preview]]. Reading the parent document and Git index
+membership grant no additional access. [[filesystem-git-separation]] explains discovery and authority.
+`ResourceController.loadDocumentImage` uses the authenticated resolver/content route without changing
+the selected file or availability state.
 
-`documentResourceReference` keeps URL escaping separate from literal workspace paths and prefixes project-relative locations with `./`. That prefix is intentional: a missing sibling image must not silently open an unrelated same-basename file elsewhere. `ResourceController.loadDocumentImage` uses the existing authenticated resolver and content route without changing selected-file or availability state. A document reference is not a new source of filesystem authority.
+## Images and navigation
 
-`DocumentImageResources` owns deduplication, four-way transfer scheduling, a 64-reference/64-MiB retained-image budget, abort and URL revocation. The ordinary 32-MiB per-image cap remains. Late resolve/content results must still belong to the selected document, session, branch view, and browser transport. UI failures retain the authored description and never fall back to a raw URL.
+`DocumentImageResources` owns per-document deduplication, transfer scheduling, retained blobs, abort,
+and URL revocation. Limits live in [[resource-preview]]. Resolve/content completions must still belong
+to the selected document, session, branch view, and transport. Failures retain the authored description.
 
-The review also removed the generic `<img src>` fallback for unrecognized conversation paths and classified protocol-relative images as explicit external links. Raw HTML in Markdown, remote image autoloading, and arbitrary subresources in sandboxed HTML remain intentionally unsupported; they were not weakened to make previews look complete.
+Notebook cell attachments decode bounded canonical raster bundles within that cell; they do not enable
+arbitrary Markdown data URLs. Conversation images outside recognized local references retain their
+description, while remote and protocol-relative images appear as explicit links. HTML previews keep
+their isolated sandbox; Notebook cells remain static.
 
-## Evidence
+`github-slugger` assigns heading IDs before sanitization. Scoped fragment navigation uses the
+sanitizer's `user-content-` prefix and waits for deferred rendering and image layout. Wheel, touch,
+pointer, or keyboard interaction cancels pending automatic positioning, preserving the reader's choice.
 
-- Node **22.19.0**: full working-tree Vitest run excluding the separately scoped launcher suite — **153 files passed, 1,549 tests passed, 2 skipped**. Before commit, an isolated export of the staged tree (without the unrelated restart changes) also passed typecheck and the targeted resource/rendering/Host set: **9 files, 205 tests**.
-- New tests: `tests/web/document-resources.test.ts`, `document-preview.test.tsx`, and `document-image-controller.test.ts`. They cover directory/encoding semantics, extensionless links, linked images, Unicode/duplicate headings, Notebook Markdown outputs and attachment scope, blocked remote/raw/data content, decode/transfer failures, StrictMode, cancellation, stale identities, deduplication and budgets.
-- `tests/server/resources.test.ts` confirms independent image authorization, ignored/outside refusal and no unrelated basename recovery. Existing Host resource and Windows-path tests also passed.
-- Typecheck, lint, unused-code checks and the production web build passed.
-- Chromium against `scripts/start-browser-test-host.mjs`: actual indexed PNG and viewBox-only SVG files rendered from authenticated blobs. Duplicate references shared a URL. Notebook file/output images and cell-local raster attachments decoded. A missing image showed an explicit failure; remote and protocol-relative fixtures caused no external HTTP(S) requests. Same-document anchors scrolled the reader without changing the browser location. Markdown → Notebook navigation used the sibling file; Notebook → Markdown `#results` navigation was rechecked after fixing the image-layout race (128px reader scroll, heading within 1px of the reader top).
-- Desktop **1440×1000** and narrow **390×844**, including system-dark mode: images decoded, preserved aspect ratio and stayed within the reader without page-level horizontal overflow. Screenshots: `output/playwright/document-images-{desktop,notebook,narrow,narrow-dark,markdown-narrow-dark}.png`. Reusable synthetic inputs live under `tests/browser/fixtures/file-previews/document-images.*` and `training curve.png`.
+## Verification
 
-## Limits
-
-The browser checks used isolated synthetic fixtures, not real Pi conversation content or the user's report. This work does not establish arbitrary image-format support, cross-browser parity, or access to images excluded by workspace/transcript authority. It does not change the HTML iframe sandbox or execute Notebook code. Unrelated in-progress restart controls were preserved.
+- `tests/web/document-resources.test.ts`, `document-preview.test.tsx`, and
+  `document-image-controller.test.ts` cover directory/encoding rules, headings, Notebook attachments,
+  transfer failures, StrictMode cleanup, cancellation, stale identities, deduplication, and budgets.
+- `tests/server/resources.test.ts` and Windows-path tests cover independent authorization, contained
+  ignored files, outside targets, and literal document-relative resolution.
+- Chromium file-preview flows render local PNG/SVG and Notebook images from authenticated blobs,
+  share duplicate image URLs, preserve missing-image errors, and block remote autoloading. Same-file
+  headings stay within the reader; cross-document fragments apply after images establish layout.
+  Desktop and 390px checks cover aspect ratio and reader overflow; newer large-document checks are
+  recorded in [[follow-core-review-repairs-2026-09-30]].
+- Reusable synthetic inputs are under `tests/browser/fixtures/file-previews/`; browser flows live in
+  `tests/browser/{workbench,filesystem-files}.spec.ts`.

@@ -1,57 +1,20 @@
 ---
-purpose: Pi conversation references resolve into an authenticated, session-bound resource list and a defensive right-pane preview rather than unrestricted browser filesystem access.
+purpose: Session-authorized files, documents, media, and Git changes are inspectable beside the conversation.
 covers:
-  - shared/contracts.ts
-  - shared/resource-references.ts
-  - server/resources.ts
-  - server/image-content.ts
-  - server/project-files.ts
-  - server/git-inspection.ts
-  - server/app.ts
-  - server/runtime.ts
-  - server/runtime-reads.ts
-  - server/mock.ts
-  - src/api.ts
-  - src/resources.ts
-  - src/resource-preview.ts
-  - src/document-resources.ts
-  - src/diff.ts
-  - src/controllers/resource-controller.ts
-  - src/controllers/git-controller.ts
-  - src/controllers/workspace-controller.ts
-  - src/components/ContextPane.tsx
-  - src/components/ContextPaneState.tsx
+  - shared/{contracts,resource-references}.ts
+  - server/{resources,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
+  - src/{api,resources,resource-preview,document-resources,diff,store,pdf-renderer}.ts
+  - scripts/vite-pdf-assets.ts
+  - server/static-asset-cache.mjs
+  - src/controllers/{resource,git,workspace}-controller.ts
+  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
   - src/components/context-pane-view.ts
-  - src/components/ContextSplitBody.tsx
-  - src/components/FilesPane.tsx
-  - src/components/FilePreview.tsx
-  - src/components/DocumentPreview.tsx
-  - src/components/ChangesPane.tsx
-  - src/components/WorkspaceBrowser.tsx
-  - src/components/NotebookPreview.tsx
-  - src/components/PaneResizeHandle.tsx
-  - src/components/RichText.tsx
-  - src/components/Transcript.tsx
   - src/App.tsx
-  - src/store.ts
   - src/styles.css
   - src/styles/*.css
-  - tests/server/app.test.ts
-  - tests/server/resources.test.ts
-  - tests/server/resources-windows-paths.test.ts
-  - tests/server/runtime-reads.test.ts
-  - tests/server/git-inspection.test.ts
-  - tests/server/runtime.test.ts
-  - tests/web/resources.test.ts
-  - tests/web/document-resources.test.ts
-  - tests/web/document-preview.test.tsx
-  - tests/web/document-image-controller.test.ts
-  - tests/web/resources-pane.test.tsx
-  - tests/web/git-controller.test.ts
-  - tests/web/pane-resize.test.tsx
-  - tests/web/workspace-controller.test.ts
-  - tests/web/rich-text.test.tsx
-  - tests/web/store-resources.test.ts
+  - tests/server/{app,resources,resources-windows-paths,runtime-reads,git-inspection,runtime}.test.ts
+  - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
+  - tests/web/{document-preview,pdf-preview,resources-pane,pane-resize,rich-text}.test.tsx
   - tests/browser/workbench.spec.ts
 ---
 
@@ -59,31 +22,195 @@ covers:
 
 ## Goal
 
-Make files and artifacts referenced during Pi work inspectable beside the conversation without turning the browser into an unrestricted filesystem client.
+Inspect project files and conversation artifacts beside the chat. Files owns read-only discovery and
+preview; Changes owns Git comparisons. [[composer]] owns file attachment and the full-image viewer.
+
+## Browse and search
+
+With no file selected, Files shows up to five deduplicated **Recent in this chat** references from
+one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
+while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
+Git state on one line.
+
+Selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
+above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
+its query, expansions, and scroll retained. The default upper boundary matches Browse after Search
+and Recent, keeping the file-content boundary stable. Files and Changes share that height, divider,
+headers, and narrow drawer layout, with no internal splitter.
+
+The lower-left explorer shares the same lazy tree, expansion, selection, hidden visibility, and Git
+decoration state, but omits search. Both trees use the project basename as their heading. Opening a
+workspace file expands its ancestors and emits one reveal request; unrelated updates do not scroll it.
+
+Filesystem membership is independent of Git. Browse includes ignored non-hidden files and empty
+directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
+attributes. Visibility changes retire requests without closing a selected preview. Directory/search
+responses require the same cwd, session, visibility, and browser transport generation. Cwd-local
+state is cached across switching; Refresh reloads the root and expanded levels.
+
+| Discovery bound | Limit |
+| --- | --- |
+| One directory | 10,000 inspected entries |
+| Breadth-first search | 20,000 files, 10,000 directories, five-second cooperative walk budget |
+| Shared search/basename cache | Five seconds; at most eight canonical-root/hidden-mode scopes |
+
+Capped scans, unreadable entries, and non-UTF-8 names report incomplete results. Regular files,
+directories, and contained links are supported; broken/outside links and special nodes are not
+traversed. Missing files invalidate cached search results. Git discovery cannot invent a deleted file.
+
+## Reference resolution and authorization
+
+Recognized references include structured tool paths, embedded images, CLI `<file name="…">` context,
+local Markdown links/images, `file://` and `vscode://file/` URLs, credible inline paths, common source
+extensions, and extensionless project filenames. Windows drives, URL-encoded spaces, and line/column
+suffixes are supported. HTTP, HTTPS, and mail links use ordinary external-link handling.
+
+- Conversation-relative references resolve against the session project directory. Document links,
+  inline paths, and images resolve against the opened document's actual directory, including after
+  basename recovery. URL decoding is separate from literal workspace path handling.
+- A local regular file needs either an exact reference in the authoritative session projection or
+  containment within the session workspace's current realpath boundary. Outside-workspace symlink
+  targets need their own exact transcript reference. Git state, hidden visibility, discovery results,
+  and the five visible Recent rows do not grant or revoke access.
+- If a bare filename is absent at its literal location, a complete bounded workspace scan may
+  recover exactly one match. Several matches become user-selectable candidates; incomplete scans
+  report unknown. Qualified paths and document-relative links do not use this recovery, and a
+  citation cannot authorize recovery outside the workspace.
+- Each operation requires the session, non-empty branch-view generation, projection revision,
+  canonical workspace, and exactly one immediate or lazy message source. Contained workspace reads
+  do not load the transcript; citation and embedded-image authorization load it on demand.
+
+The Host derives a complete ordered reference index independently of transcript pagination. Lazy
+message reads recheck their slot, view, and revision after reconciliation. Resources address that
+session slot, never the Host's last global selection, so one browser cannot retarget another's reads.
+
+### File handles and content
+
+Validation returns an opaque authenticated handle bound to the branch view and an open descriptor
+for the resolved device/inode. The descriptor anchors the object for the handle's bounded lifetime.
+The Host opens the reference's lexical path, uses Linux descriptor-to-path evidence to check the
+canonical target, and uses `O_NOFOLLOW` for an already-canonical final component.
+
+Before sending content headers or bytes, every request revalidates session/view, citation or current
+workspace containment, regular-file status, and opened-object identity. A path or ancestor exchange
+is rejected; a legitimate in-place rewrite of the same authorized file remains readable. Handles
+cannot authorize another path. Embedded image reads additionally validate supported MIME, decoded
+size, and canonical Base64 on the projection supplying the bytes.
+
+Same-branch append keeps the view stable and retains a citation handle only while its message stays
+on the active path. Explicit branch navigation or worker/projection reset changes the view. Cache
+refresh, Git ignore changes, and hidden visibility are independent of this authority.
+
+## Availability and request ownership
+
+Recent references are probed in batches of at most 16 without allocating content handles, sharing one
+lazy transcript read. Each batch merges within its exact session/view/revision/API/transport
+generation. Rows distinguish missing, unauthorized, invalid, ambiguous, and unknown references. A
+failed or incomplete batch marks only its own unconfirmed references unknown and leaves them retryable.
+
+Successful probe/resolve may return a canonical workspace-relative path for shared file/Git selection
+without exposing an absolute Host path. A later transfer failure retains that resolved standing.
+
+Explicit Files Refresh renews Recent, probes, discovery, and the selected preview without requesting
+Git status. Compatible transcript appends refresh Recent only while Browse is visible and retain the
+previous rows until success; a visible preview keeps its reader mounted and does not load hidden Recent.
+
+Selection replacement, pane close, session/view change, or API/transport replacement retires affected
+requests and object URLs. Cancellation closes the exact opened file even if it arrives during open.
+
+## Readers
+
+| File type | Default and available views |
+| --- | --- |
+| HTML, Markdown, SVG, Jupyter Notebook | Preview; Source is the reciprocal view. |
+| Plain text, code, JSON, YAML | Source only. |
+| Image, PDF, audio, video | Preview only. |
+| Unsupported binary | File information. |
+
+The selected-file header stays above scrolling content. Its path copies the path, Download streams
+through the authenticated attachment route, and the reciprocal view action keeps a fixed trailing
+slot, disabled when unavailable. Source uses highlighting and line numbers; `:line` and `#Lline`
+open Source at that position, including for files that normally open in Preview. Files does not
+duplicate Changes with a Diff mode or add file-editing controls.
+
+Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across Amber and Jade.
+Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard
+behind their pixels; full-viewer background options follow [[composer]]. The bounded media button
+respects intrinsic aspect ratio, including viewBox-only SVGs, without tinting letterboxing.
+
+Text transfer is capped at 256 KiB, with a marker at the Source cutoff and in truncated Markdown/HTML
+Preview. Image, PDF, audio, and video blobs are capped at 32 MiB. Loaded content size replaces the
+resolve-time size estimate.
+
+### Documents and local images
+
+Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
+output, and images. Highlighting uses notebook language metadata, with common kernel-name recovery;
+error traces retain line breaks and omit ANSI escapes. Notebook code is not executed. Markdown raw
+HTML is disabled.
+
+Local document images load inline through independently authorized resource requests and document-owned
+blob URLs. Reading a document does not authorize linked files. Each mounted document deduplicates at
+most 64 image references, runs four transfers concurrently, retains at most 64 MiB of image blobs,
+and keeps the 32 MiB per-image cap. Loading, transfer/authorization/limit errors, and decode failures
+retain the image description. Replacement, Source switching, close, or session/view/transport change
+retires transfers and URLs; compatible appends do not.
+
+Notebook `attachment:` images use only that cell's bounded canonical Base64 raster MIME bundles.
+External and protocol-relative images are explicit links; unsupported protocols and unrecognized
+conversation image paths do not trigger automatic requests.
+
+Local heading fragments scroll within the document; cross-document fragments apply after renderer
+and image layout. Reader interaction cancels pending automatic positioning.
+
+### HTML, PDF, and media
+
+HTML stays outside the conversation DOM in an empty-sandbox iframe. Scripts, forms, top navigation,
+and external subresources are blocked.
+
+PDF uses a lazy, local PDF.js worker to render one page at a time, with selectable text, page
+navigation, zoom, and fit-to-width. Zoom and resize preserve the reading position. It renders static
+page content; document scripts, interactive links/forms, and embedded media are inactive. Malformed
+or password-protected files show a readable error while retaining Download.
+
+Chromium's native viewer blocked rendering in an empty sandbox, but executed PDF OpenAction JavaScript
+without it despite `script-src 'none'`. This is why the reader uses static PDF.js rather than an embed;
+[[follow-interface-review-2026-09-29]] records the Chromium 153 check.
+
+The page backing canvas is capped at four million pixels, 8192 pixels per dimension, and a device
+pixel ratio of two. Closing or replacing the reader cancels rendering and destroys its worker.
+PDF.js fonts, CMaps, and JavaScript image decoders are shipped locally and retained with their build
+generation.
+
+Audio and video use native playback controls. The page media policy allows same-origin and blob
+sources for the authorized preview.
+
+## Git Changes
+
+Switching to Changes preserves the canonical selected workspace file whether or not it appears in
+Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
+paths. The lower region shows Source with the selected comparison's inline additions/deletions,
+counts, and non-wrapping previous/next change controls.
+
+- Working comparisons use working-tree source; staged comparisons use index source. An empty
+  comparison reports no diff rather than substituting disk content for index source.
+- Without an authoritative comparison, counts are `—` and navigation is disabled. Absence from a
+  bounded status result cannot distinguish clean, ignored, omitted, non-repository, or unavailable
+  states; only a concrete diff establishes zero counts.
+- Deleted, untracked, binary, submodule, conflict, outside-workspace, and non-UTF-8 states expose the
+  content their Git state supports. Rename comparisons use the selected side's old and new paths.
+  A pure rename is not a whole-file addition.
+- Polling retains the selected path/side and reader position while that comparison remains present;
+  explicit inspection refreshes the diff, and a vanished selection clears it. Git selection intent
+  owns the pane, so a delayed Files response cannot replace a newer Git choice.
+- Unified-diff file headers are recognized outside hunk bodies. Hunk lines with repeated `+` or `-`
+  remain edits with correct line numbers.
 
 ## Checks
 
-- With no selected file, Files opens on a bounded Browse surface: at most five deduplicated `Recent in this chat` references from one 16-reference host page, followed by the actual workspace filesystem tree, including Git-ignored non-hidden entries and empty directories. Recent rows stay on one compact line: a file icon anchors the filename, a CSS-ellipsized subdued parent path uses the remaining space, and Git state stays fixed at the trailing edge. Workspace search replaces those sections only while a query is present. Selecting a recent, search, or tree row replaces Browse with a stable vertical stack: the workspace tree remains above the selected file, while search and Recent yield the constrained space; the compact `← <project folder>` header returns to the complete Browse surface without discarding its query or expansion state. The actual project-folder basename, not a generic `Workspace`, labels that tree in both states. Its default fixed upper boundary matches the Browse boundary after Search plus Recent, so selection does not move the file-content boundary. Files and Changes share that upper height, divider, section/header geometry, and narrow-drawer hierarchy rather than carrying an internal resize mechanism or switching to a separate mobile component. The compact navigation explorer shares the workspace controller's lazy directory levels, expansion, selection, hidden visibility, and optional Git decoration state but intentionally omits search. A default-off Show hidden files eye control filters only dot names and native filesystem hidden attributes, consistently in Git and non-Git projects; Git state never decides membership. A visibility change retires old requests without revoking a selected preview. Directory reads are capped at 10,000 inspected entries and visibly report incomplete results. File search uses a bounded breadth-first filesystem scan (20,000 files, 10,000 directories, five-second cooperative walk budget); capped, unreadable, or non-UTF-8 entries cannot be presented as a complete search. Opening a workspace file emits one explicit reveal request after expanding its ancestors; unrelated tree updates do not repeatedly scroll the selection. Directory/search requests are accepted only while cwd, session, hidden visibility, and browser transport generation still match; switching away caches tree/search state by cwd, while refresh invalidates and reloads the root plus expanded levels. The host still derives and caches the complete ordered conversation-reference index independently of transcript pagination, and authorization uses that complete index regardless of the five rows presented in Browse.
-- Resource discovery understands Pi’s structured tool path arguments, embedded image content, CLI `<file name="…">` references, explicit local Markdown links and images, `file://` and `vscode://file/` links (including native Windows drives, encoded spaces, and line/column suffixes), common source/configuration extensions and extensionless project filenames, and credible inline local path references without treating remote web URLs as local files.
-- Relative conversation references resolve against the owning session’s project directory. In Markdown files and Notebook Markdown cells/outputs, relative file links, inline path controls, and image URLs instead resolve against the opened document’s directory (using its actual resolved workspace location after basename recovery). URL escaping is distinct from literal workspace path text, and missing document-relative files never trigger basename recovery elsewhere. Local heading fragments scroll within the document; cross-document fragments are applied after the destination renderer and images have laid out. User interaction with the reader cancels pending automatic positioning. A local regular file becomes previewable through exactly two authorities: an exact reference in the owning session’s authoritative message projection, or containment within the owning session workspace's current realpath boundary. Git tracking/ignore rules, hidden visibility, bounded discovery membership and Git availability grant or revoke neither authority. Outside-workspace symlink targets still require an independent exact transcript reference. Filesystem discovery never invokes Git.
-- A bare name is shorthand, not a location claim: when no file sits where it literally points, the host recovers it through bounded workspace filesystem discovery only if the scan is complete and exactly one file carries that name, and answers with the location it actually opened. Several matches are returned as candidates for the user to choose between; a reference carrying a directory part of its own is never recovered, and filesystem recovery never borrows a citation's authority to leave the workspace. An incomplete scan answers unknown rather than claiming uniqueness or absence; an exact qualified path remains usable without that scan.
-- Every host resource operation receives a concrete session, non-empty branch-view generation, projection revision, workspace root, and exactly one message source: either an immediate projection or a lazy loader. There is no anonymous legacy view, zero-revision default, or empty-message fallback. The host proactively probes every explicitly loaded recent row without allocating content handles, sharing one lazy transcript projection across citation checks. Probe transport stays capped at 16 references per request; each completed batch merges incrementally and is reused only within the exact `{session, branch view, projection revision, browser API/transport}` generation. A failed batch may mark only its own references `unknown`; it never overwrites prior confirmed standing. The explicit Files refresh renews the bounded recent list, probe standing, filesystem discovery cache, and selected preview without explicitly requesting Git status. Ordinary transcript appends revalidate Recent only while Browse is visible and keep its previous page and standing until current results arrive; a visible Preview neither loads hidden Recent rows nor remounts its reader. A failed, malformed, or incomplete batch is visibly `unknown`, remains eligible for retry, and never allows an omitted reference to be represented as verified. Before selection, rows distinguish missing, unauthorized, invalid, ambiguous, and unknown references. Successful probe/resolve results may return the canonical workspace-relative path so conversation and workspace rows share selection and Git identity without exposing an absolute host path; a later transfer failure leaves that resolved standing intact.
-- Filesystem discovery does not invent deleted tracked files. Discovering a missing file invalidates cached search results; directory levels are read directly on demand. Regular files, directories, and contained links are supported; broken/outside links and special filesystem nodes are not traversed.
-- The host returns an opaque authenticated resource handle after validation and never accepts that handle as authority for another unreferenced path. The handle carries the runtime's opaque branch-view generation plus a retained, never-streamed descriptor for the resolved `{device, inode}`. The Host opens the lexical path selected by the reference and uses Linux's descriptor-to-path witness to prove that it resolves to the authorized canonical target; an already-canonical final component additionally uses `O_NOFOLLOW`. That anchor keeps the authorized inode allocated for the handle's bounded lifetime, so an inode cannot be recycled beneath a stale pathname. Every content request re-validates the addressed session, current generation, and original citation/workspace/embedded authority before sending headers or bytes, repeats the descriptor witness, and compares its opened object to the anchor; a final-component or ancestor exchange is refused rather than streamed, while a legitimate in-place rewrite of the still-authorized object remains observable. An ordinary append may retain a citation handle only while its authorizing message remains on the active path. Embedded image authority additionally requires a supported image MIME type, bounded decoded size, and canonical Base64 on the exact projection read that supplies its bytes.
-- HTML, Markdown, SVG, and Jupyter Notebook files default to Preview and expose Source as the reciprocal secondary view. Notebook Preview is a static reading surface for Markdown and code cells, execution counts, text/error outputs, and embedded images; it never executes notebook code. Plain text, code, JSON, and YAML are Source-only; images, PDF, audio, and video are Preview-only; unsupported binaries present file information. Host-owned Preview, Source, and Changes content use one luminosity-aware neutral canvas across Amber and Jade so product theme does not tint the inspected content; authored artifact backgrounds and semantic source/Diff colors remain intact. Shared image previews place a neutral checkerboard directly behind image pixels rather than tinting transparency with the application theme; the full viewer's White / Black alternatives follow [[composer]]. The file reader retains a bounded media button, including for viewBox-only SVGs, while the image itself uses its intrinsic aspect ratio and fits within that button without expanding its inspection background into letterboxing. The fixed view-action slot remains visible but disabled when the reciprocal mode does not exist, so switching files does not move the header. Text transfers are capped at 256 KiB and place a truncation marker at the actual Source boundary; truncated Markdown and HTML also mark the rendered Preview so partial content cannot be mistaken for the complete file. Blob-backed image, PDF, audio, and video previews are capped at 32 MiB and report the limit instead of allocating larger files. Once content arrives, its current total replaces resolve-time size metadata in the descriptor; resolve size remains discovery metadata only.
-- Markdown file previews and Notebook Markdown cells/outputs show independently authorized local images inline through authenticated resolve/content requests and document-owned blob URLs, not conversation-style file buttons or direct browser filesystem URLs. Reading a document does not authorize its linked files: each local image/link independently passes the ordinary workspace/citation and symlink checks, including generated outputs ignored by Git. Hidden visibility and ignore rules do not act as permissions. Each mounted document deduplicates at most 64 distinct image references, runs at most four concurrent transfers, retains at most 64 MiB of image blobs, and retains the 32 MiB per-image content cap. Loading, authorization/transfer/limit failure, and decode failure remain visible with the image description. Replacement, Source switching, pane close, session/view changes, and transport replacement retire requests and URLs; compatible same-view transcript appends do not. Notebook `attachment:` images resolve only from that cell’s bounded canonical Base64 raster MIME bundles; they cannot borrow another cell’s attachments or execute SVG/HTML. External and protocol-relative images remain explicit safe links, while unsupported protocols and unrecognized conversation image paths never become automatic browser requests. Raw HTML remains disabled in Markdown and the standalone HTML sandbox policy is unchanged.
-- The selected-file header remains fixed above scrolling content. Its path is the Copy path action, Download is a same-origin attachment link that streams from the authenticated resource route without first allocating the complete file in browser memory, and the reciprocal Preview/Source action occupies the stable trailing slot. Source uses highlighted text with stable line numbers; a `:line` or `#Lline` suffix establishes the bounded source position after content arrives. Files does not duplicate Changes with a Diff mode or spend header space on Copy all, Go to line, persistent file size, or an Add to prompt action.
-- Switching to Changes preserves the canonical selected workspace file whether or not Git reports it as changed. The upper region keeps the repository identity and compact staged/working/conflict counts above grouped changed paths. The lower region always presents Source: a selected file without an authoritative comparison shows unavailable counts (`—`) with disabled navigation, not an inferred `+0 −0`. A missing status entry cannot distinguish clean, ignored, untracked outside the bounded result, not-a-repository or unavailable Git. Only a concrete diff establishes zero or nonzero counts. An empty selected Git comparison reports no diff rather than silently substituting current disk content for index source. A changed file presents the selected comparison’s complete source with additions and deletions inline, exact counts, and non-wrapping previous/next change navigation. Working comparisons present working-tree source, staged comparisons present index source, and both retain explicit Git identity. Background status polling preserves the selected diff and reader position while that exact path and side remain present; explicit inspection refreshes the diff, while a vanished selection clears it. Deleted, untracked, binary, submodule, conflict, outside-workspace, and non-UTF-8 states expose only the content and navigation their real Git state supports rather than inventing source lines.
-- Git selection intent, not resource-response arrival, owns the Changes selection. A delayed Files preview may finish independently but cannot retarget a newer Git choice, including a deleted file with no preview. Unified diff file headers are recognized outside hunk bodies; body lines beginning with repeated `+` or `-` remain edits with correct line numbers. Rename comparison includes the selected side's old and new paths, without treating a pure rename as a whole-file addition or borrowing the staged old path for working edits.
-- HTML stays outside the conversation DOM, and both HTML and PDF frames use an empty sandbox capability set: no scripts, same-origin privilege, forms, or top-level navigation. HTML also has no unrestricted subresource loading. The mock-host Chromium gate opens an actual cited local HTML fixture that declares a remote image, then rejects any external HTTP(S) request while the sandboxed frame parses it.
-- External HTTP, HTTPS, and mail links preserve ordinary safe-link behavior rather than passing through the privileged local-file resolver.
-- Resource selection, availability standing, and loaded-object URLs are cleared when the visible session, same-session branch-view generation, or browser transport/API identity changes, so previews cannot leak across branch or pairing ownership. Selection replacement, pane close, and either switch also abort the obsolete resolve or content request; a filesystem response closes its exact opened handle even when cancellation lands while that handle is opening.
-- Resource list, probe, resolve, and content reads use the request's open session slot, never the Host's last global selection and never a read-induced selection change. Lazy projection reads recheck that the same slot remains registered with the same branch-view generation and revision after reconciliation; another browser selecting a different session does not revoke the first browser's resources.
-- Filesystem search and basename discovery share a five-second cache and in-flight scan for each canonical root/hidden mode, with at most eight cached scopes. Explicit Files refresh invalidates discovery caches only, not authority. Content revalidation does not scan a workspace or consult discovery membership: session/view ownership, current workspace realpath containment, regular-file and descriptor identity, and citation/embedded checks remain per-request requirements. Ignore-rule or visibility changes do not revoke a valid handle.
-- Contained workspace resolution does not fetch the conversation transcript. Transcript messages load lazily only for citation or embedded-content authority. Ordinary same-branch append keeps the opaque view stable; explicit navigation or worker/projection reset changes it and invalidates outstanding conversation-derived authority.
-
-## Non-goals
-
-- Workspace Browse is not an editor or unrestricted filesystem client; it exposes bounded filesystem discovery inside the session workspace and independently session-authorized resources.
-- Active HTML execution, arbitrary remote URL fetching, and unrestricted absolute-path browsing are not supported.
-- Every path-like word in prose does not have to become a resource; structured and explicit references take priority over speculative matching.
+Resource, workspace, and Git tests cover authority, limits, filesystem changes, cancellation, and
+selection races. The workbench browser test also opens a cited HTML fixture containing a remote image
+and checks that parsing it sends no external HTTP(S) request. PDF checks cover painted pixels,
+selectable text, page/zoom state across layout changes, worker disposal, and inactive document actions.
+Document behavior is covered by [[document-relative-previews]] and [[follow-interface-review-2026-09-29]];
+filesystem/Git separation is in [[filesystem-git-separation]].

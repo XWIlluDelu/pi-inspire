@@ -339,6 +339,7 @@ export const ContextPane = memo(function ContextPane({
       )}
     </>
   );
+  // Keep the same host element across layouts so readers and terminals stay mounted.
   return isModal ? (
     <div
       className="ctx res"
@@ -352,8 +353,13 @@ export const ContextPane = memo(function ContextPane({
       {contents}
     </div>
   ) : (
-    <aside className="ctx res" id="context-pane" aria-label="Context panel">
+    <div
+      className="ctx res"
+      id="context-pane"
+      role="complementary"
+      aria-label="Context panel"
+    >
       {contents}
-    </aside>
+    </div>
   );
 });

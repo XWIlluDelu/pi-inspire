@@ -670,12 +670,14 @@ export class ResourceController {
         });
         return;
       }
-      this.previewObjectUrl = URL.createObjectURL(blob);
+      this.previewObjectUrl =
+        descriptor.kind === "pdf" ? null : URL.createObjectURL(blob);
       this.host.patch({
         resourcePreview: {
           status: "ready",
           reference,
           descriptor: currentDescriptor,
+          ...(descriptor.kind === "pdf" ? { pdfBlob: blob } : {}),
           ...(svgText !== undefined
             ? {
                 text: svgText,

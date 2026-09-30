@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
+import { highlightSource } from "../syntax-highlighting";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { MarkdownAttachmentsContext } from "./DocumentPreview";
 
@@ -33,10 +34,10 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function joinedText(value: unknown): string | null {
+function joinedText(value: unknown, separator = ""): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value) && value.every((item) => typeof item === "string"))
-    return value.join("");
+    return value.join(separator);
   return null;
 }
 
@@ -113,7 +114,7 @@ function normalizeOutput(value: unknown): NotebookOutput {
       : { kind: "text", text: cleanTerminalText(text) };
   }
   if (output.output_type === "error") {
-    const traceback = joinedText(output.traceback);
+    const traceback = joinedText(output.traceback, "\n");
     if (traceback !== null)
       return { kind: "error", text: cleanTerminalText(traceback) };
     const name = typeof output.ename === "string" ? output.ename : "Error";
@@ -241,6 +242,28 @@ function NotebookOutputView({
   );
 }
 
+const NotebookSource = memo(function NotebookSource({
+  source,
+  language,
+}: {
+  source: string;
+  language: string;
+}) {
+  const highlighted = useMemo(
+    () => highlightSource(source, language),
+    [source, language],
+  );
+  return (
+    <pre tabIndex={0}>
+      <code
+        className={`hljs language-${language}`}
+        // highlight.js escapes the input and emits span elements only.
+        dangerouslySetInnerHTML={{ __html: highlighted }}
+      />
+    </pre>
+  );
+});
+
 export function NotebookPreview({ text }: { text: string }) {
   const notebook = useMemo(() => parseNotebook(text), [text]);
   if (!notebook)
@@ -283,11 +306,12 @@ export function NotebookPreview({ text }: { text: string }) {
                 <RichText text={cell.source} variant="assistant" />
               </MarkdownAttachmentsContext.Provider>
             ) : (
-              <pre>
-                <code className={`language-${notebook.language}`}>
-                  {cell.source}
-                </code>
-              </pre>
+              <NotebookSource
+                source={cell.source}
+                language={
+                  cell.kind === "code" ? notebook.language : "plaintext"
+                }
+              />
             )}
           </div>
           {cell.outputs.map((output, outputIndex) => (
