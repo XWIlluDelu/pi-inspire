@@ -49,12 +49,38 @@ export interface ToolSearchGroup {
   matches: ToolSearchMatch[];
 }
 
-export type ToolImageMimeType =
-  | "image/jpeg"
-  | "image/png"
-  | "image/gif"
-  | "image/webp"
-  | "image/bmp";
+/** Overlapping context windows can repeat a line, sometimes as both context
+ * and a match. Keep its first position and strongest highlighting. */
+export function mergeSearchContext(
+  groups: ToolSearchGroup[],
+): ToolSearchGroup[] {
+  return groups.map((group) => {
+    const unique = new Map<string, ToolSearchMatch>();
+    for (const match of group.matches) {
+      const key = `${match.line}\0${match.text}`;
+      const previous = unique.get(key);
+      if (previous) previous.match ||= match.match;
+      else unique.set(key, { ...match });
+    }
+    return { ...group, matches: [...unique.values()] };
+  });
+}
+
+const TOOL_IMAGE_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+] as const;
+
+export type ToolImageMimeType = (typeof TOOL_IMAGE_MIME_TYPES)[number];
+
+export function isToolImageMimeType(
+  value: unknown,
+): value is ToolImageMimeType {
+  return TOOL_IMAGE_MIME_TYPES.some((mimeType) => mimeType === value);
+}
 
 export type ToolPresentationBlock =
   | {
@@ -68,6 +94,8 @@ export type ToolPresentationBlock =
       text: string;
       path?: string;
       startLine?: number;
+      lineNumbers?: boolean;
+      language?: string;
     }
   | {
       type: "diff";

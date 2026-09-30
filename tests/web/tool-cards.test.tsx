@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { ToolCard } from "../../src/components/transcript-cards";
+import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 
@@ -37,6 +38,100 @@ function card(
 }
 
 describe("native Pi tool cards", () => {
+  it.each(["bash", "powershell"])(
+    "renders %s as a native terminal card",
+    (name) => {
+      const { container } = render(
+        card(
+          call(name, { command: "echo ready" }),
+          result("\u001b[32mReady\u001b[0m"),
+        ),
+      );
+      expect(
+        container.querySelector(`[data-tool-rule="inspire.pi.${name}"]`),
+      ).not.toBeNull();
+      expect(screen.getByRole("group", { name: "Command" })).toHaveTextContent(
+        "echo ready",
+      );
+      expect(screen.getByRole("group", { name: "Output" })).toHaveTextContent(
+        "Ready",
+      );
+      expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
+    },
+  );
+
+  it("retains an unpaired result's text, image and structured data without inventing input", async () => {
+    render(
+      <UnpairedToolResultRow
+        visibility="expanded"
+        message={{
+          role: "toolResult",
+          toolCallId: "missing-call",
+          toolName: "plot",
+          content: [
+            { type: "text", text: "Computed spectrum" },
+            { type: "image", mimeType: "image/png", data: "AAAA" },
+          ],
+          details: { peak: 12.4 },
+        }}
+      />,
+    );
+    expect(screen.getByText("Computed spectrum")).toBeInTheDocument();
+    expect(screen.getByAltText("Tool result image 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Result details"));
+    expect(await screen.findByText(/"peak": 12.4/)).toBeInTheDocument();
+    expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
+  });
+
+  it.each(["native", "configured"])(
+    "merges overlapping %s search context without losing match emphasis or changed text",
+    (format) => {
+      if (format === "configured")
+        configureToolPresentationRegistry(
+          toolPresentationConfigurationSchema.parse({
+            version: 1,
+            rules: {
+              "test.grouped": {
+                summary: [{ value: { path: "args.pattern" } }],
+                blocks: [
+                  {
+                    type: "search",
+                    source: { path: "result.text" },
+                    format: "grouped-lines",
+                  },
+                ],
+              },
+            },
+            mappings: { grep: "test.grouped" },
+          }),
+        );
+      const rows = [
+        "1- before",
+        "2- target()",
+        "2- changed()",
+        "2: target()",
+        "3- after",
+      ];
+      const output =
+        format === "configured"
+          ? `src/a.ts\n${rows.map((line) => ` ${line}`).join("\n")}`
+          : rows
+              .map((line) => `src/a.ts${line.includes(":") ? ":" : "-"}${line}`)
+              .join("\n");
+      const { container } = render(
+        card(call("grep", { pattern: "target", path: "src" }), result(output)),
+      );
+      expect(container.querySelectorAll(".tool-search-line")).toHaveLength(4);
+      expect(
+        container.querySelectorAll(".tool-search-line--match"),
+      ).toHaveLength(1);
+      expect(
+        container.querySelector(".tool-search-line--match code"),
+      ).toHaveTextContent("target()");
+      expect(screen.getByText("changed()")).toBeInTheDocument();
+    },
+  );
+
   it("shows the write shell early, streams its code in place, then distinguishes waiting, execution and success", () => {
     const initial: ToolCallContent = {
       ...call("write", {}),

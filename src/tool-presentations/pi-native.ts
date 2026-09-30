@@ -1,6 +1,7 @@
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff } from "../diff";
 import { toolResultText } from "../events";
+import { isToolImageMimeType, mergeSearchContext } from "./model";
 import type {
   ToolImageMimeType,
   ToolListItem,
@@ -120,14 +121,6 @@ interface NativeImageResult {
   mimeType: ToolImageMimeType;
 }
 
-const NATIVE_IMAGE_MIME_TYPES = new Set<ToolImageMimeType>([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-]);
-
 /** undefined means no image part; null means an image-shaped part that this
  * rule cannot safely interpret. */
 function nativeImageResult(
@@ -141,14 +134,9 @@ function nativeImageResult(
   const image = record(candidate);
   const data = image ? stringValue(image, "data") : null;
   const mimeType = image ? stringValue(image, "mimeType") : null;
-  if (
-    data === null ||
-    data.length === 0 ||
-    mimeType === null ||
-    !NATIVE_IMAGE_MIME_TYPES.has(mimeType as ToolImageMimeType)
-  )
+  if (data === null || data.length === 0 || !isToolImageMimeType(mimeType))
     return null;
-  return { data, mimeType: mimeType as ToolImageMimeType };
+  return { data, mimeType };
 }
 
 function imageTypeLabel(mimeType: ToolImageMimeType): string {
@@ -253,9 +241,17 @@ function readRule(): ToolPresentationRule {
           else if (imageNote)
             properties.push({ label: "Type", value: "Image" });
           else if (range) properties.push({ label: "Range", value: range });
-          const blocks: ToolPresentationBlock[] = [
-            { type: "properties", items: properties },
-          ];
+          // A source preview already carries its file and range in the code
+          // heading; keep metadata chips only when there is no source body.
+          const blocks: ToolPresentationBlock[] = [];
+          if (
+            !input.result ||
+            input.result.isError ||
+            image ||
+            imageNote ||
+            !resultText
+          )
+            blocks.push({ type: "properties", items: properties });
           if (!input.result) return blocks;
           if (input.result.isError) {
             if (resultText)
@@ -275,7 +271,10 @@ function readRule(): ToolPresentationRule {
               mimeType: image.mimeType,
               alt: path,
             });
-            if (resultText)
+            if (
+              resultText &&
+              !/^Read image file \[[^\]]+\]$/.test(resultText.trim())
+            )
               blocks.push({ type: "notice", text: resultText, tone: "muted" });
             return blocks;
           }
@@ -294,7 +293,7 @@ function readRule(): ToolPresentationRule {
           const split = splitReadOutput(resultText);
           blocks.push({
             type: "code",
-            label: "Contents",
+            label: range ? `Contents · ${range}` : "Contents",
             path,
             startLine,
             text: split.text,
@@ -478,9 +477,9 @@ function editRule(): ToolPresentationRule {
   };
 }
 
-function bashRule(): ToolPresentationRule {
+function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
   return {
-    id: `${PI_RULE_PREFIX}.bash`,
+    id: `${PI_RULE_PREFIX}.${name}`,
     present(input) {
       const args = record(input.call.arguments);
       if (!args) return null;
@@ -583,7 +582,7 @@ function parseGrepOutput(text: string): ToolSearchGroup[] | null {
       match: match[2] === ":",
     });
   }
-  return [...groups.values()];
+  return mergeSearchContext([...groups.values()]);
 }
 
 function grepRule(): ToolPresentationRule {
@@ -813,7 +812,8 @@ export const PI_NATIVE_TOOL_PRESENTATION_RULES: readonly ToolPresentationRule[] 
     readRule(),
     writeRule(),
     editRule(),
-    bashRule(),
+    shellRule("bash"),
+    shellRule("powershell"),
     grepRule(),
     findRule(),
     lsRule(),
@@ -824,6 +824,7 @@ export const PI_NATIVE_TOOL_PRESENTATION_MAPPINGS = {
   write: `${PI_RULE_PREFIX}.write`,
   edit: `${PI_RULE_PREFIX}.edit`,
   bash: `${PI_RULE_PREFIX}.bash`,
+  powershell: `${PI_RULE_PREFIX}.powershell`,
   grep: `${PI_RULE_PREFIX}.grep`,
   find: `${PI_RULE_PREFIX}.find`,
   ls: `${PI_RULE_PREFIX}.ls`,

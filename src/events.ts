@@ -141,8 +141,47 @@ export interface WireEvent {
 export interface ActivityTool {
   id: string;
   name: string;
-  phase: "running" | "done" | "error";
+  phase: "queued" | "running" | "done" | "error";
   detail?: string;
+  /** Cumulative execution output, never an authoritative tool result. */
+  outputPreview?: { text: string; truncated: boolean };
+}
+
+const TOOL_OUTPUT_PREVIEW_CHARS = 16_000;
+const TOOL_OUTPUT_PREVIEW_LINES = 400;
+
+/** Pi updates replace the previous partial result; they are not text deltas.
+ * Keep a bounded tail so long-running commands continue to show recent work. */
+function toolOutputPreview(value: unknown): ActivityTool["outputPreview"] {
+  const content =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>).content
+      : value;
+  const parts = typeof content === "string" ? [content] : content;
+  if (!Array.isArray(parts)) return undefined;
+  let text = "";
+  let truncated = false;
+  for (const part of parts) {
+    const next =
+      typeof part === "string"
+        ? part
+        : part?.type === "text" && typeof part.text === "string"
+          ? part.text
+          : "";
+    if (!next) continue;
+    const separator = text ? "\n" : "";
+    truncated ||=
+      text.length + separator.length + next.length > TOOL_OUTPUT_PREVIEW_CHARS;
+    text = `${text}${separator}${next.slice(-TOOL_OUTPUT_PREVIEW_CHARS)}`.slice(
+      -TOOL_OUTPUT_PREVIEW_CHARS,
+    );
+  }
+  const lines = text.split("\n");
+  if (lines.length > TOOL_OUTPUT_PREVIEW_LINES) {
+    text = lines.slice(-TOOL_OUTPUT_PREVIEW_LINES).join("\n");
+    truncated = true;
+  }
+  return text ? { text, truncated } : undefined;
 }
 
 export interface Notice {
@@ -525,7 +564,36 @@ export function reduceEvent(
       changed = true;
       const key = messageKey(message);
       if (key) settle.push(key);
-      if (message.role === "assistant") slice.streaming = false;
+      if (message.role === "assistant") {
+        slice.streaming = false;
+        // A completed call observed in this turn is queued until execution
+        // starts. History and reconnect snapshots do not establish that state.
+        if (
+          key &&
+          key === current.activeAssistantMessageKey &&
+          isBusyRunState(current.runState) &&
+          message.stopReason !== "error" &&
+          message.stopReason !== "aborted"
+        ) {
+          const pending = contentItems(message).filter(
+            (item): item is ToolCallContent =>
+              item.type === "toolCall" &&
+              typeof item.id === "string" &&
+              typeof item.name === "string" &&
+              !item.__inspireToolCall &&
+              !current.tools[item.id],
+          );
+          if (pending.length > 0) {
+            slice.tools = { ...current.tools };
+            for (const call of pending)
+              slice.tools[call.id] = {
+                id: call.id,
+                name: call.name,
+                phase: "queued",
+              };
+          }
+        }
+      }
       break;
     }
     case "agent_start": {
@@ -603,6 +671,12 @@ export function reduceEvent(
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
+      // A delayed update must not resurrect a completed execution.
+      if (
+        event.type === "tool_execution_update" &&
+        (existing?.phase === "done" || existing?.phase === "error")
+      )
+        break;
       const detail =
         event.type === "tool_execution_update"
           ? (summarize(event.partialResult) ?? existing?.detail)
@@ -617,6 +691,9 @@ export function reduceEvent(
               : (existing?.name ?? "tool"),
           phase: "running",
           detail,
+          ...(event.type === "tool_execution_update"
+            ? { outputPreview: toolOutputPreview(event.partialResult) }
+            : {}),
         },
       };
       changed = true;
@@ -801,6 +878,22 @@ export function reduceEvent(
     slice.runState !== event.sessionStatus.runState
   ) {
     slice.runState = event.sessionStatus.runState;
+    changed = true;
+  }
+  if (
+    isSessionRuntimeStatus(event.sessionStatus) &&
+    !isBusyRunState(event.sessionStatus.runState) &&
+    Object.values(slice.tools).some(
+      (tool) => tool.phase === "running" || tool.phase === "queued",
+    )
+  ) {
+    // Abort/failure can end a run without an execution-end receipt. Drop only
+    // transient queued/running state, without inventing a successful result.
+    slice.tools = Object.fromEntries(
+      Object.entries(slice.tools).filter(
+        ([, tool]) => tool.phase !== "running" && tool.phase !== "queued",
+      ),
+    );
     changed = true;
   }
   if (!isBusyRunState(slice.runState) && slice.summarizationRetry !== null) {

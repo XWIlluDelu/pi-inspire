@@ -1,77 +1,101 @@
 ---
-purpose: Bounded presentation declarations turn Pi tools and optional Thinking text into compact, truthful Web activity while preserving native card shells and fallbacks.
+purpose: Declarative tool and Thinking presentations provide typed summaries and bodies within the shared activity-card shell.
 covers:
   - shared/tool-presentation-config.ts
   - server/tool-presentation-config.ts
-  - src/tool-presentations/
+  - src/tool-presentations/**
   - src/components/transcript-cards.tsx
-  - src/styles.css
+  - src/components/ResourcePathLabel.tsx
+  - src/styles/activity-cards.css
+  - tests/browser/tool-presentations.spec.ts
   - tests/server/app.test.ts
   - tests/server/tool-presentation-config.test.ts
-  - tests/web/tool-cards.test.tsx
-  - tests/web/streaming-edit-cards.test.tsx
-  - tests/web/tool-presentations.test.ts
+  - tests/web/{tool-cards,streaming-edit-cards}.test.tsx
   - tests/web/thinking-presentations.test.tsx
+  - tests/web/tool-presentations.test.ts
 ---
 
-# Activity presentations
+# Tool and Thinking presentations
 
 ## Goal
 
-Make common tool and Thinking activity immediately legible without coupling the browser to Pi's imperative terminal renderers, admitting arbitrary executable presentation code, or hiding canonical content when a semantic projection cannot safely interpret it.
+Make common activity legible through typed data projections, with generic inspection when a rule
+cannot interpret the content. [[activity-presentation]] owns card identity, disclosure, lifecycle,
+status, copy actions, and streaming behavior. A rule replaces only the summary and expanded body.
+
+## Rule selection
+
+- Namespaced rule definitions are separate from exact tool-name mappings. User mappings take
+  precedence over shipped mappings; shipped `inspire.*` definitions are reserved.
+- Select one mapping. A missing, failing, or shape-incompatible selected rule returns directly to
+  generic rendering rather than trying another semantic rule.
+- Thinking has one optional direct declaration. It may select only display-cleaned `thinking.text`;
+  tool rules select tool data. A failed Thinking summary restores the native presentation; a failed
+  lazy body retains its configured summary and uses native rich text.
+- Rules read Host-projected arguments, results, and tool names. Built-in rules can also use lifecycle
+  metadata. Declarations cannot execute code, inject HTML/CSS, read files, access the network, or
+  identify the extension behind a tool name. Pi TUI renderers are not Web renderer plugins.
+
+## Content and cost
+
+- Blocks support properties, text, sanitized Markdown, code, terminal output, unified diff,
+  replacement, list, grouped search, image, and notice.
+- Bodies mount lazily. Declarative summaries cannot select `result.text` or JSON-format objects.
+  Text and structured previews are bounded; code initially shows at most 400 lines. Unified edit
+  patches retain every projected line.
+- Copy serializes on demand from the Host-projected call/result or complete display-cleaned Thinking
+  text, independently of display truncation. Argument previews retain their partial labels and
+  resource-action restrictions from [[activity-presentation]].
+- Long bodies scroll inside the card and support keyboard access. `lineNumbers: false` hides the
+  gutter; numbered rows share a scroll plane so the gutter remains aligned during horizontal scroll.
+- Resource actions retain the complete reference for preview and accessibility. A fitting path stays
+  complete. Overflow uses middle truncation, prioritizing the filename tail and filling remaining
+  width with leading context. Expanded block labels stay on one line beside the available path width.
+
+## Native presentations
+
+| Tool | Content |
+| --- | --- |
+| `read` | File/range summary and source or image preview, without repeating that metadata above the body. |
+| `write` | Requested file content. |
+| `edit` | Requested replacements while pending/failed; Pi's persisted `details.patch` after success. |
+| `bash`, `powershell` | Command and terminal output. |
+| `grep` | Grouped matches and context. |
+| `find`, `ls` | File/directory lists. |
+
+Search context with the same line number and text is merged while retaining match flags. Match and
+diff row tints span the complete shared horizontal scroll width. Unified-diff recognition requires
+patch structure rather than recoloring ordinary prose starting with `+` or `-`. Native truncation
+and result-limit metadata appears as a separate notice.
+
+Streaming/interrupted edit previews accept incomplete fields and newly started array items without
+discarding earlier typed replacements. Missing old/new sides render no rows; an explicit empty string
+is a received side. Field order does not determine compatibility. Complete calls and wrong field
+types remain strict. A successful edit requires the authoritative patch; the browser does not reread
+the workspace or calculate an applied diff.
+
+## Generic results
+
+Unknown tools and incompatible rules retain arguments, text, supported inline images, and structured
+details. Details serialize only when opened. A result whose call is outside loaded history retains
+its content without fabricated arguments. Invalid image MIME types, excessive data, or invalid base64
+characters produce a visible notice rather than an empty result.
+
+## Configuration
+
+The Host reads and validates the selected file on every authenticated bootstrap, leaving the file
+unchanged. Invalid configuration warns the browser and activates only shipped rules. Source checkouts
+use ignored `.inspire/tool-presentations.json`; packages use the platform configuration directory.
+`INSPIRE_TOOL_PRESENTATIONS_PATH` overrides either. Locations, schema fields, working examples, and
+versioned personal profiles are documented in [Custom tool presentations](../../docs/tool-presentations.md).
+
+Personal profiles share the product codebase and may live in a separate configuration repository.
+An empty version-1 profile selects shipped rules and generic cards; it does not disable extensions.
+Runtime state and credentials stay outside presentation configuration.
 
 ## Checks
 
-- Existing Tool and Thinking cards remain the only owners of identity, disclosure, Adaptive lifecycle, status, copy, resource actions, motion, accessibility, and failure styling. A configured presentation replaces only its summary and expanded body.
-- Tool rule definitions have namespaced ids and remain separate from exact tool-name mappings. INSΠRE ships project-wide Pi rules and mappings; a machine-local configuration adds declarative rules and replaces mappings without modifying shipped definitions.
-- Tool resolution applies the user mapping for a tool name when present, otherwise the shipped mapping. After selecting that one mapping, a missing, throwing, or shape-incompatible rule returns directly to generic raw rendering; it never tries a second semantic rule.
-- Thinking has one optional direct declaration because it is a singleton activity kind. It may select only display-cleaned `thinking.text`; tool rules cannot select that namespace, and Thinking cannot select tool arguments or results.
-- If a Thinking summary cannot resolve, the complete native Thinking presentation remains active. If only its lazy body is incompatible, the configured summary remains while the body falls back to native Thinking rich text. Copy continues to use the complete display-cleaned Thinking text.
-- Declarations are pure projections. Tool rules see only the persisted/RPC-visible call name, Host-projected arguments (including bounded live previews), result content, result details, and lifecycle state; Thinking sees only its loaded text. Declarations do not read files, access the network, or infer extension provenance. The card owns partial-copy labelling, resource-action gating, and generation/execution distinctions under [[activity-presentation]], regardless of the selected rule.
-- Resolving a collapsed card remains cheap. Potentially large blocks are built only when the body mounts, code bodies initially project at most 400 numbered lines, and declarative summaries cannot select full tool result text or JSON-format objects. User text and structured item previews are bounded; complete copy actions retain the canonical call, result, or Thinking content. Unified edit patches remain complete because the patch is the content being inspected.
-- Both activity kinds use the same bounded block vocabulary: properties, text, sanitized Markdown, code, terminal output, unified diff, replacement, list, grouped search, image, and notice.
-- Shipped mappings cover Pi's native `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` tools. They present file/range metadata, numbered source or image previews, requested writes, authoritative applied patches, terminal command/output, grouped matches, and file or directory lists rather than argument JSON. A grouped-search match tint spans the complete horizontal range shared with longer neighboring lines.
-- File-resource actions retain the complete reference for preview and accessibility. A path that fits remains visually complete; actual overflow uses one continuous middle projection that gives the bounded filename tail first claim on available width, then preserves as much leading context as fits. The visible leading and tail text stay adjacent without a breakpoint-only abbreviation or blank spacer. An expanded block keeps its label on one line while the path consumes every remaining pixel in the row.
-- Successful native `edit` cards use Pi's persisted `details.patch`; they never reread the workspace or compute a replacement diff in the browser. Pending or failed edits may show explicitly labelled requested replacements without claiming file coordinates or application success. Host-marked streaming/interrupted edit previews tolerate absent paths and old/new fields, empty edit arrays, and newly started array items without discarding earlier typed replacements. An absent side renders no rows, distinct from an explicitly received empty string; field order does not determine compatibility. Completed calls and wrong field types remain strict, and successful results still require the authoritative patch. Every unified-diff row tint spans the complete scrollable width, including the horizontal overflow created by longer neighboring lines.
-- Native truncation and result-limit metadata becomes a separate notice rather than being mixed into source, terminal, search, or list content. Completed-call copy actions retain the original arguments and result projection under the Host bounds; a generating/interrupted call explicitly copies a partial preview.
-- Unknown tools, malformed calls, unexpected result shapes, absent Thinking configuration, and failed rule execution retain their inspectable native fallback. No selected-rule failure is swallowed or reinterpreted as another tool.
-
-## User configuration boundary
-
-Source checkouts load `.inspire/tool-presentations.json`, inside the already ignored machine-local directory. Installed packages use the native user configuration directory: `${XDG_CONFIG_HOME:-~/.config}/inspire` on Linux, `~/Library/Application Support/Inspire` on macOS, and `%APPDATA%\\Inspire` on Windows. `INSPIRE_TOOL_PRESENTATIONS_PATH` overrides either location. The Host validates the file on every authenticated bootstrap and never rewrites it. Invalid input raises a transient warning and activates no user tool rules or Thinking declaration.
-
-Native and personal presentations share one application codebase. Personal declaration files may be versioned in a separate configuration repository and selected through the existing path override or a symlink at the default path; machine-local runtime state and credentials stay outside that repository. An empty version-1 configuration selects shipped native rules plus generic extension fallbacks, not extension disabling or a separate build.
-
-Tool declarations can select persisted `args.*`, normalized `result.*`, and `tool.name` fields. Exact mappings bind tool names to user or shipped rule ids. The optional top-level `thinking` declaration uses the same summary and block grammar directly, with `thinking.text` as its sole selectable field:
-
-```json
-{
-  "version": 1,
-  "rules": {},
-  "mappings": {},
-  "thinking": {
-    "summary": [
-      { "value": { "literal": "Trace" } },
-      {
-        "value": { "path": "thinking.text", "format": "first-line" },
-        "subdued": true
-      }
-    ],
-    "blocks": [
-      {
-        "type": "markdown",
-        "label": "Reasoning",
-        "source": { "path": "thinking.text" }
-      }
-    ]
-  }
-}
-```
-
-Declarations compile into typed render primitives. They cannot execute JavaScript or React, inject HTML or CSS, read files, or access the network.
-
-## Non-goals
-
-- Pi `renderCall` and `renderResult` return terminal components and are not reused as Web renderers.
-- INSΠRE does not auto-detect which extension owns an overridden tool name; an informed user owns that mapping.
-- Users cannot replace card shells, lifecycle behavior, copy authority, status semantics, or disclosure interactions through presentation declarations.
+Schema and resolver tests cover invalid configuration, mapping precedence, shape failures, and
+Thinking fallback. Card tests cover native content, progressive edit shapes, generic results,
+copy/resource ownership, and display bounds. Browser evidence is in
+[[follow-tool-display-review-2026-09-29]].

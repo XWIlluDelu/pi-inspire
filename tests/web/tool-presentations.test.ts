@@ -379,15 +379,8 @@ describe("shipped Pi tool rules", () => {
     ).toBe("src/app.ts · L41–42");
     expect(presentation?.blocks()).toEqual([
       {
-        type: "properties",
-        items: [
-          { label: "File", value: "src/app.ts", resourceRef: "src/app.ts" },
-          { label: "Range", value: "L41–42" },
-        ],
-      },
-      {
         type: "code",
-        label: "Contents",
+        label: "Contents · L41–42",
         path: "src/app.ts",
         startLine: 41,
         text: "const one = 1;\nconst two = 2;",

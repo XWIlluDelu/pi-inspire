@@ -21,6 +21,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -49,7 +50,10 @@ import type {
   ToolPresentationBlock,
   ToolPresentationSummary,
 } from "../tool-presentations/model";
-import { toolPresentationSummaryText } from "../tool-presentations/model";
+import {
+  isToolImageMimeType,
+  toolPresentationSummaryText,
+} from "../tool-presentations/model";
 import {
   thinkingPresentationRegistry,
   toolPresentationRegistry,
@@ -327,7 +331,24 @@ type ToolStatus =
   | "unknown";
 
 // Partial paths are readable text, not usable resource identities yet.
-const ToolArgumentPreviewContext = createContext(false);
+const ToolArgumentPreviewContext =
+  createContext<ToolCallContent["__inspireToolCall"]>(undefined);
+
+function useToolOutputScroll(content: unknown, followUpdates: boolean) {
+  const ref = useRef<HTMLPreElement>(null);
+  const following = useRef(true);
+  useLayoutEffect(() => {
+    if (followUpdates && following.current && ref.current)
+      ref.current.scrollTop = ref.current.scrollHeight;
+  }, [content, followUpdates]);
+  return {
+    ref,
+    onScroll(event: React.UIEvent<HTMLPreElement>) {
+      const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+      following.current = scrollHeight - scrollTop - clientHeight < 24;
+    },
+  };
+}
 
 function toolSummary(call: ToolCallContent): string {
   const args = call.arguments;
@@ -335,12 +356,12 @@ function toolSummary(call: ToolCallContent): string {
     const record = args as Record<string, unknown>;
     for (const key of ["path", "file", "command", "query", "url"]) {
       const value = record[key];
-      if (typeof value === "string") return value.slice(0, 90);
+      if (typeof value === "string") return value;
     }
     const first = Object.values(record).find(
       (value) => typeof value === "string",
     );
-    if (typeof first === "string") return first.slice(0, 90);
+    if (typeof first === "string") return first;
   }
   return "";
 }
@@ -403,13 +424,14 @@ function FileRefButton({
 }
 
 function ToolSummary({ call }: { call: ToolCallContent }) {
-  const summary = toolSummary(call);
+  const reference = toolFileArguments(call)[0]?.value;
+  const summary = reference ?? toolSummary(call);
   if (!summary) return null;
-  if (!isLocalResourceReference(summary))
-    return <span className="card__summary">{summary}</span>;
+  if (!reference)
+    return <span className="card__summary">{summary.slice(0, 90)}</span>;
   return (
     <FileRefButton
-      reference={summary}
+      reference={reference}
       className="card__summary card__summary--file"
       accessibleLabel={summary}
     >
@@ -472,6 +494,7 @@ function toolStatus(
   if (activity?.phase === "error") return "failure";
   if (activity?.phase === "done") return "success";
   if (activity?.phase === "running") return "running";
+  if (activity?.phase === "queued") return "waiting";
   if (call.__inspireToolCall?.phase === "interrupted") return "interrupted";
   if (call.__inspireToolCall?.phase === "streaming")
     return liveFallback ? "generating" : "interrupted";
@@ -510,8 +533,16 @@ function statusIcon(status: ToolStatus) {
 /** A tool result recognized as a unified diff renders as colored lines; the
  * diff is the whole point of an edit result, so it is never truncated. */
 function DiffView({ lines }: { lines: DiffLine[] }) {
+  const preview = useContext(ToolArgumentPreviewContext);
+  const scroll = useToolOutputScroll(lines, preview?.phase === "streaming");
   return (
-    <pre className="card__mono diff">
+    <pre
+      className="card__mono diff"
+      {...scroll}
+      tabIndex={0}
+      role="group"
+      aria-label="Changes"
+    >
       <code className="diff__lines">
         {lines.map((line, index) => (
           <span key={index} className={`diff__line diff__line--${line.type}`}>
@@ -542,6 +573,97 @@ function PendingToolResult({ status }: { status: ToolStatus }) {
   );
 }
 
+function hasResultData(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+/** Keep structured payloads inspectable without printing transport metadata or
+ * large JSON by default. Serialization is deferred until disclosure. */
+function RawResultData({ value }: { value: unknown }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="tool-result-details"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Result details</summary>
+      {open ? (
+        <pre
+          className="card__mono"
+          tabIndex={0}
+          role="group"
+          aria-label="Result data"
+        >
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      ) : null}
+    </details>
+  );
+}
+
+function RawResultExtras({
+  result,
+  hasText,
+}: {
+  result: ChatMessage;
+  hasText: boolean;
+}) {
+  const parts = contentItems(result);
+  const images = parts.filter((part) => part.type === "image");
+  const otherContent = Array.isArray(result.content)
+    ? result.content.filter(
+        (part) =>
+          part != null &&
+          !(
+            typeof part === "object" &&
+            (part.type === "image" || typeof part.text === "string")
+          ),
+      )
+    : typeof result.content === "string"
+      ? undefined
+      : result.content;
+  const data = {
+    ...(hasResultData(result.details) ? { details: result.details } : {}),
+    ...(hasResultData(otherContent) ? { content: otherContent } : {}),
+  };
+  return (
+    <>
+      {images.map((part, index) => {
+        const image = part as Record<string, unknown>;
+        const mimeType = image.mimeType;
+        const valid =
+          isToolImageMimeType(mimeType) &&
+          typeof image.data === "string" &&
+          image.data.length > 0 &&
+          image.data.length <= 32_000_000 &&
+          /^[A-Za-z0-9+/\r\n]*={0,2}$/.test(image.data);
+        return valid ? (
+          <ToolPresentationBlockView
+            key={index}
+            block={{
+              type: "image",
+              data: image.data as string,
+              mimeType,
+              alt: `Tool result image ${index + 1}`,
+            }}
+          />
+        ) : (
+          <div className="tool-notice tool-notice--warning" key={index}>
+            Image unavailable (unsupported or invalid image data)
+          </div>
+        );
+      })}
+      {hasResultData(data) ? <RawResultData value={data} /> : null}
+      {!hasText && images.length === 0 && !hasResultData(data) ? (
+        <div className="tool-empty">No output</div>
+      ) : null}
+    </>
+  );
+}
+
 function RawToolDetails({
   call,
   result,
@@ -551,11 +673,19 @@ function RawToolDetails({
   result: ChatMessage | undefined;
   status: ToolStatus;
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const output = result ? toolResultText(result) : "";
-  const diff = result && !result.isError ? parseUnifiedDiff(output) : null;
-  const truncated = !diff && output.length > 600;
-  if (call.__inspireToolCall && Object.keys(call.arguments ?? {}).length === 0)
+  const argumentsText = useMemo(
+    () => JSON.stringify(call.arguments ?? {}, null, 2),
+    [call.arguments],
+  );
+  const scroll = useToolOutputScroll(
+    argumentsText,
+    call.__inspireToolCall?.phase === "streaming",
+  );
+  if (
+    !result &&
+    call.__inspireToolCall &&
+    Object.keys(call.arguments ?? {}).length === 0
+  )
     return <PendingToolResult status={status} />;
   return (
     <>
@@ -573,35 +703,83 @@ function RawToolDetails({
           <ResourcePathLabel path={arg.value} />
         </FileRefButton>
       ))}
-      <pre className="card__mono">
-        {JSON.stringify(call.arguments ?? {}, null, 2)}
+      <pre
+        className="card__mono"
+        {...scroll}
+        tabIndex={0}
+        role="group"
+        aria-label="Arguments"
+      >
+        {argumentsText}
       </pre>
       {result ? (
         <>
           <div className="card__section-label">Result</div>
-          {diff ? (
-            <DiffView lines={diff} />
-          ) : (
-            <pre
-              className={`card__mono ${result.isError ? "card__mono--error" : ""}`}
-            >
-              {showAll || !truncated ? output : `${output.slice(0, 600)}…`}
-            </pre>
-          )}
-          {truncated ? (
-            <button
-              type="button"
-              className="card__show-all"
-              onClick={() => setShowAll((value) => !value)}
-            >
-              {showAll ? "Show less" : "Show all"}
-            </button>
-          ) : null}
+          <RawToolResult result={result} />
         </>
       ) : (
         <PendingToolResult status={status} />
       )}
     </>
+  );
+}
+
+function RawToolResult({ result }: { result: ChatMessage }) {
+  const [showAll, setShowAll] = useState(false);
+  const output = toolResultText(result);
+  const diff = !result.isError ? parseUnifiedDiff(output) : null;
+  const truncated = !diff && output.length > 600;
+  return (
+    <>
+      {diff ? (
+        <DiffView lines={diff} />
+      ) : output ? (
+        <pre
+          className={`card__mono ${result.isError ? "card__mono--error" : ""}`}
+          tabIndex={0}
+          role="group"
+          aria-label="Result text"
+        >
+          {showAll || !truncated ? output : `${output.slice(0, 600)}…`}
+        </pre>
+      ) : null}
+      <RawResultExtras result={result} hasText={Boolean(output)} />
+      {truncated ? (
+        <button
+          type="button"
+          className="card__show-all"
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll ? "Show less" : "Show all"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+/** Historical/imported projections can contain a result without its call.
+ * Show its actual payload without inventing missing input arguments. */
+export function ToolResultCard({
+  result,
+  visibility,
+}: {
+  result: ChatMessage;
+  visibility: StaticVisibility;
+}) {
+  const name = typeof result.toolName === "string" ? result.toolName : "Tool";
+  return (
+    <CollapsibleCard
+      defaultVisibility={visibility}
+      className={`card--tool ${result.isError ? "card--failed" : ""}`}
+      icon={toolIcon(name)}
+      label={<code className="card__tool-name">{name} result</code>}
+      toggleLabel={`${name} result details`}
+      status={statusIcon(result.isError ? "failure" : "success")}
+      copyText={() => JSON.stringify(result, null, 2)}
+      copyLabel={`${name} result`}
+    >
+      <RawToolResult result={result} />
+    </CollapsibleCard>
   );
 }
 
@@ -628,12 +806,17 @@ const STRUCTURED_CODE_PREVIEW_LINES = 400;
 function StructuredCode({
   text,
   startLine = 1,
+  lineNumbers = true,
+  language,
 }: {
   text: string;
   startLine?: number;
+  lineNumbers?: boolean;
+  language?: string;
 }) {
   const [showAll, setShowAll] = useState(false);
   const partial = useContext(ToolArgumentPreviewContext);
+  const scroll = useToolOutputScroll(text, partial?.phase === "streaming");
   const lines = text.split("\n");
   const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
   const visible =
@@ -642,15 +825,37 @@ function StructuredCode({
       : lines;
   return (
     <>
-      <pre className="tool-code">
-        {visible.map((line, index) => (
-          <span className="tool-code__line" key={index}>
-            <span className="tool-code__number" aria-hidden>
-              {startLine + index}
-            </span>
-            <code>{line || " "}</code>
+      <pre
+        className="tool-code"
+        {...scroll}
+        tabIndex={0}
+        role="group"
+        aria-label="Code"
+        data-language={language}
+        style={
+          {
+            "--tool-line-number-width": `${Math.max(3, String(startLine + visible.length - 1).length) + 1.5}ch`,
+          } as React.CSSProperties
+        }
+      >
+        {lineNumbers ? (
+          <span className="tool-code__lines">
+            {visible.map((line, index) => (
+              <span className="tool-code__line" key={index}>
+                <span className="tool-code__number" aria-hidden>
+                  {startLine + index}
+                </span>
+                <code className={language ? `language-${language}` : undefined}>
+                  {line || " "}
+                </code>
+              </span>
+            ))}
           </span>
-        ))}
+        ) : (
+          <code className={language ? `language-${language}` : undefined}>
+            {visible.join("\n")}
+          </code>
+        )}
       </pre>
       {clipped ? (
         partial ? (
@@ -761,13 +966,19 @@ function ToolPresentationBlockView({
           </dl>
         </div>
       );
-    case "code":
+    case "code": {
       return (
         <div className="tool-block">
           <ToolBlockHeading label={block.label} path={block.path} />
-          <StructuredCode text={block.text} startLine={block.startLine} />
+          <StructuredCode
+            text={block.text}
+            startLine={block.startLine}
+            lineNumbers={block.lineNumbers}
+            language={block.language}
+          />
         </div>
       );
+    }
     case "diff": {
       const lines = parseUnifiedDiff(block.text);
       if (!lines) return null;
@@ -782,11 +993,11 @@ function ToolPresentationBlockView({
       return (
         <div className="tool-block">
           <ToolBlockHeading label={block.label} />
-          <pre
-            className={`tool-terminal ${block.error ? "tool-terminal--error" : ""}`}
-          >
-            {block.text}
-          </pre>
+          <ToolTerminal
+            text={block.text}
+            label={block.label}
+            error={block.error}
+          />
         </div>
       );
     case "list":
@@ -814,7 +1025,9 @@ function ToolPresentationBlockView({
                     <code>{item.label}</code>
                   )}
                   {item.detail ? (
-                    <span className="tool-list__detail">{item.detail}</span>
+                    <span className="tool-list__detail" title={item.detail}>
+                      {item.detail}
+                    </span>
                   ) : null}
                 </li>
               ))}
@@ -839,7 +1052,12 @@ function ToolPresentationBlockView({
                     </code>
                     <span>{formatCount(group.matches.length, "line")}</span>
                   </header>
-                  <div className="tool-search-group__lines">
+                  <div
+                    className="tool-search-group__lines"
+                    tabIndex={0}
+                    role="group"
+                    aria-label={`${group.path} matches`}
+                  >
                     <div className="tool-search-group__line-plane">
                       {group.matches.map((match, index) => (
                         <div
@@ -889,6 +1107,9 @@ function ToolPresentationBlockView({
           <ToolBlockHeading label={block.label} />
           <div
             className={`tool-markdown ${block.error ? "tool-markdown--error" : ""}`}
+            role="group"
+            aria-label={block.label ?? "Formatted output"}
+            tabIndex={0}
           >
             <RichText text={block.text} variant="extension" />
           </div>
@@ -953,17 +1174,68 @@ function ThinkingDetails({
   );
 }
 
+function ToolTerminal({
+  text,
+  label = "Output",
+  error = false,
+  live = false,
+}: {
+  text: string;
+  label?: string;
+  error?: boolean;
+  live?: boolean;
+}) {
+  const preview = useContext(ToolArgumentPreviewContext);
+  const scroll = useToolOutputScroll(
+    text,
+    live || preview?.phase === "streaming",
+  );
+  return (
+    <pre
+      {...scroll}
+      className={`tool-terminal ${error ? "tool-terminal--error" : ""} ${live ? "tool-terminal--live" : ""}`}
+      tabIndex={0}
+      role="group"
+      aria-label={label}
+    >
+      {stripTerminalSequences(text)}
+    </pre>
+  );
+}
+
+function LiveToolOutput({
+  preview,
+}: {
+  preview: NonNullable<ActivityTool["outputPreview"]>;
+}) {
+  return (
+    <div className="tool-block">
+      <ToolBlockHeading label="Output (live preview)" />
+      {preview.truncated ? (
+        <div className="card__pending">
+          Showing latest output · preview truncated
+        </div>
+      ) : null}
+      <ToolTerminal text={preview.text} label="Live output" live />
+    </div>
+  );
+}
+
 function ToolDetails({
   call,
   result,
   status,
   presentation,
+  activity,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
   status: ToolStatus;
   presentation: ResolvedToolPresentation | null;
+  activity?: ActivityTool;
 }) {
+  const preview =
+    !result && status === "running" ? activity?.outputPreview : undefined;
   return (
     <>
       {call.__inspireToolCall?.truncated ? (
@@ -975,6 +1247,7 @@ function ToolDetails({
         status={status}
         presentation={presentation}
       />
+      {preview ? <LiveToolOutput preview={preview} /> : null}
     </>
   );
 }
@@ -1008,16 +1281,36 @@ function ToolDetailsContent({
   );
 }
 
+function toolClipboardLabel(
+  call: ToolCallContent,
+  result: ChatMessage | undefined,
+  activity?: ActivityTool,
+): string {
+  return `${call.name} ${call.__inspireToolCall ? "argument preview" : !result && activity?.phase === "running" && activity.outputPreview ? "live output preview" : "tool block"}`;
+}
+
 function toolClipboardText(
   call: ToolCallContent,
   result: ChatMessage | undefined,
+  activity?: ActivityTool,
 ): string {
   const sections = [
     call.name,
     call.__inspireToolCall ? "Arguments (partial preview)" : "Arguments",
     JSON.stringify(call.arguments ?? {}, null, 2),
   ];
-  if (result) sections.push("Result", toolResultText(result));
+  if (result) {
+    sections.push("Result", toolResultText(result));
+    if (hasResultData(result.details))
+      sections.push("Result details", JSON.stringify(result.details, null, 2));
+  } else if (activity?.phase === "running" && activity.outputPreview) {
+    sections.push(
+      activity.outputPreview.truncated
+        ? "Output (live preview, truncated)"
+        : "Output (live preview)",
+      stripTerminalSequences(activity.outputPreview.text),
+    );
+  }
   return sections.join("\n\n");
 }
 
@@ -1059,7 +1352,7 @@ export function ToolCard({
     [call, result, toolPresentationRegistry],
   );
   return (
-    <ToolArgumentPreviewContext value={Boolean(call.__inspireToolCall)}>
+    <ToolArgumentPreviewContext value={call.__inspireToolCall}>
       <CollapsibleCard
         defaultVisibility={
           dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
@@ -1078,14 +1371,15 @@ export function ToolCard({
           )
         }
         status={statusIcon(status)}
-        copyText={() => toolClipboardText(call, result)}
-        copyLabel={`${call.name} ${call.__inspireToolCall ? "argument preview" : "tool block"}`}
+        copyText={() => toolClipboardText(call, result, activity)}
+        copyLabel={toolClipboardLabel(call, result, activity)}
       >
         <ToolDetails
           call={call}
           result={result}
           status={status}
           presentation={presentation}
+          activity={activity}
         />
       </CollapsibleCard>
     </ToolArgumentPreviewContext>
@@ -1128,7 +1422,7 @@ function collapsedActivityPresentation(
   });
   const summary = resolved
     ? toolPresentationSummaryText(resolved.summary)
-    : toolSummary(activity.call);
+    : toolSummary(activity.call).slice(0, 90);
   return {
     failed: status === "failure",
     label: `${activity.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
@@ -1257,9 +1551,7 @@ export function CollapsedActivityStrip({
       >
         <div className="activity-strip__reveal-inner">
           {rendered?.kind === "tool" ? (
-            <ToolArgumentPreviewContext
-              value={Boolean(rendered.call.__inspireToolCall)}
-            >
+            <ToolArgumentPreviewContext value={rendered.call.__inspireToolCall}>
               <section
                 key={rendered.key}
                 id={panelId}
@@ -1293,9 +1585,17 @@ export function CollapsedActivityStrip({
                     ),
                   )}
                   copyText={() =>
-                    toolClipboardText(rendered.call, rendered.result)
+                    toolClipboardText(
+                      rendered.call,
+                      rendered.result,
+                      rendered.activity,
+                    )
                   }
-                  copyLabel={`${rendered.call.name} ${rendered.call.__inspireToolCall ? "argument preview" : "tool block"}`}
+                  copyLabel={toolClipboardLabel(
+                    rendered.call,
+                    rendered.result,
+                    rendered.activity,
+                  )}
                 />
                 <div className="card__body">
                   <ToolDetails
@@ -1308,6 +1608,7 @@ export function CollapsedActivityStrip({
                       rendered.call,
                     )}
                     presentation={renderedPresentation}
+                    activity={rendered.activity}
                   />
                 </div>
               </section>
@@ -1430,6 +1731,7 @@ function toolIcon(name: string): React.ReactNode {
     case "write":
       return <FilePlus2 size={14} aria-hidden />;
     case "bash":
+    case "powershell":
       return <SquareTerminal size={14} aria-hidden />;
     case "grep":
       return <Search size={14} aria-hidden />;
