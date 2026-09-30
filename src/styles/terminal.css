@@ -398,6 +398,10 @@
   cursor: pointer;
 }
 
+.terminal-menu__popover .terminal-menu__focus {
+  display: none;
+}
+
 .terminal-menu__popover button:hover:not(:disabled),
 .terminal-menu__group > summary:hover {
   color: var(--ink);
@@ -917,7 +921,8 @@
   display: none;
 }
 
-.overlay.terminal-text-overlay {
+.overlay.terminal-text-overlay,
+.overlay.terminal-settings-overlay {
   align-items: center;
   padding: max(8px, var(--safe-top)) max(8px, var(--safe-right))
     max(8px, var(--safe-bottom)) max(8px, var(--safe-left));
@@ -1006,15 +1011,22 @@
   font: var(--text-sm) / var(--leading-ui) var(--font-sans);
 }
 
-.terminal-settings {
+.dialog.terminal-settings {
   width: min(680px, calc(100vw - 32px));
-  max-height: min(820px, calc(100dvh - 32px));
+  max-width: 100%;
+  max-height: min(
+    820px,
+    calc(100dvh - max(8px, var(--safe-top)) - max(8px, var(--safe-bottom)))
+  );
   display: flex;
   flex-direction: column;
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
 
 .terminal-settings__header {
+  flex-shrink: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1151,6 +1163,7 @@
 }
 
 .terminal-settings__footer {
+  flex-shrink: 0;
   min-height: 52px;
   display: flex;
   align-items: center;
@@ -1160,6 +1173,10 @@
   border-top: 1px solid var(--hairline);
   color: var(--error);
   font: 400 var(--text-xs) / 1.35 var(--font-sans);
+}
+
+.terminal-settings__footer .button {
+  margin-left: auto;
 }
 
 .terminal-settings__footer .button,
@@ -1200,7 +1217,7 @@
     min-height: 44px;
   }
 
-  .terminal-settings {
+  .dialog.terminal-settings {
     width: calc(100vw - 16px);
     max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
   }
@@ -1238,6 +1255,17 @@
   }
 
   .terminal-settings__footer .button {
+    min-height: 44px;
+    margin-left: 0;
+  }
+
+  .terminal-settings .icon-button,
+  .terminal-settings .settings-switch {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .terminal-settings__range input {
     min-height: 44px;
   }
 
@@ -1338,5 +1366,19 @@
     border-color: var(--accent);
     color: var(--accent);
     background: var(--accent-tint);
+  }
+}
+
+@container project-terminal (max-width: 360px) {
+  .terminal-tabs__focus {
+    display: none;
+  }
+
+  .terminal-menu__popover .terminal-menu__focus {
+    display: flex;
+  }
+
+  .terminal-tab {
+    min-width: 88px;
   }
 }

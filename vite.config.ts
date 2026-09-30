@@ -1,8 +1,9 @@
-import react from "@vitejs/plugin-react";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { bundledLicenseNotices } from "./scripts/vite-license-notices.js";
+import { pdfAssets } from "./scripts/vite-pdf-assets.js";
 
 const require = createRequire(import.meta.url);
 const piTuiFuzzyModule = resolve(
@@ -14,7 +15,7 @@ const piTuiFuzzyModule = resolve(
 // The host uses the deterministic development-only token INSPIRE_TOKEN=inspire-dev-token
 // (see the dev:host script); production keeps its random per-launch token.
 export default defineConfig({
-  plugins: [react(), bundledLicenseNotices()],
+  plugins: [react(), pdfAssets(), bundledLicenseNotices()],
   resolve: {
     // pi-tui publicly exports fuzzyFilter from its Node-only package root. The
     // browser consumes that exact module without pulling in the terminal UI.

@@ -443,6 +443,10 @@
   color: var(--muted);
 }
 
+.composer__selectors {
+  display: contents;
+}
+
 /* Dropdown: the themed replacement for native selects. The trigger is the
    quiet chip used in the composer; `.dropdown--field` restyles it as a
    bordered form field for Settings. The menu is a token-styled listbox —

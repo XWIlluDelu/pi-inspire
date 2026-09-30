@@ -179,7 +179,7 @@ describe("new-session start surface", () => {
     ).toBeDisabled();
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("thinking unavailable");
+    ).toHaveTextContent("unavailable");
 
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
     models = screen.getByRole("listbox", { name: "Available models" });

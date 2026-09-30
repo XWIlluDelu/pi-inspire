@@ -1,0 +1,37 @@
+%PDF-1.4
+% Inspire test fixture - intentional script and external-link actions
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (app.alert\("PDF_SCRIPT_EXECUTED"\); app.launchURL\("https://example.invalid/pdf-launch", true\); this.submitForm\("https://example.invalid/pdf-submit"\);) >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 1 /Kids [4 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 594] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R /Annots [<< /Type /Annot /Subtype /Link /Rect [42 370 300 402] /A << /S /URI /URI (https://example.invalid/pdf-link) >> >>] >>
+endobj
+5 0 obj
+<< /Length 333 >>
+stream
+BT /F1 25 Tf 42 520 Td (Static safety fixture) Tj ET
+BT /F1 14 Tf 42 485 Td (This text must render without actions.) Tj ET
+BT /F1 14 Tf 42 450 Td (No script dialogs or network requests.) Tj ET
+BT /F1 14 Tf 42 415 Td (External link action must stay inert.) Tj ET
+0.2 0.4 0.6 rg 42 280 110 12 re f 42 256 190 12 re f 42 232 260 12 re f
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000079 00000 n 
+0000000321 00000 n 
+0000000378 00000 n 
+0000000448 00000 n 
+0000000698 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1082
+%%EOF

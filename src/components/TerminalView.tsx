@@ -858,6 +858,7 @@ export const TerminalView = memo(function TerminalView({
     const buffer = xtermRef.current?.buffer.active;
     if (!buffer) return;
     clearModifiers();
+    menuHost?.closest("details")?.querySelector("summary")?.focus();
     setTextSnapshot({
       text: terminalBufferText(buffer),
       scrollRatio: buffer.baseY > 0 ? buffer.viewportY / buffer.baseY : 0,

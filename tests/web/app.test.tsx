@@ -731,6 +731,11 @@ describe("welcome flow", () => {
       store.getState().extensionUiRequests.map((request) => request.id),
     ).toEqual(["second"]);
     act(() => ws.emit({ type: "agent_settled" }));
+    expect(
+      store.getState().extensionUiRequests.map((request) => request.id),
+    ).toEqual(["second"]);
+    expect(screen.getByRole("dialog", { name: "Second" })).toBeInTheDocument();
+    act(() => ws.emit({ type: "extension_ui_clear", reason: "stopped" }));
     expect(store.getState().extensionUiRequests).toEqual([]);
     vi.stubGlobal("fetch", originalFetch);
   });

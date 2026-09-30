@@ -606,6 +606,48 @@ describe("resource previews", () => {
     });
   });
 
+  it("retains bounded PDF bytes without a native-viewer URL and releases them on replacement", async () => {
+    const createObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    let range: string | null = null;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve")) {
+        const { reference } = jsonBody(init) as { reference: string };
+        if (reference === "missing.pdf")
+          return { status: 404, body: { error: "Missing" } };
+        return {
+          body: {
+            id: "pdf",
+            sessionId: "s1",
+            viewId: "view-s1",
+            reference,
+            name: reference,
+            mimeType: "application/pdf",
+            size: 8,
+            kind: "pdf",
+          },
+        };
+      }
+      if (url.includes("/api/resources/pdf/content")) {
+        range = new Headers(init.headers).get("Range");
+        return { body: "%PDF-1.4" };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.openResource("report.pdf");
+    const preview = store.getState().resourcePreview;
+    expect(preview?.status).toBe("ready");
+    if (preview?.status !== "ready") throw new Error("PDF did not load");
+    expect(await preview.pdfBlob?.text()).toBe(JSON.stringify("%PDF-1.4"));
+    expect(preview.objectUrl).toBeUndefined();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(range).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
+    await store.openResource("missing.pdf");
+    expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
+    expect(store.getState().resourcePreview).not.toHaveProperty("pdfBlob");
+  });
+
   it("range-bounds media and aborts an obsolete transfer", async () => {
     const { promise: started, resolve: firstTransferStarted } =
       deferred<void>();

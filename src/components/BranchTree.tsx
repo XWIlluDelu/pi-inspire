@@ -7,7 +7,6 @@ import {
   History,
   Loader2,
   PencilLine,
-  RefreshCw,
   Search,
 } from "lucide-react";
 import {
@@ -724,20 +723,6 @@ export function BranchTree() {
             ) : (
               <ChevronsUpDown size={14} aria-hidden />
             )}
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Refresh history"
-            title="Refresh history"
-            onClick={() => void store.loadBranchTree()}
-            disabled={state.branchTreeLoading || state.branchActionId !== null}
-          >
-            <RefreshCw
-              size={13}
-              className={state.branchTreeLoading ? "spin" : ""}
-              aria-hidden
-            />
           </button>
         </span>
       </div>

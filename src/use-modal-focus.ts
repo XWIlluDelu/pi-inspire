@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { type RefObject, useLayoutEffect, useRef } from "react";
 
 const FOCUSABLE = [
   "a[href]",
@@ -78,18 +78,22 @@ export function useModalFocus<T extends HTMLElement>(
       (focusableElements(dialog)[0] ?? dialog).focus();
     };
 
-    const trapKeys = (event: KeyboardEvent) => {
-      if (modalStack.at(-1) !== entry) return;
-      if (event.key === "Escape") {
-        // Explicit recovery (projection conflict or terminal focus exit) may
-        // pass to its registered owner. All other modal owners consume Escape
-        // here, before shell shortcuts can see it.
-        if (entry.onEscape?.(event) === false) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        modalStack.at(-1) !== entry
+      )
         return;
-      }
-      if (event.key !== "Tab") return;
+      // Nested controls consume Escape first. The modal then handles it before
+      // window-level shell shortcuts; explicit recovery may pass through.
+      if (entry.onEscape?.(event) === false) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+
+    const trapKeys = (event: KeyboardEvent) => {
+      if (modalStack.at(-1) !== entry || event.key !== "Tab") return;
       const focusable = focusableElements(dialog);
       if (focusable.length === 0) {
         event.preventDefault();
@@ -114,10 +118,14 @@ export function useModalFocus<T extends HTMLElement>(
     document.addEventListener("focusin", containFocus, true);
     document.addEventListener("keydown", trapKeys, true);
     window.addEventListener("keydown", trapKeys, true);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape);
     return () => {
       document.removeEventListener("focusin", containFocus, true);
       document.removeEventListener("keydown", trapKeys, true);
       window.removeEventListener("keydown", trapKeys, true);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape);
       const index = modalStack.lastIndexOf(entry);
       if (index >= 0) modalStack.splice(index, 1);
       const remaining = modalStack.at(-1);

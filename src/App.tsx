@@ -945,7 +945,8 @@ export function App() {
           type="button"
           className="pane-scrim pane-scrim--nav"
           onClick={() => setMobileNavOpen(false)}
-          aria-label="Close navigation"
+          tabIndex={-1}
+          aria-hidden="true"
         />
       ) : null}
       {navigationContent}

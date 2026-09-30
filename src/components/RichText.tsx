@@ -1,4 +1,3 @@
-import hljs from "highlight.js/lib/common";
 import GithubSlugger from "github-slugger";
 import "katex/dist/katex.min.css";
 import { Check, Copy, SquareTerminal } from "lucide-react";
@@ -15,6 +14,7 @@ import remarkMath from "remark-math-extended";
 import type { Plugin } from "unified";
 import { isLocalResourceReference } from "../../shared/resource-references";
 import { store } from "../store";
+import { highlightSource } from "../syntax-highlighting";
 import { isDocumentFileReference } from "../document-resources";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { queueTerminalInsertion } from "../terminal-actions";
@@ -285,14 +285,6 @@ const remarkDocumentHeadings: Plugin<[], Root> = () => (tree) => {
   visit(tree);
 };
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 const CodeBlock = memo(function CodeBlock({
   language,
   code,
@@ -302,10 +294,7 @@ const CodeBlock = memo(function CodeBlock({
 }) {
   const { copied, copy } = useCopied();
   const highlighted = useMemo(
-    () =>
-      language && hljs.getLanguage(language)
-        ? hljs.highlight(code, { language }).value
-        : escapeHtml(code),
+    () => highlightSource(code, language),
     [code, language],
   );
 

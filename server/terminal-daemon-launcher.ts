@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveAccessToken } from "./access-token.js";
 import { installationKey } from "./installation-key.js";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
 import { TerminalServiceError } from "./terminal-service.js";
+import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { systemdEnvironmentArguments } from "./user-environment.mjs";
 import {
   defaultTerminalDaemonAddress,
@@ -22,26 +22,6 @@ interface TerminalDaemonLaunchOptions {
   host: string;
   port: number;
   environment?: NodeJS.ProcessEnv;
-}
-
-function addressAcceptsConnections(address: string): Promise<boolean> {
-  return new Promise<boolean>((resolvePromise) => {
-    const socket = createConnection(address);
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      resolvePromise(false);
-    }, 250);
-    timeout.unref?.();
-    socket.once("connect", () => {
-      clearTimeout(timeout);
-      socket.destroy();
-      resolvePromise(true);
-    });
-    socket.once("error", () => {
-      clearTimeout(timeout);
-      resolvePromise(false);
-    });
-  });
 }
 
 function delay(milliseconds: number): Promise<void> {

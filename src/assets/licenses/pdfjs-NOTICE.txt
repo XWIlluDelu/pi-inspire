@@ -1,0 +1,16 @@
+PDF.js — https://github.com/mozilla/pdf.js
+Distributed as pdfjs-dist 6.3.289 under Apache-2.0 (pdfjs-LICENSE.txt).
+The generated browser bundle also records this dependency in THIRD_PARTY_NOTICES.txt.
+
+src/styles/pdf-preview.css adapts the text-layer geometry from web/pdf_viewer.css,
+Copyright 2014 Mozilla Foundation, Apache-2.0. Inspire scopes the selectors and
+omits viewer, annotation, form and scripting styles.
+
+The build copies PDF.js's static rendering assets and their original licenses
+into dist/assets/pdfjs-6.3.289/:
+- cmaps/LICENSE: Adobe CMap resources.
+- standard_fonts/LICENSE_FOXIT and LICENSE_LIBERATION: bundled standard fonts.
+- wasm/LICENSE_JBIG2, LICENSE_PDFJS_JBIG2, LICENSE_OPENJPEG and
+  LICENSE_PDFJS_OPENJPEG: the upstream JavaScript image-decoder fallbacks.
+Despite the upstream directory name, no WebAssembly or scripting-engine asset
+is included. The original asset license texts are shipped alongside the assets.

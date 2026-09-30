@@ -31,6 +31,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   type TerminalCatalogResponse,
   type TerminalDescriptor,
@@ -202,6 +203,20 @@ export const TerminalPane = memo(function TerminalPane({
 
   const terminals = catalog?.terminals ?? EMPTY_TERMINALS;
   const activeTerminal = terminals.find((terminal) => terminal.id === activeId);
+  const activeTabId = activeTerminal?.id;
+
+  useLayoutEffect(() => {
+    if (!activeTabId) return;
+    const tab = document.getElementById(`terminal-tab-${activeTabId}`);
+    const strip = tab?.closest(".terminal-tabs");
+    if (!tab || !strip) return;
+    const reveal = () =>
+      tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, [activeTabId]);
 
   useEffect(() => {
     if (launchTarget || lastSessionCwdRef.current === sessionCwd) return;
@@ -333,7 +348,7 @@ export const TerminalPane = memo(function TerminalPane({
   );
 
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd || !catalog) return;
     storeActiveTerminal(cwd, activeId);
     if (!activeId) return;
     setOpenedIds((current) => {
@@ -354,7 +369,7 @@ export const TerminalPane = memo(function TerminalPane({
       next.delete(activeId);
       return next;
     });
-  }, [activeId, cwd]);
+  }, [activeId, catalog, cwd]);
 
   useEffect(() => {
     const knownOffsets = knownOutputOffsetsRef.current;
@@ -454,7 +469,8 @@ export const TerminalPane = memo(function TerminalPane({
         event.key !== "Escape" ||
         (!event.ctrlKey && !event.metaKey) ||
         !event.shiftKey ||
-        event.defaultPrevented
+        event.defaultPrevented ||
+        !paneRef.current?.contains(event.target as Node)
       )
         return;
       event.preventDefault();
@@ -1104,6 +1120,18 @@ export const TerminalPane = memo(function TerminalPane({
           </summary>
           <div className="terminal-menu__popover">
             <div ref={setMenuHost} className="terminal-menu__view" />
+            <button
+              type="button"
+              className="terminal-menu__focus"
+              onClick={() => setFocused((value) => !value)}
+            >
+              {focused ? (
+                <Minimize2 size={14} aria-hidden />
+              ) : (
+                <Maximize2 size={14} aria-hidden />
+              )}
+              {focused ? "Exit focused terminal" : "Focus terminal"}
+            </button>
             {activeTerminal ? (
               <>
                 <button
@@ -1254,7 +1282,16 @@ export const TerminalPane = memo(function TerminalPane({
                 )}
               </div>
             </details>
-            <button type="button" onClick={() => setSettingsOpen(true)}>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.currentTarget
+                  .closest("details")
+                  ?.querySelector("summary")
+                  ?.focus();
+                setSettingsOpen(true);
+              }}
+            >
               <Settings2 size={14} aria-hidden /> Settings
             </button>
           </div>
@@ -1315,14 +1352,17 @@ export const TerminalPane = memo(function TerminalPane({
         </div>
       )}
 
-      {settingsOpen ? (
-        <TerminalSettingsDialog
-          api={api}
-          settings={uiSettings}
-          onSettingsChange={setUiSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      ) : null}
+      {settingsOpen
+        ? createPortal(
+            <TerminalSettingsDialog
+              api={api}
+              settings={uiSettings}
+              onSettingsChange={setUiSettings}
+              onClose={() => setSettingsOpen(false)}
+            />,
+            document.body,
+          )
+        : null}
 
       {recentlyClosed && Date.now() - recentlyClosed.closedAt < 30_000 ? (
         <div className="terminal-undo" role="status">

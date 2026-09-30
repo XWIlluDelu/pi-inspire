@@ -24,15 +24,13 @@ const api = vi.hoisted(() => ({
   restartTerminal: vi.fn(),
   reorderTerminals: vi.fn(),
   retryTerminalOperation: vi.fn(),
+  terminalSettings: vi.fn(),
 }));
 vi.mock("../../src/api", () => ({ createApi: () => api }));
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({ terminal }: { terminal: TerminalDescriptor }) => (
     <div data-testid="shell-cwd">{terminal.projectCwd}</div>
   ),
-}));
-vi.mock("../../src/components/TerminalSettingsDialog", () => ({
-  TerminalSettingsDialog: () => null,
 }));
 
 function terminal(
@@ -111,6 +109,10 @@ function action(name: string) {
 beforeEach(() => {
   sessionStorage.clear();
   for (const mock of Object.values(api)) mock.mockReset();
+  api.terminalSettings.mockResolvedValue({
+    persistOutput: false,
+    historyRetentionDays: 30,
+  });
   api.terminals.mockImplementation(async (cwd?: string) =>
     catalog(
       cwd === "/A"
@@ -128,6 +130,60 @@ afterEach(() => {
 });
 
 describe("terminal project ownership", () => {
+  it("restores the selected tab after the initial catalog loads", async () => {
+    sessionStorage.setItem("inspire:terminal-active:/A", "A second");
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A second", pressed: true });
+    expect(sessionStorage.getItem("inspire:terminal-active:/A")).toBe(
+      "A second",
+    );
+  });
+
+  it("reveals terminal tabs when selection changes", async () => {
+    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    expect(reveal).toHaveBeenLastCalledWith({
+      block: "nearest",
+      inline: "nearest",
+    });
+    reveal.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "A second" }));
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(reveal.mock.instances[0]).toBe(
+      screen.getByRole("button", { name: "A second", pressed: true }),
+    );
+  });
+
+  it("keeps terminal settings above the pane and restores its visible menu trigger", async () => {
+    const view = render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    fireEvent.click(screen.getByLabelText("Focus terminal", { exact: true }));
+    action("Settings");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Terminal settings",
+    });
+    await within(dialog).findByRole("switch", {
+      name: "Persist terminal output",
+    });
+    expect(view.container).not.toContainElement(dialog);
+    const close = within(dialog).getByRole("button", {
+      name: "Close terminal settings",
+    });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "PageDown", ctrlKey: true });
+    expect(
+      screen.getByRole("button", { name: "A shell", pressed: true }),
+    ).toBeTruthy();
+    fireEvent.keyDown(close, { key: "Escape", ctrlKey: true, shiftKey: true });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      view.container.querySelector(".terminal-pane--focused"),
+    ).toBeTruthy();
+    await act(async () => {});
+    expect(screen.getByLabelText("Terminal actions")).toHaveFocus();
+  });
+
   it("keeps the all-project navigator inside More and filters project paths", async () => {
     render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });

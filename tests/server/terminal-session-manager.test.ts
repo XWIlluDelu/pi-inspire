@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { TerminalAttachmentSink } from "../../server/terminal-service.js";
 import {
-  type TerminalPty,
   type TerminalPtyFactory,
   type TerminalPtySpawnOptions,
   TerminalSessionManager,
@@ -16,53 +15,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts.js";
 
-class FakePty implements TerminalPty {
-  readonly pid = 1234;
-  readonly process = "bash";
-  readonly writes: Buffer[] = [];
-  readonly resizes: Array<[number, number]> = [];
-  readonly signals: Array<string | undefined> = [];
-  private readonly dataListeners = new Set<(data: string | Buffer) => void>();
-  private readonly exitListeners = new Set<
-    (event: { exitCode: number; signal?: number }) => void
-  >();
-  private exited = false;
-
-  onData(listener: (data: string | Buffer) => void) {
-    this.dataListeners.add(listener);
-    return { dispose: () => this.dataListeners.delete(listener) };
-  }
-
-  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
-    this.exitListeners.add(listener);
-    return { dispose: () => this.exitListeners.delete(listener) };
-  }
-
-  resize(cols: number, rows: number): void {
-    this.resizes.push([cols, rows]);
-  }
-
-  write(data: string | Buffer): void {
-    this.writes.push(
-      Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data),
-    );
-  }
-
-  kill(signal?: string): void {
-    this.signals.push(signal);
-    this.emitExit(0, signal === "SIGKILL" ? 9 : 1);
-  }
-
-  emitData(data: string | Buffer): void {
-    for (const listener of this.dataListeners) listener(data);
-  }
-
-  emitExit(exitCode: number, signal?: number): void {
-    if (this.exited) return;
-    this.exited = true;
-    for (const listener of this.exitListeners) listener({ exitCode, signal });
-  }
-}
+import { FakePty } from "./fixtures/terminal-pty.js";
 
 interface FakePtySpawn {
   shell: string;

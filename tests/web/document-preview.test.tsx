@@ -224,6 +224,44 @@ describe("document Markdown", () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 
+  it("highlights notebook code, preserves raw source and separates traceback lines", () => {
+    const source = 'print("<unsafe>", 42)';
+    const traceback = [
+      "\u001b[31mTraceback (most recent call last):\u001b[0m",
+      '  File "train.py", line 8',
+      "ValueError: invalid sample",
+    ];
+    const { container } = render(
+      <NotebookPreview
+        text={JSON.stringify({
+          metadata: { language_info: { name: "py" } },
+          cells: [
+            {
+              cell_type: "code",
+              source,
+              outputs: [{ output_type: "error", traceback }],
+            },
+            { cell_type: "raw", source },
+          ],
+        })}
+      />,
+    );
+    const code = container.querySelector(".notebook-preview__cell--code code")!;
+    expect(code.textContent).toBe(source);
+    expect(code.querySelector(".hljs-built_in")).toHaveTextContent("print");
+    expect(code.querySelector(".hljs-number")).toHaveTextContent("42");
+    expect(code.querySelector("unsafe")).toBeNull();
+    const raw = container.querySelector(".notebook-preview__cell--raw code")!;
+    expect(raw.textContent).toBe(source);
+    expect(raw.children).toHaveLength(0);
+    expect(
+      container.querySelector(".notebook-preview__output--error pre")!
+        .textContent,
+    ).toBe(
+      'Traceback (most recent call last):\n  File "train.py", line 8\nValueError: invalid sample',
+    );
+  });
+
   it("renders Notebook Markdown/output file images and cell-local attachments without executing HTML", async () => {
     const text = JSON.stringify({
       cells: [

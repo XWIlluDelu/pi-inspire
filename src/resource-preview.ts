@@ -38,8 +38,11 @@ export type ResourcePreview =
       /** Decoded text for source-capable text, HTML, Markdown, notebook, and SVG previews. */
       text?: string;
       truncated?: boolean;
-      /** Object URL for binary-backed previews (image/PDF/audio/video/HTML). */
+      /** Object URL for browser-backed previews (image/audio/video/HTML). */
       objectUrl?: string;
+      /** Authorized PDF bytes for static rendering without a native plugin or
+       * a blob fetch (which the application CSP intentionally disallows). */
+      pdfBlob?: Blob;
       /** The descriptor remains inspectable even when its bytes are withheld. */
       contentUnavailable?: "too-large";
     };

@@ -1204,8 +1204,7 @@ span.card__file-arg {
   line-height: var(--leading-mono);
 }
 
-/* Syntax colors derive from the theme palette: accent keywords, warning
-   strings, success literals, muted comments, muted-secondary variables. */
+/* Retain the palette's syntax roles using text-strength semantic colors. */
 .hljs-keyword,
 .hljs-literal,
 .hljs-selector-tag {
@@ -1213,20 +1212,23 @@ span.card__file-arg {
 }
 
 .hljs-string,
-.hljs-regexp,
-.hljs-addition {
+.hljs-regexp {
   color: var(--warning);
 }
 
-.hljs-number {
-  color: var(--success);
+.hljs-number,
+.hljs-addition {
+  color: var(--activity-success);
 }
 
 .hljs-comment,
-.hljs-quote,
-.hljs-deletion {
-  color: var(--faint);
+.hljs-quote {
+  color: var(--muted);
   font-style: italic;
+}
+
+.hljs-deletion {
+  color: var(--activity-error);
 }
 
 .hljs-title,
@@ -1245,7 +1247,7 @@ span.card__file-arg {
 
 .hljs-built_in,
 .hljs-meta {
-  color: var(--success);
+  color: var(--activity-success);
 }
 
 /* KaTeX renders with its own fonts; the system only owns spacing. The inner
