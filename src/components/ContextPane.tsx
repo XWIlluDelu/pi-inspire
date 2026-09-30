@@ -280,7 +280,12 @@ export const ContextPane = memo(function ContextPane({
             title="Refresh"
             aria-label="Refresh context pane"
             onClick={handleRefresh}
-            disabled={refreshing}
+            disabled={
+              refreshing ||
+              (state.contextMode !== "terminal" && !state.sessionId) ||
+              (state.contextMode === "branches" &&
+                state.branchActionId !== null)
+            }
           >
             <RefreshCw
               size={14}

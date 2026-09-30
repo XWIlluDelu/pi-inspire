@@ -230,6 +230,12 @@
   scroll-behavior: smooth;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .settings__content {
+    scroll-behavior: auto;
+  }
+}
+
 .settings__section {
   display: flex;
   flex-direction: column;
@@ -274,8 +280,8 @@
   line-height: var(--leading-ui);
 }
 
+/* The content scroller, not each card, bounds open setting menus. */
 .settings__card {
-  overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
@@ -559,6 +565,14 @@
   box-shadow: 0 0 0 2px var(--accent-tint);
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.settings .settings-switch:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.settings .settings-switch input:disabled + .settings-switch__track {
+  opacity: 0.5;
 }
 
 .settings-switch__state {

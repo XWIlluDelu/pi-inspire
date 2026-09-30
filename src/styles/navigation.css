@@ -24,8 +24,15 @@
   padding: 0 var(--space-2);
 }
 
+.nav__close {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+}
+
 .nav__brand-new {
   width: 100%;
+  min-width: 0;
   height: 38px;
   display: flex;
   align-items: center;

@@ -455,51 +455,53 @@ export const Welcome = memo(function Welcome({
           }}
         />
         <div className="composer__meta">
-          <ModelSelector
-            value={selectedModel}
-            models={availableModels}
-            recent={state.prefs.recentModelIds}
-            emptyLabel={
-              modelStatus === "loading" ||
-              (modelStatus === "idle" && effectiveDirectory && !modelTouched)
-                ? "Resolving model…"
-                : modelStatus === "error"
-                  ? "Model unavailable"
-                  : "Select model"
-            }
-            disabled={starting || modelStatus === "loading"}
-            onChange={(provider, id) => {
-              setModelTouched(true);
-              setModelStatus("ready");
-              setModelKey(modelIdentityKey({ provider, id }));
-            }}
-          />
-          <Dropdown
-            label="Thinking level"
-            title={
-              selectedModel?.reasoning === false
-                ? "The selected model does not support thinking"
-                : "Thinking level"
-            }
-            direction="up"
-            value={thinkingLevel}
-            display={
-              selectedModel?.reasoning === false
-                ? "thinking unavailable"
-                : thinkingLevel
-            }
-            disabled={
-              starting || !selectedModel || selectedModel.reasoning === false
-            }
-            options={thinkingLevels.map((level) => ({
-              value: level,
-              label: level,
-            }))}
-            onChange={(value) => {
-              setThinkingTouched(true);
-              setThinkingLevel(value as ThinkingLevel);
-            }}
-          />
+          <div className="composer__selectors">
+            <ModelSelector
+              value={selectedModel}
+              models={availableModels}
+              recent={state.prefs.recentModelIds}
+              emptyLabel={
+                modelStatus === "loading" ||
+                (modelStatus === "idle" && effectiveDirectory && !modelTouched)
+                  ? "Resolving model…"
+                  : modelStatus === "error"
+                    ? "Model unavailable"
+                    : "Select model"
+              }
+              disabled={starting || modelStatus === "loading"}
+              onChange={(provider, id) => {
+                setModelTouched(true);
+                setModelStatus("ready");
+                setModelKey(modelIdentityKey({ provider, id }));
+              }}
+            />
+            <Dropdown
+              label="Thinking level"
+              title={
+                selectedModel?.reasoning === false
+                  ? "The selected model does not support thinking"
+                  : "Thinking level"
+              }
+              direction="up"
+              value={thinkingLevel}
+              display={
+                selectedModel?.reasoning === false
+                  ? "unavailable"
+                  : thinkingLevel
+              }
+              disabled={
+                starting || !selectedModel || selectedModel.reasoning === false
+              }
+              options={thinkingLevels.map((level) => ({
+                value: level,
+                label: level,
+              }))}
+              onChange={(value) => {
+                setThinkingTouched(true);
+                setThinkingLevel(value as ThinkingLevel);
+              }}
+            />
+          </div>
           <button
             type="button"
             className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}

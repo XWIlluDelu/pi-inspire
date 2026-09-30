@@ -37,15 +37,16 @@ independent project shells in [[terminal]].
 
 - The navigation and contextual regions can collapse so the conversation can use the available
   width. Below 900px, desktop rail preference is preserved but navigation itself becomes an
-  independent off-canvas drawer below the center topbar; the fixed topbar toggle, internal close
-  target, and scrim all dismiss it without horizontal overflow. Each open narrow drawer is exposed
+  independent drawer opened from the topbar. Its internal close button, Escape, and scrim dismiss
+  it without horizontal overflow. Each open narrow drawer is exposed
   as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
   the center workbench inert; navigation and contextual drawers are mutually exclusive even when a
   file opens from inside navigation. The desktop surfaces retain their navigation and complementary
   landmarks. Opening a session also closes the drawer.
 
-  Returning to desktop closes any transient drawer state without overwriting the user's desktop
-  collapsed preference.
+  Returning to desktop closes transient drawer state without overwriting the desktop collapsed
+  preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
+  terminal mounted, preserving local interaction state.
 
 - Both side regions' widths are adjustable by dragging their boundary with the conversation
   (zero-width handles riding the shared edges), persist across reloads, and reset to the default on
@@ -76,7 +77,8 @@ independent project shells in [[terminal]].
   command-owned progress copy.
 
   Actions stay fixed at the right: long status text ellipsizes with its full value available on
-  hover, identity yields first, and no supported center width permits the clusters to overlap.
+  hover, identity yields first, and the clusters remain separate. Narrow layouts keep the Git change
+  count visible; the full branch identity remains in its tooltip.
   Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
   submit carries the explicit session id rather than reading a newer visible selection, and a
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
@@ -114,5 +116,8 @@ independent project shells in [[terminal]].
   Terminal presents the current project's ordered shell tabs without splits; hiding the pane
   detaches its views without ending PTYs, and focus mode or an independent same-origin window can
   temporarily give the selected terminal the viewport. The region remains in the three-column layout
-  while that layout can preserve a usable conversation; below that floor it becomes a drawer
-  starting under the center topbar, so it never covers its own open/close control.
+  while that layout can preserve a usable conversation; below that floor it becomes a modal drawer
+  with its own close control.
+
+  The contextual header owns Refresh for the current mode, including History. Files, Changes, and
+  History disable it without a selected session; History also disables it during a branch action.

@@ -1,5 +1,5 @@
 ---
-purpose: The single current visual contract for Inspire: Amber/Jade palette roles, typography, geometric scale, responsive workbench anatomy, and bounded interaction motion implemented by the shared CSS entrypoint and its responsibility-scoped modules.
+purpose: Shared palette roles, typography, geometry, responsive workbench layout, and interaction motion.
 covers:
   - index.html
   - public/favicon.svg
@@ -83,7 +83,9 @@ declaration.
   and Changes canvases use the luminosity-aware `--bg-file-*` neutral ladder,
   which is identical across Amber and Jade. Product chrome remains
   palette-aware, rendered artifacts retain their authored backgrounds, and
-  source syntax or Diff additions/deletions retain semantic color.
+  source syntax or Diff additions/deletions retain semantic color. Syntax and Git
+  text use luminosity-aware colors with AA contrast on their neutral or tinted
+  reading surfaces.
 - Success, warning, error, tool-info, and thinking-violet are semantic roles,
   not alternate brands. Navigation state combines its positioned status mark
   and accessible state with color: working spins in the warning role,
@@ -127,9 +129,9 @@ declaration.
   rail carries only the mark. A selected session uses a restrained accent edge
   and tint, while project/session hierarchy, curation, and runtime state remain
   legible without duplicating a session into a separate status group.
-- Assistant prose is an open document flow. User turns, thinking/tool
-  activity, extension-authored context messages, code, tables, math, notices, and the composer each use their own
-  compact structure, but all inherit shared surfaces, borders, type, and
+- Assistant prose is an open document flow. User turns, thinking/tool activity,
+  extension-authored context messages, code, tables, math, notices, and the
+  composer each use a compact structure with shared surfaces, borders, type, and
   semantic roles. Activity cards communicate kind and outcome through both
   iconography and their bounded semantic edge. Displayed custom messages instead
   use a neutral message surface with an information-blue edge, a package/type
@@ -139,17 +141,17 @@ declaration.
 - The composer is a single reading-width instrument with attachment/reference
   work above the writing field and a quiet metadata toolbar below. Model,
   thinking, project files, attachments, context usage, and send/abort stay
-  aligned to that toolbar; at the 390px target they remain on one row rather
-  than promoting model or effort controls to a second row. A constrained model
-  label truncates inside its trigger rather than painting across adjacent
-  controls. Completion titles can wrap within their column; long filenames do
-  not paint across the adjacent path hint. Model status badges and their
-  selected-row backgrounds preserve AA text contrast across both palettes and
+  aligned to that toolbar. On phones, model and thinking share the first row;
+  file tools, context, and send/abort use the second. This keeps selectors usable
+  with long values or busy-state controls. A constrained model label truncates
+  inside its trigger rather than painting across adjacent controls. Completion
+  titles wrap within their column, leaving adjacent path hints visible. Model
+  status badges and their selected-row backgrounds preserve AA text contrast across both palettes and
   luminosity modes. The detailed input, delivery, and ownership contract lives
   in [[composer]].
-- Files, Changes, and History share the contextual pane rather than creating a
-  fourth workbench column. File/resource safety and change semantics belong to
-  [[resource-preview]]; branch behavior belongs to [[session-continuity]].
+- Files, Changes, History, and Terminal share the contextual pane. Resource
+  safety and change semantics belong to [[resource-preview]]; branch behavior
+  belongs to [[session-continuity]].
 - `ResourcePathLabel` owns semantic path presentation throughout the product.
   It preserves one complete path value and lets the actual flex/grid container
   and shared CSS perform single-line overflow elision; it does not maintain a
@@ -179,10 +181,9 @@ declaration.
 ## Responsive, motion, and accessibility
 
 - Below the narrow-workbench breakpoint, navigation and contextual work become
-  independent off-canvas drawers instead of squeezing both side regions around
+  independent modal drawers instead of squeezing both side regions around
   phone-sized conversation content. Fixed narrow surfaces honor all four safe
-  insets; a drawer starts beneath the center topbar so its own close/open
-  control remains reachable.
+  insets. Each drawer provides its own close button inside the focus boundary.
 - Motion explains a transient surface, disclosure, or live work. Shared
   durations are 90ms micro, 150ms standard, and 180ms panel; active work may
   spin, and the whole composer carries a quiet 2.8-second theme-colored
@@ -194,9 +195,8 @@ declaration.
 - Text meets WCAG AA contrast, and graphical focus/status cues meet their UI
   contrast threshold. `:focus-visible` uses the shared 2px accent outline;
   controls retain named roles, native semantic structure, visible keyboard
-  focus, and focus restoration after overlay close. Touch layouts allocate
-  compact controls in flow rather than overlapping pseudo-targets, while the
-  390px composer toolbar remains one row.
+  focus, and focus restoration after overlay close. Touch controls occupy real
+  layout space rather than overlapping pseudo-targets.
 
 ## Checks
 
@@ -206,8 +206,7 @@ declaration.
   completion-flash keyframes.
 - Theme bootstrap and overlay ownership have focused web tests; mock-host
   browser coverage checks desktop and narrow workbench behavior, including the
-  390px one-row toolbar, non-overlapping touch controls, and accessibility
-  paths.
+  320px and 390px controls, drawer dismissal, and keyboard/accessibility paths.
 - A visual change is evaluated in both luminosity modes and both palettes when
   its affected role appears in each; it does not create a second component
   architecture or a local exception token.

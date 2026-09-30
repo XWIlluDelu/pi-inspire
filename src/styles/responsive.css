@@ -902,6 +902,23 @@ body.srail-dragging {
   .welcome__row-project {
     display: none;
   }
+
+  .composer__meta {
+    flex-wrap: wrap;
+  }
+
+  .composer__selectors {
+    display: flex;
+    flex: 1 0 100%;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .composer__meta .model-picker {
+    flex: 1 1 auto;
+    max-width: none;
+  }
 }
 
 /* Scroll containers keep their momentum to themselves. */

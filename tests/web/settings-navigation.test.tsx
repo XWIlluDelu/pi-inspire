@@ -61,6 +61,24 @@ describe("Settings component UX and navigation", () => {
     expect(conversation).toHaveAttribute("aria-current", "true");
   });
 
+  it("navigates without smooth scrolling when reduced motion is requested", () => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const matchMedia = vi.spyOn(window, "matchMedia").mockReturnValue({
+      ...media,
+      matches: true,
+    });
+    render(<Settings onClose={() => undefined} />);
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Updates" }),
+    );
+    expect(
+      screen.getByRole("region", { name: "Updates" }).scrollIntoView,
+    ).toHaveBeenCalledWith({ behavior: "instant", block: "start" });
+    matchMedia.mockRestore();
+  });
+
   it("presents the complete settings contract in its owning groups", () => {
     render(<Settings onClose={() => undefined} />);
 

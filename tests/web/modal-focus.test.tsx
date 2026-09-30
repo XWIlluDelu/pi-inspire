@@ -2,7 +2,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
 import { useModalFocus } from "../../src/use-modal-focus";
@@ -39,6 +39,31 @@ describe("modal focus ownership", () => {
     await Promise.resolve();
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+
+  it("lets a Settings dropdown consume Escape before closing the dialog", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SettingsDialog onClose={onClose}>
+        <SettingsContent />
+      </SettingsDialog>,
+    );
+    const trigger = screen.getByRole("combobox", { name: "Activity groups" });
+    await user.click(trigger);
+    expect(
+      screen.getByRole("listbox", { name: "Activity groups" }),
+    ).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("listbox", { name: "Activity groups" }),
+    ).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the opener across StrictMode effect replay", async () => {

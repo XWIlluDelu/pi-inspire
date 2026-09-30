@@ -29,6 +29,7 @@ export type ContextPaneView = Pick<
   | "selectedGitSide"
   | "gitDiff"
   | "branchTreeLoading"
+  | "branchActionId"
 >;
 
 export function selectContextPaneView(state: AppState): ContextPaneView {
@@ -57,5 +58,6 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     selectedGitSide: state.selectedGitSide,
     gitDiff: state.gitDiff,
     branchTreeLoading: state.branchTreeLoading,
+    branchActionId: state.branchActionId,
   };
 }

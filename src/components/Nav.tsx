@@ -10,6 +10,7 @@ import {
   Search,
   SearchX,
   Trash2,
+  X,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import {
@@ -20,12 +21,12 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
-import { splitNavSections } from "./nav-model";
 import { ProjectGroup, SessionRow } from "./NavSessions";
+import { splitNavSections } from "./nav-model";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
-import { WorkspaceTree } from "./WorkspaceBrowser";
 import { BrandLogo, Wordmark } from "./Wordmark";
+import { WorkspaceTree } from "./WorkspaceBrowser";
 
 /** Compact quick navigation over the shared workspace projection. The right
  * Files pane consumes the same expansion, search, identity, selection, and
@@ -294,6 +295,17 @@ export const Nav = memo(function Nav({
             <span className="nav__new-session-label">New session</span>
           </span>
         </button>
+        {isModal && onClose ? (
+          <button
+            type="button"
+            className="icon-button nav__close"
+            aria-label="Close navigation"
+            title="Close navigation"
+            onClick={onClose}
+          >
+            <X size={15} aria-hidden />
+          </button>
+        ) : null}
       </div>
       <div className="nav__controls">
         <label className="nav__search">

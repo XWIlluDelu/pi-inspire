@@ -448,48 +448,48 @@ export const Composer = memo(function Composer() {
         </div>
       ) : null}
       <div className="composer__meta">
-        <ModelSelector
-          key={`model-${sessionId ?? "none"}`}
-          value={activeModel}
-          models={state.availableModels}
-          recent={state.recentModelIds}
-          disabled={sessionOpening}
-          openRequest={
-            state.nativeCommandUiRequest?.sessionId === state.sessionId &&
-            state.nativeCommandUiRequest.action === "model"
-              ? state.nativeCommandUiRequest
-              : undefined
-          }
-          onOpenRequestHandled={store.consumeNativeCommandUiRequest}
-          onChange={(provider, id) => void store.setModel(provider, id)}
-        />
-        <Dropdown
-          key={`thinking-${sessionId ?? "none"}`}
-          label="Thinking level"
-          title={
-            thinkingSupported
-              ? "Thinking level"
-              : "The active model does not support thinking"
-          }
-          direction="up"
-          value={state.thinkingLevel}
-          display={
-            thinkingSupported ? state.thinkingLevel : "thinking unavailable"
-          }
-          disabled={!thinkingSupported || sessionOpening}
-          openRequest={
-            state.nativeCommandUiRequest?.sessionId === state.sessionId &&
-            state.nativeCommandUiRequest.action === "thinking"
-              ? state.nativeCommandUiRequest.id
-              : undefined
-          }
-          onOpenRequestHandled={store.consumeNativeCommandUiRequest}
-          options={thinkingLevels.map((level) => ({
-            value: level,
-            label: level,
-          }))}
-          onChange={(value) => void store.setThinkingLevel(value)}
-        />
+        <div className="composer__selectors">
+          <ModelSelector
+            key={`model-${sessionId ?? "none"}`}
+            value={activeModel}
+            models={state.availableModels}
+            recent={state.recentModelIds}
+            disabled={sessionOpening}
+            openRequest={
+              state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+              state.nativeCommandUiRequest.action === "model"
+                ? state.nativeCommandUiRequest
+                : undefined
+            }
+            onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            onChange={(provider, id) => void store.setModel(provider, id)}
+          />
+          <Dropdown
+            key={`thinking-${sessionId ?? "none"}`}
+            label="Thinking level"
+            title={
+              thinkingSupported
+                ? "Thinking level"
+                : "The active model does not support thinking"
+            }
+            direction="up"
+            value={state.thinkingLevel}
+            display={thinkingSupported ? state.thinkingLevel : "unavailable"}
+            disabled={!thinkingSupported || sessionOpening}
+            openRequest={
+              state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+              state.nativeCommandUiRequest.action === "thinking"
+                ? state.nativeCommandUiRequest.id
+                : undefined
+            }
+            onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            options={thinkingLevels.map((level) => ({
+              value: level,
+              label: level,
+            }))}
+            onChange={(value) => void store.setThinkingLevel(value)}
+          />
+        </div>
         <button
           ref={projectPickerButtonRef}
           type="button"
