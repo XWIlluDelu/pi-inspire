@@ -35,6 +35,12 @@ test.beforeAll(async () => {
       "base64",
     ),
   );
+  await writeFile(
+    resolve(root, "large-document.md"),
+    "# Large document\n\n[Jump](#last-section)\n\n![Local figure](dist/plot.png)\n\n" +
+      "An ordinary paragraph with **emphasis**.\n\n".repeat(1_000) +
+      "## Last section\n\nReader mathematics $x^2$.\n",
+  );
   await promisify(execFile)("git", ["-C", root, "init", "-q"]);
   await writeFile(resolve(root, ".git/index"), "Corrupt synthetic index\n");
 });
@@ -89,6 +95,46 @@ test("authorized audio and video previews play from local blobs", async ({
       });
     }
   }
+});
+
+test("large document Markdown keeps scoped images and heading navigation with the parser worker", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  const workers: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("worker", (worker) => workers.push(worker.url()));
+  await page.goto("/");
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Pair", exact: true }).click();
+  await expect(page.getByRole("main")).toBeVisible();
+  const created = await page.request.post("/api/sessions/new", {
+    data: { cwd: root, name: "Large document fixture" },
+  });
+  expect(created.ok()).toBe(true);
+  await page.reload();
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const pane = page.locator(".ctx");
+  await pane
+    .getByRole("region", { name: "Workspace file tree" })
+    .getByRole("button", { name: "large-document.md", exact: true })
+    .click();
+  await expect(
+    pane.getByRole("heading", { name: "Large document", exact: true }),
+  ).toBeVisible();
+  const image = pane.locator('img[alt="Local figure"]');
+  await expect
+    .poll(() =>
+      image.evaluate((element: HTMLImageElement) => element.naturalWidth),
+    )
+    .toBe(1);
+  const last = pane.getByRole("heading", { name: "Last section", exact: true });
+  await expect(last).toHaveAttribute("id", /last-section$/);
+  await pane.getByRole("link", { name: "Jump", exact: true }).click();
+  await expect(last).toBeInViewport();
+  expect(workers.some((url) => url.includes("rich-text-worker"))).toBe(true);
+  expect(errors).toEqual([]);
 });
 
 for (const narrow of [false, true]) {

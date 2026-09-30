@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type WebSocketRoute, test } from "@playwright/test";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
+import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 test.use({ serviceWorkers: "block" });
 
@@ -79,21 +80,70 @@ async function openReview(
   await page.getByLabel("Access token").fill("inspire-browser-test-token");
   await page.getByRole("button", { name: "Pair", exact: true }).click();
   await expect(page.getByRole("main")).toBeVisible();
-  const session = page.getByRole("button", {
-    name: /^Review extension event lifecycle/,
+  // Own an empty session rather than depending on the Host selection left by
+  // another browser file or earlier presentation case.
+  const created = await page.request.post("/api/sessions/new", {
+    data: { cwd: browserWorkspace, name: "Tool presentation review" },
   });
-  if (!(await session.isVisible()))
-    await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await session.click();
+  expect(created.ok()).toBe(true);
+  sessionId = null;
+  await page.reload();
   await expect(
     page.getByRole("button", { name: "Rename session", exact: true }),
-  ).toHaveText(/Review extension event lifecycle/);
+  ).toHaveText("Tool presentation review");
   await expect.poll(() => sessionId).not.toBeNull();
   return (...events: Record<string, unknown>[]) => {
     for (const event of events)
       socket!.send(JSON.stringify({ ...event, sessionId }));
   };
 }
+
+test("large Markdown stays readable through a stream burst without losing the composer draft", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  const workers: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("worker", (worker) => workers.push(worker.url()));
+  const send = await openReview(page);
+  let text =
+    "## Responsive rich reply\n\n[Forward][later] and $x^2$.\n\n**Decoded &amp; entity**\n\n" +
+    "A paragraph with **emphasis** and ordinary text.\n\n".repeat(2_700);
+  const message = () => ({
+    role: "assistant",
+    __inspireMessageId: "review-large-rich-text",
+    timestamp: 1_900_000_000_000,
+    content: [{ type: "text", text }],
+  });
+  send({ type: "agent_start" }, { type: "message_start", message: message() });
+  const body = page.locator(".turn--assistant .rich-text--assistant").last();
+  await expect(body).toContainText("Responsive rich reply");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.focus();
+  await Promise.all([
+    input.pressSequentially("Keep this draft", { delay: 20 }),
+    (async () => {
+      for (let index = 0; index < 20; index++) {
+        text += `\n\nStreaming token ${index}.`;
+        send({ type: "message_update", message: message() });
+        await page.waitForTimeout(20);
+      }
+      text += "\n\n[later]: ./docs/reference.md\n\n**Latest rich text**";
+      send({ type: "message_update", message: message() });
+    })(),
+  ]);
+  await expect(input).toHaveValue("Keep this draft");
+  await expect(body).not.toHaveAttribute("aria-busy", "true");
+  await expect(
+    body.locator('[data-file-path="./docs/reference.md"]'),
+  ).toHaveText("Forward");
+  await expect(body.locator("strong").last()).toHaveText("Latest rich text");
+  await expect(body.getByText("Decoded & entity", { exact: true })).toHaveCount(
+    1,
+  );
+  expect(workers.some((url) => url.includes("rich-text-worker"))).toBe(true);
+  expect(errors).toEqual([]);
+});
 
 function tool(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `review-${name}`, name, arguments: args };
