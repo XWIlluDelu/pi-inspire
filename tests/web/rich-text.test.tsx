@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { RichText } from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
 
@@ -306,6 +306,55 @@ describe("local file references", () => {
 });
 
 describe("markdown constructs", () => {
+  it.each([
+    [
+      "unlabeled fence",
+      "```\n  first\n\n\tsecond\n\n```",
+      "  first\n\n\tsecond\n",
+    ],
+    ["indented code", "    first\n\n      second", "first\n\n  second"],
+    [
+      "unknown language",
+      "```unknown-lang\n  first\n\nsecond\n```",
+      "  first\n\nsecond",
+    ],
+    ["incomplete fence", "```\n  first\n\nsecond", "  first\n\nsecond"],
+    ["path in fence", "```\nsrc/store.ts\n```", "src/store.ts"],
+    ["indented path", "    src/store.ts", "src/store.ts"],
+  ])(
+    "preserves %s whitespace and copies source as a block",
+    async (_label, text, code) => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      const { container } = render(<RichText text={text} />);
+      expect(container.querySelector("pre code")?.textContent).toBe(code);
+      expect(
+        container.querySelector(".inline-code, [data-file-path]"),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Insert code in terminal" }),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy(),
+      );
+      expect(writeText).toHaveBeenCalledWith(code);
+    },
+  );
+
+  it("does not parse HTML or math inside an unlabeled fence", () => {
+    const { container } = render(
+      <RichText text={"```\n<img src=x onerror=alert(1)>\n$x$\n```"} />,
+    );
+    expect(container.querySelector("img, .katex")).toBeNull();
+    expect(container.querySelector("pre code")?.textContent).toBe(
+      "<img src=x onerror=alert(1)>\n$x$",
+    );
+  });
+
   it("renders GFM tables and task lists", () => {
     const text = "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] done\n- [ ] todo";
     const { container } = render(<RichText text={text} />);
