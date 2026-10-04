@@ -381,8 +381,45 @@
 }
 
 .composer__input-wrap {
+  position: relative;
   display: flex;
   min-width: 0;
+}
+
+.composer__expand.icon-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--muted);
+}
+
+.composer__expand.icon-button:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.composer__expand.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.composer__input-wrap:has(.composer__expand) .composer__input {
+  padding-right: 32px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .composer__expand.icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .composer__input-wrap:has(.composer__expand) .composer__input {
+    padding-right: 48px;
+  }
 }
 
 .composer__input {
@@ -416,6 +453,16 @@
 
 .composer__delivery .segmented button {
   justify-content: center;
+}
+
+@media (max-width: 600px) {
+  .composer__delivery .segmented {
+    width: 100%;
+  }
+
+  .composer__delivery .segmented button {
+    min-height: 34px;
+  }
 }
 
 .composer__failed-delivery {

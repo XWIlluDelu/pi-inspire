@@ -20,6 +20,8 @@ import type {
   InspireUpdateCheckResult,
   NewSessionDefaults,
   NewSessionOptions,
+  PendingReadRequest,
+  PendingRecovery,
   PiMessageDeliveryMode,
   PiUpdateCheckResult,
   ProjectDirEntry,
@@ -771,7 +773,29 @@ export function createApi(token: string | null = null) {
         { timeoutMs: null },
       ),
     abort: (sessionId: string) =>
-      post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
+      post<PendingRecovery>(
+        token,
+        "/api/control/abort",
+        { sessionId },
+        {},
+        { timeoutMs: null },
+      ),
+    recoverPending: (sessionId: string) =>
+      post<PendingRecovery>(
+        token,
+        "/api/pending/recover",
+        { sessionId },
+        {},
+        { timeoutMs: null },
+      ),
+    pendingText: (body: PendingReadRequest) =>
+      post<{ text: string }>(
+        token,
+        "/api/pending/text",
+        body,
+        {},
+        { mutation: false },
+      ),
     clearPending: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/pending/clear", { sessionId }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
@@ -807,6 +831,19 @@ export function createApi(token: string | null = null) {
       }),
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
       uploadFiles(token, files, signal),
+    attachmentPreview: (id: string, signal?: AbortSignal) =>
+      observeRequest(signal, { mutation: false }, async (signal) => {
+        const response = await applicationFetch(
+          `/api/attachments/${encodeURIComponent(id)}/image`,
+          {
+            signal,
+            credentials: "same-origin",
+            headers: authorizationHeader(token),
+          },
+        );
+        await ensureOk(response);
+        return response.blob();
+      }),
     deleteAttachment: (id: string) =>
       request<{ ok: boolean }>(
         token,

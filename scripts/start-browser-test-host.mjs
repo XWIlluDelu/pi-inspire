@@ -51,6 +51,11 @@ for (const path of [
   await cp(resolve(path), target, { recursive: true });
 }
 
+await writeFile(
+  resolve(browserWorkspace, "native-shell.log"),
+  `${Array.from({ length: 2500 }, (_, index) => `native shell line ${index + 1}`).join("\n")}\nCOMPLETE_NATIVE_SHELL_LOG_END\n`,
+);
+
 const child = spawn(
   process.execPath,
   [resolve("node_modules", "tsx", "dist", "cli.mjs"), "server/index.ts"],

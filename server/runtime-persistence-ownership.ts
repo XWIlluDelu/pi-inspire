@@ -4,17 +4,17 @@ import {
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
 import { type DiagnosticLogger } from "./diagnostics.js";
-import { MAX_RPC_LINE_BYTES, type PiRpcProcess } from "./pi-rpc.js";
 import { samePersistedJson } from "./persisted-json.js";
+import { MAX_RPC_LINE_BYTES, type PiRpcProcess } from "./pi-rpc.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
 import {
   compactionMatcher,
-  customMessageEntryMatches,
   eventSessionEntry,
   exactEntryExpectation,
   knownExpectation,
   messageExpectation,
+  payloadActivityEntryMatches,
   persistenceEntryKey,
   persistenceMessageKey,
 } from "./runtime-persistence.js";
@@ -24,15 +24,15 @@ import type {
   RuntimeSlot,
 } from "./runtime-slot.js";
 import {
-  boundedTranscriptProjection,
-  type ProjectionReconcileResult,
-  TRANSIENT_OVERLAY_MAX_BYTES,
-  TRANSCRIPT_ITEM_MAX_BYTES,
-} from "./session-projection.js";
-import {
   assistantDeltaProjectionBytes,
   type ReducedAssistantDelta,
 } from "./runtime-stream-budget.js";
+import {
+  boundedTranscriptProjection,
+  type ProjectionReconcileResult,
+  TRANSCRIPT_ITEM_MAX_BYTES,
+  TRANSIENT_OVERLAY_MAX_BYTES,
+} from "./session-projection.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 const CUSTOM_ACTIVITY_OWNERSHIP_MAX = 1_000;
@@ -125,7 +125,10 @@ export class RuntimePersistenceOwnershipController {
     entry: SessionEntry,
   ): void {
     if (
-      entry.type !== "custom_message" ||
+      (entry.type !== "custom_message" &&
+        !(
+          entry.type === "message" && entry.message.role === "bashExecution"
+        )) ||
       slot.customActivities.activityIdByEntryId.has(entry.id)
     )
       return;
@@ -136,7 +139,7 @@ export class RuntimePersistenceOwnershipController {
           (item) => this.overlayIdentity(item) === activityId,
         );
         return (
-          pending !== undefined && customMessageEntryMatches(pending, entry)
+          pending !== undefined && payloadActivityEntryMatches(pending, entry)
         );
       },
     );
@@ -177,7 +180,7 @@ export class RuntimePersistenceOwnershipController {
     const linkedEntryId = ownership.entryIdByActivityId.get(activityId);
     if (linkedEntryId) return linkedEntryId;
     const entryIndex = ownership.pendingEntries.findIndex((entry) =>
-      customMessageEntryMatches(message, entry),
+      payloadActivityEntryMatches(message, entry),
     );
     if (entryIndex >= 0) {
       const entry = ownership.pendingEntries[entryIndex]!;
@@ -234,7 +237,8 @@ export class RuntimePersistenceOwnershipController {
         ? (bounded as Record<string, unknown>)
         : null;
     const customEntryId =
-      boundedRecord?.role === "custom"
+      boundedRecord?.role === "custom" ||
+      boundedRecord?.role === "bashExecution"
         ? this.claimCustomActivityMessage(slot, bounded, liveId)
         : null;
     const projected = boundedRecord
@@ -335,8 +339,13 @@ export class RuntimePersistenceOwnershipController {
     const persisted = slot.projection?.messages ?? [];
     const remaining = new Map<string, number>();
     const customCandidates = appendedEntries.filter(
-      (entry) => entry.type === "custom_message",
+      (entry) =>
+        entry.type === "custom_message" ||
+        (entry.type === "message" && entry.message.role === "bashExecution"),
     );
+    for (const entry of customCandidates) {
+      if (entry.type === "message") this.claimCustomActivityEntry(slot, entry);
+    }
     const usedCustomEntries = new Set(
       slot.customActivities.activityIdByEntryId.keys(),
     );
@@ -350,7 +359,8 @@ export class RuntimePersistenceOwnershipController {
         item &&
         typeof item === "object" &&
         !Array.isArray(item) &&
-        (item as Record<string, unknown>).role === "custom"
+        ((item as Record<string, unknown>).role === "custom" ||
+          (item as Record<string, unknown>).role === "bashExecution")
       ) {
         const record = item as Record<string, unknown>;
         const activityId = this.overlayIdentity(item);
@@ -361,7 +371,7 @@ export class RuntimePersistenceOwnershipController {
           const candidate = customCandidates.find(
             (entry) =>
               !usedCustomEntries.has(entry.id) &&
-              customMessageEntryMatches(item, entry),
+              payloadActivityEntryMatches(item, entry),
           );
           if (candidate) {
             entryId = candidate.id;

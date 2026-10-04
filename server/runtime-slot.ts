@@ -5,6 +5,7 @@ import {
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
+  type PendingInput,
   type PendingQueues,
   type ProjectionConflict,
   type PromptRequest,
@@ -12,6 +13,8 @@ import {
   type RunState,
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
+import type { NativeBashExecution } from "./runtime-bash.js";
+import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import type { SessionProjectionView } from "./session-projection.js";
 
@@ -135,6 +138,13 @@ export interface RuntimeSlot {
   /** Worker owning a prompt whose Pi receipt is still pending. */
   pendingPrompt: PiRpcProcess | null;
   pendingPromptCount: number;
+  nativeBash: NativeBashExecution | null;
+  /** Standalone compaction owns its native command boundary and cancellation evidence. */
+  manualCompaction: {
+    worker: PiRpcProcess;
+    finished: Promise<void>;
+    aborted: boolean;
+  } | null;
   /** Explicit branch selection changes, distinct from a compaction's view refresh. */
   deliveryNavigationEpoch: number;
   /** Host-held input awaiting a safe Pi prompt boundary; not persisted Pi history. */
@@ -156,9 +166,6 @@ export interface RuntimeSlot {
   compactionReturnState: RunState | null;
   retry: RetryInfo | null;
   summarizationRetry: RetryInfo | null;
-  /** Pi RPC can set this SettingsManager value but does not expose it from
-   * get_state, so the Host caches the SDK-observed value between snapshots. */
-  autoRetryEnabled: boolean | null;
   attention: CompletionAttention | null;
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
   pendingExtensionUiOwners: Map<string, PiRpcProcess>;
@@ -166,6 +173,12 @@ export interface RuntimeSlot {
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
   piPendingQueues: PendingQueues;
+  /** Latest complete public Pi queue event; never sent in a browser snapshot. */
+  piPendingInput: PendingInput | null;
+  /** Worker-bound artifact ownership, not a queue/scheduling authority. */
+  pendingImages: PendingImageRecovery | null;
+  stoppingInput: boolean;
+  inputStopEpoch: number;
   extensionDisplays: ExtensionDisplay[];
   extensionStatuses: Record<string, string>;
   availableModels: unknown[] | null;
@@ -187,7 +200,7 @@ export interface RuntimeSlot {
    * as active when the current message falls outside a bounded page. */
   activeAssistantCorrelation: string | null;
   activeOverlayIds: Map<string, string>;
-  /** Pi assigns a fresh persistence timestamp to custom_message entries, so
+  /** Pi assigns persistence timestamps to custom_message and direct Bash results, so
    * live↔durable ownership is established one-to-one from exact payload and
    * event order rather than the ordinary role+timestamp correlation. */
   customActivities: CustomActivityOwnership;
@@ -235,6 +248,8 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     stopping: null,
     pendingPrompt: null,
     pendingPromptCount: 0,
+    nativeBash: null,
+    manualCompaction: null,
     deliveryNavigationEpoch: 0,
     deferredPrompts: [],
     drainingDeferredPrompts: false,
@@ -244,7 +259,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     compactionReturnState: null,
     retry: null,
     summarizationRetry: null,
-    autoRetryEnabled: null,
     attention: null,
     pendingExtensionUiRequests: new Map(),
     pendingExtensionUiOwners: new Map(),
@@ -252,6 +266,10 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
     piPendingQueues: emptyPendingQueues(),
+    piPendingInput: { steering: [], followUp: [] },
+    pendingImages: null,
+    stoppingInput: false,
+    inputStopEpoch: 0,
     extensionDisplays: [],
     extensionStatuses: {},
     availableModels: null,

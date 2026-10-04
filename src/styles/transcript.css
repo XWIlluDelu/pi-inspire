@@ -1737,7 +1737,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-.pending-groups__note {
+.pending-groups__omitted {
   margin: 0;
   padding: var(--space-3);
   color: var(--muted);
@@ -1897,6 +1897,43 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.pending-group__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-block: 2px;
+}
+
+.pending-group__image {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur-micro) var(--ease-standard);
+}
+
+.pending-group__image:hover {
+  border-color: var(--accent);
+}
+
+.pending-group__image:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pending-group__image img {
+  object-fit: contain;
+}
+
+.pending-group__image-count {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 20px;
+  color: var(--muted);
 }
 
 .pending-group__item pre.is-placeholder {

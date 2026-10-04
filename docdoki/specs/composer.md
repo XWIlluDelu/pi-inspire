@@ -9,12 +9,19 @@ covers:
   - server/runtime-reads.ts
   - server/image-content.ts
   - server/composer-history.ts
+  - server/resources.ts
   - server/model-catalog.ts
   - server/project-files.ts
   - server/runtime.ts
+  - server/runtime-pending.ts
+  - server/runtime-slot.ts
+  - server/runtime-events.ts
+  - server/runtime-worker-lifecycle.ts
   - server/runtime-composer-artifacts.ts
   - server/session-projection.ts
   - shared/contracts.ts
+  - shared/pending-preview.ts
+  - shared/composer-artifact-references.ts
   - shared/resource-references.ts
   - src/api.ts
   - src/controllers/composer-controller.ts
@@ -24,6 +31,7 @@ covers:
   - src/clipboard-files.ts
   - src/composer-completion.ts
   - src/composer-history.ts
+  - src/session-drafts.ts
   - src/composer-keyboard.ts
   - src/model-options.ts
   - src/styles.css
@@ -41,16 +49,24 @@ covers:
   - tests/server/app.test.ts
   - tests/server/attachments.test.ts
   - tests/server/composer-history.test.ts
+  - tests/server/composer-history-retention.test.ts
   - tests/server/model-catalog.test.ts
   - tests/server/runtime-composer-artifacts.test.ts
+  - tests/server/{runtime-pending,runtime-compaction}.test.ts
   - tests/server/session-projection.test.ts
   - tests/web/composer-completion.test.ts
+  - tests/web/composer-editor-layout.test.tsx
   - tests/web/composer-controller.test.ts
   - tests/web/composer-history.test.ts
+  - tests/web/session-drafts.test.ts
+  - tests/shared/composer-artifact-references.test.ts
   - tests/web/composer-sessions.test.tsx
   - tests/web/composer.test.tsx
   - tests/web/model-selector.test.tsx
   - tests/web/store-composer.test.ts
+  - tests/server/runtime.test.ts
+  - tests/server/pi-operation-lifecycle.integration.test.ts
+  - tests/shared/pending-contracts.test.ts
   - tests/web/transcript-inspection.test.tsx
   - tests/web/welcome-new-session.test.tsx
   - tests/browser/workbench.spec.ts
@@ -72,9 +88,14 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   Return always inserts a line break even from an attached keyboard, and only the explicit send
   action submits; this boundary follows `(hover: none) and (pointer: coarse)` rather than viewport
   width or user agent. The chosen chord submits through the visible Steer/Queue delivery selection
-  rather than secretly changing delivery mode. Each session keeps its own unsent draft, staged
-  attachments, and project-file references, restored when the user switches back (in-memory — staged
-  work does not survive a reload).
+  rather than secretly changing delivery mode. Each session keeps its own unsent text, staged
+  attachments, and project-file references when the user switches away and back. Unsent text also
+  restores after a browser reload in the same tab and Host origin through browser session storage;
+  the start surface has a separate text partition. Unsent attachment and project-file partitions
+  remain memory-only. History previews do not overwrite the saved pre-browse draft. Handoff,
+  explicit clearing, and session deletion remove persisted text; ordinary failed/unknown-delivery
+  recovery can restore it through the same draft path. Browsers that deny storage retain the
+  in-memory behavior without blocking typing or sending.
 
   Append-only transcript progress keeps the active textarea instance, focus, and selection intact
   while the session runs. Empty session partitions are discarded, while non-empty partitions remain
@@ -82,8 +103,24 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   attachment/project-file partitions and delivery lifecycle through `AppStore`'s narrow facade;
   `AppStore` remains the sole browser snapshot and cross-domain commit authority.
 
+- Keep the compact input's established padding and control order, with an icon-only send button.
+  Controls share a row where space permits and wrap only as needed. On phones, Steer and Queue
+  split the full delivery row into equal-width buttons. The input grows with its content.
+  A top-right Expand control appears only when text
+  exceeds the available compact height and requires internal scrolling, evaluated against the actual
+  layout after content or viewport changes. Expanding gives the same input more of the main column;
+  Collapse remains available throughout expanded mode, even if subsequent edits shorten the text.
+  Collapse restores the compact layout and hides the control if the text now fits. The input reserves
+  space for Expand only while the control is visible; ordinary input has no empty overlay gutter.
+  The shared active/start editor reacts to wrapping, container width, and visual-viewport changes;
+  its height budget reserves room for composer controls even when a software keyboard shrinks only
+  the visual viewport, not the main layout.
+  Toggling preserves text, attachments, focus, and selection; touch targets remain at least 44px.
+  Expansion does not claim Escape from completion, modal, or Stop ownership.
+
 - An active-session composer reproduces Pi's prompt-history traversal. It initializes the
-  newest-first history from the complete compaction-aware context of the current branch view, trims
+  newest-first history from retained user messages on the selected branch, including messages
+  summarized by compaction and after reopening. Other branches do not enter this history. It trims
   entries, suppresses only consecutive duplicates, and retains at most 100 prompts; newly accepted
   prompts join the same in-memory history immediately. Unmodified Up continues ordinary wrapped
   multiline navigation until the caret reaches the first visual line, then moves to the logical line
@@ -94,10 +131,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
   Completion menus and IME composition retain first ownership of their keys, and history changes
   scope with the session/branch projection. Text, embedded images, ordinary attachments, and project
-  files are recalled as one prompt. Artifacts remain branch-bound message/part or message/reference
-  coordinates until the Host resolves the current projection again: it rehydrates embedded image
-  bytes; accepts an ordinary file only while its canonical regular path remains owned by the current
-  Host's in-flight or consumed attachment lifecycle, never from persisted path text alone; and
+  files are recalled as one prompt. Retained prompts come from branch ancestry, independently of
+  Pi's compacted model context and the visible transcript. Their artifacts use branch-bound entry
+  identities plus image-part or file-reference coordinates, not mutable context-message offsets,
+  until the Host resolves the current projection again: it rehydrates embedded image
+  bytes; accepts an ordinary file only while its canonical regular path has durable Inspire upload
+  ownership, including after Host restart, never from persisted path text alone; and
   revalidates regular project files against the current workspace realpath boundary again after worker startup,
   immediately before delivery. Missing or changed files fail visibly and remain removable from the
   recalled draft.
@@ -105,8 +144,8 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   The Host pages exact entries under a serialized byte bound and binds every page to one content
   identity so assistant-only revision advances cannot corrupt newest-first offsets. A lightweight
   Host history version invalidates the browser's payload cache only for history-relevant changes,
-  not every assistant/tool leaf append. Cache reuse never substitutes an old effective leaf for
-  the current artifact authority.
+  not compaction checkpoints or assistant/tool leaf appends. Cache reuse never substitutes an old
+  effective leaf for the current artifact authority. Implementation evidence: [[follow-composer-editing-2026-10-02]].
 
 ### Project files and command completion
 
@@ -195,14 +234,14 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   silently uploaded elsewhere by inspire. One shared contract limits a message to eight attachments,
   16 MiB per file, 32 MiB of raw attachment bytes, and 20 MiB of raw image bytes. The browser
   rejects excess staging before upload; the host's multipart storage counts raw file bytes while
-  streaming directly into a private `0600` process cache and aborts the batch at 32 MiB; prompt
+  streaming directly into private `0600` upload files and aborts the batch at 32 MiB; prompt
   resolution revalidates totals, encodes images sequentially within a bounded base64 budget, and the
   Pi RPC writer rejects any serialized command line above 32 MiB before touching stdin.
 
   The matching stdout reader permits only that bound plus a 1 MiB event-envelope allowance, so Pi
   can echo an accepted image message without making the child unbounded or killing it under a
-  contradictory 8 MiB cap. Dead process cache directories are reclaimed on startup, and shutdown
-  removes this host's cache only after active HTTP uploads have drained.
+  contradictory 8 MiB cap. Shutdown drains uploads and runtime work before withdrawing staged
+  copies; it preserves accepted ordinary files and their ownership metadata.
 
 - Uploads observe headers and the response body within a size-dependent budget: 120 seconds plus
   transfer allowance at 128 KiB/s. Replacing the transport cancels observation; withdrawing the last
@@ -210,10 +249,24 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   remove/re-add guidance, without resending files or a prompt. Late handles from a transport that
   ignores cancellation are reclaimed. Switching sessions preserves the originating upload owner.
 
-- Uploaded attachments have a bounded host-side lifetime: withdrawing a staged attachment deletes
-  its host cache copy, image bytes are reclaimed once a delivered prompt has consumed them, and
-  ordinary files persist for the host’s lifetime because their host paths are referenced by the
-  conversation text. Browser upload handles belong to the issuing Host authority, not a WebSocket
+- Withdrawing a staged attachment deletes its owned copy. Delivered images remain embedded in Pi
+  message data, so their upload copies can be removed. Sent ordinary files live in durable Inspire
+  state storage and remain readable after normal Host restart.
+
+  Reclamation follows retained session references, not process age: scan all entries and branches
+  in default/configured Pi storage and remembered custom directories, plus recoverable desktop
+  Trash and private deletion-recovery payloads. Shared forks retain the same upload until the last
+  reference disappears. Confirmed deletion triggers collection; periodic sweeps detect Trash
+  emptying and other reference changes. Incomplete, unreadable, or changing Pi sources defer deletion;
+  unrelated valid non-Pi JSONL records in Trash do not block collection merely because of their suffix.
+  Staged, in-flight, and accepted-but-unpersisted input and recalled resends remain protected.
+  A native input hook's `handled` disposition creates no future-reference hold; actual persisted hook
+  references still protect the upload. Scanning and resend leases recognize literal paths and the
+  exact JSON-string representation Inspire writes. Only ownership-recorded upload copies are eligible;
+  original user/project files are never removed.
+  There is no separate cleanup setting or attachment-management surface.
+
+  Browser upload handles still belong to the issuing Host authority, not a WebSocket
   connection. Same-Host reconnect preserves ready uploads; a changed authority marks old handles
   invalid immediately, including inactive session partitions, saved history drafts, and failed
   deliveries. A definitive expiry refusal marks only the named uploads invalid. Invalid attachments
@@ -243,19 +296,67 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   saw a start event. Retry attempt/reason details enrich that state when available; missing details
   still display `Retrying` without invented counters. Ordinary retry, compaction retry, and
   summary retry keep their short status distinct from any long reason, which wraps within the
-  composer width rather than stretching a non-wrapping chip. The same surface shows the combined count as
-  `N Pending`, not `queued`; executing and failed tools remain in their chronological Transcript cards
-  instead of being duplicated above the Composer. Bounded host-projected steering and follow-up
-  arrays and Host-held temporary inputs remain in one labelled Pending surface that preserves each
-  array's order, marks rows `S` or `Q`, and clearly marks omitted or truncated text.
+  composer width rather than stretching a non-wrapping chip. Pending input appears at the end of
+  Transcript, with ordered `S`/`Q` previews visible immediately. Its compact header groups the count,
+  Return, Copy and Clear actions; there is no disclosure or separate copy row. ActivityBar retains
+  its compact pending count. Executing and failed tools stay in their chronological Transcript cards.
+  Pending text previews keep the beginning and end with an explicit middle ellipsis, giving more
+  space to the beginning: up to three leading lines and one trailing line within a 512-character
+  budget. Short inputs stay whole when they fit, including when an ellipsis would not shorten them.
+  Omitted rows retain the total count and a concise count of additional items not shown; there is
+  no persistent explanation of preview, copying, or recovery behavior.
 
-  Individual or numbered-list copy uses exactly the displayed text; truncated rows and partial lists
-  explicitly label that operation as preview copy and never claim to include omitted content. An
-  explicit confirmed Clear all removes Host-held, not-yet-dispatched input and invokes public Pi
-  `clear_queue` for whatever remains unconsumed at its operation boundary; it does not interrupt the
-  current run or substitute for pause. A cleared Host delivery is definitively rejected to its
-  originating browser operation. There are no dormant pause/resume, per-item delete/convert,
-  exact-text RPC, second editor, or browser-owned pending queue paths.
+  Single-item copy obtains complete text from the Host's matching queue revision and item coordinate.
+  Copy all includes every pending message, including rows omitted from the display, in a numbered list
+  with all Steer texts before Queue texts. Neither copy removes input or stops Pi. The Host retains
+  complete public Pi queue events separately from bounded browser previews; changed coordinates or
+  unavailable full content fail visibly rather than copying a preview as complete text.
+
+  Return all removes all input still pending at the public Pi `clear_queue` boundary and from the
+  Host's temporary delivery queue without stopping the current task. It restores Steer texts first,
+  then Queue texts, preserving order within each group, joined by blank lines and followed by the
+  originating session's latest draft. This is one editable draft: original delivery modes and message
+  boundaries are not retained, and resending uses the newly selected mode. Consumed messages are not
+  recalled. A delayed receipt merges into its original session partition without replacing another
+  session's work or a newly typed draft. Explicit Return all restores editor focus only while its
+  originating session/view and focus still own the action; a newer focus or modal keeps ownership.
+
+  Stop and unclaimed Escape return pending input to the composer before stopping. The Host also
+  clears Pi's queue before its abort boundary and rejects deliveries while Stop is in progress, so
+  pending work cannot automatically resume. Recovery bypasses suspended prompt hooks just as Stop
+  bypasses the blocked persistence lane; modal/completion Escape ownership and standalone-compaction,
+  preflight, and conflict cancellation paths remain intact. A failed Pi clear is reported and Stop
+  retires the worker instead of aborting with a live queue.
+
+  Pi's public dequeue returns text only. Inspire retains recoverable copies of images it submits
+  while they remain pending. Return all and Stop restore those images as previewable, removable
+  attachments alongside the recovered text, preserving the originating session's existing draft and
+  attachments, including saved artifacts temporarily hidden by input-history browsing. Recovery
+  preserves image order and multiplicity; an over-limit restored draft remains intact and explains
+  why it cannot yet send. Images already consumed are not restored; user-discarded input releases
+  its copies. These are the original Inspire-submitted images: extension-added or replaced bytes
+  are not reconstructed, even when an input hook preserves the caption. Expanded file/reference
+  text remains intact. Public Pi supplies no image-presence metadata or item identities; unresolved
+  ownership at a consumption/dequeue boundary does not authorize guessing which image to restore. Known text-only recovery is quiet; an image-loss warning requires positive
+  evidence of image content that could not be recovered. Still Host-held attachments and references
+  are restaged with their originating composer partition, and their rejected delivery does not
+  manufacture a second failed-text restore.
+
+  Known original image admissions carry an image count and retained attachment handles. Pending
+  displays a compact, wrapping strip of clickable thumbnails alongside any caption, opening the
+  shared image viewer. Image bytes load through the existing attachment endpoint, not session or
+  queue events; previewing does not transfer ownership. Count-only summaries retain the concise
+  Image or N images presentation until retained handles are available. Unknown empty rows do not
+  imply an image.
+  Once consumed, image admissions leave the public Pending view even if Pi retains their empty
+  captions. Preview, full-copy coordinates and recovery use the same unconsumed view across
+  settlement and subsequent runs.
+
+  Clear all intentionally discards unconsumed input through the same queue boundary without stopping
+  Pi or changing the draft. Clear queue opens the existing Clear all confirmation; X cancels.
+  A cleared Host delivery is definitively rejected to its originating operation and releases its
+  staged artifacts. There are no pause/resume, per-item delete/convert, second-editor, or browser-owned
+  pending-queue paths. Implementation evidence: [[follow-pending-input-recovery-2026-10-02]].
 
 - A shared Pi-native registry covers the installed interactive command vocabulary even though Pi RPC
   does not enumerate built-ins. Browser-owned commands open or invoke existing model, thinking,
@@ -285,9 +386,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   scrolling with visible overlay rails. Running receipts use the command and
   phase without invented explanatory progress messages; compaction and other Host commands do not replace the
   editor placeholder with “keep writing” or “send when finished” guidance. Host-adapter labels and
-  results must not be represented as verbatim Pi UI copy. Compact can be cancelled through the
-  ordinary abort affordance by stopping only its owning worker; reload likewise reports its worker
-  replacement and reset of worker-local extension state. Compaction summaries project as dedicated
+  results must not be represented as verbatim Pi UI copy. Stop/Escape preserves Pending recovery and
+  a neutral cancelled receipt under [[pi-integration]]'s native cancellation/completion boundary.
+  Reload reports its worker replacement and reset of worker-local extension state. Compaction summaries project as dedicated
   collapsed transcript cards at their persisted position between retained prior messages and later
   messages, including after refresh, repeated compaction, and branch navigation. Model-context
   ordering and session bytes are unchanged. Manual and automatic cancellation/failure produce
@@ -298,6 +399,19 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   progress, and does not suggest invoking another `/compact` while compaction is active. Historical
   checkpoints show persisted tokens-before; after-token estimates remain explicitly labelled in
   the operation receipt and are not fabricated after reload. Review: [[native-command-compatibility]].
+
+- `!command` and `!!command` execute directly through the selected Pi session, not a model prompt
+  or project terminal. Both stream and persist a native Bash result; `!` includes it in subsequent
+  model context, while `!!` excludes it. Neither form automatically starts a model turn. Shell
+  input rejects staged attachments and project references without discarding them.
+
+  Shell execution stays independent of model/compaction state and works during either operation.
+  One native shell may run per session; another is rejected rather than queued. Shell-only activity
+  leaves ordinary Send available beside Stop without selecting Steer/Queue. Stop uses native Bash
+  cancellation when only the shell runs; the model/compaction operation retains first Stop ownership
+  when both run. Accepted shell commands participate in input history, including after reopening and
+  compaction, with the correct `!`/`!!` prefix. [[pi-integration]] owns execution and hook boundaries;
+  [[conversation]] owns output/status presentation. Evidence: [[follow-shell-input-2026-10-02]].
 
 - `/copy` reads the complete last settled assistant text from the Host's authoritative branch
   projection through an authenticated session/view-bound endpoint. It does not start a worker merely

@@ -78,6 +78,7 @@ export const CommandPalette = memo(function CommandPalette({
         !appState.hasOlderMessages,
       ),
       runState: appState.runState,
+      bashRunning: appState.bashRunning,
       transcriptDurableLeafId: appState.transcriptDurableLeafId,
       transcriptEffectiveLeafId: appState.transcriptEffectiveLeafId,
       prefs: appState.prefs,
@@ -109,7 +110,7 @@ export const CommandPalette = memo(function CommandPalette({
       else onClose();
     },
   );
-  const abortable = isAbortableRunState(state.runState);
+  const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const hasEarlierBranch = Boolean(
     state.transcriptDurableLeafId &&
       state.transcriptEffectiveLeafId &&

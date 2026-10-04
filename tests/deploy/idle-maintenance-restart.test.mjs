@@ -70,9 +70,13 @@ describe.runIf(process.platform !== "win32")(
       async (delayAt) => {
         vi.useFakeTimers();
         // These admission-only operations need no catalog, attachment, or Pi access.
-        const runtime = new RuntimeController({}, {}, () => {
-          throw new Error("No real worker allowed");
-        });
+        const runtime = new RuntimeController(
+          {},
+          { discoverSessionDirectories() {} },
+          () => {
+            throw new Error("No real worker allowed");
+          },
+        );
         try {
           const test = fixture({
             inspect: async () => {

@@ -227,7 +227,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Failed inputs retained for explicit restoration without replacing a draft. */
   failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: "clear" | null;
+  pendingAction: "clear" | "recover" | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";

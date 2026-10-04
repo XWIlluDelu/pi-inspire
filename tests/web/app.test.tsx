@@ -139,9 +139,11 @@ beforeAll(async () => {
       };
     }
     if (url.startsWith("/api/extension-ui")) return { body: { ok: true } };
+    if (url.startsWith("/api/pending/recover"))
+      return { body: { steering: [], followUp: [] } };
     if (url.startsWith("/api/control/abort")) {
       abortCalls += 1;
-      return { body: { ok: true } };
+      return { body: { steering: [], followUp: [] } };
     }
     if (url.startsWith("/api/control/model")) {
       return (modelFailureGate ?? Promise.resolve()).then(() => ({

@@ -1,6 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { compactToolArgumentEvents } from "../../server/tool-argument-batches.js";
-import { applyAssistantMessageDelta } from "../../shared/assistant-stream.js";
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeEventController } from "../../server/runtime-events.js";
@@ -11,6 +9,8 @@ import {
   TRANSCRIPT_ITEM_MAX_BYTES,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "../../server/session-projection.js";
+import { compactToolArgumentEvents } from "../../server/tool-argument-batches.js";
+import { applyAssistantMessageDelta } from "../../shared/assistant-stream.js";
 
 function setup(incremental = true) {
   const rpc = {} as PiRpcProcess;
@@ -34,6 +34,7 @@ function setup(incremental = true) {
   let forwarded: Record<string, unknown> = {};
   const forwardedEvents: Record<string, unknown>[] = [];
   const events = new RuntimeEventController({
+    updateBash: () => false,
     selectedSessionId: () => slot.id,
     recordPersistenceEvent: () => {},
     activeAssistantOverlayMessage: (owner) =>

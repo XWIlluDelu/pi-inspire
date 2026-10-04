@@ -58,7 +58,10 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   to Trash or been unlinked, failure to remove its now-empty private container cannot turn that
   committed outcome into a retryable deletion failure. Success clears catalog, resource handles,
   browser drafts/status, and navigation identity without touching project files or separately stored
-  forks.
+  forks. Ordinary uploaded files follow [[composer]] reference retention: Trash preserves their
+  references, a surviving fork or branch prevents reclamation, and permanent deletion releases
+  only the deleted session's references. Private indeterminate-deletion payloads also retain files;
+  attachment-collection failure cannot turn a committed session deletion into a retryable operation.
 
   If durable preference cleanup fails after the file outcome is known, the response marks that
   failure and the browser warns without retrying the destructive operation. The host cannot prove

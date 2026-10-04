@@ -1,6 +1,18 @@
-import { requestError } from "../../../server/request-error.js";
 import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+  type ComposerHistoryFileNameResolver,
+  projectComposerHistoryPage,
+} from "../../../server/composer-history.js";
+import { requestError } from "../../../server/request-error.js";
+import type { ActiveSessionSnapshot } from "../../../server/session-preview.js";
+import {
+  boundedTranscriptValue,
+  type InitialMaterializationAttestation,
+  type ProjectionReconcileHandler,
+  type ProjectionReconcileResult,
+  type SessionProjectionView,
+} from "../../../server/session-projection.js";
 import type {
   BranchTreeResponse,
   ComposerHistoryPage,
@@ -10,18 +22,6 @@ import type {
   UserTurnTranscriptPage,
 } from "../../../shared/contracts.js";
 import { sequentialUserTurnAnchors } from "../../../shared/user-turns.js";
-import {
-  type ComposerHistoryFileNameResolver,
-  projectComposerHistoryPage,
-} from "../../../server/composer-history.js";
-import type { ActiveSessionSnapshot } from "../../../server/session-preview.js";
-import {
-  boundedTranscriptValue,
-  type InitialMaterializationAttestation,
-  type ProjectionReconcileResult,
-  type ProjectionReconcileHandler,
-  type SessionProjectionView,
-} from "../../../server/session-projection.js";
 
 /**
  * Snapshot-only projection for runtime scheduling and UI fixtures. Persistence
@@ -205,12 +205,25 @@ export class PreviewProjection
     return null;
   }
 
+  entriesAfter(_tailEntryId: string | null): readonly SessionEntry[] {
+    return [];
+  }
+
   persistedEntryMatches(_entry: SessionEntry): boolean {
     return false;
   }
 
   userText(_id: string, _maxChars: number): string {
     throw requestError("Branch history is unavailable for this preview", 503);
+  }
+
+  composerHistoryMessages(): readonly unknown[] {
+    return this.preview.transcriptPage.messages.filter(
+      (value) =>
+        value &&
+        typeof value === "object" &&
+        (value as Record<string, unknown>).role === "user",
+    );
   }
 
   viewMessages(): readonly unknown[] {

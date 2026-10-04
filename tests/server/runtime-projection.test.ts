@@ -13,6 +13,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+  BRANCH_BRIDGE_MAX_RESULT_BYTES,
+  decodeBranchBridgeJson,
+  encodeBranchBridgeJson,
+  RETRY_STATE_SUFFIX,
+} from "../../shared/branch-bridge-protocol.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import {
@@ -185,6 +192,26 @@ class NewSessionRpc extends EventEmitter {
       return {} as T;
     }
     if (command.type === "prompt") {
+      if (
+        String(command.message).startsWith(
+          `/${this.options.env!.INSPIRE_BRANCH_COMMAND}${RETRY_STATE_SUFFIX} `,
+        )
+      ) {
+        const request = decodeBranchBridgeJson(
+          String(command.message).split(" ")[1],
+          BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+        ) as object;
+        this.emit("event", {
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: `${this.options.env!.INSPIRE_BRANCH_STATUS_KEY}${RETRY_STATE_SUFFIX}`,
+          statusText: encodeBranchBridgeJson(
+            { ...request, autoRetryEnabled: true },
+            BRANCH_BRIDGE_MAX_RESULT_BYTES,
+          ),
+        });
+        return { disposition: "handled" } as T;
+      }
       const index = ++this.promptCount;
       const timestampIndex = this.reusePromptTimestamps ? 1 : index;
       const user = {

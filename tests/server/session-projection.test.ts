@@ -1484,7 +1484,7 @@ describe("SessionProjection bounded paging", () => {
       expect(() =>
         projection.page(cursor, projection.leafId, "view-a"),
       ).toThrow(/stale/);
-      expect(projection.latestPage().composerHistoryVersion).not.toBe(
+      expect(projection.latestPage().composerHistoryVersion).toBe(
         latest.composerHistoryVersion,
       );
       expect(projection.latestPage([], "m120").composerHistoryVersion).toBe(

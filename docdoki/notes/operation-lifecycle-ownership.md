@@ -33,6 +33,19 @@ it, including hooks that finish without starting an agent. Stop can bypass the p
 retire a worker blocked in preflight; the interrupted prompt remains acceptance-unknown. The private
 branch handler's RPC completion fences its matching result, so a missing result fails at completion.
 
+Standalone manual compact retains a worker-owned raw-command settlement promise and Pi's terminal
+`compaction_end.aborted` evidence. Stop recovers Pending before generic `abort`, then allows three
+seconds for cooperative settlement; the grace bounds explicit cancellation, not normal execution.
+A cancellation event can accompany a rejected compact RPC with an arbitrary hook diagnostic, so
+classification uses the event rather than error-message matching. Unresponsive hooks fall back to
+confirmed retirement, and neither a pending nor rejected stop releases the writer fence or permits a
+cancelled receipt. Persisted completion racing Stop remains completed even if a post-compact hook
+appends native custom state before suspending. `SessionProjection.entriesAfter` identifies new durable
+entries beyond the admitted tail; ancestry is validated separately against the admitted effective
+leaf. This distinction matters after earlier-branch navigation: the old durable branch can already
+contain a checkpoint, and a new one need not descend from its final tail. Actual installed-Pi 1.0
+Inspire-API evidence and focused ownership regressions: [[follow-compaction-cancellation-2026-10-02]].
+
 ## Worker retirement
 
 `PiRpcProcess` shares one stop attempt across callers. The direct helper in `server/pi-rpc-stop.ts`

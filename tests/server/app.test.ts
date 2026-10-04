@@ -16,25 +16,25 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { accessCookieName, createInspireServer } from "../../server/app.js";
-import {
-  MAX_JOINING_EVENT_BYTES,
-  MAX_RUNTIME_EVENT_BYTES,
-} from "../../server/runtime-event-sockets.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
-import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
+import {
+  MAX_JOINING_EVENT_BYTES,
+  MAX_RUNTIME_EVENT_BYTES,
+} from "../../server/runtime-event-sockets.js";
 import { ToolArgumentStream } from "../../server/tool-argument-stream.js";
+import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
 } from "../../shared/assistant-stream.js";
 import {
   type ActiveSnapshot,
-  type SessionRuntimeStatus,
   MAX_ATTACHMENT_FILE_BYTES,
+  type SessionRuntimeStatus,
 } from "../../shared/contracts.js";
 
 type DetailFrame = Record<string, unknown> & {
@@ -969,7 +969,7 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
-  it("exposes only authenticated current-boundary Pending clear, not individual management", async () => {
+  it("authenticates Pending clear, recovery, and exact-text reads without individual management", async () => {
     const clear = vi
       .spyOn(runtime, "clearPending")
       .mockResolvedValue(undefined);
@@ -990,7 +990,47 @@ describe("local host API", () => {
       .send({ sessionId: "mock-active" })
       .expect(200, { ok: true });
     expect(clear).toHaveBeenCalledExactlyOnceWith("mock-active");
-    for (const path of ["/api/pending", "/api/pending/text"]) {
+    const recover = vi
+      .spyOn(runtime, "recoverPending")
+      .mockResolvedValue({ steering: ["complete"], followUp: ["later"] });
+    const text = vi
+      .spyOn(runtime, "pendingText")
+      .mockResolvedValue("x".repeat(2000));
+    for (const path of ["/api/pending/recover", "/api/pending/text"]) {
+      await request(application.server)
+        .post(path)
+        .send({ sessionId: "mock-active" })
+        .expect(401);
+    }
+    const recovered = await request(application.server)
+      .post("/api/pending/recover")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active" })
+      .expect(200);
+    expect(recovered.body).toEqual({
+      steering: ["complete"],
+      followUp: ["later"],
+    });
+    expect(recover).toHaveBeenCalledExactlyOnceWith("mock-active");
+    const copied = await request(application.server)
+      .post("/api/pending/text")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId: "mock-active",
+        viewId: "view",
+        revision: 7,
+        itemId: "text-steer-0",
+      })
+      .expect(200);
+    expect(copied.body.text).toHaveLength(2000);
+    expect(copied.headers["cache-control"]).toBe("no-store");
+    expect(text).toHaveBeenCalledExactlyOnceWith({
+      sessionId: "mock-active",
+      viewId: "view",
+      revision: 7,
+      itemId: "text-steer-0",
+    });
+    for (const path of ["/api/pending"]) {
       await request(application.server)
         .post(path)
         .set("Authorization", `Bearer ${token}`)
@@ -3150,10 +3190,23 @@ describe("local host API", () => {
     });
     expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
     const storedFiles = await readdir(join(temporary, "uploads"));
-    expect(storedFiles).toHaveLength(1);
+    const id = uploaded.body.attachments[0].id;
+    expect(storedFiles.sort()).toEqual(
+      [`${id}-notes.txt`, `${id}.json`].sort(),
+    );
+    const ownership = JSON.parse(
+      await readFile(join(temporary, "uploads", `${id}.json`), "utf8"),
+    );
+    expect(ownership).toMatchObject({
+      id,
+      kind: "file",
+      fileName: "notes.txt",
+      path: join(temporary, "uploads", `${id}-notes.txt`),
+    });
     if (process.platform !== "win32") {
       expect(
-        (await stat(join(temporary, "uploads", storedFiles[0]!))).mode & 0o777,
+        (await stat(join(temporary, "uploads", `${id}-notes.txt`))).mode &
+          0o777,
       ).toBe(0o600);
     }
 

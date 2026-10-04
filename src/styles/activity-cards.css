@@ -40,6 +40,48 @@
   color: var(--activity-error);
 }
 
+/* User-issued native shell commands remain readable independently of tools. */
+.shell-execution__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.shell-execution__status { color: var(--ink); }
+.shell-execution__context { margin-left: auto; }
+.shell-execution__copy { flex-shrink: 0; }
+
+.shell-execution__command,
+.shell-execution__output {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.shell-execution__command { border-top: 1px solid var(--line); }
+.shell-execution__output {
+  max-height: 24rem;
+  overflow: auto;
+  background: var(--bg-inset);
+}
+
+.shell-execution__note,
+.shell-execution__error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.shell-execution__note { color: var(--muted); }
+.shell-execution__error { color: var(--activity-error); }
+
 @keyframes card-in {
   from {
     opacity: 0;

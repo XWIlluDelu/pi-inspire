@@ -26,7 +26,6 @@ import {
   type RouteResponse,
   TEST_HOST_AUTHORITY,
 } from "./helpers";
-import { pendingQueues } from "./pending-fixtures";
 
 let promptBodies: Record<string, unknown>[];
 let abortBodies: Record<string, unknown>[];
@@ -113,9 +112,13 @@ beforeAll(async () => {
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
+    if (url.startsWith("/api/pending/recover"))
+      return {
+        body: { steering: ["recovered steer"], followUp: ["recovered follow"] },
+      };
     if (url.startsWith("/api/control/abort")) {
       abortBodies.push(jsonBody(init));
-      return { body: { ok: true } };
+      return { body: { steering: [], followUp: [] } };
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);
@@ -612,6 +615,40 @@ describe("composer keyboard submission", () => {
 });
 
 describe("composer-adjacent status and queued controls", () => {
+  it("keeps ordinary Send alongside shell-only Stop without model queue controls", async () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: { ...activeSnapshot(), bashRunning: true },
+      }),
+    );
+    render(<Composer />);
+    expect(
+      screen.getByRole("button", { name: "Abort running task" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Send as steer" }),
+    ).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(input, { target: { value: "!pwd" } });
+    expect(
+      screen.getByRole("button", { name: "Run shell command" }),
+    ).toBeEnabled();
+    fireEvent.change(input, {
+      target: { value: "Explicit model input during shell." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(promptBodies.at(-1)).toMatchObject({
+      message: "Explicit model input during shell.",
+    });
+    expect(promptBodies.at(-1)?.behavior).toBeUndefined();
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+  });
+
   it("keeps retry status without duplicating live or failed tools", () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;
@@ -654,23 +691,6 @@ describe("composer-adjacent status and queued controls", () => {
     expect(
       screen.getByRole("status", { name: "Retry status" }),
     ).toHaveTextContent("Retry 2/3 — rate limited");
-
-    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
-  });
-
-  it("shows a concise pending count outside the live region", () => {
-    clearLeftovers();
-    const socket = FakeWebSocket.instances.at(-1)!;
-    const queued = activeSnapshot();
-    queued.pendingQueues = pendingQueues(
-      ["clarify the constraints"],
-      ["then summarize"],
-    );
-    act(() => socket.emit({ type: "snapshot", data: queued }));
-
-    render(<ActivityBar />);
-    expect(screen.getByText("2 Pending")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Pending input")).not.toBeInTheDocument();
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });

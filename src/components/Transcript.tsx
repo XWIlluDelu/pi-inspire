@@ -30,12 +30,12 @@ import {
 import { userTurnSummary } from "../../shared/user-turns";
 import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
-import { transcriptProjectionKey } from "../transcript-projection-key";
 import {
   type ActivityMaterializationMode,
   store,
   type TranscriptActivityRangeState,
 } from "../store";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 import { Dropdown } from "./Dropdown";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { PromptMap } from "./PromptMap";
@@ -85,7 +85,6 @@ export const Transcript = memo(function Transcript({
   projectionIncarnation = "",
   queue = emptyPendingQueues(),
   pendingAction = null,
-  onClearPending = store.clearPending,
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
@@ -120,8 +119,7 @@ export const Transcript = memo(function Transcript({
   viewId?: string;
   projectionIncarnation?: string;
   queue?: PendingQueues;
-  pendingAction?: "clear" | null;
-  onClearPending?: () => Promise<boolean>;
+  pendingAction?: "clear" | "recover" | null;
   extensionDisplays?: ExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
@@ -693,7 +691,9 @@ export const Transcript = memo(function Transcript({
                 key={sessionId}
                 queue={queue}
                 pendingAction={pendingAction}
-                onClear={onClearPending}
+                onClear={store.clearPending}
+                onRecover={store.recoverPending}
+                getText={store.pendingText}
               />
               <ExtensionDisplaySurface displays={genericExtensionDisplays} />
             </div>

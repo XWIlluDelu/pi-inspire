@@ -64,14 +64,31 @@ Host commands perform compaction, HTML export, and resource reload. Terminal-onl
 copy/open guidance. `/bug` does not upload a report or submit its description as a model prompt.
 The public command inventory is [Pi commands](../../docs/pi-commands.md).
 
-The Host rejects unknown command-shaped text and shell syntax at the prompt boundary, normalizes
-resource-command separators, and revalidates command ownership after reload/worker replacement.
+The Host rejects unknown command-shaped text at the prompt boundary, dispatches direct `!`/`!!`
+input to native Bash, normalizes resource-command separators, and revalidates command ownership
+after reload/worker replacement. Snapshots and slash-command admission/delivery read the worker's
+current loaded inventory. Resource-command completion refreshes browser discovery even during model
+work, without settling that work or Pending. Native in-process reload therefore does not require a
+GUI worker replacement merely to discover its commands.
 `/compact` also has a first-message path using its standalone operation lifecycle.
 
-Compaction completes according to Pi, outside browser prompt deadlines. Because Pi has no public
-`abort_compaction` RPC, cancellation stops only its worker and classifies that compact operation as
-cancelled. A fresh worker resumes from JSONL on demand. Reload replaces an idle worker and invalidates
-resource/model inventories. Export and reload share writer admission; [[composer]] specifies their
+Compaction completes according to Pi, outside browser prompt deadlines. Standalone manual Stop uses
+Pi's generic `abort`, retaining the same worker and extension-local state when cancellation cooperates.
+The abort acknowledgement is not the compaction's completion boundary: Pi's terminal event and compact
+response determine cancellation versus completion, with persisted completion winning a Stop race.
+Only explicit cancellation has a short settlement grace; an unresponsive hook retires through the
+existing confirmed-stop/writer fence. Normal compaction has no time budget. Evidence:
+[[follow-compaction-cancellation-2026-10-02]]. Reload replaces an idle worker and invalidates
+resource/model inventories. Opening the model picker instead refreshes the current worker through
+public `ExtensionCommandContext.modelRegistry.refresh({ signal })`, followed by RPC
+`get_available_models`; native `set_model` reads that same available snapshot. The narrow internal
+command/status pair is worker/session/nonce-owned, hidden from user command/status inventories,
+coalesced per worker, and independent of the persistence/branch mutation lane. A 15-second abort
+budget bounds catalog discovery without stopping Pi. Pi retains extension-registered providers,
+credentials, offline/network policy, and usable cached catalogs; Inspire neither patches private
+registries nor imports an unrelated Host model list into an active worker. Ordinary model changes
+still go through native RPC. [[composer]] specifies cached-first browser ownership and start-surface
+read-only thinking transitions; [[follow-model-selection-2026-10-02]] records verification. Export and reload share writer admission; [[composer]] specifies their
 availability and user feedback.
 
 ## RPC transport and observations
@@ -91,8 +108,27 @@ availability and user feedback.
   Actual stream/stdin failure or child loss initiates retirement. A response deadline alone does
   not establish stream failure or process exit.
 
-Explicit Stop bypasses a blocked persistence lane and can retire a preflight worker when Pi's ordinary
-abort cannot interrupt a hook. A prompt stopped before its receipt remains acceptance-unknown.
+Explicit Stop first dequeues pending text and recoverable original Inspire images into the composer,
+then sends public `clear_queue` before `abort`; abort alone can continue Pi's queued work. Queue recovery and Stop bypass a blocked
+persistence lane, and Stop can retire a preflight worker when Pi's ordinary abort cannot interrupt a
+hook. A failed clear is reported and Stop retires the worker rather than letting pending work resume.
+A prompt written to Pi but stopped before its receipt remains acceptance-unknown. Unwritten image
+preparation remains with its existing owner: worker retirement rejects retained preparations back to
+staged originals rather than deleting them. A Stop epoch is rechecked after asynchronous preparation
+and at the prompt write boundary, so completed Stop cannot admit an older preparation. A genuinely
+new post-Stop send remains available.
+
+Pi's dequeue supplies text, not image bytes. Worker-bound image ownership combines observed queue
+admission, original submitted content, raw user-message consumption, and the dequeue response fence.
+Preparation records a native append cursor through the internal bridge, not a full message read.
+Only ambiguous clearing requests subsequent persisted user-message identity/content hashes and image
+counts, emitted as individual bounded records without image bodies. Raw `message_start` events still
+own consumption before persistence; the bridge cannot reveal a message suspended before that event.
+Exact original Inspire admissions return as staged image handles; known text-only input remains quiet. Extension-added/replaced bytes
+are not reconstructed. Evidence of unresolved image ownership reports a warning instead of guessing
+bytes. Returned handles leave worker cleanup ownership; discard, consumption, and retirement release
+only retained copies still owned by that worker. [[composer]] specifies complete copying and recovery
+merging; [[follow-pending-input-recovery-2026-10-02]] records checks and the API boundary.
 An input hook can also accept a prompt without agent lifecycle events: an idle/empty Pi observation
 may clear that queued admission only while the same worker and sole pending prompt still own it.
 Failure of this observation does not reject an accepted prompt.

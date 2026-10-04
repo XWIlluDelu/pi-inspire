@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { relative, resolve } from "node:path";
+import { parseComposerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
@@ -25,19 +26,13 @@ import type { RuntimeSlot } from "./runtime-slot.js";
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
 type UserMessage = Record<string, unknown>;
-type UserMessageLookup = (messageIndex: number) => UserMessage;
+type UserMessageLookup = (entry: string | number) => UserMessage;
 
 interface ResolvedComposerHistoryArtifacts {
   images: RecalledImage[];
   files: AttachmentContextFile[];
   fileBytes: number;
   projectFiles: string[];
-}
-
-function effectiveLeaf(slot: RuntimeSlot): string | null {
-  return (
-    slot.navigationLease?.effectiveLeafId ?? slot.projection?.leafId ?? null
-  );
 }
 
 function historyProjection(
@@ -48,7 +43,9 @@ function historyProjection(
   effectiveLeafId: string | null;
 } {
   const projection = slot.projection;
-  const effectiveLeafId = effectiveLeaf(slot);
+  const effectiveLeafId = slot.navigationLease
+    ? slot.navigationLease.effectiveLeafId
+    : (projection?.leafId ?? null);
   if (
     !projection ||
     selection.viewId !== slot.viewId ||
@@ -64,13 +61,16 @@ function historyProjection(
 }
 
 function userMessageLookup(messages: readonly unknown[]): UserMessageLookup {
-  const byPersistedIndex = new Map<number, unknown>();
+  const byPersistedIndex = new Map<string | number, unknown>();
   messages.forEach((message, messageIndex) => {
     if (!message || typeof message !== "object") return;
     const record = message as UserMessage;
-    const persistedIndex = Number.isSafeInteger(record.__inspireMessageIndex)
-      ? Number(record.__inspireMessageIndex)
-      : messageIndex;
+    const persistedIndex =
+      typeof record.__inspireHistoryEntryId === "string"
+        ? record.__inspireHistoryEntryId
+        : Number.isSafeInteger(record.__inspireMessageIndex)
+          ? Number(record.__inspireMessageIndex)
+          : messageIndex;
     if (byPersistedIndex.has(persistedIndex)) {
       throw requestError(
         "The conversation contains ambiguous attachment references",
@@ -95,21 +95,12 @@ function userMessageLookup(messages: readonly unknown[]): UserMessageLookup {
 
 function referenceIndexes(
   reference: string,
-  pattern: RegExp,
   label: "image" | "file",
-): [messageIndex: number, itemIndex: number] {
-  const match = pattern.exec(reference);
-  const messageIndex = match ? Number(match[1]) : -1;
-  const itemIndex = match ? Number(match[2]) : -1;
-  if (
-    !Number.isSafeInteger(messageIndex) ||
-    messageIndex < 0 ||
-    !Number.isSafeInteger(itemIndex) ||
-    itemIndex < 0
-  ) {
+): [entry: string | number, itemIndex: number] {
+  const indexes = parseComposerArtifactReference(label, reference);
+  if (!indexes)
     throw requestError(`A recalled ${label} reference is invalid`, 400);
-  }
-  return [messageIndex, itemIndex];
+  return indexes;
 }
 
 function recalledImages(
@@ -117,11 +108,7 @@ function recalledImages(
   userMessage: UserMessageLookup,
 ): RecalledImage[] {
   return references.map((reference) => {
-    const [messageIndex, partIndex] = referenceIndexes(
-      reference,
-      /^pi-embedded:\/\/(\d+)\/(\d+)$/,
-      "image",
-    );
+    const [messageIndex, partIndex] = referenceIndexes(reference, "image");
     const record = userMessage(messageIndex);
     const part = Array.isArray(record.content)
       ? record.content[partIndex]
@@ -177,11 +164,7 @@ function recalledFilePaths(
   userMessage: UserMessageLookup,
 ): string[] {
   return references.map((reference) => {
-    const [messageIndex, referenceIndex] = referenceIndexes(
-      reference,
-      /^pi-file:\/\/(\d+)\/(\d+)$/,
-      "file",
-    );
+    const [messageIndex, referenceIndex] = referenceIndexes(reference, "file");
     const path = parseAttachmentContext(promptText(userMessage(messageIndex)))
       .references[referenceIndex];
     if (!path) {
@@ -217,10 +200,10 @@ async function recalledFiles(
     const outsideWorkspace = escapesBase(relative(workspaceRoot, candidate));
     const ownedAttachment = attachments.ownsPromptFile(candidate);
     // Persisted path text is descriptive, not a capability. Reject an external
-    // path before touching it unless this Host still owns that upload.
+    // path before touching it unless durable Inspire ownership authorizes it.
     if (outsideWorkspace && !ownedAttachment) {
       throw requestError(
-        "A recalled attachment is not owned by this Host; add it again",
+        "A recalled attachment is not owned by Inspire; add it again",
         409,
       );
     }
@@ -291,11 +274,12 @@ export async function revalidateProjectFiles(
 export async function resolveComposerHistoryArtifacts(
   slot: RuntimeSlot,
   request: PromptRequest,
-  attachments: Pick<AttachmentStore, "ownsPromptFile">,
+  attachments: Pick<AttachmentStore, "ownsPromptFile" | "ready">,
 ): Promise<ResolvedComposerHistoryArtifacts> {
   const selection = request.historyArtifacts;
   if (!selection)
     return { images: [], files: [], fileBytes: 0, projectFiles: [] };
+  await attachments.ready();
   if (
     new Set(selection.imageReferences).size !==
       selection.imageReferences.length ||
@@ -306,7 +290,7 @@ export async function resolveComposerHistoryArtifacts(
 
   const { projection, effectiveLeafId } = historyProjection(slot, selection);
   const userMessage = userMessageLookup(
-    projection.viewMessages(effectiveLeafId),
+    projection.composerHistoryMessages(effectiveLeafId),
   );
   const images = recalledImages(selection.imageReferences, userMessage);
   const resolvedFiles = await recalledFiles(

@@ -19,6 +19,9 @@ covers:
   - src/components/transcript-row-projection.tsx
   - src/components/AssistantError.tsx
   - src/components/CustomMessage.tsx
+  - src/components/BashExecution.tsx
+  - tests/web/native-shell.test.tsx
+  - tests/browser/native-shell.spec.ts
   - src/components/transcript-search.ts
   - src/components/transcript-viewport.ts
   - src/components/ActivityBar.tsx
@@ -228,6 +231,19 @@ custom messages remain independent readable boundaries in this contract.
 - Structured file paths and explicit local file references in conversation content remain
   distinguishable from external web links and can open the owning session’s resource preview.
 
+### Direct shell results
+
+Native `bashExecution` messages are user activity, not assistant tool calls. A readable shell card
+shows the exact command with `!`/`!!`, streamed output, running/final exit or cancelled status,
+context inclusion/exclusion, and native truncation metadata. **View full output** opens Pi's recorded
+log through the same session-authorized resource viewer as assistant-tool output. Worker retirement settles
+an unfinished card as Interrupted with retained known output and an unconfirmed result/context;
+it does not leave a spinner or invent a native persisted result. It remains visible when
+assistant tools are hidden, supports copying the displayed result and metadata, and strips terminal
+control sequences without interpreting output as HTML. Live-to-durable reconciliation and reopened
+history keep one result per native execution. [[pi-integration]] owns execution and context semantics;
+[[follow-shell-input-2026-10-02]] records implementation and checks.
+
 ### History, extension interaction, and Pending
 
 - The contextual History mode shows the bounded Pi conversation tree, active path, and effective
@@ -253,17 +269,13 @@ custom messages remain independent readable boundaries in this contract.
   Model settlement does not end an independent extension command or its dialog. Snapshots retain
   pending requests with their owning worker.
 
-- The user can send steering input during work and queue follow-up input for after completion.
-  Pending is a quiet, bounded, text-only projection of public Pi `queue_update` events with separate
-  Steer/Queue FIFO order and omission markers; its local row keys are not authoritative Pi item IDs.
-  Complete visible text may be copied, but a truncated or omitted preview cannot be copied as full
-  text. Explicitly confirmed Clear all invokes Pi's public `clear_queue` for whatever remains at the
-  operation boundary; it is not a fallback for pause or an implicit side effect of Abort/Escape.
-  There is no pause/resume, per-item mutation, conversion, second editor, or browser-owned pending
-  queue.
+- Pending appears at the end of Transcript with visible, bounded Steer/Queue previews, known image
+  counts and omission markers. Its header groups Return, complete Copy and Clear actions.
+  [[composer]] owns their behavior: Return and Stop recover unconsumed input; explicitly confirmed
+  Clear discards it. The projection does not create browser-owned queue authority.
 
-  The composer-adjacent surface is limited to automatic retry plus a concise `N Pending` count;
-  running and failed tools remain in their chronological cards.
+  The composer-adjacent activity surface shows state-owned retry/compaction feedback and a concise
+  `N Pending` count. Running and failed tools remain in their chronological cards.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
   distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.

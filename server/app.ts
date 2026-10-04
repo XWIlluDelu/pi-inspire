@@ -10,6 +10,10 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
+  COMPOSER_HISTORY_FILE_REFERENCE,
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+} from "../shared/composer-artifact-references.js";
+import {
   type BootstrapResponse,
   type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
@@ -114,20 +118,10 @@ const promptSchema = z
         incarnation: z.string().min(1).max(240).nullable(),
         effectiveLeafId: z.string().min(1).max(240).nullable(),
         imageReferences: z
-          .array(
-            z
-              .string()
-              .max(80)
-              .regex(/^pi-embedded:\/\/\d+\/\d+$/),
-          )
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_IMAGE_REFERENCE))
           .max(MAX_ATTACHMENTS),
         fileReferences: z
-          .array(
-            z
-              .string()
-              .max(80)
-              .regex(/^pi-file:\/\/\d+\/\d+$/),
-          )
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_FILE_REFERENCE))
           .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
       })
       .strict()
@@ -167,6 +161,14 @@ const runtimeDeliveryModeSchema = z
   })
   .strict();
 const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
+const pendingReadSchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(256),
+    revision: z.number().int().nonnegative(),
+    itemId: z.string().min(1).max(128).optional(),
+  })
+  .strict();
 const renameSchema = z.object({
   sessionId: sessionIdField,
   name: z.string().max(160),
@@ -1095,6 +1097,14 @@ export function createInspireServer(deps: AppDependencies): {
       response.json({ attachments: await deps.attachments.addMany(files) });
     },
   );
+  app.get("/api/attachments/:id/image", async (request, response) => {
+    const image = await deps.attachments.imagePreview(
+      attachmentIdSchema.parse(request.params.id),
+    );
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.type(image.mimeType).send(image.bytes);
+  });
   app.delete("/api/attachments/:id", async (request, response) => {
     await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
     response.json({ ok: true });
@@ -1202,8 +1212,29 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
-    await deps.runtime.abort(sessionId);
-    response.json({ ok: true });
+    response.setHeader("Cache-Control", "no-store");
+    const recovered = await deps.runtime.abort(sessionId);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
+  app.post("/api/pending/text", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      text: await deps.runtime.pendingText(
+        pendingReadSchema.parse(request.body),
+      ),
+    });
+  });
+  app.post("/api/pending/recover", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const { sessionId } = clearPendingSchema.parse(request.body);
+    const recovered = await deps.runtime.recoverPending(sessionId);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
   });
   app.post("/api/pending/clear", async (request, response) => {
     const { sessionId } = clearPendingSchema.parse(request.body);

@@ -4,6 +4,7 @@ import {
   MAX_PROJECT_FILES,
   type PromptAcceptedResponse,
   type PromptDeliveryRequest,
+  type UploadedAttachment,
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
@@ -12,7 +13,7 @@ import {
   composerHistoryScopeKey,
   discardComposerHistory,
 } from "../composer-history";
-import { deleteSessionDraft } from "../session-drafts";
+import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
 
 interface RecalledHistoryArtifact {
   type: "image" | "file";
@@ -32,6 +33,7 @@ export interface PendingAttachment {
   size: number;
   kind: "image" | "file";
   previewUrl?: string;
+  previewLoading?: boolean;
   status: "uploading" | "ready" | "error";
   uploadedId?: string;
   uploadedAuthorityId?: string;
@@ -212,6 +214,128 @@ export class ComposerController {
     if (changed && sessionId) this.publish(sessionId);
   }
 
+  /** The receipt transfers handles, not a browser queue. Preserve every image
+   * and the existing draft even when their combined count exceeds send limits. */
+  restorePendingArtifacts(
+    sessionId: string,
+    attachments: UploadedAttachment[],
+    authorityId: string | null,
+  ): void {
+    const composer = this.forSession(sessionId);
+    // Recovery merges into the newest saved draft, not a temporary history
+    // preview. Exiting that preview must not discard returned upload handles.
+    this.restoreHistoryDraft(composer);
+    const api = this.host.api();
+    const currentAuthority = this.host.authorityId();
+    const pending: PendingAttachment[] = attachments.map((item) => ({
+      localId: globalThis.crypto.randomUUID(),
+      fileName: item.fileName,
+      mimeType: item.mimeType,
+      size: item.size,
+      kind: item.kind,
+      uploadedId: item.id,
+      uploadedAuthorityId: authorityId ?? undefined,
+      previewLoading: item.kind === "image",
+      status: authorityId === currentAuthority ? "ready" : "error",
+      ...(authorityId === currentAuthority
+        ? {}
+        : {
+            error: "The Host changed; remove this attachment and add it again",
+          }),
+    }));
+    if (pending.length) touchSessionDraft(sessionId);
+    composer.attachments = [...pending, ...composer.attachments];
+    this.publish(sessionId);
+    if (!api || authorityId !== currentAuthority) return;
+    for (const item of pending)
+      if (item.kind === "image") {
+        void api
+          .attachmentPreview(item.uploadedId!)
+          .then((blob) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            const lists = [
+              composer.attachments,
+              ...(composer.historyDraft
+                ? [composer.historyDraft.attachments]
+                : []),
+              ...[
+                ...composer.deliveries.values(),
+                ...composer.failedDeliveries,
+              ].flatMap((record) => [
+                record.attachments,
+                ...(record.historyDraft
+                  ? [record.historyDraft.attachments]
+                  : []),
+              ]),
+            ];
+            if (
+              !lists.some((items) =>
+                items.some((value) => value.localId === item.localId),
+              )
+            )
+              return;
+            const previewUrl = URL.createObjectURL(blob);
+            this.patchRecoveredPreview(composer, item.localId, {
+              previewUrl,
+              previewLoading: false,
+            });
+            this.publish(sessionId);
+          })
+          .catch((error) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            if (
+              this.patchRecoveredPreview(composer, item.localId, {
+                previewLoading: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Image preview failed",
+              })
+            )
+              this.publish(sessionId);
+          });
+      }
+  }
+
+  private patchRecoveredPreview(
+    composer: ComposerPartition,
+    localId: string,
+    patch: Partial<PendingAttachment>,
+  ): boolean {
+    let found = false;
+    const apply = (items: PendingAttachment[]) => {
+      if (!items.some((item) => item.localId === localId)) return items;
+      found = true;
+      return items.map((item) =>
+        item.localId === localId ? { ...item, ...patch } : item,
+      );
+    };
+    composer.attachments = apply(composer.attachments);
+    if (composer.historyDraft)
+      composer.historyDraft.attachments = apply(
+        composer.historyDraft.attachments,
+      );
+    for (const record of [
+      ...composer.deliveries.values(),
+      ...composer.failedDeliveries,
+    ]) {
+      record.attachments = apply(record.attachments);
+      if (record.historyDraft)
+        record.historyDraft.attachments = apply(
+          record.historyDraft.attachments,
+        );
+    }
+    return found;
+  }
+
   discard(sessionId: string): void {
     for (const confirmation of this.confirmations.get(sessionId)?.values() ??
       [])
@@ -275,6 +399,16 @@ export class ComposerController {
       return false;
     }
     const included = composer.attachments;
+    if (
+      message.trim().startsWith("!") &&
+      (included.length > 0 || composer.projectFiles.length > 0)
+    ) {
+      this.host.notify(
+        "warning",
+        "Shell commands cannot include attachments or project-file references",
+      );
+      return false;
+    }
     const attachmentCount = included.filter(
       (item) =>
         !(
@@ -430,6 +564,30 @@ export class ComposerController {
       if (acceptanceUnknown)
         composer.unknownDeliveries.set(signature, delivery);
       else composer.unknownDeliveries.delete(signature);
+      if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
+        // The recovery receipt owns text merging. Keep Host-held artifacts
+        // with that same session instead of restoring the message twice.
+        composer.attachments = [
+          ...record.attachments.map((item) =>
+            item.recalledArtifact?.preview
+              ? {
+                  ...item,
+                  recalledArtifact: {
+                    ...item.recalledArtifact,
+                    preview: false,
+                  },
+                }
+              : item,
+          ),
+          ...composer.attachments,
+        ];
+        composer.projectFiles = [
+          ...new Set([...record.projectFiles, ...composer.projectFiles]),
+        ];
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+        return false;
+      }
       if (error instanceof ApiError && error.code === "PROMPT_CLEARED") {
         this.releaseAttachments(record.attachments);
         if (record.historyDraft)

@@ -1,9 +1,9 @@
 import {
   type ActiveSnapshot,
+  isSessionRuntimeStatus,
   type ProjectionConflict,
   type ProjectionHealth,
   projectionConflictSeverity,
-  isSessionRuntimeStatus,
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
@@ -238,6 +238,7 @@ export class RuntimeEventController {
     return {
       messages: s.messages,
       streaming: s.streaming,
+      bashRunning: s.bashRunning,
       activeAssistantMessageKey: s.activeAssistantMessageKey,
       runState: s.runState,
       tools: s.tools,

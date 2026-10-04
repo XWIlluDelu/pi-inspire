@@ -1097,44 +1097,6 @@ test("activity dots swap theme colors without layout motion and respect reduced 
   ).toEqual(["none", "none", "none"]);
 });
 
-test("Pending stays read-only until an explicit Clear all confirmation", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
-
-  const composer = page.getByRole("form", { name: "Message composer" });
-  const input = composer.getByRole("textbox", { name: "Message" });
-  await input.fill(`long running prompt ${"x".repeat(260)}`);
-  await composer.getByRole("button", { name: "Send message" }).click();
-  await expect(
-    composer.getByRole("button", { name: "Abort running task" }),
-  ).toBeVisible();
-
-  await input.fill("first pending instruction");
-  await composer.getByRole("button", { name: "Send as steer" }).click();
-  const pending = page.getByRole("region", { name: "Pending input" });
-  await expect(pending).toContainText("first pending instruction");
-  await expect(
-    pending.getByRole("button", { name: /pause|resume|delete|move/i }),
-  ).toHaveCount(0);
-  await composer.getByRole("button", { name: "Queue" }).click();
-  await input.fill("second pending instruction");
-  await composer
-    .getByRole("button", { name: "Queue after current task" })
-    .click();
-  await expect(pending).toContainText("second pending instruction");
-  await pending
-    .getByRole("button", { name: "Clear all Pending input" })
-    .click();
-  await expect(pending).toContainText(
-    "whatever remains queued when Pi handles this request",
-  );
-  await expect(pending.getByRole("listitem")).toHaveCount(2);
-  await pending.getByRole("button", { name: "Clear all" }).click();
-  await expect(pending).toHaveCount(0);
-});
-
 test("new-session completion opens below its caret line inside the viewport", async ({
   page,
 }) => {

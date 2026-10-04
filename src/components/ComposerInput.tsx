@@ -1,9 +1,11 @@
+import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
   type KeyboardEventHandler,
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -225,6 +227,9 @@ export function ComposerInput({
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
 }) {
   const completionId = useId();
+  const editorId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
   const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
   const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
@@ -280,12 +285,77 @@ export function ComposerInput({
     historyPreviewValueRef.current = null;
   }, []);
 
-  useEffect(() => {
+  const resizeEditor = useCallback(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    const wrap = inputWrapRef.current;
+    if (!element || !wrap) return;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const main = wrap.closest("main");
+    const composer = wrap.closest(".composer");
+    const dock = wrap.closest(".composer-dock");
+    const chrome = composer
+      ? composer.getBoundingClientRect().height -
+        element.getBoundingClientRect().height
+      : 0;
+    const dockChrome =
+      dock && composer
+        ? dock.getBoundingClientRect().height -
+          composer.getBoundingClientRect().height
+        : 0;
+    const available = Math.max(
+      48,
+      Math.min(
+        viewportHeight * 0.8,
+        Math.min(
+          main?.getBoundingClientRect().height || viewportHeight,
+          viewportHeight,
+        ) -
+          chrome -
+          dockChrome -
+          64,
+      ),
+    );
+    const limit = expanded
+      ? available
+      : Math.min(viewportHeight * maxHeightRatio, available);
+    const scrollTop = element.scrollTop;
+    element.style.maxHeight = `${limit}px`;
     element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * maxHeightRatio))}px`;
-  }, [maxHeightRatio, value]);
+    element.style.height = `${expanded ? limit : Math.min(element.scrollHeight, limit)}px`;
+    element.scrollTop = scrollTop;
+    setOverflowing(element.scrollHeight > element.clientHeight + 1);
+  }, [expanded, maxHeightRatio]);
+
+  useLayoutEffect(() => {
+    resizeEditor();
+  }, [resizeEditor, value]);
+
+  useEffect(() => {
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resizeEditor);
+    };
+    const wrap = inputWrapRef.current;
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(schedule);
+    if (wrap) {
+      observer?.observe(wrap);
+      const main = wrap.closest("main");
+      if (main) observer?.observe(main);
+    }
+    window.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("resize", schedule);
+    void document.fonts?.ready.then(schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
+  }, [resizeEditor]);
 
   useEffect(() => {
     if (
@@ -604,7 +674,7 @@ export function ComposerInput({
     <>
       <div
         ref={inputWrapRef}
-        className="composer__input-wrap"
+        className={`composer__input-wrap${expanded ? " composer__input-wrap--expanded" : ""}`}
         role="combobox"
         aria-label={completionLabel}
         aria-haspopup="listbox"
@@ -613,6 +683,7 @@ export function ComposerInput({
       >
         <textarea
           ref={textareaRef}
+          id={editorId}
           className="composer__input"
           aria-autocomplete="list"
           aria-controls={completion ? completionId : undefined}
@@ -666,6 +737,32 @@ export function ComposerInput({
           autoCorrect="off"
           autoFocus={autoFocus}
         />
+        {expanded || overflowing ? (
+          <button
+            type="button"
+            className="composer__expand icon-button"
+            aria-label={expanded ? "Collapse editor" : "Expand editor"}
+            title={expanded ? "Collapse editor" : "Expand editor"}
+            aria-expanded={expanded}
+            aria-controls={editorId}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const element = textareaRef.current;
+              const start = element?.selectionStart ?? 0;
+              const end = element?.selectionEnd ?? start;
+              const direction = element?.selectionDirection ?? "none";
+              setExpanded((current) => !current);
+              element?.focus({ preventScroll: true });
+              element?.setSelectionRange(start, end, direction);
+            }}
+          >
+            {expanded ? (
+              <Minimize2 size={16} aria-hidden />
+            ) : (
+              <Maximize2 size={16} aria-hidden />
+            )}
+          </button>
+        ) : null}
       </div>
       {completion
         ? createPortal(

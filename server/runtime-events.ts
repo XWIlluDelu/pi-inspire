@@ -3,10 +3,13 @@ import {
   assistantStreamTextLength,
 } from "../shared/assistant-stream.js";
 import {
+  RETRY_STATE_SUFFIX,
+  PENDING_IMAGE_SUFFIX,
+} from "../shared/branch-bridge-protocol.js";
+import {
   boundedExtensionStatus,
   type ExtensionDisplay,
   type ExtensionUiRequest,
-  emptyPendingQueues,
   isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
@@ -23,7 +26,10 @@ import {
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
-import { pendingQueuesFromTexts } from "./runtime-pending.js";
+import {
+  exactPendingInput,
+  pendingQueuesFromTexts,
+} from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
@@ -57,6 +63,7 @@ export const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
 interface RuntimeEventControllerHost {
+  updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
   selectedSessionId(): string | null;
   recordPersistenceEvent(
     slot: RuntimeSlot,
@@ -237,7 +244,15 @@ export class RuntimeEventController {
     slot: RuntimeSlot,
     event: unknown,
     rpc: PiRpcProcess,
+    pendingContentChanged = false,
   ): void {
+    if (pendingContentChanged) {
+      this.host.refreshPendingQueues(slot);
+      this.host.emitSlotEvent(slot, {
+        type: "queue_update",
+        pendingQueues: slot.pendingQueues,
+      });
+    }
     let record =
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
@@ -397,6 +412,11 @@ export class RuntimeEventController {
       }
     }
     switch (record.type) {
+      case "bash_execution_update":
+        // Only the matching id-tagged native request owns these deltas. Do not
+        // expose raw unbounded chunks from unrelated extension executions.
+        this.host.updateBash(slot, record);
+        return;
       case "extension_ui_request": {
         const owned = { ...record, sessionId: slot.id };
         const pending = this.host.addPendingExtensionUi(slot, owned, rpc);
@@ -425,11 +445,13 @@ export class RuntimeEventController {
         break;
       }
       case "queue_update":
-        slot.piPendingQueues = pendingQueuesFromTexts(
-          record.steering,
-          record.followUp,
-          slot.piPendingQueues.revision,
-        );
+        slot.piPendingInput = exactPendingInput(record);
+        if (!slot.piPendingInput)
+          slot.piPendingQueues = pendingQueuesFromTexts(
+            record.steering,
+            record.followUp,
+            slot.piPendingQueues.revision,
+          );
         this.host.refreshPendingQueues(slot);
         // Public Pi emits full-text arrays on queue updates. The browser
         // receives only the bounded Host projection.
@@ -537,11 +559,10 @@ export class RuntimeEventController {
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
-        // Public Pi's text projection can leave image-only rows stale until settlement.
-        slot.piPendingQueues = emptyPendingQueues();
-        if (slot.deferredPrompts.length === 0)
-          slot.pendingQueues = emptyPendingQueues();
-        else this.host.refreshPendingQueues(slot);
+        // Native display captions can outlive consumption and settlement.
+        // Keep worker-bound row evidence until Pi removes them or the worker retires.
+        slot.pendingImages?.settled();
+        this.host.refreshPendingQueues(slot);
         this.host.invalidateCatalog();
         this.host.scheduleIdleWorkerEviction();
         break;
@@ -627,6 +648,21 @@ export class RuntimeEventController {
     event: unknown,
     record: Record<string, unknown>,
   ): void {
+    // Artifact identity uses the exact wire boundary, before async projection
+    // ordering or response fences can advance.
+    let pendingContentChanged = false;
+    if (record.type === "queue_update") {
+      const input = exactPendingInput(record);
+      if (input) slot.pendingImages?.observeQueue(input);
+    } else if (record.type === "message_start")
+      pendingContentChanged =
+        slot.pendingImages?.observeMessage(record.message) ?? false;
+    if (
+      record.type === "compaction_end" &&
+      record.reason === "manual" &&
+      slot.manualCompaction?.worker === rpc
+    )
+      slot.manualCompaction.aborted = record.aborted === true;
     this.host.recordPersistenceEvent(slot, record);
     // `entry_appended` is host provenance, not transcript content. Its raw
     // extension payload must never cross the browser boundary.
@@ -667,7 +703,7 @@ export class RuntimeEventController {
           }
           if (slot.process !== rpc && (slot.process !== null || !slot.conflict))
             return;
-          this.handleEvent(slot, event, rpc);
+          this.handleEvent(slot, event, rpc, pendingContentChanged);
           // A terminal lifecycle event may settle the agent, but it cannot
           // repair a reconciliation conflict. Keep the worker stopped and leave
           // the explicit abort/recovery boundary as the sole conflict clearer.
@@ -679,12 +715,13 @@ export class RuntimeEventController {
       this.enqueueOrderedEvent(
         slot,
         () => {
-          if (slot.process === rpc) this.handleEvent(slot, event, rpc);
+          if (slot.process === rpc)
+            this.handleEvent(slot, event, rpc, pendingContentChanged);
         },
         "ordered_event_failed",
       );
     } else {
-      this.handleEvent(slot, event, rpc);
+      this.handleEvent(slot, event, rpc, pendingContentChanged);
     }
   }
 
@@ -695,6 +732,16 @@ export class RuntimeEventController {
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
+    if (
+      slot.bridge &&
+      record.type === "extension_ui_request" &&
+      record.method === "setStatus" &&
+      [
+        `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
+        `${slot.bridge.statusKey}${PENDING_IMAGE_SUFFIX}`,
+      ].includes(record.statusKey as string)
+    )
+      return;
     if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     this.dispatchOwnedProcessEvent(slot, rpc, event, record);

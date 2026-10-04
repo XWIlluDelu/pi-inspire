@@ -13,6 +13,7 @@ import type {
   SessionEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
+import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchTreeResponse,
   type ComposerHistoryPage,
@@ -28,7 +29,6 @@ import {
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import { userTurnSummary } from "../shared/user-turns.js";
-import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -215,9 +215,13 @@ export interface SessionProjectionView {
   ): ComposerHistoryPage;
   branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
   entry(id: string): ProjectionEntryTarget | null;
+  /** Committed append suffix after an operation's admitted durable tail. */
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
   persistedEntryMatches(entry: SessionEntry): boolean;
   userText(id: string, maxChars: number): string;
   viewMessages(effectiveLeafId?: string | null): readonly unknown[];
+  /** Retained USER entries on this branch, independent of model compaction. */
+  composerHistoryMessages(effectiveLeafId?: string | null): readonly unknown[];
   reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
   /** Host startup attestation only: reconcile while ordinary readers are suspended. */
   reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
@@ -456,9 +460,8 @@ function isLinearAppend(
 
 function changesComposerHistory(entry: SessionEntry): boolean {
   return (
-    (entry.type === "message" && entry.message.role === "user") ||
-    entry.type === "compaction" ||
-    entry.type === "branch_summary"
+    entry.type === "message" &&
+    (entry.message.role === "user" || entry.message.role === "bashExecution")
   );
 }
 
@@ -683,7 +686,7 @@ export function boundedTranscriptValue(value: unknown): unknown {
 function isVisibleTranscriptBoundary(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  if (record.role === "user") return true;
+  if (record.role === "user" || record.role === "bashExecution") return true;
   // Visible extension messages are context content, not lazily hidden tools.
   if (record.role === "custom") return record.display !== false;
   if (record.role !== "assistant") return false;
@@ -1142,6 +1145,18 @@ export class SessionProjection
     };
   }
 
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
+    const index =
+      tailEntryId === null
+        ? -1
+        : this.currentEntries.findLastIndex(
+            (entry) => entry.id === tailEntryId,
+          );
+    if (tailEntryId !== null && index < 0)
+      throw requestError("Session persistence boundary no longer exists", 409);
+    return this.currentEntries.slice(index + 1);
+  }
+
   persistedEntryMatches(entry: SessionEntry): boolean {
     const found = this.currentEntriesById.get(entry.id);
     return found !== undefined && samePersistedJson(found, entry);
@@ -1198,6 +1213,33 @@ export class SessionProjection
       effectiveLeafId,
       this.currentEntriesById,
     );
+  }
+
+  composerHistoryMessages(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): readonly unknown[] {
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntriesById.has(effectiveLeafId)
+    )
+      throw requestError("Effective branch leaf does not exist", 409);
+    const messages: unknown[] = [];
+    let id = effectiveLeafId;
+    while (id !== null) {
+      const entry = this.currentEntriesById.get(id)!;
+      if (
+        entry.type === "message" &&
+        (entry.message.role === "user" ||
+          entry.message.role === "bashExecution")
+      ) {
+        messages.push({
+          ...entry.message,
+          __inspireHistoryEntryId: entry.id,
+        });
+      }
+      id = entry.parentId;
+    }
+    return messages.reverse();
   }
 
   private resultObservation(): Pick<
@@ -2152,7 +2194,7 @@ export class SessionProjection
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
-      this.viewMessages(effectiveLeafId),
+      this.composerHistoryMessages(effectiveLeafId),
       {
         sessionId: this.sessionId,
         revision: this.revision,

@@ -10,7 +10,7 @@ import {
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   SessionEntry,
@@ -29,10 +29,18 @@ import type {
   SessionRecord,
 } from "../../server/session-catalog.js";
 import type {
+  BranchNavigateRequest,
+  BranchNavigateResponse,
+  BranchTreeResponse,
+  HostNativeCommandRequest,
+  HostNativeCommandResponse,
+  PendingReadRequest,
+  PendingRecovery,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
   PromptDeliveryResponse,
 } from "../../shared/contracts.js";
+import { pendingTextSummary } from "../../shared/pending-preview.js";
 
 const PROVIDER = "pi-operation-offline";
 const MODEL = "tiny-context-fixture";
@@ -51,6 +59,20 @@ interface Observation {
   receipt?: PromptDeliveryResponse;
 }
 interface BrowserClient {
+  branchTree(sessionId: string): Promise<BranchTreeResponse>;
+  navigateBranch(
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse>;
+  nativeCommand(
+    request: HostNativeCommandRequest,
+  ): Promise<HostNativeCommandResponse>;
+  pendingText(request: PendingReadRequest): Promise<{ text: string }>;
+  recoverPending(sessionId: string): Promise<PendingRecovery>;
+  abort(sessionId: string): Promise<PendingRecovery>;
+  clearPending(sessionId: string): Promise<{ ok: boolean }>;
+  attachmentPreview(
+    id: string,
+  ): Promise<{ size: number; arrayBuffer(): Promise<ArrayBuffer> }>;
   prompt(
     body: PromptDeliveryRequest,
     signal?: AbortSignal,
@@ -122,7 +144,7 @@ async function closeServer(server: Server): Promise<void> {
 async function fixture(
   autoCompaction: boolean,
   compactionDelayMs = 35_000,
-  modelReplyGate?: Promise<void>,
+  modelReplyGate?: Promise<void> | ((requestNumber: number) => Promise<void>),
 ) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-pi-operation-")),
@@ -212,7 +234,9 @@ async function fixture(
         response.writeHead(400).end("Unexpected synthetic provider request");
         return;
       }
-      await modelReplyGate;
+      await (typeof modelReplyGate === "function"
+        ? modelReplyGate(modelRequests.length)
+        : modelReplyGate);
       if (response.destroyed) return;
       response.writeHead(200, {
         "content-type": "text/event-stream",
@@ -264,7 +288,7 @@ async function fixture(
             {
               id: MODEL,
               name: "Synthetic tiny context",
-              input: ["text"],
+              input: ["text", "image"],
               reasoning: false,
               contextWindow: 2048,
               maxTokens: 128,
@@ -435,9 +459,10 @@ async function fixture(
     const response = await nativeFetch(url, init);
     observation.status = response.status;
     observation.authorityId = response.headers.get("X-Inspire-Authority");
-    observation.receipt = (await response
-      .clone()
-      .json()) as PromptDeliveryResponse;
+    if (response.headers.get("Content-Type")?.includes("application/json"))
+      observation.receipt = (await response
+        .clone()
+        .json()) as PromptDeliveryResponse;
     observation.completedAt = performance.now();
     return response;
   }) satisfies typeof fetch);
@@ -460,9 +485,7 @@ async function fixture(
     },
     { timeout: 10_000 },
   );
-  expect(piInstallation.packageRoot).toBe(
-    await realpath(resolve("node_modules/@earendil-works/pi-coding-agent")),
-  );
+  expect(piInstallation.commandPath).toBe(process.env.INSPIRE_PI_COMMAND);
   expect(workers).toHaveLength(1);
   const initial = await runtime.snapshot();
   expect(initial.active?.availableModels).toEqual([
@@ -473,6 +496,7 @@ async function fixture(
   );
   return {
     runtime,
+    attachments,
     application,
     api,
     workers,
@@ -482,6 +506,8 @@ async function fixture(
     observations,
     sessionFile,
     sessionId,
+    directory,
+    workspace,
     delivery(message: string): PromptDeliveryRequest {
       return {
         sessionId,
@@ -492,6 +518,332 @@ async function fixture(
     },
   };
 }
+
+describe("native shell input", () => {
+  it("streams direct native results, preserves cwd/context and reopens excluded results without a model turn", async () => {
+    const f = await fixture(false);
+    const included = f.delivery(
+      "!printf 'NATIVE_INCLUDED'; pwd; sleep 0.2; printf 'TAIL'",
+    );
+    await f.api.prompt(included);
+    await f.api.prompt(included); // Reobserving the same receipt must not rerun a shell.
+    await f.api.prompt(f.delivery("!!printf 'NATIVE_EXCLUDED'"));
+    expect(f.modelRequests).toHaveLength(0);
+    expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
+    const deltas = eventsOf(f.piEvents, "bash_execution_update");
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.every((event) => typeof event.id === "string")).toBe(true);
+    expect(
+      eventsOf(f.runtimeEvents, "message_update").some((event) =>
+        (event.message as Record<string, unknown>)?.output
+          ?.toString()
+          .includes("NATIVE_INCLUDED"),
+      ),
+    ).toBe(true);
+    const snapshot = await f.runtime.snapshot();
+    const bash = snapshot.active!.transcriptPage.messages.filter(
+      (message) =>
+        (message as Record<string, unknown>).role === "bashExecution",
+    ) as Array<Record<string, unknown>>;
+    expect(bash).toHaveLength(2);
+    expect(bash[0]).toMatchObject({
+      exitCode: 0,
+      cancelled: false,
+      excludeFromContext: false,
+    });
+    expect(bash[0]!.output).toContain(f.workspace);
+    expect(bash[1]).toMatchObject({
+      output: "NATIVE_EXCLUDED",
+      excludeFromContext: true,
+    });
+    expect(snapshot.bashRunning).toBe(false);
+    expect(snapshot.active?.projectionConflict).toBeNull();
+    await f.api.prompt(f.delivery("Explicit model turn."));
+    await settled(f, 1);
+    const modelContext = JSON.stringify(f.modelRequests[0]!.body.messages);
+    expect(modelContext).toContain("NATIVE_INCLUDED");
+    expect(modelContext).not.toContain("NATIVE_EXCLUDED");
+    const history = await f.runtime.composerHistory(f.sessionId);
+    expect(history.entries.map((entry) => entry.text)).toContain(
+      "!!printf 'NATIVE_EXCLUDED'",
+    );
+    await f.runtime.nativeCommand({
+      sessionId: f.sessionId,
+      command: "reload",
+    });
+    const reopened = (await f.runtime.snapshot()).active!.transcriptPage
+      .messages as Array<Record<string, unknown>>;
+    expect(
+      reopened.filter((message) => message.role === "bashExecution"),
+    ).toHaveLength(2);
+    expect(
+      reopened.some(
+        (message) =>
+          message.output === "NATIVE_EXCLUDED" &&
+          message.excludeFromContext === true,
+      ),
+    ).toBe(true);
+    const persisted = await readFile(f.sessionFile, "utf8");
+    expect(persisted).toContain('"role":"bashExecution"');
+    expect(persisted).toContain('"excludeFromContext":true');
+  }, 25_000);
+
+  it("honors extension results/custom operations, nonzero status and native truncation metadata", async () => {
+    const f = await fixture(false);
+    await f.api.prompt(f.delivery("!!fixture-hook"));
+    await f.api.prompt(f.delivery("!fixture-ops"));
+    await f.api.prompt(f.delivery("!head -c 80000 /dev/zero | tr '\\000' x"));
+    const snapshot = await f.runtime.snapshot();
+    const messages = snapshot.active!.transcriptPage.messages as Array<
+      Record<string, unknown>
+    >;
+    expect(
+      messages.find((message) => message.command === "fixture-hook"),
+    ).toMatchObject({
+      output: "EXTENSION_BASH_RESULT",
+      exitCode: 7,
+      excludeFromContext: true,
+    });
+    expect(snapshot.extensionStatuses?.["fixture-user-bash"]).toBe(
+      `true:${f.workspace}`,
+    );
+    expect(
+      messages.find((message) => message.command === "fixture-ops")?.output,
+    ).toContain("EXTENSION_CUSTOM_OPERATIONS");
+    const truncated = messages.find((message) =>
+      String(message.command).startsWith("head -c"),
+    )!;
+    expect(truncated).toMatchObject({ exitCode: 0, truncated: true });
+    expect(truncated.fullOutputPath).toEqual(expect.any(String));
+    expect(String(truncated.fullOutputPath)).toContain(f.directory);
+    expect((await readFile(String(truncated.fullOutputPath))).length).toBe(
+      80000,
+    );
+    expect(f.modelRequests).toHaveLength(0);
+    expect(snapshot.active?.projectionConflict).toBeNull();
+  }, 20_000);
+
+  it("uses abort_bash without model abort/dequeue and rejects a second shell while one is running", async () => {
+    const f = await fixture(false);
+    const worker = f.workers[0]!;
+    const requests = vi.spyOn(worker, "request");
+    const running = f.api.prompt(
+      f.delivery("!printf 'CANCEL_READY'; sleep 30"),
+    );
+    await vi.waitFor(async () =>
+      expect((await f.runtime.snapshot()).bashRunning).toBe(true),
+    );
+    await expect(f.api.prompt(f.delivery("!echo second"))).rejects.toThrow(
+      /already running/,
+    );
+    await f.api.abort(f.sessionId);
+    await running;
+    expect(
+      requests.mock.calls.some(([command]) => command.type === "abort_bash"),
+    ).toBe(true);
+    expect(
+      requests.mock.calls.some(
+        ([command]) =>
+          command.type === "abort" || command.type === "clear_queue",
+      ),
+    ).toBe(false);
+    expect(worker.stop).not.toHaveBeenCalled();
+    const snapshot = await f.runtime.snapshot();
+    expect(snapshot.bashRunning).toBe(false);
+    const cancelled = (
+      snapshot.active!.transcriptPage.messages as Array<Record<string, unknown>>
+    ).find((message) => message.role === "bashExecution");
+    expect(cancelled).toMatchObject({
+      cancelled: true,
+      command: "printf 'CANCEL_READY'; sleep 30",
+    });
+    expect(snapshot.active?.projectionConflict).toBeNull();
+    expect(f.modelRequests).toHaveLength(0);
+  }, 20_000);
+
+  it("keeps extension-hook dialogs answerable and retires only the selected worker on explicit hook Stop", async () => {
+    const f = await fixture(false);
+    const first = f.api.prompt(f.delivery("!fixture-await-bash"));
+    await vi.waitFor(async () =>
+      expect(
+        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+      ).toHaveLength(1),
+    );
+    const dialog = (await f.runtime.snapshot()).pendingExtensionUiRequests![0]!;
+    await f.runtime.extensionUiResponse({
+      sessionId: f.sessionId,
+      id: dialog.id,
+      confirmed: true,
+    });
+    await first;
+    expect(f.workers[0]!.stop).not.toHaveBeenCalled();
+    const stopped = f.api.prompt(f.delivery("!fixture-await-bash"));
+    void stopped.catch(() => {});
+    await vi.waitFor(async () =>
+      expect(
+        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+      ).toHaveLength(1),
+    );
+    await f.api.abort(f.sessionId);
+    await expect(stopped).rejects.toMatchObject({ outcomeUnknown: true });
+    expect(f.workers[0]!.stop).toHaveBeenCalledWith("bash");
+    expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    const final = await f.runtime.snapshot();
+    expect(final.bashRunning).toBe(false);
+    const interrupted = (
+      final.active!.transcriptPage.messages as Array<Record<string, unknown>>
+    ).find((message) => message.__inspireBashInterrupted === true);
+    expect(interrupted).toMatchObject({
+      command: "fixture-await-bash",
+      __inspireBashRunning: false,
+      __inspireBashError: expect.stringContaining("result was confirmed"),
+    });
+    expect(interrupted?.exitCode).toBeUndefined();
+    expect(interrupted?.cancelled).toBeUndefined();
+    expect(
+      (
+        final.active!.transcriptPage.messages as Array<Record<string, unknown>>
+      ).some((message) => message.__inspireBashRunning === true),
+    ).toBe(false);
+    expect(
+      (await readFile(f.sessionFile, "utf8")).split("HOOK_CONFIRMED"),
+    ).toHaveLength(2);
+    expect(f.modelRequests).toHaveLength(0);
+  }, 20_000);
+
+  it("settles streamed output honestly when its isolated worker exits unexpectedly", async () => {
+    const f = await fixture(false);
+    const running = f.api.prompt(f.delivery("!printf 'BEFORE_EXIT'; sleep 30"));
+    void running.catch(() => {});
+    await vi.waitFor(() =>
+      expect(
+        f.runtimeEvents.some(
+          (event) =>
+            (event.message as Record<string, unknown>)?.output ===
+            "BEFORE_EXIT",
+        ),
+      ).toBe(true),
+    );
+    const pid = f.workers[0]!.pid;
+    expect(pid).toEqual(expect.any(Number));
+    process.kill(pid!, "SIGKILL"); // This fixture-created worker, never a live session.
+    await expect(running).rejects.toMatchObject({ outcomeUnknown: true });
+    const snapshot = await f.runtime.snapshot();
+    expect(snapshot.bashRunning).toBe(false);
+    expect(
+      (
+        snapshot.active!.transcriptPage.messages as Array<
+          Record<string, unknown>
+        >
+      ).find((message) => message.role === "bashExecution"),
+    ).toMatchObject({
+      output: "BEFORE_EXIT",
+      __inspireBashRunning: false,
+      __inspireBashInterrupted: true,
+    });
+    expect(await readFile(f.sessionFile, "utf8")).not.toContain("BEFORE_EXIT");
+    expect(f.modelRequests).toHaveLength(0);
+  }, 20_000);
+
+  it("accepts explicit model input during a shell and gives model Stop first ownership", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const f = await fixture(false, 35_000, gate);
+    const requests = vi.spyOn(f.workers[0]!, "request");
+    const shell = f.api.prompt(
+      f.delivery("!printf 'SHELL_ACTIVE'; sleep 2; printf 'SHELL_DONE'"),
+    );
+    try {
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).bashRunning).toBe(true),
+      );
+      expect((await f.runtime.snapshot()).runState).toBe("idle");
+      await f.api.prompt(f.delivery("Explicit model input during shell."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      await f.api.abort(f.sessionId);
+      expect(
+        requests.mock.calls.some(([command]) => command.type === "abort"),
+      ).toBe(true);
+      expect(
+        requests.mock.calls.some(([command]) => command.type === "abort_bash"),
+      ).toBe(false);
+      expect((await f.runtime.snapshot()).bashRunning).toBe(true);
+      await shell;
+      const messages = (await f.runtime.snapshot()).active!.transcriptPage
+        .messages as Array<Record<string, unknown>>;
+      expect(
+        messages.find((message) => message.role === "bashExecution"),
+      ).toMatchObject({
+        output: "SHELL_ACTIVESHELL_DONE",
+        cancelled: false,
+        exitCode: 0,
+      });
+      expect(f.modelRequests).toHaveLength(1);
+    } finally {
+      release();
+    }
+  }, 20_000);
+
+  it("executes during native pre-prompt compaction without joining the model queue", async () => {
+    const f = await fixture(true, 1_500);
+    const model = f.api.prompt(f.delivery("Model input that compacts first."));
+    await vi.waitFor(async () =>
+      expect((await f.runtime.snapshot()).runState).toBe("compacting"),
+    );
+    await f.api.prompt(f.delivery("!!printf 'WHILE_COMPACTING'"));
+    expect((await f.runtime.snapshot()).runState).toBe("compacting");
+    expect(f.modelRequests).toHaveLength(0);
+    await model;
+    await settled(f, 1);
+    expect(f.modelRequests).toHaveLength(1);
+    expect(
+      (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
+        (message) =>
+          (message as Record<string, unknown>).output === "WHILE_COMPACTING",
+      ),
+    ).toBe(true);
+  }, 20_000);
+
+  it("runs alongside an agent and persists deferred shell output at settlement without another model turn", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const f = await fixture(false, 35_000, gate);
+    try {
+      await f.api.prompt(f.delivery("Background model turn."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      await f.api.prompt(f.delivery("!printf 'WHILE_MODEL_ACTIVE'"));
+      expect((await f.runtime.snapshot()).runState).toBe("running");
+      expect(await readFile(f.sessionFile, "utf8")).not.toContain(
+        "WHILE_MODEL_ACTIVE",
+      );
+      expect(
+        (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
+          (message) =>
+            (message as Record<string, unknown>).output ===
+            "WHILE_MODEL_ACTIVE",
+        ),
+      ).toBe(true);
+      release();
+      await settled(f, 1);
+      expect(await readFile(f.sessionFile, "utf8")).toContain(
+        "WHILE_MODEL_ACTIVE",
+      );
+      expect(f.modelRequests).toHaveLength(1);
+      expect(
+        (await f.runtime.snapshot()).active!.transcriptPage.messages.filter(
+          (message) =>
+            (message as Record<string, unknown>).role === "bashExecution",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      release();
+    }
+  }, 20_000);
+});
 
 function eventsOf(events: ObservedEvent[], type: string) {
   return events.filter((event) => event.type === type);
@@ -528,15 +880,773 @@ afterEach(async () => {
     throw new AggregateError(failures, "Pi fixture cleanup failed");
 });
 
-describe("installed Pi operation lifecycle", () => {
-  it("returns to idle when an input hook handles the prompt without agent events", async () => {
+async function compactThenReturnToEarlierPoint(
+  f: Awaited<ReturnType<typeof fixture>>,
+) {
+  await f.api.nativeCommand({ sessionId: f.sessionId, command: "compact" });
+  const tree = await f.api.branchTree(f.sessionId);
+  await f.api.navigateBranch({
+    sessionId: f.sessionId,
+    revision: tree.revision,
+    targetId: "00000008",
+    mode: "switch",
+  });
+}
+
+describe("native manual compaction cancellation", () => {
+  it.each(["current", "earlier"] as const)(
+    "cancels manual compaction on the %s branch without replacing its worker or mistaking an old checkpoint for completion",
+    async (branch) => {
+      const f = await fixture(false, 500);
+      const previousCompactions = branch === "earlier" ? 1 : 0;
+      if (branch === "earlier") await compactThenReturnToEarlierPoint(f);
+      const worker = f.workers[0]!;
+      const pid = worker.pid;
+      const requests = vi.spyOn(worker, "request");
+      const compacting = f.api.nativeCommand({
+        sessionId: f.sessionId,
+        command: "compact",
+      });
+      void compacting.catch(() => {});
+      await vi.waitFor(() =>
+        expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(
+          previousCompactions + 1,
+        ),
+      );
+      expect(await worker.request({ type: "get_state" })).toMatchObject({
+        isCompacting: true,
+      });
+      // An earlier-branch view intentionally has a read-only navigation lease.
+      // Current-branch admission additionally verifies Pending recovery.
+      const pending =
+        branch === "current"
+          ? f.api.prompt({
+              ...f.delivery("Never resume this pending input."),
+              behavior: "followUp",
+            })
+          : null;
+      if (pending) {
+        void pending.catch(() => {});
+        await vi.waitFor(async () =>
+          expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(
+            1,
+          ),
+        );
+      }
+      expect(await f.api.abort(f.sessionId)).toEqual({
+        steering: [],
+        followUp: pending ? ["Never resume this pending input."] : [],
+      });
+      if (pending)
+        await expect(pending).rejects.toMatchObject({
+          code: "PROMPT_RECOVERED",
+        });
+      await expect(compacting).resolves.toMatchObject({
+        command: "compact",
+        outcome: "cancelled",
+      });
+      const cancelled = await f.runtime.snapshot();
+      expect(cancelled.runState).toBe("aborted");
+      expect(cancelled.active?.projectionConflict).toBeNull();
+      expect(cancelled.pendingQueues?.totalCount).toBe(0);
+      expect(
+        cancelled.extensionStatuses?.["pi-operation-compaction-count"],
+      ).toBe(String(previousCompactions + 1));
+      expect(eventsOf(f.runtimeEvents, "compaction_end").at(-1)).toMatchObject({
+        aborted: true,
+      });
+      expect(
+        (await readFile(f.sessionFile, "utf8")).match(/"type":"compaction"/g) ??
+          [],
+      ).toHaveLength(previousCompactions);
+      expect(
+        requests.mock.calls
+          .filter(([command]) =>
+            ["clear_queue", "abort"].includes(String(command.type)),
+          )
+          .map(([command]) => command.type),
+      ).toEqual(["clear_queue", "abort"]);
+      expect(worker.stop).not.toHaveBeenCalled();
+      expect(worker.pid).toBe(pid);
+      expect(worker.available).toBe(true);
+      await expect(
+        f.api.nativeCommand({
+          sessionId: f.sessionId,
+          command: "compact",
+        }),
+      ).resolves.toMatchObject({ outcome: "completed" });
+      expect(
+        (await f.runtime.snapshot()).extensionStatuses?.[
+          "pi-operation-compaction-count"
+        ],
+      ).toBe(String(previousCompactions + 2));
+      expect(f.workers).toHaveLength(1);
+      expect(worker.pid).toBe(pid);
+      expect(worker.stop).not.toHaveBeenCalled();
+      expect(
+        (await readFile(f.sessionFile, "utf8")).match(/"type":"compaction"/g),
+      ).toHaveLength(previousCompactions + 1);
+      expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+      expect(f.modelRequests).toHaveLength(0);
+    },
+    20_000,
+  );
+
+  it("retires a genuinely unresponsive compaction hook only after native cancellation cannot settle it", async () => {
+    const f = await fixture(false, 0);
+    const worker = f.workers[0]!;
+    const requests = vi.spyOn(worker, "request");
+    const compacting = f.api.nativeCommand({
+      sessionId: f.sessionId,
+      command: "compact",
+      argument: "fixture-ignore-cancellation",
+    });
+    await vi.waitFor(async () =>
+      expect(
+        (await f.runtime.snapshot()).extensionStatuses?.[
+          "pi-operation-compaction-count"
+        ],
+      ).toBe("1"),
+    );
+    const abort = f.api.abort(f.sessionId);
+    await vi.waitFor(() =>
+      expect(
+        requests.mock.calls.some(([command]) => command.type === "abort"),
+      ).toBe(true),
+    );
+    expect(worker.stop).not.toHaveBeenCalled();
+    await abort;
+    await expect(compacting).resolves.toMatchObject({ outcome: "cancelled" });
+    expect(worker.stop).toHaveBeenCalledWith("compact");
+    expect(worker.available).toBe(false);
+    expect(worker.pid).toBeNull();
+    expect((await f.runtime.snapshot()).runState).toBe("aborted");
+    expect((await f.runtime.snapshot()).active?.projectionConflict).toBeNull();
+    expect(await readFile(f.sessionFile, "utf8")).not.toContain(
+      '"type":"compaction"',
+    );
+    expect(f.modelRequests).toHaveLength(0);
+  }, 20_000);
+
+  it("reports a committed checkpoint as completed when a later native custom entry and suspended hook race Stop", async () => {
+    const f = await fixture(false, 0);
+    await compactThenReturnToEarlierPoint(f);
+    const worker = f.workers[0]!;
+    const compacting = f.api.nativeCommand({
+      sessionId: f.sessionId,
+      command: "compact",
+      argument: "fixture-post-compact",
+    });
+    void compacting.catch(() => {});
+    // Host projection reconciliation may await the still-running compact receipt.
+    // Observe the native hook boundary directly, without waiting on that reader.
+    await vi.waitFor(() =>
+      expect(f.piEvents).toContainEqual(
+        expect.objectContaining({
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: "pi-operation-compaction",
+          statusText: "persisted-waiting",
+        }),
+      ),
+    );
+    await f.api.abort(f.sessionId);
+    await expect(compacting).resolves.toMatchObject({ outcome: "completed" });
+    expect((await f.runtime.snapshot()).runState).toBe("idle");
+    expect(eventsOf(f.runtimeEvents, "compaction_end").at(-1)).toMatchObject({
+      result: {},
+    });
+    expect(
+      eventsOf(f.runtimeEvents, "compaction_end").at(-1)!.aborted,
+    ).not.toBe(true);
+    expect(worker.stop).toHaveBeenCalledWith("compact");
+    const entries = (await readFile(f.sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)) as SessionEntry[];
+    const compactions = entries.filter((entry) => entry.type === "compaction");
+    expect(compactions).toHaveLength(2);
+    expect(compactions.at(-1)?.parentId).toBe("00000008");
+    expect(entries.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "fixture-after-compaction",
+    });
+    expect(f.modelRequests).toHaveLength(0);
+  }, 20_000);
+});
+
+describe("native Pending recovery", () => {
+  it("recovers complete queued text without stopping and Stop never runs pending input", async () => {
+    let releaseModel!: () => void;
+    const modelGate = new Promise<void>((resolveModel) => {
+      releaseModel = resolveModel;
+    });
+    try {
+      const f = await fixture(false, 0, modelGate);
+      await f.api.prompt(f.delivery("Keep this synthetic task active."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const longSteer = `${"long queued input ".repeat(200)}EXACT_END`;
+      for (const [message, behavior] of [
+        ["follow one", "followUp"],
+        [longSteer, "steer"],
+        ["steer two", "steer"],
+        ["follow two", "followUp"],
+      ] as const)
+        await f.api.prompt({ ...f.delivery(message), behavior });
+      const snapshot = await f.runtime.snapshot();
+      expect(snapshot.pendingQueues!.totalCount).toBe(4);
+      expect(snapshot.pendingQueues!.steering[0]!.textPreview).toHaveLength(
+        512,
+      );
+      expect(snapshot.pendingQueues!.steering[0]!.textPreview).toMatch(
+        /…\n.*EXACT_END$/,
+      );
+      const read = {
+        sessionId: f.sessionId,
+        viewId: snapshot.active!.transcriptPage.viewId,
+        revision: snapshot.pendingQueues!.revision,
+      };
+      await expect(
+        f.api.pendingText({ ...read, itemId: "text-steer-0" }),
+      ).resolves.toEqual({ text: longSteer });
+      await expect(f.api.pendingText(read)).resolves.toEqual({
+        text: `1. ${longSteer}\n2. steer two\n3. follow one\n4. follow two`,
+      });
+      expect((await f.runtime.snapshot()).pendingQueues).toEqual(
+        snapshot.pendingQueues,
+      );
+      const restored = await f.api.recoverPending(f.sessionId);
+      expect(restored).toEqual({
+        steering: [longSteer, "steer two"],
+        followUp: ["follow one", "follow two"],
+      });
+      expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+      expect((await f.runtime.snapshot()).runState).toBe("running");
+      expect(f.workers[0]!.stop).not.toHaveBeenCalled();
+      await f.api.prompt({
+        ...f.delivery("Never run this after Stop."),
+        behavior: "followUp",
+      });
+      await expect(f.api.abort(f.sessionId)).resolves.toEqual({
+        steering: [],
+        followUp: ["Never run this after Stop."],
+      });
+      await vi.waitFor(() =>
+        expect(eventsOf(f.runtimeEvents, "agent_settled")).toHaveLength(1),
+      );
+      releaseModel();
+      await delay(250);
+      expect(f.modelRequests).toHaveLength(1);
+      const state = await f.workers[0]!.request({ type: "get_state" });
+      expect(state).toMatchObject({
+        isStreaming: false,
+        pendingMessageCount: 0,
+      });
+      expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+      expect(eventsOf(f.runtimeEvents, "session_projection_conflict")).toEqual(
+        [],
+      );
+    } finally {
+      releaseModel?.();
+    }
+  }, 30_000);
+
+  it("recovers and resends mixed/duplicate/image-only input, discards copies, and restores both modes on Stop", async () => {
+    let releaseModel!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      releaseModel = resolveGate;
+    });
+    try {
+      const f = await fixture(false, 0, gate);
+      await f.api.prompt(
+        f.delivery("Keep mixed pending-image recovery active."),
+      );
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const gif = Buffer.from(
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        "base64",
+      );
+      const add = async (bytes: Buffer, name: string) =>
+        f.attachments.add({
+          originalname: name,
+          mimetype: name.endsWith("png") ? "image/png" : "image/gif",
+          size: bytes.length,
+          buffer: bytes,
+        } as Express.Multer.File);
+      const first = await add(png, "first.png");
+      const second = await add(gif, "second.gif");
+      const duplicate = await add(png, "duplicate.png");
+      const imageOnly = await add(gif, "image-only.gif");
+      for (const [image, behavior, text] of [
+        [first, "steer", "same caption"],
+        [second, "followUp", "same caption"],
+        [duplicate, "steer", "same caption"],
+        [imageOnly, "followUp", ""],
+      ] as const)
+        await f.api.prompt({
+          ...f.delivery(text),
+          behavior,
+          attachmentIds: [image.id],
+        });
+      const recovered = await f.api.recoverPending(f.sessionId);
+      expect(recovered).toEqual({
+        steering: ["same caption", "same caption"],
+        followUp: ["same caption", ""],
+        attachments: [first, duplicate, second, imageOnly],
+        authorityId: f.application.authorityId,
+      });
+      for (const image of recovered.attachments!)
+        expect((await f.api.attachmentPreview(image.id)).size).toBe(image.size);
+      const merged = [...recovered.steering, ...recovered.followUp].join(
+        "\n\n",
+      );
+      await f.api.prompt({
+        ...f.delivery(merged),
+        behavior: "followUp",
+        attachmentIds: recovered.attachments!.map((image) => image.id),
+      });
+      expect(
+        (await f.runtime.snapshot()).pendingQueues!.followUp[0],
+      ).toMatchObject({
+        imageCount: 4,
+        textLength: merged.trim().length,
+      });
+      await f.api.clearPending(f.sessionId);
+      for (const image of recovered.attachments!)
+        await expect(f.api.attachmentPreview(image.id)).rejects.toMatchObject({
+          status: 404,
+        });
+      const stopSteer = await add(png, "stop-steer.png");
+      const stopFollow = await add(gif, "stop-follow.gif");
+      await f.api.prompt({
+        ...f.delivery("stop caption"),
+        behavior: "steer",
+        attachmentIds: [stopSteer.id],
+      });
+      await f.api.prompt({
+        ...f.delivery(""),
+        behavior: "followUp",
+        attachmentIds: [stopFollow.id],
+      });
+      expect(await f.api.abort(f.sessionId)).toEqual({
+        steering: ["stop caption"],
+        followUp: [""],
+        attachments: [stopSteer, stopFollow],
+        authorityId: f.application.authorityId,
+      });
+      for (const image of [stopSteer, stopFollow])
+        expect((await f.api.attachmentPreview(image.id)).size).toBe(image.size);
+      expect(f.modelRequests).toHaveLength(1);
+    } finally {
+      releaseModel?.();
+    }
+  }, 30_000);
+
+  it.each([
+    { label: "image-only Steer", mode: "steer", caption: "" },
+    { label: "image-only Queue", mode: "followUp", caption: "" },
+    {
+      label: "same-caption Queue",
+      mode: "followUp",
+      caption: "long same caption ".repeat(40).trim(),
+    },
+  ] as const)(
+    "keeps only unconsumed $label content through projection, full copy and recovery",
+    async ({ mode, caption }) => {
+      let releaseFirst!: () => void;
+      let releaseLater!: () => void;
+      const first = new Promise<void>((resolveGate) => {
+        releaseFirst = resolveGate;
+      });
+      const later = new Promise<void>((resolveGate) => {
+        releaseLater = resolveGate;
+      });
+      try {
+        const f = await fixture(false, 0, (number) =>
+          number === 1 ? first : later,
+        );
+        await f.api.prompt(f.delivery("Keep image-only consumption active."));
+        await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+        const bytes = Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+          "base64",
+        );
+        const image = await f.attachments.add({
+          originalname: "consumed.png",
+          mimetype: "image/png",
+          size: bytes.length,
+          buffer: bytes,
+        } as Express.Multer.File);
+        await f.api.prompt({
+          ...f.delivery(caption),
+          behavior: mode,
+          attachmentIds: [image.id],
+        });
+        const admitted = await f.runtime.snapshot();
+        expect(admitted.pendingQueues!.totalCount).toBe(1);
+        const staleRead = {
+          sessionId: f.sessionId,
+          viewId: admitted.active!.transcriptPage.viewId,
+          revision: admitted.pendingQueues!.revision,
+          itemId: `text-${mode}-0`,
+        };
+        releaseFirst();
+        await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
+        expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+        expect(eventsOf(f.runtimeEvents, "queue_update").at(-1)).toMatchObject({
+          pendingQueues: { totalCount: 0 },
+        });
+        await expect(f.api.pendingText(staleRead)).rejects.toMatchObject({
+          status: 409,
+        });
+        const gif = Buffer.from(
+          "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+          "base64",
+        );
+        const pending = await f.attachments.add({
+          originalname: "pending.gif",
+          mimetype: "image/gif",
+          size: gif.length,
+          buffer: gif,
+        } as Express.Multer.File);
+        await f.api.prompt({
+          ...f.delivery(caption),
+          behavior: mode,
+          attachmentIds: [pending.id],
+        });
+        await f.api.prompt({
+          ...f.delivery("later exact text"),
+          behavior: mode,
+        });
+        const snapshot = await f.runtime.snapshot();
+        expect(snapshot.runState).toBe("running");
+        expect(snapshot.pendingQueues!.totalCount).toBe(2);
+        const rows =
+          mode === "steer"
+            ? snapshot.pendingQueues!.steering
+            : snapshot.pendingQueues!.followUp;
+        expect(rows).toEqual([
+          {
+            id: `text-${mode}-0`,
+            ...pendingTextSummary(caption),
+            imageCount: 1,
+            imageAttachmentIds: [pending.id],
+          },
+          {
+            id: `text-${mode}-1`,
+            textPreview: "later exact text",
+            textLength: 16,
+            textTruncated: false,
+          },
+        ]);
+        const nativeQueue = eventsOf(f.piEvents, "queue_update").at(-1)!;
+        expect(nativeQueue[mode === "steer" ? "steering" : "followUp"]).toEqual(
+          caption
+            ? [caption, "later exact text"]
+            : ["", "", "later exact text"],
+        );
+        const read = {
+          sessionId: f.sessionId,
+          viewId: snapshot.active!.transcriptPage.viewId,
+          revision: snapshot.pendingQueues!.revision,
+        };
+        expect(
+          await f.api.pendingText({ ...read, itemId: rows[0]!.id }),
+        ).toEqual({ text: caption });
+        expect(
+          await f.api.pendingText({ ...read, itemId: rows[1]!.id }),
+        ).toEqual({ text: "later exact text" });
+        expect(await f.api.pendingText(read)).toEqual({
+          text: `1. ${caption}\n2. later exact text`,
+        });
+        const recovered = await f.api.recoverPending(f.sessionId);
+        expect(recovered).toEqual({
+          steering: mode === "steer" ? [caption, "later exact text"] : [],
+          followUp: mode === "followUp" ? [caption, "later exact text"] : [],
+          attachments: [pending],
+          authorityId: f.application.authorityId,
+        });
+        expect((await f.api.attachmentPreview(pending.id)).size).toBe(
+          gif.length,
+        );
+        await expect(f.api.attachmentPreview(image.id)).rejects.toMatchObject({
+          status: 404,
+        });
+        const body = f.modelRequests[1]!.body;
+        expect(JSON.stringify(body)).toContain("data:image/png;base64,");
+        expect(JSON.stringify(body)).not.toContain("data:image/gif;base64,");
+        expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+        await f.api.abort(f.sessionId);
+        expect(f.modelRequests).toHaveLength(2);
+      } finally {
+        releaseFirst?.();
+        releaseLater?.();
+      }
+    },
+    30_000,
+  );
+
+  it("keeps consumed image-only captions hidden after settlement and the next native queue update", async () => {
+    const releases: Array<() => void> = [];
+    const gates = Array.from(
+      { length: 3 },
+      () =>
+        new Promise<void>((resolveGate) => {
+          releases.push(resolveGate);
+        }),
+    );
+    try {
+      const f = await fixture(false, 0, (number) => gates[number - 1]!);
+      await f.api.prompt(f.delivery("First synthetic task."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const bytes = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const add = (name: string) =>
+        f.attachments.add({
+          originalname: name,
+          mimetype: "image/png",
+          size: bytes.length,
+          buffer: bytes,
+        } as Express.Multer.File);
+      const consumed = await add("consumed.png");
+      await f.api.prompt({
+        ...f.delivery(""),
+        behavior: "steer",
+        attachmentIds: [consumed.id],
+      });
+      releases[0]!();
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
+      releases[1]!();
+      await settled(f, 1);
+      expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+      // No recovery or clear has removed Pi's stale native caption.
+      expect(eventsOf(f.piEvents, "queue_update").at(-1)).toMatchObject({
+        steering: [""],
+        followUp: [],
+      });
+      await f.api.prompt(f.delivery("Second synthetic task."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(3));
+      const pending = await add("pending.png");
+      await f.api.prompt({
+        ...f.delivery(""),
+        behavior: "steer",
+        attachmentIds: [pending.id],
+      });
+      expect(eventsOf(f.piEvents, "queue_update").at(-1)).toMatchObject({
+        steering: ["", ""],
+      });
+      expect((await f.runtime.snapshot()).pendingQueues).toMatchObject({
+        totalCount: 1,
+        steering: [{ id: "text-steer-0", textPreview: "", imageCount: 1 }],
+        followUp: [],
+      });
+      expect(await f.api.abort(f.sessionId)).toEqual({
+        steering: [""],
+        followUp: [],
+        attachments: [pending],
+        authorityId: f.application.authorityId,
+      });
+      await expect(f.api.attachmentPreview(consumed.id)).rejects.toMatchObject({
+        status: 404,
+      });
+      expect((await f.api.attachmentPreview(pending.id)).size).toBe(
+        bytes.length,
+      );
+      expect(f.modelRequests).toHaveLength(3);
+      expect(f.workers).toHaveLength(1);
+      expect(f.workers[0]!.stop).not.toHaveBeenCalled();
+    } finally {
+      for (const release of releases) release();
+    }
+  }, 30_000);
+
+  it("recovers unchanged pending images while an extension delays message_start; get_messages does not expose that in-flight message", async () => {
+    let releaseFirst!: () => void;
+    let releaseLater!: () => void;
+    const first = new Promise<void>((resolveGate) => {
+      releaseFirst = resolveGate;
+    });
+    const later = new Promise<void>((resolveGate) => {
+      releaseLater = resolveGate;
+    });
+    try {
+      const f = await fixture(false, 0, (number) =>
+        number === 1 ? first : later,
+      );
+      await f.api.prompt(
+        f.delivery("Keep delayed image event recovery active."),
+      );
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const gif = Buffer.from(
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        "base64",
+      );
+      const consumed = await f.attachments.add({
+        originalname: "starting.png",
+        mimetype: "image/png",
+        size: png.length,
+        buffer: png,
+      } as Express.Multer.File);
+      await f.api.prompt({
+        ...f.delivery("Delay unchanged image start."),
+        behavior: "steer",
+        attachmentIds: [consumed.id],
+      });
+      releaseFirst();
+      await vi.waitFor(async () =>
+        expect(
+          (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        ).toHaveLength(1),
+      );
+      const dialog = (await f.runtime.snapshot())
+        .pendingExtensionUiRequests![0]!;
+      const publicMessages = await f.workers[0]!.request<{
+        messages: unknown[];
+      }>({ type: "get_messages" });
+      expect(JSON.stringify(publicMessages.messages)).not.toContain(
+        png.toString("base64"),
+      );
+      const pending = await f.attachments.add({
+        originalname: "pending.gif",
+        mimetype: "image/gif",
+        size: gif.length,
+        buffer: gif,
+      } as Express.Multer.File);
+      await f.api.prompt({
+        ...f.delivery("Delay unchanged image start."),
+        behavior: "followUp",
+        attachmentIds: [pending.id],
+      });
+      expect(await f.api.recoverPending(f.sessionId)).toEqual({
+        steering: [],
+        followUp: ["Delay unchanged image start."],
+        attachments: [pending],
+        authorityId: f.application.authorityId,
+      });
+      await f.runtime.extensionUiResponse({
+        sessionId: f.sessionId,
+        id: dialog.id,
+        confirmed: true,
+      });
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
+      expect((await f.api.attachmentPreview(pending.id)).size).toBe(
+        pending.size,
+      );
+      await expect(f.api.attachmentPreview(consumed.id)).rejects.toMatchObject({
+        status: 404,
+      });
+      await f.api.abort(f.sessionId);
+      expect((await f.api.attachmentPreview(pending.id)).size).toBe(
+        pending.size,
+      );
+    } finally {
+      releaseFirst?.();
+      releaseLater?.();
+    }
+  }, 30_000);
+
+  it("recovers original Inspire bytes across an invisible same-caption image replacement, but not after Pi consumes that input", async () => {
+    let releaseFirst!: () => void;
+    let releaseLater!: () => void;
+    const first = new Promise<void>((resolveGate) => {
+      releaseFirst = resolveGate;
+    });
+    const later = new Promise<void>((resolveGate) => {
+      releaseLater = resolveGate;
+    });
+    try {
+      const f = await fixture(false, 0, (number) =>
+        number === 1 ? first : later,
+      );
+      await f.api.prompt(f.delivery("Keep replacement recovery active."));
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+      const bytes = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const image = await f.attachments.add({
+        originalname: "original.png",
+        mimetype: "image/png",
+        size: bytes.length,
+        buffer: bytes,
+      } as Express.Multer.File);
+      await f.api.prompt({
+        ...f.delivery("Replace pending image bytes."),
+        behavior: "followUp",
+        attachmentIds: [image.id],
+      });
+      expect(await f.api.recoverPending(f.sessionId)).toEqual({
+        steering: [],
+        followUp: ["Replace pending image bytes."],
+        attachments: [image],
+        authorityId: f.application.authorityId,
+      });
+      expect(
+        Buffer.from(
+          await (await f.api.attachmentPreview(image.id)).arrayBuffer(),
+        ),
+      ).toEqual(bytes);
+      await f.api.prompt({
+        ...f.delivery("Replace pending image bytes."),
+        behavior: "followUp",
+        attachmentIds: [image.id],
+      });
+      releaseFirst();
+      await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
+      expect(JSON.stringify(f.modelRequests[1]!.body)).toContain(
+        "data:image/gif;base64,",
+      );
+      const recovered = await f.api.recoverPending(f.sessionId);
+      expect(recovered.attachments).toBeUndefined();
+      expect(recovered.warning).toBeUndefined();
+      await expect(f.api.attachmentPreview(image.id)).rejects.toMatchObject({
+        status: 404,
+      });
+      await f.api.abort(f.sessionId);
+    } finally {
+      releaseFirst?.();
+      releaseLater?.();
+    }
+  }, 30_000);
+});
+
+describe("native prompt admission and extension dialogs", () => {
+  it("settles handled input without agent events or an immortal upload reference", async () => {
     const f = await fixture(false);
+    const file = await f.attachments.add({
+      originalname: "handled.txt",
+      mimetype: "text/plain",
+      size: 7,
+      buffer: Buffer.from("payload"),
+    } as Express.Multer.File);
     await expect(
-      f.api.prompt(f.delivery("Handled without a model turn.")),
+      f.api.prompt({
+        ...f.delivery("Handled without a model turn."),
+        attachmentIds: [file.id],
+      }),
     ).resolves.toMatchObject({ accepted: true });
     expect(f.modelRequests).toHaveLength(0);
     expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
     expect((await f.runtime.snapshot()).runState).toBe("idle");
+    const path = join(
+      await f.attachments.uploadDirectory(),
+      `${file.id}-${file.fileName}`,
+    );
+    expect((await readFile(f.sessionFile, "utf8")).includes(path)).toBe(false);
+    expect((await f.attachments.collectUnreferenced()).reclaimed).toEqual([
+      path,
+    ]);
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
 
     await expect(
       f.api.prompt(f.delivery("Continue with an ordinary prompt.")),

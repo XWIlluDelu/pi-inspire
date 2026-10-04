@@ -6,11 +6,17 @@ import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
   type BranchBridgeRequest,
   type BranchBridgeResult,
+  decodeBranchBridgeJson,
+  encodeBranchBridgeJson,
+  RETRY_STATE_SUFFIX,
+  PENDING_IMAGE_SUFFIX,
+  type RetryStateRequest,
+  type RetryStateResult,
 } from "../../shared/branch-bridge-protocol.js";
+
+import { userMessageEvidence } from "../pending-image-evidence.js";
 
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,200}$/;
@@ -90,6 +96,100 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
   const workerId = process.env.INSPIRE_BRANCH_WORKER_ID ?? "";
   if (!TOKEN.test(command) || !TOKEN.test(statusKey) || !TOKEN.test(workerId))
     return;
+
+  pi.registerCommand(`${command}${RETRY_STATE_SUFFIX}`, {
+    description: "Internal Inspire effective retry state",
+    handler: async (argument, ctx) => {
+      const request = decodeBranchBridgeJson(
+        argument,
+        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      ) as RetryStateRequest;
+      if (
+        !request ||
+        ctx.mode !== "rpc" ||
+        request.v !== BRANCH_BRIDGE_VERSION ||
+        request.workerId !== workerId ||
+        request.sessionId !== ctx.sessionManager.getSessionId() ||
+        typeof request.nonce !== "string" ||
+        !TOKEN.test(request.nonce)
+      )
+        throw new Error("invalid retry state owner");
+      // Pi 1.0's public API reads this worker's effective, trust-filtered settings.
+      // The development SDK types predate getSettings().
+      const settings = (
+        pi as ExtensionAPI & {
+          getSettings(): { retry?: { enabled?: boolean } };
+        }
+      ).getSettings();
+      ctx.ui.setStatus(
+        `${statusKey}${RETRY_STATE_SUFFIX}`,
+        encodeBranchBridgeJson(
+          {
+            v: BRANCH_BRIDGE_VERSION,
+            nonce: request.nonce,
+            workerId,
+            sessionId: request.sessionId,
+            autoRetryEnabled: settings.retry?.enabled ?? true,
+          } satisfies RetryStateResult,
+          BRANCH_BRIDGE_MAX_RESULT_BYTES,
+        ),
+      );
+    },
+  });
+
+  pi.registerCommand(`${command}${PENDING_IMAGE_SUFFIX}`, {
+    description: "Internal Inspire pending image evidence",
+    handler: async (argument, ctx) => {
+      const request = decodeBranchBridgeJson(
+        argument,
+        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      ) as Record<string, unknown>;
+      if (
+        !request ||
+        ctx.mode !== "rpc" ||
+        request.v !== BRANCH_BRIDGE_VERSION ||
+        request.workerId !== workerId ||
+        request.sessionId !== ctx.sessionManager.getSessionId() ||
+        typeof request.nonce !== "string" ||
+        !TOKEN.test(request.nonce) ||
+        (request.since !== undefined &&
+          request.since !== null &&
+          typeof request.since !== "string")
+      )
+        throw new Error("invalid pending image owner");
+      const entries = ctx.sessionManager.getEntries();
+      const emit = (payload: object) =>
+        ctx.ui.setStatus(
+          `${statusKey}${PENDING_IMAGE_SUFFIX}`,
+          encodeBranchBridgeJson(
+            {
+              v: BRANCH_BRIDGE_VERSION,
+              nonce: request.nonce,
+              workerId,
+              sessionId: request.sessionId,
+              ...payload,
+            },
+            BRANCH_BRIDGE_MAX_RESULT_BYTES,
+          ),
+        );
+      if (request.since !== undefined) {
+        const start =
+          request.since === null
+            ? -1
+            : entries.findIndex((entry) => entry.id === request.since);
+        if (request.since !== null && start < 0)
+          throw new Error("Pending image cursor is no longer available");
+        for (const entry of entries.slice(start + 1)) {
+          if (entry.type !== "message") continue;
+          const message = userMessageEvidence(entry.message);
+          if (message) emit({ message });
+        }
+      }
+      // No image bodies or old-message hashes cross this boundary. Raw
+      // message_start events still own consumption before persistence.
+      emit({ cursor: entries.at(-1)?.id ?? null });
+    },
+  });
 
   pi.registerCommand(command, {
     description: "Internal Inspire branch navigation bridge",

@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { EventEmitter } from "node:events";
-import { realpathSync } from "node:fs";
 import {
   access,
   mkdir,
@@ -13,15 +11,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AttachmentStore,
-  addAttachmentContext,
-} from "../../server/attachments.js";
+import { addAttachmentContext } from "../../server/attachments.js";
 import { HostRestartController } from "../../server/host-restart.js";
 import {
-  PiRpcCancelledError,
   type PiRpcOptions,
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
@@ -37,140 +31,32 @@ import {
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
   SessionCatalog,
-  type SessionCatalogLike,
   type SessionRecord,
 } from "../../server/session-catalog.js";
-import type { ActiveSessionSnapshot } from "../../server/session-preview.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
 } from "../../shared/contracts.js";
 import { PreviewProjection } from "./fixtures/preview-projection.js";
-
-class FakeRpc extends EventEmitter {
-  readonly commands: Array<Record<string, unknown>> = [];
-  readonly uiResponses: Array<Record<string, unknown>> = [];
-  starts = 0;
-  stops = 0;
-  failPrompts = false;
-  readonly responseOverrides = new Map<string, unknown>();
-  startupEvent: Record<string, unknown> | null = null;
-  startGate: Promise<void> | null = null;
-  sessionPath: string | null;
-  sessionId: string;
-
-  get available(): boolean {
-    return true;
-  }
-
-  constructor(readonly options: PiRpcOptions) {
-    super();
-    const marker = options.args?.indexOf("--session") ?? -1;
-    this.sessionPath =
-      marker >= 0
-        ? resolve(options.args![marker + 1]!)
-        : join(fixtureWorkspace, "new-id.jsonl");
-    this.sessionId = this.sessionPath
-      ? basename(this.sessionPath, ".jsonl")
-      : "new-id";
-  }
-
-  async start(): Promise<void> {
-    this.starts += 1;
-    if (this.startupEvent) this.emit("event", this.startupEvent);
-    if (this.startGate) await this.startGate;
-  }
-
-  async stop(_cancelledCommand?: string): Promise<void> {
-    this.stops += 1;
-  }
-
-  async request<T>(command: Record<string, unknown>): Promise<T> {
-    this.commands.push(command);
-    if (command.type === "prompt" && this.failPrompts)
-      throw new Error("prompt rejected");
-    if (
-      typeof command.type === "string" &&
-      this.responseOverrides.has(command.type)
-    ) {
-      const override = this.responseOverrides.get(command.type);
-      const value =
-        typeof override === "function"
-          ? (override as (command: Record<string, unknown>) => unknown)(command)
-          : structuredClone(override);
-      return value as T;
-    }
-    let value: unknown;
-    switch (command.type) {
-      case "get_state":
-        value = {
-          sessionId: this.sessionId,
-          sessionFile: this.sessionPath ?? undefined,
-          isStreaming: false,
-          isCompacting: false,
-          thinkingLevel: "medium",
-          model: { provider: "test", id: "model" },
-        };
-        break;
-      case "get_messages":
-        value = { messages: [] };
-        break;
-      case "get_entries":
-        value = { entries: [], leafId: command.since ?? null };
-        break;
-      case "get_session_stats":
-        value = {};
-        break;
-      case "get_available_models":
-        value = { models: [] };
-        break;
-      case "get_commands":
-        value = { commands: [] };
-        break;
-      default:
-        value = {};
-    }
-    return value as T;
-  }
-
-  sendExtensionUiResponse(response: Record<string, unknown>): void {
-    this.uiResponses.push(response);
-  }
-}
-
-function pendingEntry(id: string, text: string) {
-  return {
-    id,
-    textPreview: text,
-    textLength: text.length,
-    textTruncated: false,
-  };
-}
-
-const TEST_CWD = realpathSync(tmpdir());
-let fixtureWorkspace: string;
-let HIDDEN_FOLDER_CWD: string;
-
-function fixtureCwd(cwd: string): string {
-  return /^\/(project|folder|loose|ordinary|hidden|other)(\/|$)/u.test(cwd)
-    ? join(fixtureWorkspace, cwd.slice(1))
-    : cwd;
-}
-
-function record(id: string, cwd: string): SessionRecord {
-  return {
-    id,
-    cwd: cwd === "/tmp" ? TEST_CWD : resolve(fixtureCwd(cwd)),
-    path: resolve("/sessions", `${id}.jsonl`),
-    source: null,
-    created: new Date("2026-07-22T00:00:00Z"),
-    modified: new Date("2026-07-22T00:00:00Z"),
-    messageCount: 1,
-    firstMessage: id,
-    searchText: id,
-  };
-}
+import {
+  FakeRpc,
+  TEST_CWD,
+  fixtureWorkspace,
+  HIDDEN_FOLDER_CWD,
+  fixtureCwd,
+  record,
+  waitForReady,
+  preview,
+  previewSnapshot,
+  catalog,
+  workspaceDirectories,
+  trackedAttachmentStore,
+  deferredSignal,
+  upload,
+  initializeRuntimeFixture,
+  disposeRuntimeFixture,
+} from "./fixtures/runtime.js";
 
 async function persistedRecord(
   id: string,
@@ -210,124 +96,8 @@ async function persistedRecord(
   return session;
 }
 
-async function waitForReady(runtime: RuntimeController, sessionId = "a") {
-  const slots = (
-    runtime as unknown as {
-      slots: Map<string, { ready: boolean }>;
-    }
-  ).slots;
-  await vi.waitFor(() => expect(slots.get(sessionId)?.ready).toBe(true));
-}
-
-async function preview(session: SessionRecord): Promise<PreviewProjection> {
-  return new PreviewProjection(session.id, await previewSnapshot(session));
-}
-
-async function previewSnapshot(
-  session: SessionRecord,
-): Promise<ActiveSessionSnapshot> {
-  return {
-    sessionId: session.id,
-    sessionFile: session.path,
-    sessionName: session.name,
-    cwd: session.cwd,
-    model: { provider: "test", id: "model" },
-    thinkingLevel: "medium",
-    isStreaming: false,
-    isCompacting: false,
-    transcriptPage: {
-      sessionId: session.id,
-      revision: 1,
-      viewId: `view-${session.id}`,
-      composerHistoryVersion: "history-1",
-      messages: [
-        { role: "user", content: `preview:${session.id}`, timestamp: 1 },
-      ],
-      hasOlder: false,
-      olderCursor: null,
-    },
-    projectionHealth: { status: "ok" },
-    availableModels: [],
-    commands: [],
-  };
-}
-
-function catalog(records: SessionRecord[]): SessionCatalogLike {
-  const byId = new Map(records.map((item) => [item.id, item]));
-  return {
-    refresh: async () => records,
-    get: async (id) => {
-      const matches = records.filter((record) => record.id === id);
-      if (matches.length > 1)
-        throw Object.assign(
-          new Error("The session identity is ambiguous in the Pi catalog"),
-          { status: 409 },
-        );
-      return byId.get(id);
-    },
-    list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate: () => undefined,
-  };
-}
-
-const attachments: AttachmentStore[] = [];
-const workspaceDirectories: string[] = [];
-
-function trackedAttachmentStore(): AttachmentStore {
-  const store = new AttachmentStore();
-  attachments.push(store);
-  return store;
-}
-
-function deferredSignal(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
-}
-
-function upload(name: string, type: string): Express.Multer.File {
-  const buffer = Buffer.from("payload");
-  return {
-    originalname: name,
-    mimetype: type,
-    size: buffer.length,
-    buffer,
-  } as Express.Multer.File;
-}
-
-beforeEach(async () => {
-  fixtureWorkspace = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-runtime-fixture-")),
-  );
-  workspaceDirectories.push(fixtureWorkspace);
-  await Promise.all(
-    [
-      "project/one",
-      "project/two",
-      "folder",
-      "loose",
-      "ordinary",
-      "hidden",
-      "other",
-    ].map((directory) =>
-      mkdir(join(fixtureWorkspace, directory), { recursive: true }),
-    ),
-  );
-  HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
-});
-
-afterEach(async () => {
-  await Promise.all(attachments.splice(0).map((store) => store.close()));
-  await Promise.all(
-    workspaceDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
-});
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 describe("browser-safe runtime projection", () => {
   it.each(["moved", "replaced", "removed", "ambiguous"] as const)(
@@ -550,8 +320,7 @@ describe("browser-safe runtime projection", () => {
         sessionPath,
         `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: alias })}\n${JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: "hello", timestamp: 1 } })}\n`,
       );
-      const store = new AttachmentStore();
-      attachments.push(store);
+      const store = trackedAttachmentStore();
       let worker: FakeRpc | undefined;
       const runtime = new RuntimeController(
         catalog([session]),
@@ -1684,6 +1453,43 @@ describe("RuntimeController concurrent sessions", () => {
     await runtime.close();
   });
 
+  it("publishes resource-command completion without settling active model work", async () => {
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.responseOverrides.set("get_commands", {
+          commands: [{ name: "reload-fixture", source: "extension" }],
+        });
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    try {
+      await runtime.openSession("a");
+      await runtime.setAutoRetry("a", false);
+      worker.emit("event", { type: "agent_start" });
+      await vi.waitFor(() =>
+        expect(events.some((event) => event.type === "agent_start")).toBe(true),
+      );
+      await runtime.prompt({ sessionId: "a", message: "/reload-fixture" });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "prompt_finished",
+          sessionStatus: expect.objectContaining({ runState: "running" }),
+        }),
+      );
+      expect((await runtime.snapshot("a")).runState).toBe("running");
+      expect(worker.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("revalidates command ownership after a queued worker reload", async () => {
     const workers: FakeRpc[] = [];
     const gate = deferredSignal();
@@ -2002,7 +1808,16 @@ describe("RuntimeController concurrent sessions", () => {
     ).rejects.toMatchObject({ status: 409 });
     await expect(
       runtime.prompt({ sessionId: "a", message: "!pwd" }),
-    ).rejects.toMatchObject({ status: 409 });
+    ).resolves.toMatchObject({ text: "!pwd", images: [], files: [] });
+    expect(
+      worker.commands.find((command) => command.type === "bash"),
+    ).toMatchObject({
+      command: "pwd",
+      excludeFromContext: false,
+    });
+    expect(worker.commands.some((command) => command.type === "prompt")).toBe(
+      false,
+    );
 
     await expect(
       runtime.prompt({
@@ -2018,25 +1833,6 @@ describe("RuntimeController concurrent sessions", () => {
     expect(worker.commands.some((command) => command.type === "prompt")).toBe(
       true,
     );
-    await runtime.setAutoCompaction("a", false);
-    await runtime.setAutoRetry("a", true);
-    await runtime.setSteeringMode("a", "one-at-a-time");
-    await runtime.setFollowUpMode("a", "all");
-    expect(worker.commands).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "set_auto_compaction",
-          enabled: false,
-        }),
-        expect.objectContaining({ type: "set_auto_retry", enabled: true }),
-        expect.objectContaining({
-          type: "set_steering_mode",
-          mode: "one-at-a-time",
-        }),
-        expect.objectContaining({ type: "set_follow_up_mode", mode: "all" }),
-      ]),
-    );
-
     worker.emit("event", { type: "agent_start" });
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
     worker.responseOverrides.set("export_html", { path: "/tmp/live.html" });
@@ -2044,228 +1840,6 @@ describe("RuntimeController concurrent sessions", () => {
       runtime.nativeCommand({ sessionId: "a", command: "export" }),
     ).resolves.toMatchObject({ command: "export", outcome: "completed" });
     expect(worker.commands).toContainEqual({ type: "export_html" });
-    await runtime.close();
-  });
-
-  it("snapshots bounded retry detail for late observers and retires it with the phase", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) => events.push(event));
-    try {
-      await runtime.openSession("a");
-      // Ensure the worker exists without requiring the observer to send a prompt.
-      await runtime.setAutoRetry("a", true);
-      worker.emit("event", {
-        type: "auto_retry_start",
-        attempt: 2,
-        maxAttempts: 3,
-        errorMessage: "x".repeat(5000),
-      });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "auto_retry_start")).toBe(
-          true,
-        ),
-      );
-      expect(
-        events.find((event) => event.type === "auto_retry_start")?.errorMessage,
-      ).toHaveLength(4000);
-      const joined = await runtime.snapshot("a");
-      expect(joined.runState).toBe("retrying");
-      expect(joined.retry).toEqual({
-        attempt: 2,
-        maxAttempts: 3,
-        message: "x".repeat(4000),
-      });
-      expect((await runtime.snapshot("a")).retry).toEqual(joined.retry);
-
-      worker.emit("event", { type: "auto_retry_end", success: true });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "auto_retry_end")).toBe(
-          true,
-        ),
-      );
-      expect((await runtime.snapshot("a")).retry).toBeNull();
-      worker.emit("event", {
-        type: "auto_retry_start",
-        attempt: 99,
-        maxAttempts: 3,
-        errorMessage: "invalid attempt",
-      });
-      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-      expect(await runtime.snapshot("a")).toMatchObject({
-        runState: "retrying",
-        retry: null,
-      });
-      worker.emit("event", { type: "agent_settled" });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "agent_settled")).toBe(
-          true,
-        ),
-      );
-      expect(await runtime.snapshot("a")).toMatchObject({
-        runState: "idle",
-        retry: null,
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("retains bounded summarization retry detail without changing compaction ownership", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) => events.push(event));
-    try {
-      await runtime.openSession("a");
-      await runtime.setAutoRetry("a", true);
-      worker.emit("event", { type: "compaction_start", reason: "manual" });
-      worker.emit("event", {
-        type: "summarization_retry_scheduled",
-        attempt: 2,
-        maxAttempts: 3,
-        errorMessage: "x".repeat(5000),
-      });
-      await vi.waitFor(() =>
-        expect(
-          events.some(
-            (event) => event.type === "summarization_retry_scheduled",
-          ),
-        ).toBe(true),
-      );
-      expect(
-        events.find((event) => event.type === "summarization_retry_scheduled")
-          ?.errorMessage,
-      ).toHaveLength(4000);
-      const joined = await runtime.snapshot("a");
-      expect(joined).toMatchObject({
-        runState: "compacting",
-        retry: null,
-        summarizationRetry: {
-          attempt: 2,
-          maxAttempts: 3,
-          message: "x".repeat(4000),
-        },
-      });
-      expect((await runtime.snapshot("a")).summarizationRetry).toEqual(
-        joined.summarizationRetry,
-      );
-      for (const type of [
-        "summarization_retry_attempt_start",
-        "summarization_retry_finished",
-      ]) {
-        worker.emit("event", { type });
-        await new Promise<void>((done) => setImmediate(done));
-        expect(await runtime.snapshot("a")).toMatchObject({
-          runState: "compacting",
-          summarizationRetry: null,
-        });
-        worker.emit("event", {
-          type: "summarization_retry_scheduled",
-          attempt: 2,
-          maxAttempts: 3,
-          errorMessage: "retry",
-        });
-      }
-      worker.emit("event", {
-        type: "compaction_end",
-        reason: "manual",
-        aborted: true,
-      });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "compaction_end")).toBe(
-          true,
-        ),
-      );
-      expect(await runtime.snapshot("a")).toMatchObject({
-        runState: "aborted",
-        summarizationRetry: null,
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("cancels standalone compaction by replacing its Pi worker", async () => {
-    const store = trackedAttachmentStore();
-    let beginCompact!: () => void;
-    const compactStarted = new Promise<void>((resolveStarted) => {
-      beginCompact = resolveStarted;
-    });
-    let cancelCompact!: (error: Error) => void;
-
-    class HangingCompactRpc extends FakeRpc {
-      override async stop(cancelledCommand?: string): Promise<void> {
-        await super.stop(cancelledCommand);
-        if (cancelledCommand === "compact")
-          cancelCompact(new PiRpcCancelledError("compact"));
-      }
-
-      override async request<T>(command: Record<string, unknown>): Promise<T> {
-        if (command.type !== "compact") return super.request<T>(command);
-        this.commands.push(command);
-        beginCompact();
-        return new Promise<T>((_resolve, reject) => {
-          cancelCompact = reject;
-        });
-      }
-    }
-
-    let worker!: HangingCompactRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new HangingCompactRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    await runtime.openSession("a");
-
-    const compacting = runtime.nativeCommand({
-      sessionId: "a",
-      command: "compact",
-    });
-    await compactStarted;
-    expect((await runtime.snapshot()).runState).toBe("compacting");
-    const pending = runtime.prompt({
-      sessionId: "a",
-      message: "direction held through compaction",
-      behavior: "steer",
-    });
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-    );
-    await runtime.abort("a");
-    await expect(pending).rejects.toMatchObject({ code: "PROMPT_ABORTED" });
-
-    await expect(compacting).resolves.toMatchObject({
-      command: "compact",
-      outcome: "cancelled",
-    });
-    expect(worker.stops).toBe(1);
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toEqual([]);
-    expect((await runtime.snapshot()).runState).toBe("aborted");
     await runtime.close();
   });
 
@@ -3055,431 +2629,6 @@ describe("RuntimeController concurrent sessions", () => {
       extensionDisplays: [],
       extensionStatuses: {},
     });
-    await runtime.close();
-  });
-
-  it("keeps public text-only pending projections for reconnect and clears them on settlement and worker replacement", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-
-    const longPendingText = "x".repeat(600);
-    worker.emit("event", {
-      type: "queue_update",
-      steering: ["first", longPendingText],
-      followUp: ["later"],
-    });
-    expect((await runtime.snapshot()).pendingQueues).toEqual({
-      totalCount: 3,
-      revision: 1,
-      steering: [
-        pendingEntry("text-steer-0", "first"),
-        {
-          ...pendingEntry("text-steer-1", "x".repeat(512)),
-          textLength: 600,
-          textTruncated: true,
-        },
-      ],
-      followUp: [pendingEntry("text-followUp-0", "later")],
-    });
-
-    worker.emit("event", {
-      type: "queue_update",
-      steering: Array.from({ length: 1_001 }, (_, index) => `steer-${index}`),
-      followUp: ["bounded-out"],
-    });
-    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-      totalCount: 1_002,
-      revision: 2,
-      steering: { length: 1_000 },
-      followUp: [],
-    });
-
-    worker.emit("event", { type: "agent_settled" });
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).pendingQueues).toEqual({
-        totalCount: 0,
-        revision: 0,
-        steering: [],
-        followUp: [],
-      }),
-    );
-
-    worker.emit("event", {
-      type: "queue_update",
-      steering: ["stale"],
-      followUp: [],
-    });
-    worker.emit("exit", new Error("replacement required"));
-    expect((await runtime.snapshot()).pendingQueues).toEqual({
-      totalCount: 0,
-      revision: 0,
-      steering: [],
-      followUp: [],
-    });
-    await runtime.close();
-  });
-
-  it("holds manual-compaction input as Pending, clears it, and starts the first surviving prompt once Pi is idle", async () => {
-    let worker!: FakeRpc;
-    const compactGate = deferredSignal();
-    let streaming = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.responseOverrides.set("compact", () => compactGate.promise);
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        sessionFile: worker.sessionPath,
-        isStreaming: streaming,
-        isCompacting: false,
-        thinkingLevel: "medium",
-        model: { provider: "test", id: "model" },
-      }));
-      worker.responseOverrides.set("prompt", () => {
-        streaming = true;
-        return {};
-      });
-      const compact = runtime.nativeCommand({
-        sessionId: "a",
-        command: "compact",
-      });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "compact"),
-        ).toBe(true),
-      );
-      const removed = runtime.prompt({
-        sessionId: "a",
-        message: "remove me",
-        behavior: "steer",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      await runtime.clearPending("a");
-      await expect(removed).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
-      const first = runtime.prompt({
-        sessionId: "a",
-        message: "start",
-        behavior: "steer",
-      });
-      const second = runtime.prompt({
-        sessionId: "a",
-        message: "later",
-        behavior: "followUp",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
-      );
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toEqual([]);
-      worker.emit("event", {
-        type: "compaction_end",
-        reason: "manual",
-        result: {},
-      });
-      compactGate.resolve();
-      await compact;
-      await Promise.all([first, second]);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toMatchObject([
-        { message: "start" },
-        { message: "later", streamingBehavior: "followUp" },
-      ]);
-    } finally {
-      compactGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("does not overtake the original prompt while auto-compaction runs in preflight", async () => {
-    let worker!: FakeRpc;
-    const firstGate = deferredSignal();
-    let streaming = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.responseOverrides.set(
-        "prompt",
-        (command: Record<string, unknown>) =>
-          command.message === "first" ? firstGate.promise : {},
-      );
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        sessionFile: worker.sessionPath,
-        isStreaming: streaming,
-        isCompacting: false,
-      }));
-      const first = runtime.prompt({ sessionId: "a", message: "first" });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "prompt"),
-        ).toBe(true),
-      );
-      worker.emit("event", { type: "compaction_start", reason: "threshold" });
-      const queued = runtime.prompt({
-        sessionId: "a",
-        message: "follow",
-        behavior: "followUp",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      worker.emit("event", {
-        type: "compaction_end",
-        reason: "threshold",
-        result: {},
-      });
-      await new Promise<void>((done) => setImmediate(done));
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-      streaming = true;
-      firstGate.resolve();
-      await Promise.all([first, queued]);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toMatchObject([
-        { message: "first" },
-        { message: "follow", streamingBehavior: "followUp" },
-      ]);
-    } finally {
-      firstGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("lets queued input and Clear bypass a blocked extension receipt", async () => {
-    let worker!: FakeRpc;
-    const extensionGate = deferredSignal();
-    const steeringGate = deferredSignal();
-    let streaming = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        worker.responseOverrides.set("get_commands", () => ({
-          commands: [{ name: "slow", source: "extension" }],
-        }));
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      await runtime.snapshot();
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        sessionFile: worker.sessionPath,
-        isStreaming: streaming,
-        isCompacting: false,
-      }));
-      worker.responseOverrides.set(
-        "prompt",
-        (command: Record<string, unknown>) =>
-          command.message === "/slow"
-            ? extensionGate.promise
-            : command.message === "live"
-              ? steeringGate.promise
-              : {},
-      );
-      const extension = runtime.prompt({ sessionId: "a", message: "/slow" });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "prompt"),
-        ).toBe(true),
-      );
-      const queued = runtime.prompt({
-        sessionId: "a",
-        message: "direction",
-        behavior: "steer",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      await runtime.clearPending("a");
-      await expect(queued).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-      const steering = runtime.prompt({
-        sessionId: "a",
-        message: "live",
-        behavior: "steer",
-      });
-      const following = runtime.prompt({
-        sessionId: "a",
-        message: "more",
-        behavior: "followUp",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
-      );
-      streaming = true;
-      worker.emit("event", { type: "agent_start" });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.message === "more"),
-        ).toBe(true),
-      );
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toMatchObject([
-        { message: "/slow" },
-        { message: "live", streamingBehavior: "steer" },
-        { message: "more", streamingBehavior: "followUp" },
-      ]);
-      steeringGate.resolve();
-      await Promise.all([steering, following]);
-      extensionGate.resolve();
-      await extension;
-    } finally {
-      steeringGate.resolve();
-      extensionGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("does not make a slow steer receipt block the next steer or Clear", async () => {
-    let worker!: FakeRpc;
-    const slowGate = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.emit("event", { type: "agent_start" });
-      worker.responseOverrides.set(
-        "prompt",
-        (command: Record<string, unknown>) =>
-          command.message === "slow" ? slowGate.promise : {},
-      );
-      const slow = runtime.prompt({
-        sessionId: "a",
-        message: "slow",
-        behavior: "steer",
-      });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.message === "slow"),
-        ).toBe(true),
-      );
-      const next = runtime.prompt({
-        sessionId: "a",
-        message: "next",
-        behavior: "followUp",
-      });
-      await runtime.clearPending("a");
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.message === "next"),
-        ).toBe(true),
-      );
-      slowGate.resolve();
-      await Promise.all([slow, next]);
-    } finally {
-      slowGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("clears the public Pi queue at its current boundary without rewriting newer projections", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    const forwarded: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      forwarded.push(event as Record<string, unknown>),
-    );
-
-    worker.emit("event", {
-      type: "queue_update",
-      steering: ["first"],
-      followUp: ["later"],
-    });
-    expect(forwarded.at(-1)).toMatchObject({
-      type: "queue_update",
-      pendingQueues: { totalCount: 2, revision: 1 },
-    });
-    expect(forwarded.at(-1)).not.toHaveProperty("steering");
-    expect(forwarded.at(-1)).not.toHaveProperty("followUp");
-    worker.responseOverrides.set("clear_queue", () => {
-      // Pi consumed 'first' before the operation, cleared 'later', then
-      // another producer queued new work before the HTTP receipt arrived.
-      worker.emit("event", {
-        type: "queue_update",
-        steering: [],
-        followUp: [],
-      });
-      worker.emit("event", {
-        type: "queue_update",
-        steering: ["new"],
-        followUp: [],
-      });
-      return { steering: [], followUp: ["later"] };
-    });
-    await expect(runtime.clearPending("a")).resolves.toBeUndefined();
-    expect(
-      worker.commands.filter((command) => command.type === "clear_queue"),
-    ).toEqual([{ type: "clear_queue" }]);
-    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-      totalCount: 1,
-      steering: [{ textPreview: "new" }],
-      followUp: [],
-    });
-    expect(worker.commands.some((command) => command.type === "abort")).toBe(
-      false,
-    );
     await runtime.close();
   });
 

@@ -1,7 +1,9 @@
 import {
   Archive,
   ChevronRight,
+  CornerUpLeft,
   GitFork,
+  Image as ImageIcon,
   Loader2,
   Package,
   Trash2,
@@ -23,6 +25,7 @@ import {
   type ToolCallContent,
 } from "../events";
 import { store } from "../store";
+import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -542,14 +545,55 @@ export const UnknownRoleRow = memo(function UnknownRoleRow({
   );
 });
 
+function PendingImage({ id, alt }: { id: string; alt: string }) {
+  const [src, setSrc] = useState<string>();
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const request = new AbortController();
+    let objectUrl: string | undefined;
+    void store.loadAttachmentImage(id, request.signal).then(
+      (blob) => {
+        if (request.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      },
+      (reason: unknown) => {
+        if (!request.signal.aborted)
+          setError(
+            reason instanceof Error ? reason.message : "Image unavailable",
+          );
+      },
+    );
+    return () => {
+      request.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [id]);
+
+  return (
+    <ImagePreview
+      src={src}
+      alt={alt}
+      className="pending-group__image"
+      loading={!src && !error}
+      error={error}
+    />
+  );
+}
+
 export function PendingQueueGroups({
   queue,
   pendingAction,
   onClear,
+  onRecover,
+  getText,
 }: {
   queue: PendingQueues;
-  pendingAction: "clear" | null;
+  pendingAction: "clear" | "recover" | null;
   onClear: () => Promise<boolean>;
+  onRecover: () => Promise<boolean>;
+  getText: (revision: number, itemId?: string) => Promise<string | null>;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
@@ -574,16 +618,36 @@ export function PendingQueueGroups({
   ].filter((group) => group.items.length > 0);
   const entries = [...queue.steering, ...queue.followUp];
   const busy = pendingAction !== null;
-  const copyAllPreview = entries
-    .map(
-      (entry, index) =>
-        `${index + 1}. ${entry.textPreview.replace(/\n/g, "\n   ")}`,
-    )
-    .join("\n");
-  const hasText = entries.some(
-    (entry) => entry.textPreview.length > 0 || entry.textTruncated,
-  );
-  const previewOnly = entries.some((entry) => entry.textTruncated);
+
+  async function returnToComposer() {
+    const owner = store.getState();
+    let focusChanged = false;
+    const onFocus = () => {
+      focusChanged = true;
+    };
+    document.addEventListener("focusin", onFocus);
+    try {
+      if (!(await onRecover())) return;
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      const current = store.getState();
+      if (
+        !focusChanged &&
+        !hasActiveModal() &&
+        current.sessionId === owner.sessionId &&
+        current.transcriptViewId === owner.transcriptViewId &&
+        current.transportGeneration === owner.transportGeneration &&
+        !current.sessionSelectionPending
+      )
+        document
+          .querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')
+          ?.focus();
+    } finally {
+      document.removeEventListener("focusin", onFocus);
+    }
+  }
+
   const omitted = queue.totalCount - entries.length;
   if (queue.totalCount === 0) return null;
 
@@ -603,64 +667,69 @@ export function PendingQueueGroups({
           </span>
         </div>
         <div className="pending-groups__actions">
-          {hasText ? (
+          <button
+            type="button"
+            className="icon-button pending-group__control"
+            aria-label="Return all Pending input to composer"
+            title="Return Pending text and images to your draft without stopping"
+            disabled={busy}
+            onClick={() => void returnToComposer()}
+          >
+            {pendingAction === "recover" ? (
+              <Loader2 className="spin" size={13} aria-hidden />
+            ) : (
+              <CornerUpLeft size={13} aria-hidden />
+            )}
+          </button>
+          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
             <CopyAction
-              text={copyAllPreview}
-              label={
-                previewOnly || omitted > 0
-                  ? "displayed pending previews"
-                  : "all pending input"
-              }
+              getText={() => getText(queue.revision)}
+              label="all pending input"
               className="pending-group__copy"
             />
           ) : null}
-          {queue.totalCount > 0 ? (
-            confirmClear ? (
-              <span className="pending-groups__confirm">
-                <span className="pending-groups__confirm-label">
-                  Clear all?
-                </span>
-                <button
-                  type="button"
-                  className="pending-groups__confirm-btn"
-                  disabled={busy}
-                  onClick={() =>
-                    void onClear().then((cleared) => {
-                      if (cleared) setConfirmClear(false);
-                    })
-                  }
-                >
-                  Clear all
-                </button>
-                <button
-                  type="button"
-                  className="pending-groups__confirm-cancel"
-                  aria-label="Cancel clearing Pending input"
-                  disabled={busy}
-                  onClick={() => setConfirmClear(false)}
-                >
-                  <X size={12} aria-hidden />
-                </button>
-              </span>
-            ) : (
+          {confirmClear ? (
+            <span className="pending-groups__confirm">
+              <span className="pending-groups__confirm-label">Clear all?</span>
               <button
                 type="button"
-                className="icon-button pending-group__control pending-group__control--clear"
-                aria-label="Clear all Pending input"
-                title="Clear all Pending input"
+                className="pending-groups__confirm-btn"
                 disabled={busy}
-                onClick={() => setConfirmClear(true)}
+                onClick={() =>
+                  void onClear().then((cleared) => {
+                    if (cleared) setConfirmClear(false);
+                  })
+                }
               >
-                <Trash2 size={13} aria-hidden />
+                Clear all
               </button>
-            )
-          ) : null}
+              <button
+                type="button"
+                className="pending-groups__confirm-cancel"
+                aria-label="Cancel clearing Pending input"
+                disabled={busy}
+                onClick={() => setConfirmClear(false)}
+              >
+                <X size={12} aria-hidden />
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="icon-button pending-group__control pending-group__control--clear"
+              aria-label="Clear all Pending input"
+              title="Clear all Pending input"
+              disabled={busy}
+              onClick={() => setConfirmClear(true)}
+            >
+              <Trash2 size={13} aria-hidden />
+            </button>
+          )}
         </div>
       </div>
-      {previewOnly || omitted > 0 ? (
-        <p className="pending-groups__note">
-          Text previews only; copy uses the displayed text, not omitted content.
-          {omitted > 0 ? ` ${omitted} more pending items are not shown.` : ""}
+      {omitted > 0 ? (
+        <p className="pending-groups__omitted">
+          {omitted} more pending {omitted === 1 ? "item" : "items"} not shown.
         </p>
       ) : null}
       {groups.map((group) => (
@@ -686,8 +755,6 @@ export function PendingQueueGroups({
           <ol className="pending-group__list" start={group.start + 1}>
             {group.items.map((entry, index) => {
               const number = group.start + index + 1;
-              const contentLabel =
-                entry.textPreview || "No text in Pi queue projection";
               const canCopyText = entry.textPreview.length > 0;
               return (
                 <li key={entry.id} className="pending-group__item">
@@ -705,20 +772,43 @@ export function PendingQueueGroups({
                     </span>
                   </div>
                   <div className="pending-group__content">
-                    <pre
-                      className={
-                        entry.textPreview ? undefined : "is-placeholder"
-                      }
-                    >
-                      {contentLabel}
-                      {entry.textTruncated ? "…" : ""}
-                    </pre>
+                    {entry.textPreview || !entry.imageCount ? (
+                      <pre
+                        className={
+                          entry.textPreview ? undefined : "is-placeholder"
+                        }
+                      >
+                        {entry.textPreview || "No text"}
+                      </pre>
+                    ) : null}
+                    {entry.imageAttachmentIds?.length ? (
+                      <div
+                        className="pending-group__images"
+                        role="group"
+                        aria-label={`${entry.imageAttachmentIds.length} ${entry.imageAttachmentIds.length === 1 ? "image" : "images"}`}
+                      >
+                        {entry.imageAttachmentIds.map((id, imageIndex) => (
+                          <PendingImage
+                            key={id}
+                            id={id}
+                            alt={`Pending ${group.label.toLowerCase()} item ${index + 1} image ${imageIndex + 1}`}
+                          />
+                        ))}
+                      </div>
+                    ) : entry.imageCount ? (
+                      <span className="pending-group__image-count">
+                        <ImageIcon size={13} aria-hidden />
+                        {entry.imageCount === 1
+                          ? "Image"
+                          : `${entry.imageCount} images`}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="pending-group__item-actions">
                     {canCopyText ? (
                       <CopyAction
-                        text={entry.textPreview}
-                        label={`${group.label} item ${index + 1}${entry.textTruncated ? " preview" : ""}`}
+                        getText={() => getText(queue.revision, entry.id)}
+                        label={`${group.label} item ${index + 1}`}
                         className="pending-group__copy"
                       />
                     ) : null}

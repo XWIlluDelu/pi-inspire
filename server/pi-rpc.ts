@@ -14,6 +14,8 @@ export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
 
 export interface PiRpcResponseFence {
   received: boolean;
+  /** Assigned before writing; associates native Bash deltas with this request. */
+  id?: string;
 }
 
 interface PendingRequest {
@@ -469,6 +471,7 @@ export class PiRpcProcess extends EventEmitter {
     }
 
     const id = `inspire_${++this.requestSequence}`;
+    if (responseFence) responseFence.id = id;
     const commandName = String(command.type);
     const frame = encodeOutboundFrame({ ...command, id });
     const mayMutate = !READ_ONLY_RPC_COMMANDS.has(commandName);

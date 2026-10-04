@@ -7,10 +7,21 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
-import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
+import {
+  sessionDraft,
+  setSessionDraft,
+  setStartDraft,
+} from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
 import {
   activeSnapshot,
@@ -154,6 +165,7 @@ beforeAll(async () => {
 afterEach(() => {
   defaultModelAvailable = true;
   promptGate = null;
+  setStartDraft("");
 });
 
 describe("new-session start surface", () => {

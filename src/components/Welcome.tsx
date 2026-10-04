@@ -21,7 +21,12 @@ import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { supportedThinkingLevels } from "../model-options";
-import { sessionDraft, setSessionDraft } from "../session-drafts";
+import {
+  sessionDraft,
+  setSessionDraft,
+  setStartDraft,
+  startDraft,
+} from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
@@ -92,7 +97,11 @@ export const Welcome = memo(function Welcome({
   const inheritedModel = inheritance?.model ?? null;
   const inheritedThinkingLevel =
     inheritance?.thinkingLevel ?? state.thinkingLevel;
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(startDraft);
+  const updateDraft = (text: string) => {
+    setDraft(text);
+    setStartDraft(text);
+  };
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
@@ -339,6 +348,12 @@ export const Welcome = memo(function Welcome({
       // both its durable browser draft and its live nonce channel, then let the
       // normal upload/send path own all host attachment state.
       setSessionDraft(opened, message);
+      // Creation transfers this input to its session even if uploading/sending
+      // later fails. A newer start-surface draft keeps its separate ownership.
+      if (startDraft() === message) {
+        setStartDraft("");
+        setDraft("");
+      }
       store.replaceComposerText(message);
       for (const path of referencedProjectFiles) store.addProjectFile(path);
       if (files.length > 0) await store.addFiles(files);
@@ -354,12 +369,10 @@ export const Welcome = memo(function Welcome({
         setSessionDraft(opened, "");
         if (store.getState().sessionId === opened)
           store.replaceComposerText("");
-        setDraft("");
       });
       if (!sent || handedOff || sessionDraft(opened) !== message) return;
       setSessionDraft(opened, "");
       if (store.getState().sessionId === opened) store.replaceComposerText("");
-      setDraft("");
     } finally {
       setStarting(false);
     }
@@ -419,7 +432,7 @@ export const Welcome = memo(function Welcome({
         />
         <ComposerInput
           value={draft}
-          onChange={setDraft}
+          onChange={updateDraft}
           commands={commandScopeMatches ? (inheritance?.commands ?? []) : []}
           includeNativeCommands={false}
           completionDisabled={starting}

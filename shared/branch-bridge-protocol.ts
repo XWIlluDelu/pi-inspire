@@ -1,4 +1,8 @@
 export const BRANCH_BRIDGE_VERSION = 1 as const;
+export const MODEL_REFRESH_SUFFIX = "_models";
+export const RETRY_STATE_SUFFIX = "_retry";
+export const PENDING_IMAGE_SUFFIX = "_pending_images";
+export const MODEL_REFRESH_TIMEOUT_MS = 15_000;
 /** Maximum UTF-8 JSON bytes and, independently, encoded base64url characters. */
 export const BRANCH_BRIDGE_MAX_ARGUMENT_BYTES = 4_096;
 export const BRANCH_BRIDGE_MAX_RESULT_BYTES = 2_048;
@@ -22,6 +26,17 @@ export interface BranchBridgeResult {
   beforeLeaf: string | null;
   effectiveLeaf: string | null;
   error?: string;
+}
+
+export interface RetryStateRequest {
+  v: typeof BRANCH_BRIDGE_VERSION;
+  nonce: string;
+  workerId: string;
+  sessionId: string;
+}
+
+export interface RetryStateResult extends RetryStateRequest {
+  autoRetryEnabled: boolean;
 }
 
 /** Structural framing only. Endpoints remain responsible for validating fields. */

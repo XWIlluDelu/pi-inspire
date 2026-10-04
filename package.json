@@ -62,7 +62,8 @@
       "public/service-worker.js",
       "docs/redesign/prototype/app.js",
       "tests/**/*.{test,spec}.{ts,tsx}",
-      "tests/fixtures/pi-operation-lifecycle-extension.ts"
+      "tests/fixtures/pi-operation-lifecycle-extension.ts",
+      "tests/fixtures/attachment-retention-process.ts"
     ],
     "ignore": [
       "server/instance-state.d.mts",

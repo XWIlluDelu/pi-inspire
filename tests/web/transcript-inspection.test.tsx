@@ -8,11 +8,23 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { pendingTextSummary } from "../../shared/pending-preview";
 import { ExtensionDisplayDock } from "../../src/components/ExtensionDisplays";
 import { Transcript } from "../../src/components/Transcript";
+import { PendingQueueGroups } from "../../src/components/transcript-rows";
 import { findLiteralMatches } from "../../src/components/transcript-search";
 import { store } from "../../src/store";
+import { useModalFocus } from "../../src/use-modal-focus";
 import { pendingQueues } from "./pending-fixtures";
+
+function PendingFocusModal() {
+  const ref = useModalFocus<HTMLDivElement>();
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" tabIndex={-1}>
+      New dialog
+    </div>
+  );
+}
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -1301,7 +1313,100 @@ describe("message actions", () => {
   });
 });
 
-describe("transient conversation projections", () => {
+describe("pending input visibility and actions", () => {
+  it("keeps count-only image summaries visible until thumbnail handles are available", () => {
+    const queue = pendingQueues(["", "Count-only caption", ""]);
+    queue.steering[0]!.imageCount = 1;
+    queue.steering[1]!.imageCount = 2;
+    render(
+      <PendingQueueGroups
+        queue={queue}
+        pendingAction={null}
+        onClear={async () => true}
+        onRecover={async () => true}
+        getText={async () => "Count-only caption"}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem");
+    expect(within(rows[0]!).getByText("Image")).toBeVisible();
+    expect(within(rows[0]!).queryByText("No text")).toBeNull();
+    expect(within(rows[1]!).getByText("2 images")).toBeVisible();
+    expect(within(rows[1]!).getByText("Count-only caption")).toBeVisible();
+    expect(within(rows[2]!).getByText("No text")).toBeVisible();
+  });
+
+  it("previews retained images without changing Pending actions and releases them when consumed", async () => {
+    const load = vi
+      .spyOn(store, "loadAttachmentImage")
+      .mockResolvedValue(new Blob(["image"]));
+    const createUrl = vi
+      .fn()
+      .mockReturnValueOnce("blob:first")
+      .mockReturnValueOnce("blob:second")
+      .mockReturnValueOnce("blob:third");
+    const revokeUrl = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL: createUrl,
+      revokeObjectURL: revokeUrl,
+    });
+    const queue = pendingQueues(["", "Compare these", ""]);
+    queue.steering[0]!.imageCount = 1;
+    queue.steering[0]!.imageAttachmentIds = ["first-image"];
+    queue.steering[1]!.imageCount = 2;
+    queue.steering[1]!.imageAttachmentIds = ["second-image", "third-image"];
+    const onClear = vi.fn(async () => true);
+    const onRecover = vi.fn(async () => true);
+    const { rerender } = render(
+      <PendingQueueGroups
+        queue={queue}
+        pendingAction={null}
+        onClear={onClear}
+        onRecover={onRecover}
+        getText={async () => "Compare these"}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem");
+    const preview = await screen.findByRole("button", {
+      name: "Preview Pending steer item 1 image 1",
+    });
+    expect(preview).toBeEnabled();
+    expect(
+      within(rows[0]!).getByRole("group", { name: "1 image" }),
+    ).toBeVisible();
+    expect(within(rows[0]!).queryByRole("button", { name: /Copy/ })).toBeNull();
+    expect(within(rows[1]!).getByText("Compare these")).toBeVisible();
+    expect(
+      within(rows[1]!).getByRole("group", { name: "2 images" }),
+    ).toBeVisible();
+    expect(
+      within(rows[1]!).getAllByRole("button", { name: /Preview Pending/ }),
+    ).toHaveLength(2);
+    expect(
+      within(rows[1]!).getByRole("button", { name: "Copy steer item 2" }),
+    ).toBeEnabled();
+    expect(within(rows[2]!).getByText("No text")).toBeVisible();
+    expect(within(rows[2]!).queryByRole("group")).toBeNull();
+    fireEvent.click(preview);
+    expect(screen.getByRole("dialog", { name: "Image preview" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Zoom image" })).toBeVisible();
+    expect(onClear).not.toHaveBeenCalled();
+    expect(onRecover).not.toHaveBeenCalled();
+    queue.steering.shift(); // Consumption removes the owner, including its open viewer.
+    queue.totalCount--;
+    rerender(
+      <PendingQueueGroups
+        queue={queue}
+        pendingAction={null}
+        onClear={onClear}
+        onRecover={onRecover}
+        getText={async () => "Compare these"}
+      />,
+    );
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+    expect(revokeUrl).toHaveBeenCalledWith("blob:first");
+    expect(load.mock.calls[0]![1].aborted).toBe(true);
+  });
+
   it("distinguishes, numbers, and copies multiple ordered pending inputs", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -1309,15 +1414,19 @@ describe("transient conversation projections", () => {
       value: { writeText },
     });
     render(
-      <Transcript
-        messages={[{ role: "user", content: "persisted", timestamp: 1 }]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
+      <PendingQueueGroups
+        pendingAction={null}
+        onClear={async () => true}
+        onRecover={async () => true}
         queue={pendingQueues(
           ["steer first", "steer second"],
           ["follow first", "follow second\ncontinued"],
         )}
+        getText={async (_revision, itemId) =>
+          itemId === undefined
+            ? "1. steer first\n2. steer second\n3. follow first\n4. follow second\n   continued"
+            : "steer first"
+        }
       />,
     );
     const pending = screen.getByRole("region", { name: "Pending input" });
@@ -1358,6 +1467,11 @@ describe("transient conversation projections", () => {
 
   it("keeps rows read/copy-only and requires explicit current-boundary clear confirmation", async () => {
     const onClear = vi.fn(async () => true);
+    const onRecover = vi.fn(async () => true);
+    const fullText = `steer preview\nsecond line\nthird line\n${"x".repeat(600)}\nEXACT_END`;
+    const getText = vi.fn(async (_revision: number, itemId?: string) =>
+      itemId === undefined ? `1. ${fullText}\n2. queue preview` : fullText,
+    );
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -1366,17 +1480,15 @@ describe("transient conversation projections", () => {
     const queue = pendingQueues(["steer preview"], ["queue preview"], {
       revision: 7,
     });
-    queue.steering[0]!.textLength = 600;
-    queue.steering[0]!.textTruncated = true;
+    Object.assign(queue.steering[0]!, pendingTextSummary(fullText));
 
     render(
-      <Transcript
-        messages={[]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
+      <PendingQueueGroups
+        pendingAction={null}
         queue={queue}
-        onClearPending={onClear}
+        onClear={onClear}
+        onRecover={onRecover}
+        getText={getText}
       />,
     );
 
@@ -1386,21 +1498,29 @@ describe("transient conversation projections", () => {
     expect(
       screen.queryByRole("button", { name: /pause|resume|delete|move/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Text previews only/)).toBeInTheDocument();
+    expect(screen.queryByText(/Display previews only/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("listitem")[0]!.querySelector("pre")?.textContent,
+    ).toBe("steer preview\nsecond line\nthird line\n…\nEXACT_END");
+    fireEvent.click(screen.getByRole("button", { name: "Copy steer item 1" }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(fullText));
     fireEvent.click(
-      screen.getByRole("button", { name: "Copy steer item 1 preview" }),
-    );
-    await waitFor(() =>
-      expect(writeText).toHaveBeenLastCalledWith("steer preview"),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy displayed pending previews" }),
+      screen.getByRole("button", { name: "Copy all pending input" }),
     );
     await waitFor(() =>
       expect(writeText).toHaveBeenLastCalledWith(
-        "1. steer preview\n2. queue preview",
+        `1. ${fullText}\n2. queue preview`,
       ),
     );
+    expect(onClear).not.toHaveBeenCalled();
+    expect(onRecover).not.toHaveBeenCalled();
+    expect(getText).toHaveBeenCalledWith(7, queue.steering[0]!.id);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Return all Pending input to composer",
+      }),
+    );
+    await waitFor(() => expect(onRecover).toHaveBeenCalledOnce());
 
     fireEvent.click(
       screen.getByRole("button", { name: "Clear all Pending input" }),
@@ -1422,13 +1542,53 @@ describe("transient conversation projections", () => {
     await waitFor(() => expect(onClear).toHaveBeenCalledOnce());
   });
 
+  it.each(["return", "new focus", "new modal"])(
+    "returns explicit Pending focus only while it still owns focus: %s",
+    async (action) => {
+      let resolve!: (value: boolean) => void;
+      const recovery = new Promise<boolean>((done) => {
+        resolve = done;
+      });
+      render(
+        <>
+          <textarea aria-label="Message" />
+          <button type="button">Another editor</button>
+          <PendingQueueGroups
+            queue={pendingQueues(["pending"])}
+            pendingAction={null}
+            onClear={async () => true}
+            onRecover={() => recovery}
+            getText={async () => "pending"}
+          />
+        </>,
+      );
+      const button = screen.getByRole("button", {
+        name: "Return all Pending input to composer",
+      });
+      button.focus();
+      fireEvent.click(button);
+      if (action === "new focus")
+        screen.getByRole("button", { name: "Another editor" }).focus();
+      if (action === "new modal") render(<PendingFocusModal />);
+      await act(async () => {
+        resolve(true);
+        await new Promise((done) => requestAnimationFrame(done));
+      });
+      if (action === "return")
+        await waitFor(() =>
+          expect(screen.getByLabelText("Message")).toHaveFocus(),
+        );
+      else expect(screen.getByLabelText("Message")).not.toHaveFocus();
+    },
+  );
+
   it("hides an empty Pending panel", () => {
     render(
-      <Transcript
-        messages={[]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
+      <PendingQueueGroups
+        pendingAction={null}
+        onClear={async () => true}
+        onRecover={async () => true}
+        getText={async () => ""}
         queue={pendingQueues()}
       />,
     );
@@ -1437,27 +1597,26 @@ describe("transient conversation projections", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("labels omitted rows and offers only displayed-set copy", () => {
+  it("labels omitted rows while offering complete all-items copy", () => {
     render(
-      <Transcript
-        messages={[]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
+      <PendingQueueGroups
+        pendingAction={null}
+        onClear={async () => true}
+        onRecover={async () => true}
+        getText={async () => "complete text"}
         queue={pendingQueues(["shown"], [], { totalCount: 1002 })}
       />,
     );
     expect(
-      screen.getByText(/1001 more pending items are not shown/),
+      screen.getByText("1001 more pending items not shown."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Copy displayed pending previews" }),
+      screen.getByRole("button", { name: "Copy all pending input" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Copy all pending input" }),
-    ).not.toBeInTheDocument();
   });
+});
 
+describe("transient conversation projections", () => {
   it("renders attributable extension content and hides anonymous extension plumbing", () => {
     const { rerender, container } = render(
       <Transcript

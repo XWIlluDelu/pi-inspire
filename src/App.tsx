@@ -603,7 +603,6 @@ const ConversationStage = memo(function ConversationStage() {
       )}
       queue={state.queue}
       pendingAction={state.pendingAction}
-      onClearPending={store.clearPending}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
@@ -660,6 +659,7 @@ export function App() {
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
       runState: source.runState,
+      bashRunning: source.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
       projectionConflict: source.projectionConflict,
@@ -893,7 +893,7 @@ export function App() {
       } else if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
-        isAbortableRunState(state.runState)
+        (isAbortableRunState(state.runState) || state.bashRunning)
       ) {
         void store.abort();
       }
@@ -902,6 +902,7 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     state.runState,
+    state.bashRunning,
     state.resourcesOpen,
     narrowViewport,
     mobileNavOpen,

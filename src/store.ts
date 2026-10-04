@@ -22,6 +22,7 @@ import {
   type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
+  type PendingRecovery,
   type PiMessageDeliveryMode,
   type PiRuntimeSettings,
   type ProjectDisplayPreference,
@@ -934,6 +935,7 @@ export class AppStore {
           ? { error: null, errorSeverity: "error" }
           : {}),
       streaming: Boolean(active?.isStreaming),
+      bashRunning: snapshot.bashRunning === true,
       activeAssistantMessageKey:
         typeof active?.activeAssistantMessageKey === "string"
           ? active.activeAssistantMessageKey
@@ -1809,6 +1811,8 @@ export class AppStore {
     if (native && this.isNativeCommand(message))
       return this.executeNativeCommand(message, native);
 
+    if (message.trim().startsWith("!"))
+      return this.composer.send(message.trim(), undefined, onHandoff);
     const invocation = parseCommandInvocation(message);
     if (invocation) {
       const dynamic = resolveCommandInventory(this.state.commands).find(
@@ -1836,18 +1840,6 @@ export class AppStore {
         behavior,
         onHandoff,
       );
-    } else if (message.trim().startsWith("!")) {
-      const sessionId = this.state.sessionId;
-      if (sessionId)
-        this.presentCommandActivity(
-          sessionId,
-          message,
-          "bash",
-          "warning",
-          "Pi's ! shell mode is not projected into chat yet. Run the command in the persistent project terminal instead.",
-          { action: { kind: "open-terminal", label: "Open project terminal" } },
-        );
-      return false;
     }
     return this.composer.send(message, behavior, onHandoff);
   };
@@ -1864,10 +1856,44 @@ export class AppStore {
     );
     if (compacting)
       this.updateCommandActivity(sessionId, compacting.id, {
-        message: "Cancelling compaction and restarting the Pi worker…",
+        message: "Cancelling compaction…",
       });
     try {
-      await api.abort(sessionId);
+      if (
+        !this.state.projectionConflict &&
+        !(this.state.bashRunning && !isBusyRunState(this.state.runState))
+      ) {
+        try {
+          const pending = await api.recoverPending(sessionId);
+          if (
+            this.api === api &&
+            this.transportGeneration === transportGeneration
+          )
+            this.restorePendingInput(sessionId, pending);
+        } catch (error) {
+          if (
+            this.api !== api ||
+            this.transportGeneration !== transportGeneration
+          )
+            return;
+          if (error instanceof ApiError && error.status === 401) {
+            this.handleAuthFailure();
+            return;
+          }
+          if (this.state.sessionId === sessionId)
+            this.notify(
+              "warning",
+              `Pending recovery failed: ${error instanceof Error ? error.message : "request failed"}`,
+            );
+          // Stop remains owned even if its preliminary recovery failed. The
+          // Host will clear again or retire the worker rather than resume input.
+        }
+      }
+      // The editor receives the first dequeue before Stop is sent. Host abort
+      // clears again at its own boundary, including input arriving meanwhile.
+      const recovered = await api.abort(sessionId);
+      if (this.api === api && this.transportGeneration === transportGeneration)
+        this.restorePendingInput(sessionId, recovered);
     } catch (error) {
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return;
@@ -1886,6 +1912,118 @@ export class AppStore {
         )
           this.fail(message);
       }
+    }
+  };
+
+  private restorePendingInput(
+    sessionId: string,
+    recovered: PendingRecovery,
+  ): boolean {
+    const text = [...recovered.steering, ...recovered.followUp].join("\n\n");
+    const hasImages = Boolean(recovered.attachments?.length);
+    if (text.trim() || hasImages)
+      this.composer.restorePendingArtifacts(
+        sessionId,
+        recovered.attachments ?? [],
+        recovered.authorityId ?? this.hostAuthorityId,
+      );
+    if (text.trim()) {
+      const draft = [text, sessionDraft(sessionId)]
+        .filter((part) => part.trim())
+        .join("\n\n");
+      setSessionDraft(sessionId, draft);
+      if (this.state.sessionId === sessionId) this.replaceComposerText(draft);
+    } else if (hasImages && this.state.sessionId === sessionId) {
+      // Exit a temporary history preview even without recovered text, keeping
+      // the saved draft rather than committing the browsed history caption.
+      this.replaceComposerText(sessionDraft(sessionId));
+    }
+    if (this.state.sessionId === sessionId) {
+      if (recovered.warning) this.notify("warning", recovered.warning);
+      if (recovered.error)
+        this.notify("warning", `Pending recovery failed: ${recovered.error}`);
+    }
+    return !recovered.error;
+  }
+
+  recoverPending = async (): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId || this.state.pendingAction) return false;
+    const request = ++this.pendingActionRequest;
+    this.set({ pendingAction: "recover" });
+    try {
+      const recovered = await api.recoverPending(sessionId);
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      // A selection change must not lose input already removed on the Host.
+      // Merge into the originating partition's latest draft, not the invocation draft.
+      return this.restorePendingInput(sessionId, recovered);
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else if (this.state.sessionId === sessionId)
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to recover Pending input",
+        );
+      return false;
+    } finally {
+      if (
+        this.api === api &&
+        this.transportGeneration === transportGeneration &&
+        request === this.pendingActionRequest
+      )
+        this.set({ pendingAction: null });
+    }
+  };
+
+  pendingText = async (
+    revision: number,
+    itemId?: string,
+  ): Promise<string | null> => {
+    const sessionId = this.state.sessionId;
+    const viewId = this.state.transcriptViewId;
+    const generation = this.selectionGeneration;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId || !viewId) {
+      this.notify("warning", "Complete pending text is unavailable");
+      return null;
+    }
+    const owns = () =>
+      this.api === api &&
+      this.transportGeneration === transportGeneration &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation;
+    try {
+      const result = await api.pendingText({
+        sessionId,
+        viewId,
+        revision,
+        ...(itemId === undefined ? {} : { itemId }),
+      });
+      if (!owns()) return null;
+      if (typeof result.text !== "string")
+        throw new Error("Complete pending text is unavailable");
+      return result.text;
+    } catch (error) {
+      if (!owns()) return null;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to copy Pending input",
+        );
+      return null;
     }
   };
 
@@ -2421,6 +2559,11 @@ export class AppStore {
     signal: AbortSignal,
   ): Promise<Blob> =>
     this.resources.loadDocumentImage(documentId, reference, signal);
+
+  loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
+    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
+    return this.api.attachmentPreview(id, signal);
+  };
 
   loadEmbeddedImage = (
     sessionId: string,

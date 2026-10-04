@@ -10,8 +10,8 @@ import {
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
-  isSessionRuntimeStatus,
   isBusyRunState,
+  isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
@@ -91,6 +91,18 @@ export interface ChatMessage {
   summary?: string;
   tokensBefore?: number;
   fromId?: string;
+  /** Native direct Bash, independent of assistant tool calls. */
+  command?: string;
+  output?: string;
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  excludeFromContext?: boolean;
+  __inspireBashRunning?: boolean;
+  __inspireBashPreviewTruncated?: boolean;
+  __inspireBashError?: string;
+  __inspireBashInterrupted?: boolean;
 }
 
 export function asMessage(value: unknown): ChatMessage {
@@ -194,6 +206,7 @@ export interface Notice {
 export interface EventSlice {
   messages: ChatMessage[];
   streaming: boolean;
+  bashRunning: boolean;
   /** Stable key of the assistant message that owns the current Pi turn. It
    * survives that message's end event through tool execution and is replaced
    * only when the next LLM call starts. */
@@ -217,6 +230,7 @@ export function emptyEventSlice(): EventSlice {
   return {
     messages: [],
     streaming: false,
+    bashRunning: false,
     activeAssistantMessageKey: null,
     runState: "idle",
     tools: {},
@@ -270,6 +284,10 @@ function upsert(
   const next = [...messages];
   const key = messageKey(incoming);
   let index = key ? indexOfKey(next, key) : -1;
+  if (index === -1 && incoming.__inspireLiveId)
+    index = next.findIndex(
+      (message) => message.__inspireLiveId === incoming.__inspireLiveId,
+    );
   if (index === -1 && !key && incoming.role === "assistant") {
     for (let i = next.length - 1; i >= 0; i -= 1) {
       const candidate = next[i]!;
@@ -411,6 +429,13 @@ export function reduceEvent(
   const settle: string[] = [];
   let resync = false;
   let changed = false;
+  if (
+    typeof event.bashRunning === "boolean" &&
+    event.bashRunning !== current.bashRunning
+  ) {
+    slice.bashRunning = event.bashRunning;
+    changed = true;
+  }
   const displays = extensionDisplaysFromEvent(current.extensionDisplays, event);
   if (displays !== current.extensionDisplays) {
     slice.extensionDisplays = displays;
@@ -435,6 +460,13 @@ export function reduceEvent(
       }
       break;
     }
+    case "prompt_finished":
+    case "bash_finished":
+      // Handled extension commands can reload resources without an agent run.
+      // Refresh the snapshot (including commands) when their prompt settles.
+      changed = true;
+      resync = true;
+      break;
     case "message_update":
     case "message_update_batch": {
       const supplied =
@@ -613,7 +645,6 @@ export function reduceEvent(
         slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.queue = emptyPendingQueues();
       changed = true;
       resync = true;
       break;

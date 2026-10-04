@@ -20,6 +20,8 @@ import type {
   ModelOption,
   NewSessionOptions,
   PendingQueues,
+  PendingReadRequest,
+  PendingRecovery,
   PiMessageDeliveryMode,
   PromptRequest,
   SessionDeleteResponse,
@@ -31,6 +33,7 @@ import type {
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { emptyPendingQueues } from "../shared/contracts.js";
+import { pendingTextSummary } from "../shared/pending-preview.js";
 import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
 import { lastAssistantText } from "./assistant-text.js";
@@ -567,6 +570,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     runState: "idle",
     sessionStatuses: {},
   };
+  private readonly pendingTexts = new Map<string, string>();
   private readonly sessions = new Map<
     string,
     NonNullable<ActiveSnapshot["active"]>
@@ -601,6 +605,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   private drainPending(pending: PendingQueues): boolean {
     const entries = [...pending.steering, ...pending.followUp];
     if (entries.length === 0) return false;
+    for (const entry of entries) this.pendingTexts.delete(entry.id);
     pending.totalCount = 0;
     pending.steering = [];
     pending.followUp = [];
@@ -626,11 +631,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const pending = this.pendingFor(request.sessionId);
     const id = `mock-pending-${++this.nextPending}`;
     const text = request.message;
+    this.pendingTexts.set(id, text);
     const entry = {
       id,
-      textPreview: text.slice(0, 512),
-      textLength: text.length,
-      textTruncated: text.length > 512,
+      ...pendingTextSummary(text),
     };
     (kind === "steer" ? pending.steering : pending.followUp).push(entry);
     pending.totalCount += 1;
@@ -951,7 +955,47 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       this.publishPending(sessionId);
   }
 
-  async abort(sessionId: string): Promise<void> {
+  async pendingText(request: PendingReadRequest): Promise<string> {
+    const session = this.requireSession(request.sessionId);
+    const pending = this.pendingFor(request.sessionId);
+    if (
+      session.transcriptPage.viewId !== request.viewId ||
+      pending.revision !== request.revision
+    )
+      throw requestError(
+        "Pending input changed; copy the current item again",
+        409,
+      );
+    const entries = [...pending.steering, ...pending.followUp];
+    if (request.itemId !== undefined) {
+      if (!entries.some((entry) => entry.id === request.itemId))
+        throw requestError("Pending item is no longer available", 409);
+      return this.pendingTexts.get(request.itemId)!;
+    }
+    return entries
+      .map(
+        (entry, index) =>
+          `${index + 1}. ${this.pendingTexts.get(entry.id)!.replace(/\n/g, "\n   ")}`,
+      )
+      .join("\n");
+  }
+
+  async recoverPending(sessionId: string): Promise<PendingRecovery> {
+    this.requireSession(sessionId);
+    const pending = this.pendingFor(sessionId);
+    const recovered = {
+      steering: pending.steering.map(
+        (entry) => this.pendingTexts.get(entry.id)!,
+      ),
+      followUp: pending.followUp.map(
+        (entry) => this.pendingTexts.get(entry.id)!,
+      ),
+    };
+    await this.clearPending(sessionId);
+    return recovered;
+  }
+
+  async abort(sessionId: string): Promise<PendingRecovery> {
     const active = this.requireSession(sessionId);
     const timer = this.timers.get(active.sessionId);
     if (timer) clearInterval(timer);
@@ -960,9 +1004,9 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     this.state.sessionStatuses[active.sessionId] = { runState: "aborted" };
     if (this.state.active?.sessionId === active.sessionId)
       this.state.runState = "aborted";
-    const pending = this.pendingFor(active.sessionId);
-    if (this.drainPending(pending)) this.publishPending(active.sessionId);
+    const recovered = await this.recoverPending(active.sessionId);
     this.emitSession(active.sessionId, { type: "agent_settled" });
+    return recovered;
   }
 
   async compact(

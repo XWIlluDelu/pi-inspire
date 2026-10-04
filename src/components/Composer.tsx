@@ -76,6 +76,7 @@ export const Composer = memo(function Composer() {
       transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
       composerHistoryVersion: source.composerHistoryVersion,
       runState: source.runState,
+      bashRunning: source.bashRunning,
       sessionSelectionPending: source.sessionSelectionPending,
       editorText: source.editorText,
       attachments: source.attachments,
@@ -162,12 +163,13 @@ export const Composer = memo(function Composer() {
   const busy = isBusyRunState(state.runState);
   const sessionOpening = state.sessionSelectionPending;
 
-  const abortable = isAbortableRunState(state.runState);
+  const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const isRunning = state.runState === "running";
   const isRetrying = state.runState === "retrying";
   const isCompacting = state.runState === "compacting";
   const isFailed = state.runState === "failed";
   const deliveryBusy = busy;
+  const shellInput = draft.trim().startsWith("!");
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -431,7 +433,7 @@ export const Composer = memo(function Composer() {
               aria-pressed={deliveryBehavior === "steer"}
               disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("steer")}
-              title="Influence the task that is running now"
+              title="Influence the running task"
             >
               Steer
             </button>
@@ -440,7 +442,7 @@ export const Composer = memo(function Composer() {
               aria-pressed={deliveryBehavior === "followUp"}
               disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("followUp")}
-              title="Queue this message after the current task"
+              title="Send after the current task"
             >
               Queue
             </button>
@@ -514,20 +516,28 @@ export const Composer = memo(function Composer() {
         </button>
         <span className="composer__spacer" />
         <ContextMeter />
-        {deliveryBusy ? (
+        {deliveryBusy || state.bashRunning ? (
           <button
             type="submit"
             className="composer__send"
             disabled={!canSend}
             aria-label={
-              deliveryBehavior === "steer"
-                ? "Send as steer"
-                : "Queue after current task"
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send message"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
             }
             title={
-              deliveryBehavior === "steer"
-                ? "Send as steer"
-                : "Queue after current task"
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
             }
           >
             <Send size={14} aria-hidden />
@@ -551,7 +561,7 @@ export const Composer = memo(function Composer() {
                 ? "Recover session"
                 : isCompacting
                   ? "Cancel compaction"
-                  : "Abort"
+                  : "Stop"
             }
           >
             <Square size={14} aria-hidden />
@@ -561,8 +571,8 @@ export const Composer = memo(function Composer() {
             type="submit"
             className="composer__send"
             disabled={!canSend}
-            aria-label="Send message"
-            title="Send"
+            aria-label={shellInput ? "Run shell command" : "Send message"}
+            title={shellInput ? "Run shell command" : "Send"}
           >
             <Send size={14} aria-hidden />
           </button>

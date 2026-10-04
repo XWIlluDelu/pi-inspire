@@ -620,6 +620,33 @@ export interface PendingMessageSummary {
   textPreview: string;
   textLength: number;
   textTruncated: boolean;
+  /** Known original Inspire image content; absent for unowned native rows. */
+  imageCount?: number;
+  /** Retained upload handles, never image bodies or native Pi item identities. */
+  imageAttachmentIds?: string[];
+}
+
+/** Exact text, obtained from Pi's public queue boundary rather than previews. */
+export interface PendingInput {
+  steering: string[];
+  followUp: string[];
+}
+
+export interface PendingRecovery extends PendingInput {
+  /** Staged handles in Steer/Queue order; recovery never applies send limits. */
+  attachments?: UploadedAttachment[];
+  /** Issuing Host authority for recovered upload handles. */
+  authorityId?: string;
+  /** Recovery can retain Host input even if the Pi operation failed. */
+  error?: string;
+  warning?: string;
+}
+
+export interface PendingReadRequest {
+  sessionId: string;
+  viewId: string;
+  revision: number;
+  itemId?: string;
 }
 
 export interface PendingQueues {
@@ -645,7 +672,17 @@ export function parsePendingMessageSummary(
     !Number.isSafeInteger(record.textLength) ||
     record.textLength < record.textPreview.length ||
     typeof record.textTruncated !== "boolean" ||
-    record.textTruncated !== record.textLength > record.textPreview.length
+    record.textTruncated !== record.textLength > record.textPreview.length ||
+    (record.imageCount !== undefined &&
+      (!Number.isSafeInteger(record.imageCount) ||
+        (record.imageCount as number) <= 0)) ||
+    (record.imageAttachmentIds !== undefined &&
+      (!Array.isArray(record.imageAttachmentIds) ||
+        record.imageAttachmentIds.length !== record.imageCount ||
+        record.imageAttachmentIds.length > MAX_ATTACHMENTS ||
+        record.imageAttachmentIds.some(
+          (id) => typeof id !== "string" || !/^[0-9a-f-]{36}$/u.test(id),
+        )))
   ) {
     return null;
   }
@@ -654,6 +691,12 @@ export function parsePendingMessageSummary(
     textPreview: record.textPreview,
     textLength: record.textLength,
     textTruncated: record.textTruncated,
+    ...(record.imageCount === undefined
+      ? {}
+      : { imageCount: record.imageCount as number }),
+    ...(record.imageAttachmentIds === undefined
+      ? {}
+      : { imageAttachmentIds: [...(record.imageAttachmentIds as string[])] }),
   };
 }
 
@@ -1053,6 +1096,8 @@ export interface ActiveSnapshot {
     commands: unknown[];
   };
   runState: RunState;
+  /** Direct Bash runs independently of the model/compaction lifecycle. */
+  bashRunning?: boolean;
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   pendingExtensionUiRequests?: ExtensionUiRequest[];
   pendingQueues?: PendingQueues;
