@@ -35,6 +35,11 @@ import {
 } from "../../server/session-catalog.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import {
+  decodeBranchBridgeJson,
+  encodeBranchBridgeJson,
+  MODEL_REFRESH_SUFFIX,
+} from "../../shared/branch-bridge-protocol.js";
+import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
 } from "../../shared/contracts.js";
@@ -98,6 +103,92 @@ async function persistedRecord(
 
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
+
+describe("model catalog refresh", () => {
+  it("coalesces same-worker reads, updates its cache, and hides internal command/status traffic", async () => {
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new FakeRpc(options);
+        worker.responseOverrides.set("get_available_models", {
+          models: [{ provider: "test", id: "cached", reasoning: true }],
+        });
+        worker.responseOverrides.set("get_commands", {
+          commands: [
+            {
+              name: `${options.env!.INSPIRE_BRANCH_COMMAND}${MODEL_REFRESH_SUFFIX}`,
+              source: "extension",
+            },
+            { name: "user-extension", source: "extension" },
+          ],
+        });
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      const before = await runtime.snapshot();
+      const { promise, resolve: release } = deferredSignal();
+      worker.responseOverrides.set(
+        "prompt",
+        async (command: Record<string, unknown>) => {
+          await promise;
+          const encoded = String(command.message).split(" ")[1]!;
+          const request = decodeBranchBridgeJson(encoded, 4096) as object;
+          worker.emit("event", {
+            type: "extension_ui_request",
+            method: "setStatus",
+            statusKey: `${worker.options.env!.INSPIRE_BRANCH_STATUS_KEY}${MODEL_REFRESH_SUFFIX}`,
+            statusText: encodeBranchBridgeJson({ ...request, ok: true }, 2048),
+          });
+          worker.responseOverrides.set("get_available_models", {
+            models: [
+              {
+                provider: "test",
+                id: "fresh",
+                reasoning: true,
+                thinkingLevelMap: { max: "max" },
+              },
+            ],
+          });
+          return {};
+        },
+      );
+      const first = runtime.refreshModels("a");
+      const second = runtime.refreshModels("a");
+      await vi.waitFor(() =>
+        expect(
+          worker.commands.filter((command) => command.type === "prompt"),
+        ).toHaveLength(1),
+      );
+      release();
+      expect(await first).toEqual(await second);
+      const after = await runtime.snapshot();
+      expect(after.active?.availableModels).toEqual([
+        {
+          provider: "test",
+          id: "fresh",
+          reasoning: true,
+          thinkingLevelMap: { max: "max" },
+        },
+      ]);
+      expect(after.active?.model).toEqual(before.active?.model);
+      expect(after.active?.thinkingLevel).toBe(before.active?.thinkingLevel);
+      expect(after.active?.commands).toEqual([
+        { name: "user-extension", source: "extension" },
+      ]);
+      expect(after.extensionStatuses ?? {}).toEqual({});
+      expect(worker.stops).toBe(0);
+      expect(worker.starts).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+});
 
 describe("browser-safe runtime projection", () => {
   it.each(["moved", "replaced", "removed", "ambiguous"] as const)(

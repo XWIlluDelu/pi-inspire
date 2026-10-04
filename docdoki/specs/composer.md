@@ -11,6 +11,7 @@ covers:
   - server/composer-history.ts
   - server/resources.ts
   - server/model-catalog.ts
+  - server/model-catalog-refresh.ts
   - server/project-files.ts
   - server/runtime.ts
   - server/runtime-pending.ts
@@ -51,6 +52,8 @@ covers:
   - tests/server/composer-history.test.ts
   - tests/server/composer-history-retention.test.ts
   - tests/server/model-catalog.test.ts
+  - tests/server/model-thinking.integration.test.ts
+  - tests/server/model-catalog-refresh.integration.test.ts
   - tests/server/runtime-composer-artifacts.test.ts
   - tests/server/{runtime-pending,runtime-compaction}.test.ts
   - tests/server/session-projection.test.ts
@@ -63,6 +66,8 @@ covers:
   - tests/web/composer-sessions.test.tsx
   - tests/web/composer.test.tsx
   - tests/web/model-selector.test.tsx
+  - tests/web/model-store.test.ts
+  - tests/web/welcome-model-transition.test.tsx
   - tests/web/store-composer.test.ts
   - tests/server/runtime.test.ts
   - tests/server/pi-operation-lifecycle.integration.test.ts
@@ -70,6 +75,7 @@ covers:
   - tests/web/transcript-inspection.test.tsx
   - tests/web/welcome-new-session.test.tsx
   - tests/browser/workbench.spec.ts
+  - tests/browser/model-selection.spec.ts
 ---
 
 # Conversation composer
@@ -396,7 +402,15 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   successful summary. Summarization retry wait, attempt counts, and bounded reason are restored from
   Host snapshots; attempts and completion retire that detail without changing the enclosing
   compaction's cancellation semantics. The context meter remains occupancy, never compaction
-  progress, and does not suggest invoking another `/compact` while compaction is active. Historical
+  progress. Its existing ring/percentage reveals a read-only model-name and used-token/context-window
+  hint on desktop hover or keyboard focus, and on touch tap until an outside tap dismisses it. The
+  hint stays within the viewport without transferring focus, reserving layout, or adding compaction
+  controls. Text and accessible descriptions preserve Pi's reported percentage above 100%; only the
+  ring and progress range are clamped. Unknown post-compaction
+  usage keeps the ring with `—`, retains known capacity in the hint, and briefly explains “Updates
+  after the next reply”; it never fabricates a zero count. Menus, completion, modals and IME own Escape
+  before the hint. Otherwise Escape dismisses the hint before ordinary Stop.
+  Evidence: [[follow-compaction-cancellation-2026-10-02]]. Historical
   checkpoints show persisted tokens-before; after-token estimates remain explicitly labelled in
   the operation receipt and are not fabricated after reload. Review: [[native-command-compatibility]].
 
@@ -481,7 +495,20 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   space. Only its catalog scrolls, opening does not move an ancestor scrollport, it restores trigger
   focus after Enter, click, or Escape without waiting for asynchronous model ownership, retains that
   focus through a later mutation-error rerender, and uses only successful model changes to maintain
-  a bounded global MRU ordering within each provider.
+  a bounded global MRU ordering within each provider. The menu renders only after floating
+  placement exists, so its visible search input can claim keyboard focus after a palette handoff
+  and Escape returns to the trigger rather than escaping to session Stop.
+
+  Opening shows cached choices immediately and refreshes the selected worker's catalog in the
+  background through Pi's public model runtime. Refresh does not restart Pi, stop its task, discard
+  extension state, or change the selected model/effort. Keyboard highlighting follows the model
+  identity across insertion/reordering, with a nearby surviving-row fallback only if it disappears;
+  intentional query, keyboard, and pointer changes still win. The resulting choices come from that same
+  worker's available snapshot, not an independent Host catalog. Failures leave cached choices and
+  a local picker status; partial native refreshes retain Pi's usable available snapshot. Delayed
+  results cannot replace another browser selection or transport. The first-message surface obtains
+  fresh choices too, using the inherited worker only while its workspace still owns the surface,
+  otherwise the read-only Host model runtime; no worker is created merely to inspect choices.
 
   Unavailable MRU identities stay harmless preference history and are omitted from the current
   projection. A rejected model change never updates active truth or recency; a rejected
@@ -518,6 +545,17 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   explicitly selected provider/id and supported thinking level are always passed to the creating Pi
   worker before the first prompt; no synthetic `Pi default` option or silent model omission exists.
   A model that does not support reasoning disables thinking instead of inventing a value.
+  Explicit start-surface model switches follow Pi's per-model thinking default, then its global
+  default, then the current effort, with native capability clamping (upward first, then downward).
+  `xhigh`/`max` therefore clamp to `high` on ordinary off-through-high reasoning models, not `off`.
+  Model defaults override an effort chosen before the switch, as in native Pi; an effort chosen
+  after an in-flight resolution remains user-owned. Workspace/model changes invalidate old reads,
+  and refreshing metadata alone never reapplies switching defaults. These reads do not write user
+  settings or create a persistent session. Automatic catalog/default reads wait for a pause in
+  directory typing; opening the picker still refreshes immediately. The Host validates a prospective
+  directory before catalog work. Evidence: [[follow-model-selection-2026-10-02]].
+  Current virtual-identity and cold-start extension-model gaps are retained in
+  [[follow-pi-native-capability-review-2026-10-02]].
 
 ## Non-goals
 

@@ -5,7 +5,7 @@ covers:
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
   - src/controllers/{preference,update,runtime-event}-controller.ts
   - src/{visual-preferences,update-availability,use-modal-focus}.ts
-  - src/components/{Settings,SettingsDialog}.tsx
+  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection}.tsx
   - src/styles/settings-overlays.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
   - tests/web/{settings-navigation,settings-loading,notices,update-controller,attention,modal-focus}.test.ts*
@@ -21,26 +21,45 @@ Keep persistent preferences easy to find and save each change without overwritin
 
 ## Settings organization
 
-Settings opens from the topbar as a modal, leaving session navigation in place.
+Settings opens from the topbar as a modal, leaving session navigation in place. Categories locate
+sections in one continuous scrolling document, as in Terminal settings. Navigation tracks the visible
+section; form edits and login state remain intact while browsing.
 
 | Category | Controls |
 | --- | --- |
 | Display | Theme, palette, content text size, shared transcript/composer reading width, project-location form. |
 | Conversation | Reasoning detail, tool activity, activity groups, assistant-turn details, desktop send key. |
+| Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | Behavior | Launch behavior, completion alerts, Pi delivery/compaction/retry, optional Herdr enhancement. |
-| Updates | Separate Pi plus user-scoped extensions and INSΠRE checks, results, and actions. |
+| System | Component versions, Docs/Changelog release references, unified check for updates, and Host restart under [[host-lifecycle]]. |
 
 Pi controls follow [[pi-integration]]. Herdr takes effect on Host restart under [[herdr-enhancement]].
-Install-when-available, Pi/About, and Restore defaults remain footer utilities. The bounded category
-navigation has no separate search.
+Footer utilities present INSΠRE version, optional install action, and Reset preferences on a single line.
+System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
+row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
+Both restart actions use equal-height danger controls, with descriptions that
+state whether project terminals keep running or close.
+Category names and self-explanatory choices need no introductory text; descriptions explain scope or
+non-obvious behavior. The bounded category navigation has no separate search.
 
 Restore defaults patches the complete interface-default set, including Herdr. It leaves Pi runtime
 settings, update observations, navigation curation, pane state, recent models, and other direct work
 state unchanged.
 
-Fields stay within their sections; explanatory copy yields to its control and stacks above it on
-narrow phones. Open menus can extend beyond a card without clipping. Disabled controls remain
-legible and visually distinct from selected, available controls.
+Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
+controls for a mouse, 40px for touch. Card width determines when wide controls move below their
+labels; switches stay inline. Segment labels do not wrap. Continuous navigation scrolls only the
+settings content, keeping the dialog header and navigation visible. Unknown runtime values show
+Unavailable rather than a confirmed state.
+Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
+from selected, available controls.
+
+## Loaded extension names
+
+Listing the current session's loaded extensions in System is requested but not implemented. Pi 1.0's
+RPC and public extension context do not expose the worker's complete inventory; a command-free
+extension is absent from `get_commands`. This needs a native inventory read. Package update results
+remain separate from loaded-extension membership.
 
 ## Modal focus
 
@@ -68,6 +87,8 @@ legible and visually distinct from selected, available controls.
 
 ## Update observations
 
+- The Extensions check covers global/user packages. Document this scope in the command guide rather
+  than adding a persistent qualifier to the result label.
 - Explicit checks bypass the cache. Results offer commands or release links; Host/Restart all use
   the confirmation and execution rules in [[host-lifecycle]].
 - The first accepted prompt after 08:00 Host-local time each day invokes cache-aware checks. The
@@ -77,7 +98,7 @@ legible and visually distinct from selected, available controls.
   credentials; an unavailable source leaves local work quiet. Pi checks use its official latest
   endpoint and package-manager observation. INSΠRE distinguishes no published release from a failed
   check.
-- Available Pi, extension, and INSΠRE updates share one notice that opens Settings at Updates.
+- Available Pi, extension, and INSΠRE updates share one notice that opens Settings at System.
   Host snapshots, status events, and results own execution state. Browser request-pending state
   separately prevents duplicate clicks and shows `Pending` until Host execution is observed; HTTP
   failure or disconnection does not mark a running check finished.

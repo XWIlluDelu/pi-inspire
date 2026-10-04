@@ -15,7 +15,7 @@ covers:
   - src/styles.css
   - src/styles/{terminal,responsive,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{workbench,operation-lifecycles}.spec.ts
+  - tests/browser/{workbench,operation-lifecycles,terminal-settings}.spec.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -133,9 +133,11 @@ within the pane; header controls align across desktop/touch layouts, and hidden 
 
 Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
 visible around the scrolling body. Settings and Select text restore focus to the visible More summary;
-modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore browser defaults**
-resets local presentation/interaction preferences, not Host history. Narrow settings controls have 44px
-hit areas.
+modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore defaults**
+resets browser presentation/interaction preferences, not Host history. Appearance, Interaction and
+Saved output use the main Settings controls and dialog header, with 40px touch controls. Font size
+uses an inline decrement/value/increment stepper at every width. Wide choices can move below their
+labels on narrow cards. Browser preferences remain distinct from Host output and retention settings.
 
 ## Rendering and input
 

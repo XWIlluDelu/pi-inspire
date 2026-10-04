@@ -41,6 +41,7 @@ import {
   availableModelOptions,
   resolveNewSessionDefaults,
 } from "./model-catalog.js";
+import { ModelSettingsService } from "./model-settings.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
@@ -51,6 +52,10 @@ import {
 } from "./pi-runtime.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
+import {
+  nativeOAuthDescriptors,
+  ProviderAuthService,
+} from "./provider-auth.js";
 import { requestError } from "./request-error.js";
 import { ResourceStore } from "./resources.js";
 import {
@@ -248,12 +253,31 @@ const modelRuntime = mock
       );
       return null;
     });
-const readAvailableModels = async () => {
+let refreshingModels: Promise<void> | undefined;
+const refreshHostModels = () => {
+  if (!modelRuntime) return Promise.resolve();
+  refreshingModels ??= modelRuntime
+    .refresh({ signal: AbortSignal.timeout(15_000) })
+    .then((result) => {
+      const error = modelRuntime.getError();
+      if (error || result.aborted || result.errors.size)
+        throw new Error(
+          error ?? "Model refresh failed; showing cached choices",
+        );
+    })
+    .finally(() => {
+      refreshingModels = undefined;
+    });
+  return refreshingModels;
+};
+const readAvailableModels = async (refresh = false) => {
   if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
   if (!modelRuntime) return [];
   try {
+    if (refresh) await refreshHostModels();
     return await availableModelOptions(modelRuntime);
   } catch (error) {
+    if (refresh) throw error;
     console.error(
       "Unable to refresh Pi's available models:",
       error instanceof Error ? error.message : String(error),
@@ -271,6 +295,7 @@ const readNewSessionDefaults = async (cwd: string) => {
   }
   if (!modelRuntime)
     throw requestError("Pi's model catalog is unavailable", 503);
+  await refreshHostModels();
   return resolveNewSessionDefaults(modelRuntime, cwd);
 };
 const maintenanceRestart = mock
@@ -333,6 +358,25 @@ const application = createInspireServer({
   ),
   updateCoordinator,
   availableModels: readAvailableModels,
+  modelSettings: mock ? undefined : new ModelSettingsService(),
+  providerAuth: modelRuntime
+    ? new ProviderAuthService(
+        modelRuntime,
+        () => {
+          const settings = SettingsManager.create(
+            root,
+            getAgentDir(),
+          ) as ReturnType<typeof SettingsManager.create> & {
+            getOrCreateDeviceId?: () => string;
+          };
+          if (!settings.getOrCreateDeviceId)
+            throw new Error("This Pi version does not require a device ID");
+          return settings.getOrCreateDeviceId();
+        },
+        undefined,
+        await nativeOAuthDescriptors(piInstallation.sdkEntryPath),
+      )
+    : undefined,
   newSessionDefaults: readNewSessionDefaults,
   distDir,
   staticAssetCacheDirs,

@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -25,6 +26,7 @@ import {
   setSessionDraft,
 } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { hasActiveModal } from "../use-modal-focus";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { Dropdown } from "./Dropdown";
@@ -35,38 +37,114 @@ const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 const ContextMeter = memo(function ContextMeter() {
-  const usage = useAppState((state) => state.contextUsage);
-  const compacting = useAppState((state) => state.runState === "compacting");
-  if (!usage || usage.percent === null) return null;
-  const percent = Math.max(0, Math.min(100, usage.percent));
+  const { usage, model, sessionId } = useAppState(
+    (state) => ({
+      usage: state.contextUsage,
+      model: state.model,
+      sessionId: state.sessionId,
+    }),
+    shallowEqual,
+  );
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  useEffect(() => setOpen(false), [sessionId]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const dismissKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        hasActiveModal()
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", dismiss);
+    // Focused controls dismiss first; the hint precedes window-level Stop.
+    document.addEventListener("keydown", dismissKey);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissKey);
+    };
+  }, [open]);
+  if (!usage) return null;
+  const percent = usage.percent;
+  const fillPercent = Math.max(0, Math.min(100, percent ?? 0));
   const tone =
-    percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
-  const tokens =
-    usage.tokens !== null
-      ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
-      : `${usage.contextWindow.toLocaleString()}-token window`;
+    percent !== null && percent >= 85
+      ? "meter--error"
+      : percent !== null && percent >= 60
+        ? "meter--warning"
+        : "";
+  const tokens = `${usage.tokens?.toLocaleString() ?? "—"} / ${usage.contextWindow.toLocaleString()} tokens`;
   return (
     <div
-      className={`meter ${tone}`}
-      role="meter"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(percent)}
-      title={`Context ${Math.round(percent)}% full (${tokens}) — ${compacting ? "context compaction in progress" : "type /compact to summarize"}`}
-      aria-label={`Context ${Math.round(percent)} percent full`}
+      className="meter-anchor"
+      ref={rootRef}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") setOpen(true);
+      }}
+      onPointerLeave={(event) => {
+        if (
+          event.pointerType !== "touch" &&
+          !rootRef.current?.contains(document.activeElement)
+        )
+          setOpen(false);
+      }}
     >
-      <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
-        <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
-        <circle
-          className="meter__ring-fill"
-          cx="7"
-          cy="7"
-          r={RING_RADIUS}
-          strokeDasharray={`${(percent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
-          transform="rotate(-90 7 7)"
-        />
-      </svg>
-      <span aria-hidden>{Math.round(percent)}%</span>
+      <div
+        className={`meter ${tone}`}
+        {...(percent === null
+          ? { role: "img", "aria-label": "Context usage unknown" }
+          : {
+              role: "meter",
+              "aria-label": `Context ${Math.round(percent)} percent full`,
+              "aria-valuemin": 0,
+              "aria-valuemax": 100,
+              "aria-valuenow": Math.round(fillPercent),
+              "aria-valuetext": `${Math.round(percent)}%`,
+            })}
+        tabIndex={0}
+        aria-describedby={open ? hintId : undefined}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen(true)}
+      >
+        <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
+          <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
+          {percent !== null && (
+            <circle
+              className="meter__ring-fill"
+              cx="7"
+              cy="7"
+              r={RING_RADIUS}
+              strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+              transform="rotate(-90 7 7)"
+            />
+          )}
+        </svg>
+        <span aria-hidden>
+          {percent === null ? "—" : `${Math.round(percent)}%`}
+        </span>
+      </div>
+      {open && (
+        <div className="meter__hint" id={hintId} role="tooltip">
+          {model && (
+            <span className="meter__model">{model.name ?? model.id}</span>
+          )}
+          <span>
+            {percent === null ? tokens : `${Math.round(percent)}% · ${tokens}`}
+          </span>
+          {usage.tokens === null && <span>Updates after the next reply</span>}
+        </div>
+      )}
     </div>
   );
 });
@@ -89,6 +167,7 @@ export const Composer = memo(function Composer() {
       workspaceShowHidden: source.workspaceShowHidden,
       model: source.model,
       availableModels: source.availableModels,
+      commonModels: source.commonModels,
       commands: source.commands,
       thinkingLevel: source.thinkingLevel,
       desktopSendKey: source.prefs.desktopSendKey,
@@ -467,6 +546,8 @@ export const Composer = memo(function Composer() {
             value={activeModel}
             models={state.availableModels}
             recent={state.recentModelIds}
+            common={state.commonModels}
+            onManageModels={store.openModelSettings}
             disabled={sessionOpening}
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
@@ -475,6 +556,7 @@ export const Composer = memo(function Composer() {
                 : undefined
             }
             onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            refreshModels={store.refreshModels}
             onChange={(provider, id) => void store.setModel(provider, id)}
           />
           <Dropdown

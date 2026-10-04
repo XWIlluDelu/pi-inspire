@@ -16,6 +16,7 @@ import {
   type UpdateCheckResponse,
   type UserTurnAnchor,
 } from "../shared/contracts";
+import type { ModelSettingsOwner } from "../shared/model-settings";
 import type { PiCommand } from "./composer-completion";
 import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
@@ -65,8 +66,18 @@ export interface NativeCommandActivity {
 export interface NativeCommandUiRequest {
   id: number;
   sessionId: string;
-  action: "model" | "thinking" | "settings" | "updates" | "sessions" | "new";
+  action:
+    | "model"
+    | "thinking"
+    | "models"
+    | "settings"
+    | "updates"
+    | "sessions"
+    | "new"
+    | "changelog";
   query?: string;
+  modelSettingsFocus?: "credentials" | "common";
+  modelSettingsOwner?: ModelSettingsOwner;
 }
 
 export interface TranscriptActivityRangeState extends TranscriptActivityRange {
@@ -144,6 +155,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   model: ModelOption | null;
   thinkingLevel: string;
   availableModels: ModelOption[];
+  commonModels: import("../shared/model-settings").CommonModelOption[];
   commands: PiCommand[];
   contextUsage: ContextUsage | null;
   /** Ephemeral command lifecycle receipts are partitioned by session. */
@@ -312,6 +324,7 @@ export function createInitialAppState(): AppState {
     model: null,
     thinkingLevel: "medium",
     availableModels: [],
+    commonModels: [],
     commands: [],
     contextUsage: null,
     commandActivities: {},

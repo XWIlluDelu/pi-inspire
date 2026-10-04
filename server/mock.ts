@@ -1070,6 +1070,11 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async rename(sessionId: string, name: string): Promise<void> {
     this.requireSession(sessionId).sessionName = name;
   }
+  async refreshModels(sessionId: string) {
+    return {
+      models: this.requireSession(sessionId).availableModels as ModelOption[],
+    };
+  }
   async setModel(
     sessionId: string,
     provider: string,

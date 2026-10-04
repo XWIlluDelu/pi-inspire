@@ -1,5 +1,6 @@
 import {
   Compass,
+  Cpu,
   Laptop,
   Monitor,
   Moon,
@@ -26,16 +27,15 @@ import {
   type LaunchPreference,
   type PalettePreference,
   type PiMessageDeliveryMode,
-  type PiUpdateCheckResponse,
   type ProjectDisplayPreference,
   type ReadingWidthPreference,
   type ThemePreference,
   TOOL_VISIBILITY_PREFERENCES,
   type ToolVisibilityPreference,
-  type UpdateCheckResponse,
   VISIBILITY_PREFERENCES,
   type VisibilityPreference,
 } from "../../shared/contracts";
+import type { ModelSettingsDestination } from "../../shared/model-settings";
 import {
   installAvailability,
   requestInstall,
@@ -46,12 +46,15 @@ import { shallowEqual, store, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
-
-interface Choice<T extends string> {
-  value: T;
-  label: string;
-  icon?: ReactNode;
-}
+import { ModelsSettings } from "./ModelsSettings";
+import {
+  type SettingsChoice as Choice,
+  SegmentedControl,
+  SettingField,
+  SettingsSwitch,
+} from "./SettingsControls";
+import { SettingsSection as Section } from "./SettingsSection";
+import { SystemVersionsCard } from "./SystemVersionsCard";
 
 const THEMES: Choice<ThemePreference>[] = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
@@ -88,7 +91,7 @@ const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
 
 const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [
   { value: "one-at-a-time", label: "One at a time" },
-  { value: "all", label: "All queued messages" },
+  { value: "all", label: "All at once" },
 ];
 
 function isMessageDeliveryMode(value: string): value is PiMessageDeliveryMode {
@@ -136,6 +139,7 @@ export type SettingsCategoryId =
   | "display"
   | "conversation"
   | "behavior"
+  | "models"
   | "updates";
 type CategoryId = SettingsCategoryId;
 
@@ -160,324 +164,29 @@ const CATEGORIES: Array<{
     icon: <Compass size={14} aria-hidden />,
   },
   {
+    id: "models",
+    label: "Models",
+    icon: <Cpu size={14} aria-hidden />,
+  },
+  {
     id: "updates",
-    label: "Updates",
+    label: "System",
     icon: <RefreshCw size={14} aria-hidden />,
   },
 ];
-
-function SegmentedControl<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: Choice<T>[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="segmented" role="group" aria-label={label}>
-      {options.map((option) => (
-        <button
-          type="button"
-          key={option.value}
-          className={`segmented__item ${
-            value === option.value ? "segmented__item--active" : ""
-          }`}
-          onClick={() => onChange(option.value)}
-          aria-pressed={value === option.value}
-          title={option.label}
-        >
-          {option.icon}
-          <span>{option.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SettingField({
-  label,
-  description,
-  children,
-  stacked = false,
-}: {
-  label: string;
-  description: string;
-  children: ReactNode;
-  stacked?: boolean;
-}) {
-  return (
-    <div
-      className={`settings__field ${stacked ? "settings__field--stacked" : ""}`}
-    >
-      <div className="settings__field-info">
-        <span className="settings__field-label">{label}</span>
-        <p className="settings__field-help">{description}</p>
-      </div>
-      <div className="settings__field-control">{children}</div>
-    </div>
-  );
-}
-
-function Section({
-  id,
-  icon,
-  title,
-  description,
-  children,
-}: {
-  id: CategoryId;
-  icon: ReactNode;
-  title: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section
-      id={`settings-section-${id}`}
-      className="settings__section"
-      aria-label={title}
-    >
-      <div className="settings__section-header">
-        <div className="settings__section-title-wrap">
-          <span className="settings__section-icon" aria-hidden>
-            {icon}
-          </span>
-          <h3 className="settings__section-title">{title}</h3>
-        </div>
-        {description ? (
-          <p className="settings__section-desc">{description}</p>
-        ) : null}
-      </div>
-      <div className="settings__card">{children}</div>
-    </section>
-  );
-}
-
-function UpdateCheckButton({
-  label,
-  checked,
-  checking,
-  requestPending,
-  onClick,
-}: {
-  label: string;
-  checked: boolean;
-  checking: boolean;
-  requestPending: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="settings__update-check"
-      aria-label={label}
-      disabled={checking || requestPending}
-      onClick={onClick}
-    >
-      <RefreshCw
-        size={13}
-        className={checking || requestPending ? "spin" : undefined}
-        aria-hidden
-      />
-      {checking
-        ? "Checking"
-        : requestPending
-          ? "Pending"
-          : checked
-            ? "Check again"
-            : "Check now"}
-    </button>
-  );
-}
-
-function UpdateStatusRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings__update-status-row">
-      <span className="settings__update-status-label">{label}</span>
-      <div className="settings__update-status-value">{children}</div>
-    </div>
-  );
-}
-
-function PiUpdateStatus({
-  currentVersion,
-  check,
-  checking,
-}: {
-  currentVersion: string;
-  check: PiUpdateCheckResponse | null;
-  checking: boolean;
-}) {
-  const version = check?.currentVersion || currentVersion;
-  const pending = checking && !check;
-  return (
-    <div
-      className="settings__update-status"
-      aria-live="polite"
-      aria-busy={checking}
-    >
-      <UpdateStatusRow label="Pi">
-        <span>{version ? `v${version}` : "Version unavailable"}</span>
-        {pending ? (
-          <span className="settings__update-state">Checking…</span>
-        ) : check?.pi.kind === "available" ? (
-          <>
-            <a
-              className="settings__update-link"
-              href={check.pi.releaseUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              v{check.pi.latestVersion} available
-            </a>
-            <code className="settings__update-command">pi update</code>
-          </>
-        ) : check?.pi.kind === "current" ? (
-          <span className="settings__update-state">Up to date</span>
-        ) : check?.pi.kind === "unavailable" ? (
-          <span className="settings__update-state">Check unavailable</span>
-        ) : (
-          <span className="settings__update-state">Not checked</span>
-        )}
-      </UpdateStatusRow>
-
-      <UpdateStatusRow label="Extensions">
-        {pending ? (
-          <span className="settings__update-state">Checking…</span>
-        ) : check?.extensions.kind === "available" ? (
-          <div className="settings__update-packages">
-            <span className="settings__update-link">
-              {check.extensions.updates.length}{" "}
-              {check.extensions.updates.length === 1 ? "update" : "updates"}
-            </span>
-            <ul>
-              {check.extensions.updates.map((update, index) => (
-                <li key={`${update.type}:${update.displayName}:${index}`}>
-                  {update.displayName}
-                </li>
-              ))}
-            </ul>
-            <code className="settings__update-command">
-              pi update --extensions
-            </code>
-          </div>
-        ) : check?.extensions.kind === "none" ? (
-          <span className="settings__update-state">No updates found</span>
-        ) : check?.extensions.kind === "unavailable" ? (
-          <span className="settings__update-state">Check unavailable</span>
-        ) : (
-          <span className="settings__update-state">Not checked</span>
-        )}
-      </UpdateStatusRow>
-    </div>
-  );
-}
-
-function InspireUpdateStatus({
-  currentVersion,
-  check,
-  checking,
-}: {
-  currentVersion: string;
-  check: UpdateCheckResponse | null;
-  checking: boolean;
-}) {
-  return (
-    <div
-      className="settings__update-status"
-      aria-live="polite"
-      aria-busy={checking}
-    >
-      <UpdateStatusRow label="INSΠRE">
-        <span>
-          {currentVersion ? `v${currentVersion}` : "Version unavailable"}
-        </span>
-        {checking && !check ? (
-          <span className="settings__update-state">Checking…</span>
-        ) : check?.kind === "available" ? (
-          <a
-            className="settings__update-link"
-            href={check.update.releaseUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            v{check.update.latestVersion} available
-          </a>
-        ) : check?.kind === "current" ? (
-          <span className="settings__update-state">Up to date</span>
-        ) : check?.kind === "unreleased" ? (
-          <span className="settings__update-state">No release published</span>
-        ) : check?.kind === "unavailable" ? (
-          <span className="settings__update-state">Check unavailable</span>
-        ) : (
-          <span className="settings__update-state">Not checked</span>
-        )}
-      </UpdateStatusRow>
-    </div>
-  );
-}
-
-function UpdateEntry({
-  title,
-  checked,
-  checking,
-  requestPending,
-  checkLabel,
-  onCheck,
-  children,
-}: {
-  title: string;
-  checked: boolean;
-  checking: boolean;
-  requestPending: boolean;
-  checkLabel: string;
-  onCheck: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings__update-entry">
-      <div className="settings__update-entry-header">
-        <span className="settings__field-label">{title}</span>
-        <UpdateCheckButton
-          label={checkLabel}
-          checked={checked}
-          checking={checking}
-          requestPending={requestPending}
-          onClick={onCheck}
-        />
-      </div>
-      {children}
-    </div>
-  );
-}
 
 /** Persistent workbench preferences grouped by user purpose, with secondary
  * install/about/reset utilities kept outside the settings taxonomy. */
 export const SettingsContent = memo(function SettingsContent({
   initialCategory = "display",
+  modelDestination,
 }: {
   initialCategory?: SettingsCategoryId;
+  modelDestination?: ModelSettingsDestination;
 }) {
   const state = useAppState(
     (source) => ({
       prefs: source.prefs,
-      piUpdateCheck: source.piUpdateCheck,
-      piUpdateChecking: source.piUpdateChecking,
-      piUpdateRequestPending: source.piUpdateRequestPending,
-      piVersion: source.piVersion,
-      inspireUpdateCheck: source.inspireUpdateCheck,
-      inspireUpdateChecking: source.inspireUpdateChecking,
-      inspireUpdateRequestPending: source.inspireUpdateRequestPending,
       version: source.version,
       sessionId: source.sessionId,
       runtimeSettings: source.runtimeSettings,
@@ -491,66 +200,54 @@ export const SettingsContent = memo(function SettingsContent({
   const [activeCategory, setActiveCategory] =
     useState<CategoryId>(initialCategory);
   const contentRef = useRef<HTMLElement>(null);
-  const programmaticScroll = useRef(false);
 
-  const scrollToCategory = useCallback(
-    (categoryId: CategoryId, behavior: ScrollBehavior = "smooth") => {
+  const navigate = useCallback(
+    (categoryId: CategoryId, sectionId: string = categoryId) => {
       setActiveCategory(categoryId);
-      const target = document.getElementById(`settings-section-${categoryId}`);
-      if (!target) return;
-      const scrollBehavior = window.matchMedia(
-        "(prefers-reduced-motion: reduce)",
-      ).matches
-        ? "instant"
-        : behavior;
-      programmaticScroll.current = true;
-      target.scrollIntoView({ behavior: scrollBehavior, block: "start" });
-      window.setTimeout(
-        () => {
-          programmaticScroll.current = false;
-        },
-        scrollBehavior === "smooth" ? 450 : 0,
-      );
+      const id = sectionId.startsWith("settings-")
+        ? sectionId
+        : `settings-section-${sectionId}`;
+      document
+        .getElementById(id)
+        ?.scrollIntoView({ block: "start", behavior: "instant" });
     },
     [],
   );
 
   useEffect(() => {
-    if (initialCategory === "display") return;
-    const frame = window.requestAnimationFrame(() =>
-      scrollToCategory(initialCategory, "auto"),
+    const frame = requestAnimationFrame(() =>
+      navigate(
+        initialCategory,
+        initialCategory === "models" &&
+          modelDestination?.focus === "credentials"
+          ? "credentials"
+          : undefined,
+      ),
     );
-    return () => window.cancelAnimationFrame(frame);
-  }, [initialCategory, scrollToCategory]);
+    return () => cancelAnimationFrame(frame);
+  }, [initialCategory, modelDestination?.focus, navigate]);
 
-  const handleContentScroll = useCallback(() => {
-    if (programmaticScroll.current) return;
+  const trackCategory = () => {
     const container = contentRef.current;
     if (!container) return;
-    const sections = CATEGORIES.map(({ id }) => ({
-      id,
-      element: document.getElementById(`settings-section-${id}`),
-    })).filter(
-      (entry): entry is { id: CategoryId; element: HTMLElement } =>
-        entry.element !== null,
-    );
-    if (sections.length === 0) return;
     if (
       container.scrollTop + container.clientHeight >=
       container.scrollHeight - 24
     ) {
-      setActiveCategory(sections.at(-1)!.id);
+      setActiveCategory("updates");
       return;
     }
     const top = container.getBoundingClientRect().top;
-    let next = sections[0]!.id;
-    for (const section of sections) {
-      if (section.element.getBoundingClientRect().top - top <= 96)
-        next = section.id;
-      else break;
+    let current: CategoryId = "display";
+    for (const category of CATEGORIES) {
+      const section = document.getElementById(
+        `settings-section-${category.id}`,
+      );
+      if (section && section.getBoundingClientRect().top <= top + 48)
+        current = category.id;
     }
-    setActiveCategory(next);
-  }, []);
+    setActiveCategory(current);
+  };
 
   return (
     <div className="settings__layout">
@@ -562,11 +259,11 @@ export const SettingsContent = memo(function SettingsContent({
               <button
                 type="button"
                 key={category.id}
-                aria-current={active ? "true" : undefined}
+                aria-current={active ? "location" : undefined}
                 className={`settings__nav-item ${
                   active ? "settings__nav-item--active" : ""
                 }`}
-                onClick={() => scrollToCategory(category.id)}
+                onClick={() => navigate(category.id)}
               >
                 <span className="settings__nav-icon">{category.icon}</span>
                 <span className="settings__nav-label">{category.label}</span>
@@ -580,360 +277,311 @@ export const SettingsContent = memo(function SettingsContent({
         <main
           className="settings__content"
           ref={contentRef}
-          onScroll={handleContentScroll}
+          onScroll={trackCategory}
         >
-          <Section
-            id="display"
-            icon={<Palette size={14} />}
-            title="Display"
-            description="Tune the workbench surface and its reading measure."
-          >
-            <SettingField
-              label="Theme"
-              description="Choose a light, dark, or system-matched interface."
-            >
-              <SegmentedControl
-                label="Theme"
-                value={state.prefs.theme}
-                options={THEMES}
-                onChange={store.setTheme}
-              />
-            </SettingField>
+          <div className="settings__page" data-category="display">
+            <Section id="display" icon={<Palette size={14} />} title="Display">
+              <SettingField label="Theme">
+                <SegmentedControl
+                  label="Theme"
+                  value={state.prefs.theme}
+                  options={THEMES}
+                  onChange={store.setTheme}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Color palette"
-              description="Select the accent palette used across the workbench."
-            >
-              <SegmentedControl
-                label="Color palette"
-                value={state.prefs.palette}
-                options={PALETTES}
-                onChange={store.setPalette}
-              />
-            </SettingField>
+              <SettingField label="Color palette">
+                <SegmentedControl
+                  label="Color palette"
+                  value={state.prefs.palette}
+                  options={PALETTES}
+                  onChange={store.setPalette}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Content text size"
-              description="Adjust conversation, composer, code, and text preview readability."
-            >
-              <SegmentedControl
+              <SettingField
                 label="Content text size"
-                value={state.prefs.contentTextSize}
-                options={CONTENT_TEXT_SIZES}
-                onChange={store.setContentTextSize}
-              />
-            </SettingField>
+                wide
+                description="Applies to messages, input, code, and previews."
+              >
+                <SegmentedControl
+                  label="Content text size"
+                  value={state.prefs.contentTextSize}
+                  options={CONTENT_TEXT_SIZES}
+                  onChange={store.setContentTextSize}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Reading width"
-              description="Set the maximum width of conversations and the composer."
-            >
-              <SegmentedControl
+              <SettingField
                 label="Reading width"
-                value={state.prefs.readingWidth}
-                options={READING_WIDTHS}
-                onChange={store.setReadingWidth}
-              />
-            </SettingField>
+                wide
+                description="Maximum width for conversation and input."
+              >
+                <SegmentedControl
+                  label="Reading width"
+                  value={state.prefs.readingWidth}
+                  options={READING_WIDTHS}
+                  onChange={store.setReadingWidth}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Project location"
-              description="Show folder names or full paths in the top bar."
-            >
-              <SegmentedControl
+              <SettingField
                 label="Project location"
-                value={state.prefs.projectDisplay}
-                options={PROJECT_DISPLAYS}
-                onChange={store.setProjectDisplay}
-              />
-            </SettingField>
-          </Section>
+                wide
+                description="How the project appears in the title bar."
+              >
+                <SegmentedControl
+                  label="Project location"
+                  value={state.prefs.projectDisplay}
+                  options={PROJECT_DISPLAYS}
+                  onChange={store.setProjectDisplay}
+                />
+              </SettingField>
+            </Section>
+          </div>
 
-          <Section
-            id="conversation"
-            icon={<ScrollText size={14} />}
-            title="Conversation"
-            description="Choose how messages and agent activity reveal their detail."
-          >
-            <SettingField
-              label="Reasoning detail"
-              description="Choose how model reasoning appears in the conversation."
+          <div className="settings__page" data-category="conversation">
+            <Section
+              id="conversation"
+              icon={<ScrollText size={14} />}
+              title="Conversation"
             >
-              <Dropdown
+              <SettingField
                 label="Reasoning detail"
-                className="dropdown--field"
-                value={state.prefs.thinkingVisibility}
-                options={REASONING_DETAILS}
-                onChange={(value) =>
-                  store.setThinkingVisibility(value as VisibilityPreference)
-                }
-              />
-            </SettingField>
+                description="How much model reasoning to show by default."
+              >
+                <Dropdown
+                  label="Reasoning detail"
+                  className="dropdown--field"
+                  value={state.prefs.thinkingVisibility}
+                  options={REASONING_DETAILS}
+                  onChange={(value) =>
+                    store.setThinkingVisibility(value as VisibilityPreference)
+                  }
+                />
+              </SettingField>
 
-            <SettingField
-              label="Tool activity"
-              description="Set the default detail shown for individual tool calls."
-            >
-              <Dropdown
+              <SettingField
                 label="Tool activity"
-                className="dropdown--field"
-                value={state.prefs.toolVisibility}
-                options={TOOL_ACTIVITY}
-                onChange={(value) =>
-                  store.setToolVisibility(value as ToolVisibilityPreference)
-                }
-              />
-            </SettingField>
+                description="Detail shown for individual tool calls."
+              >
+                <Dropdown
+                  label="Tool activity"
+                  className="dropdown--field"
+                  value={state.prefs.toolVisibility}
+                  options={TOOL_ACTIVITY}
+                  onChange={(value) =>
+                    store.setToolVisibility(value as ToolVisibilityPreference)
+                  }
+                />
+              </SettingField>
 
-            <SettingField
-              label="Activity groups"
-              description="Set how grouped activity is loaded and shown by default."
-              stacked
-            >
-              <Dropdown
+              <SettingField
                 label="Activity groups"
-                className="dropdown--field dropdown--described"
-                value={state.prefs.activityFoldVisibility}
-                options={ACTIVITY_GROUPS}
-                onChange={(value) =>
-                  store.setActivityFoldVisibility(
-                    value as ActivityFoldVisibilityPreference,
-                  )
-                }
-              />
-            </SettingField>
-
-            <SettingField
-              label="Assistant turn details"
-              description="Show model and time between assistant turns; otherwise use a divider."
-            >
-              <label className="settings-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="Assistant turn details"
-                  checked={state.prefs.assistantRoundDisplay === "details"}
-                  onChange={(event) =>
-                    store.setAssistantRoundDisplay(
-                      event.currentTarget.checked ? "details" : "divider",
+                description="Detail shown for grouped activity."
+              >
+                <Dropdown
+                  label="Activity groups"
+                  className="dropdown--field dropdown--described"
+                  value={state.prefs.activityFoldVisibility}
+                  options={ACTIVITY_GROUPS}
+                  onChange={(value) =>
+                    store.setActivityFoldVisibility(
+                      value as ActivityFoldVisibilityPreference,
                     )
                   }
                 />
-                <span className="settings-switch__track" aria-hidden>
-                  <span className="settings-switch__thumb" />
-                </span>
-                <span className="settings-switch__state" aria-hidden>
-                  {state.prefs.assistantRoundDisplay === "details"
-                    ? "On"
-                    : "Off"}
-                </span>
-              </label>
-            </SettingField>
+              </SettingField>
 
-            <SettingField
-              label="Desktop send key"
-              description="On mobile, Return always adds a line; only Send submits."
-            >
-              <SegmentedControl
-                label="Desktop send key"
-                value={state.prefs.desktopSendKey}
-                options={DESKTOP_SEND_KEYS}
-                onChange={store.setDesktopSendKey}
-              />
-            </SettingField>
-          </Section>
+              <SettingField
+                label="Assistant turn details"
+                description="Show model and elapsed time between replies."
+              >
+                <SettingsSwitch
+                  label="Assistant turn details"
+                  checked={state.prefs.assistantRoundDisplay === "details"}
+                  onChange={(checked) =>
+                    store.setAssistantRoundDisplay(
+                      checked ? "details" : "divider",
+                    )
+                  }
+                />
+              </SettingField>
 
-          <Section
-            id="behavior"
-            icon={<Compass size={14} />}
-            title="Behavior"
-            description="Set workbench behavior and controls owned by the live Pi runtime."
-          >
-            <HerdrSettings />
-            <SettingField
-              label="On launch"
-              description="Open the welcome page or continue the previous session."
+              <SettingField
+                label="Send key"
+                wide
+                description="On touch keyboards, Return adds a new line."
+              >
+                <SegmentedControl
+                  label="Send key"
+                  value={state.prefs.desktopSendKey}
+                  options={DESKTOP_SEND_KEYS}
+                  onChange={store.setDesktopSendKey}
+                />
+              </SettingField>
+            </Section>
+          </div>
+
+          <div className="settings__page" data-category="behavior">
+            <Section
+              id="behavior"
+              icon={<Compass size={14} />}
+              title="Behavior"
             >
-              <Dropdown
+              <SettingField
                 label="On launch"
-                className="dropdown--field"
-                value={state.prefs.launch}
-                options={LAUNCH_OPTIONS}
-                onChange={(value) => store.setLaunch(value as LaunchPreference)}
-              />
-            </SettingField>
+                description="What to show when INSΠRE opens."
+              >
+                <Dropdown
+                  label="On launch"
+                  className="dropdown--field"
+                  value={state.prefs.launch}
+                  options={LAUNCH_OPTIONS}
+                  onChange={(value) =>
+                    store.setLaunch(value as LaunchPreference)
+                  }
+                />
+              </SettingField>
 
-            <SettingField
-              label="Completion alerts"
-              description="Choose how background completions get your attention. Desktop notifications also keep the tab marked."
-              stacked
-            >
-              <Dropdown
+              <SettingField
                 label="Completion alerts"
-                className="dropdown--field"
-                value={state.prefs.completionAttention}
-                options={COMPLETION_ALERTS}
-                onChange={(value) =>
-                  void store.setCompletionAttention(
-                    value as CompletionAttentionPreference,
-                  )
-                }
-              />
-            </SettingField>
+                description="Notify when work finishes in the background."
+              >
+                <Dropdown
+                  label="Completion alerts"
+                  className="dropdown--field"
+                  value={state.prefs.completionAttention}
+                  options={COMPLETION_ALERTS}
+                  onChange={(value) =>
+                    void store.setCompletionAttention(
+                      value as CompletionAttentionPreference,
+                    )
+                  }
+                />
+              </SettingField>
 
-            <SettingField
-              label="Steering delivery"
-              description="When work is running, deliver queued directions one at a time or together at the next safe boundary."
-            >
-              <Dropdown
+              <SettingField
                 label="Steering delivery"
-                className="dropdown--field"
-                value={state.runtimeSettings?.steeringMode ?? ""}
-                display={
-                  state.runtimeSettings?.steeringMode
-                    ? undefined
-                    : "Unavailable"
-                }
-                options={MESSAGE_DELIVERY_MODES}
-                disabled={
-                  !state.sessionId ||
-                  state.runtimeSettings?.steeringMode === null ||
-                  state.runtimeSettings === null
-                }
-                onChange={(mode) => {
-                  if (isMessageDeliveryMode(mode))
-                    void store.setSteeringMode(mode);
-                }}
-              />
-            </SettingField>
+                description="How Steer messages reach Pi during a task."
+              >
+                <Dropdown
+                  label="Steering delivery"
+                  className="dropdown--field"
+                  value={state.runtimeSettings?.steeringMode ?? ""}
+                  display={
+                    state.runtimeSettings?.steeringMode
+                      ? undefined
+                      : "Unavailable"
+                  }
+                  options={MESSAGE_DELIVERY_MODES}
+                  disabled={
+                    !state.sessionId ||
+                    state.runtimeSettings?.steeringMode === null ||
+                    state.runtimeSettings === null
+                  }
+                  onChange={(mode) => {
+                    if (isMessageDeliveryMode(mode))
+                      void store.setSteeringMode(mode);
+                  }}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Follow-up delivery"
-              description="After work settles, start queued follow-ups one at a time or deliver them together."
-            >
-              <Dropdown
+              <SettingField
                 label="Follow-up delivery"
-                className="dropdown--field"
-                value={state.runtimeSettings?.followUpMode ?? ""}
-                display={
-                  state.runtimeSettings?.followUpMode
-                    ? undefined
-                    : "Unavailable"
-                }
-                options={MESSAGE_DELIVERY_MODES}
-                disabled={
-                  !state.sessionId ||
-                  state.runtimeSettings?.followUpMode === null ||
-                  state.runtimeSettings === null
-                }
-                onChange={(mode) => {
-                  if (isMessageDeliveryMode(mode))
-                    void store.setFollowUpMode(mode);
-                }}
-              />
-            </SettingField>
+                description="How queued messages reach Pi after a task."
+              >
+                <Dropdown
+                  label="Follow-up delivery"
+                  className="dropdown--field"
+                  value={state.runtimeSettings?.followUpMode ?? ""}
+                  display={
+                    state.runtimeSettings?.followUpMode
+                      ? undefined
+                      : "Unavailable"
+                  }
+                  options={MESSAGE_DELIVERY_MODES}
+                  disabled={
+                    !state.sessionId ||
+                    state.runtimeSettings?.followUpMode === null ||
+                    state.runtimeSettings === null
+                  }
+                  onChange={(mode) => {
+                    if (isMessageDeliveryMode(mode))
+                      void store.setFollowUpMode(mode);
+                  }}
+                />
+              </SettingField>
 
-            <SettingField
-              label="Automatic context compaction"
-              description="Let Pi summarize older context when the active model approaches its context limit."
-            >
-              <label className="settings-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="Automatic context compaction"
+              <SettingField
+                label="Automatic context compaction"
+                description="Summarize older context near the model's limit."
+                status={
+                  !state.sessionId ||
+                  state.runtimeSettings?.autoCompactionEnabled == null
+                    ? "Unavailable"
+                    : undefined
+                }
+              >
+                <SettingsSwitch
+                  label="Automatic context compaction"
                   checked={
                     state.runtimeSettings?.autoCompactionEnabled === true
                   }
                   disabled={
                     !state.sessionId ||
-                    state.runtimeSettings?.autoCompactionEnabled === null ||
-                    state.runtimeSettings === null
+                    state.runtimeSettings?.autoCompactionEnabled == null
                   }
-                  onChange={(event) =>
-                    void store.setAutoCompaction(event.currentTarget.checked)
-                  }
+                  onChange={(checked) => void store.setAutoCompaction(checked)}
                 />
-                <span className="settings-switch__track" aria-hidden>
-                  <span className="settings-switch__thumb" />
-                </span>
-                <span className="settings-switch__state" aria-hidden>
-                  {state.runtimeSettings?.autoCompactionEnabled === null ||
-                  state.runtimeSettings === null
-                    ? "Unavailable"
-                    : state.runtimeSettings.autoCompactionEnabled
-                      ? "On"
-                      : "Off"}
-                </span>
-              </label>
-            </SettingField>
+              </SettingField>
 
-            <SettingField
-              label="Automatic retry"
-              description="Let Pi retry transient provider failures such as rate limits and service overloads."
-            >
-              <label className="settings-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="Automatic retry"
+              <SettingField
+                label="Automatic retry"
+                description="Retry temporary provider errors."
+                status={
+                  !state.sessionId ||
+                  state.runtimeSettings?.autoRetryEnabled == null
+                    ? "Unavailable"
+                    : undefined
+                }
+              >
+                <SettingsSwitch
+                  label="Automatic retry"
                   checked={state.runtimeSettings?.autoRetryEnabled === true}
                   disabled={
                     !state.sessionId ||
-                    state.runtimeSettings?.autoRetryEnabled === null ||
-                    state.runtimeSettings === null
+                    state.runtimeSettings?.autoRetryEnabled == null
                   }
-                  onChange={(event) =>
-                    void store.setAutoRetry(event.currentTarget.checked)
-                  }
+                  onChange={(checked) => void store.setAutoRetry(checked)}
                 />
-                <span className="settings-switch__track" aria-hidden>
-                  <span className="settings-switch__thumb" />
-                </span>
-                <span className="settings-switch__state" aria-hidden>
-                  {state.runtimeSettings?.autoRetryEnabled === null ||
-                  state.runtimeSettings === null
-                    ? "Unavailable"
-                    : state.runtimeSettings.autoRetryEnabled
-                      ? "On"
-                      : "Off"}
-                </span>
-              </label>
-            </SettingField>
-          </Section>
+              </SettingField>
 
-          <Section id="updates" icon={<RefreshCw size={14} />} title="Updates">
-            <UpdateEntry
-              title="Pi & Extensions"
-              checked={state.piUpdateCheck !== null}
-              checking={state.piUpdateChecking}
-              requestPending={state.piUpdateRequestPending}
-              checkLabel="Check Pi and extension updates"
-              onCheck={store.checkPiUpdate}
-            >
-              <PiUpdateStatus
-                currentVersion={state.piVersion}
-                check={state.piUpdateCheck}
-                checking={state.piUpdateChecking}
+              <HerdrSettings
+                onNavigateRestart={() =>
+                  navigate("updates", "settings-host-restart")
+                }
               />
-            </UpdateEntry>
+            </Section>
+          </div>
 
-            <UpdateEntry
-              title="INSΠRE"
-              checked={state.inspireUpdateCheck !== null}
-              checking={state.inspireUpdateChecking}
-              requestPending={state.inspireUpdateRequestPending}
-              checkLabel="Check INSΠRE updates"
-              onCheck={store.checkInspireUpdate}
-            >
-              <InspireUpdateStatus
-                currentVersion={state.version}
-                check={state.inspireUpdateCheck}
-                checking={state.inspireUpdateChecking}
-              />
-            </UpdateEntry>
-            <HostRestartSettings />
-          </Section>
+          <div className="settings__page" data-category="models">
+            <ModelsSettings
+              destination={
+                activeCategory === "models" || initialCategory === "models"
+                  ? modelDestination
+                  : undefined
+              }
+            />
+          </div>
+
+          <div className="settings__page" data-category="updates">
+            <SystemVersionsCard />
+
+            <Section icon={<RefreshCw size={14} />} title="Restart">
+              <HostRestartSettings />
+            </Section>
+          </div>
         </main>
 
         <footer className="settings__footer">
@@ -946,40 +594,25 @@ export const SettingsContent = memo(function SettingsContent({
             {install === "installed" ? (
               <span className="settings__installed">App installed</span>
             ) : null}
-          </div>
-          <div className="settings__footer-actions">
             {install === "available" ? (
               <button
                 type="button"
-                className="settings__utility"
+                className="settings__utility settings__install"
                 onClick={() => void requestInstall()}
               >
                 <Laptop size={13} aria-hidden />
                 Install app
               </button>
             ) : null}
-            <a
-              className="settings__utility"
-              href="https://github.com/earendil-works/pi"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              Pi Coding Agent
-            </a>
-            <a
-              className="settings__utility"
-              href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              Pi changelog
-            </a>
+          </div>
+          <div className="settings__footer-actions">
             <button
               type="button"
               className="settings__utility settings__utility--reset"
               onClick={store.restoreDefaultSettings}
+              title="Reset appearance and behavior preferences"
             >
-              Restore defaults
+              Reset preferences
             </button>
           </div>
         </footer>

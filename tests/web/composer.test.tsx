@@ -829,11 +829,11 @@ describe("composer-adjacent status and queued controls", () => {
       screen.getByRole("button", { name: "Cancel context compaction" }),
     ).toBeInTheDocument();
     const meter = screen.getByRole("meter");
-    expect(meter).toHaveAttribute(
-      "title",
-      expect.stringContaining("context compaction in progress"),
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
     );
-    expect(meter.getAttribute("title")).not.toContain("type /compact");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("/compact");
 
     typeDraft("steer during the checkpoint");
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -849,16 +849,110 @@ describe("composer-adjacent status and queued controls", () => {
 });
 
 describe("composer meta row", () => {
-  it("shows the context gauge from session stats with the exact tokens on hover", () => {
+  it("reveals read-only model/context details on hover, focus and tap without moving focus", () => {
     clearLeftovers();
     render(<Composer />);
     const meter = screen.getByLabelText("Context 10 percent full");
     expect(meter).toHaveTextContent("10%");
-    expect(meter).toHaveAttribute(
-      "title",
-      expect.stringContaining("12,640 / 131,072 tokens"),
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("kimi-k3");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
     );
-    expect(meter.getAttribute("title")).toContain("/compact");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("/compact");
+    fireEvent.pointerLeave(meter);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(meter);
+    act(() => screen.getByLabelText("Message").focus());
+    expect(
+      fireEvent.keyDown(document.activeElement!, {
+        key: "Escape",
+        isComposing: true,
+      }),
+    ).toBe(true);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(fireEvent.keyDown(document.activeElement!, { key: "Escape" })).toBe(
+      false,
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    act(() => meter.focus());
+    expect(meter).toHaveFocus();
+    expect(meter).toHaveAttribute(
+      "aria-describedby",
+      screen.getByRole("tooltip").id,
+    );
+    fireEvent.keyDown(meter, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(meter).toHaveFocus();
+    act(() => meter.blur());
+    fireEvent.click(meter);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByLabelText("Message"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("reports Pi occupancy above 100 percent while bounding only the ring and meter value", () => {
+    clearLeftovers();
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          stats: {
+            contextUsage: {
+              tokens: 196_608,
+              contextWindow: 131_072,
+              percent: 150,
+            },
+          },
+        }),
+      }),
+    );
+    render(<Composer />);
+    const meter = screen.getByRole("meter", {
+      name: "Context 150 percent full",
+    });
+    expect(meter).toHaveTextContent("150%");
+    expect(meter).toHaveAttribute("aria-valuenow", "100");
+    expect(meter).toHaveAttribute("aria-valuetext", "150%");
+    const [fill, circumference] = meter
+      .querySelector(".meter__ring-fill")!
+      .getAttribute("stroke-dasharray")!
+      .split(" ")
+      .map(Number);
+    expect(fill).toBe(circumference);
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "150% · 196,608 / 131,072 tokens",
+    );
+  });
+
+  it("retains unknown occupancy and known capacity after compaction, then restores Pi's next count", () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const unknown = activeSnapshot({
+      stats: {
+        contextUsage: { tokens: null, contextWindow: 131_072, percent: null },
+      },
+    });
+    act(() => socket.emit({ type: "snapshot", data: unknown }));
+    render(<Composer />);
+    const meter = screen.getByLabelText("Context usage unknown");
+    expect(meter).toHaveTextContent("—");
+    expect(meter).not.toHaveAttribute("aria-valuenow");
+    fireEvent.click(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("— / 131,072 tokens");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Updates after the next reply",
+    );
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    expect(screen.getByRole("meter")).toHaveTextContent("10%");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
+    );
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent(
+      "Updates after the next reply",
+    );
   });
 
   it("opens the thinking picker with keyboard focus for /thinking", async () => {
@@ -1099,7 +1193,7 @@ describe("caret completion", () => {
       within(list).queryByText(/settings collision/),
     ).not.toBeInTheDocument();
     expect(
-      within(list).getByRole("option", { name: /\/clone.*Terminal only/ }),
+      within(list).getByRole("option", { name: /\/import.*Terminal only/ }),
     ).toBeInTheDocument();
   });
 

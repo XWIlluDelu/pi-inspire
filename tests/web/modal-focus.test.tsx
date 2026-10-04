@@ -21,7 +21,7 @@ describe("modal focus ownership", () => {
     );
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const first = screen.getByRole("button", { name: "Close settings" });
-    const last = screen.getByRole("button", { name: "Restore defaults" });
+    const last = screen.getByRole("button", { name: "Reset preferences" });
     expect(document.activeElement).toBe(first);
 
     last.focus();
@@ -46,7 +46,7 @@ describe("modal focus ownership", () => {
     const user = userEvent.setup();
     render(
       <SettingsDialog onClose={onClose}>
-        <SettingsContent />
+        <SettingsContent initialCategory="conversation" />
       </SettingsDialog>,
     );
     const trigger = screen.getByRole("combobox", { name: "Activity groups" });

@@ -10,6 +10,8 @@ import {
   type BranchBridgeResult,
   decodeBranchBridgeJson,
   encodeBranchBridgeJson,
+  MODEL_REFRESH_SUFFIX,
+  MODEL_REFRESH_TIMEOUT_MS,
   RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
   type RetryStateRequest,
@@ -17,6 +19,7 @@ import {
 } from "../../shared/branch-bridge-protocol.js";
 
 import { userMessageEvidence } from "../pending-image-evidence.js";
+import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
 
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,200}$/;
@@ -102,6 +105,8 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
   const workerId = process.env.INSPIRE_BRANCH_WORKER_ID ?? "";
   if (!TOKEN.test(command) || !TOKEN.test(statusKey) || !TOKEN.test(workerId))
     return;
+
+  registerProviderAuthBridge(pi, { command, statusKey, workerId });
 
   pi.registerCommand(`${command}${RETRY_STATE_SUFFIX}`, {
     description: "Internal Inspire effective retry state",
@@ -194,6 +199,69 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
       // No image bodies or old-message hashes cross this boundary. Raw
       // message_start events still own consumption before persistence.
       emit({ cursor: entries.at(-1)?.id ?? null });
+    },
+  });
+
+  // Catalog refresh is independent of branch navigation and active agent work.
+  // ModelRuntime retains extension providers and owns authentication/network policy.
+  let refreshing: Promise<string | undefined> | undefined;
+  pi.registerCommand(`${command}${MODEL_REFRESH_SUFFIX}`, {
+    description: "Internal Inspire model catalog refresh",
+    handler: async (argument, ctx) => {
+      const request = decodeBranchBridgeJson(
+        argument,
+        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      ) as Record<string, unknown>;
+      if (
+        ctx.mode !== "rpc" ||
+        request.workerId !== workerId ||
+        request.sessionId !== ctx.sessionManager.getSessionId() ||
+        typeof request.nonce !== "string" ||
+        !TOKEN.test(request.nonce)
+      )
+        throw new Error("invalid model refresh owner");
+      let ok = true;
+      let warning: string | undefined;
+      try {
+        refreshing ??= (async () => {
+          const controller = new AbortController();
+          const timer = setTimeout(
+            () => controller.abort(),
+            MODEL_REFRESH_TIMEOUT_MS,
+          );
+          try {
+            const result = await ctx.modelRegistry.refresh({
+              signal: controller.signal,
+            });
+            return result.aborted
+              ? "Model refresh timed out; showing cached models"
+              : result.errors.size
+                ? "Some model catalogs could not refresh; showing available models"
+                : ctx.modelRegistry.getError();
+          } finally {
+            clearTimeout(timer);
+          }
+        })().finally(() => {
+          refreshing = undefined;
+        });
+        warning = await refreshing;
+      } catch (error) {
+        ok = false;
+        warning = boundedError(error);
+      }
+      ctx.ui.setStatus(
+        `${statusKey}${MODEL_REFRESH_SUFFIX}`,
+        encodeBranchBridgeJson(
+          {
+            nonce: request.nonce,
+            workerId,
+            sessionId: request.sessionId,
+            ok,
+            ...(warning ? { warning: warning.slice(0, 300) } : {}),
+          },
+          BRANCH_BRIDGE_MAX_RESULT_BYTES,
+        ),
+      );
     },
   });
 

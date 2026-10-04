@@ -10,6 +10,7 @@ import {
 import {
   afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   it,
@@ -23,6 +24,7 @@ import {
   setStartDraft,
 } from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
+import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -77,6 +79,12 @@ beforeAll(async () => {
           ],
         }),
       };
+    if (url.startsWith("/api/models"))
+      return { body: { models: store.getState().availableModels } };
+    if (url.startsWith("/api/new-session/thinking")) {
+      const query = new URL(url, "http://local").searchParams;
+      return { body: { level: query.get("current") ?? "high" } };
+    }
     if (url.startsWith("/api/new-session/defaults")) {
       const parsed = new URL(url, "http://local");
       defaultModelCwd = parsed.searchParams.get("cwd");
@@ -162,6 +170,8 @@ beforeAll(async () => {
   FakeWebSocket.instances.at(-1)?.open();
 });
 
+beforeEach(mockModelMenuLayout);
+
 afterEach(() => {
   defaultModelAvailable = true;
   promptGate = null;
@@ -221,6 +231,11 @@ describe("new-session start surface", () => {
     fireEvent.change(screen.getByLabelText("Project directory"), {
       target: { value: "/proj" },
     });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Start session" }));
 
     await waitFor(() =>

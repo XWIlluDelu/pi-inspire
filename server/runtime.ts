@@ -10,6 +10,7 @@ import {
   type BranchBridgeRequest,
   type BranchBridgeResult,
   encodeBranchBridgeJson,
+  MODEL_REFRESH_SUFFIX,
   RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
@@ -42,6 +43,7 @@ import {
   isBusyRunState,
   MAX_PROJECT_FILES,
   MAX_SESSION_ID_CHARS,
+  type ModelOption,
   type NewSessionOptions,
   type PendingReadRequest,
   type PendingRecovery,
@@ -112,7 +114,16 @@ import {
 
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
 
+import {
+  PROVIDER_AUTH_SUFFIX,
+  type ProviderAuthOperation,
+  type ProviderAuthResult,
+} from "../shared/provider-auth-bridge.js";
+import { modelOption } from "./model-catalog.js";
+import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
+import { commonModelOptions } from "./model-settings.js";
 import { getAgentDir, SettingsManager } from "./pi-runtime.js";
+import { requestWorkerAuth } from "./provider-auth-bridge.js";
 import {
   exactPendingInput,
   mergePendingQueues,
@@ -287,6 +298,17 @@ export interface RuntimeLike {
     provider: string,
     modelId: string,
   ): Promise<unknown>;
+  refreshModels(
+    sessionId: string,
+  ): Promise<{ models: ModelOption[]; warning?: string }>;
+  providerAuth?(
+    sessionId: string,
+    operation: ProviderAuthOperation,
+    workerId?: string,
+  ): Promise<ProviderAuthResult>;
+  providerAuthOwner?(
+    sessionId: string,
+  ): { id: string; cancelLogin(id: string): Promise<void> } | null;
   setThinkingLevel(sessionId: string, level: string): Promise<void>;
   setAutoCompaction(sessionId: string, enabled: boolean): Promise<void>;
   setAutoRetry(sessionId: string, enabled: boolean): Promise<void>;
@@ -389,6 +411,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly extensionUi: RuntimeExtensionUiController;
   private readonly events: RuntimeEventController;
   private readonly bash: RuntimeBashController;
+  private readonly modelRefreshes = new WeakMap<
+    PiRpcProcess,
+    Promise<{ models: ModelOption[]; warning?: string }>
+  >();
   private readonly reads: RuntimeReadController;
   private readonly deletions: RuntimeSessionDeletionController;
   private readonly projectionCoordinator: RuntimeProjectionCoordinator;
@@ -1612,6 +1638,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           const internal = reserved
             ? [
                 reserved,
+                `${reserved}${MODEL_REFRESH_SUFFIX}`,
+                `${reserved}${PROVIDER_AUTH_SUFFIX}`,
                 `${reserved}${RETRY_STATE_SUFFIX}`,
                 `${reserved}${PENDING_IMAGE_SUFFIX}`,
               ]
@@ -4143,6 +4171,90 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  refreshModels(
+    sessionId: string,
+  ): Promise<{ models: ModelOption[]; warning?: string }> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      const rpc = slot.process;
+      const bridge = slot.bridge;
+      if (!rpc || !bridge || !slot.ready)
+        throw requestError("No active Pi model catalog", 409);
+      const existing = this.modelRefreshes.get(rpc);
+      if (existing) return existing;
+      const owns = () =>
+        slot.process === rpc && slot.bridge === bridge && slot.ready;
+      const operation = (async () => {
+        const warning = await refreshWorkerCatalog(rpc, bridge, sessionId);
+        if (!owns())
+          throw requestError("Pi worker changed during model refresh", 409);
+        const result = await rpc.request<{ models: ModelOption[] }>({
+          type: "get_available_models",
+        });
+        if (!owns())
+          throw requestError("Pi worker changed during model refresh", 409);
+        const models = result.models.map(modelOption);
+        slot.availableModels = models;
+        return { models, ...(warning ? { warning } : {}) };
+      })().finally(() => this.modelRefreshes.delete(rpc));
+      this.modelRefreshes.set(rpc, operation);
+      return operation;
+    });
+  }
+
+  providerAuthOwner(
+    sessionId: string,
+  ): { id: string; cancelLogin(id: string): Promise<void> } | null {
+    const slot = this.slots.get(sessionId);
+    const rpc = slot?.process;
+    const bridge = slot?.bridge;
+    if (!slot || !rpc || !bridge || !slot.ready) return null;
+    const owns = () =>
+      slot.process === rpc && slot.bridge === bridge && slot.ready;
+    return {
+      id: bridge.workerId,
+      cancelLogin: async (id) => {
+        if (!owns()) {
+          await rpc.stop();
+          return;
+        }
+        await this.useSlot(slot, async () => {
+          if (owns())
+            await requestWorkerAuth(rpc, bridge, sessionId, {
+              operation: "cancel",
+              id,
+            });
+          else await rpc.stop();
+        });
+      },
+    };
+  }
+
+  providerAuth(
+    sessionId: string,
+    operation: ProviderAuthOperation,
+    workerId?: string,
+  ): Promise<ProviderAuthResult> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      const rpc = slot.process;
+      const bridge = slot.bridge;
+      if (
+        !rpc ||
+        !bridge ||
+        !slot.ready ||
+        (workerId && workerId !== bridge.workerId)
+      )
+        throw requestError("No active Pi authentication owner", 409);
+      const result = await requestWorkerAuth(rpc, bridge, sessionId, operation);
+      if (slot.process !== rpc || slot.bridge !== bridge || !slot.ready)
+        throw requestError("Pi worker changed during authentication", 409);
+      return result;
+    });
+  }
+
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
     return this.withMaintenanceOperation(() =>
       this.setThinkingLevelInside(sessionId, level),
@@ -4323,7 +4435,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 ? state.followUpMode
                 : null,
           },
-          availableModels: models,
+          availableModels: slot.availableModels ?? models,
+          commonModels: await commonModelOptions(
+            SettingsManager.create(
+              slot.cwd,
+              getAgentDir(),
+            ).getEnabledModels() ?? [],
+            (slot.availableModels ?? models) as ModelOption[],
+          ),
           commands,
         },
         runState: slot.runState,

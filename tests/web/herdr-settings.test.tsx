@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { HerdrSettings } from "../../src/components/HerdrSettings";
 
 const fixture = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ vi.mock("../../src/store", () => ({
 }));
 const ready = {
   enabled: false,
+  ready: true,
   supported: true,
   installed: true,
   running: false,
@@ -46,16 +48,15 @@ describe("Herdr Settings", () => {
       /Restart Host to turn on/,
     );
     expect(
-      screen
-        .getByRole("link", { name: "Review Host restart" })
-        .getAttribute("href"),
-    ).toBe("#settings-host-restart");
+      screen.getByRole("button", { name: "Review Host restart" }),
+    ).toBeInTheDocument();
     expect(getStatus).toHaveBeenCalledOnce();
   });
 
   it("explains an unavailable backend and still allows disabling a saved choice", async () => {
     const getStatus = vi.fn(async () => ({
       ...ready,
+      ready: false,
       supported: false,
       installed: false,
       issue: "Herdr is unavailable on this platform.",
@@ -73,6 +74,49 @@ describe("Herdr Settings", () => {
     expect(toggle).not.toBeDisabled();
     fireEvent.click(toggle);
     expect(fixture.save).toHaveBeenCalledWith(false);
+  });
+
+  it("blocks a known scope failure, permits disabling, and restores enabling after recheck", async () => {
+    const blocked = {
+      ...ready,
+      ready: false,
+      issue: "Herdr worker scopes are unavailable: user manager unavailable",
+    };
+    let recover!: (status: HerdrEnhancementStatus) => void;
+    const recheck = new Promise<HerdrEnhancementStatus>((resolve) => {
+      recover = resolve;
+    });
+    const getStatus = vi
+      .fn<() => Promise<HerdrEnhancementStatus>>()
+      .mockResolvedValueOnce(blocked)
+      .mockReturnValueOnce(recheck);
+    const { rerender } = render(<HerdrSettings getStatus={getStatus} />);
+    const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
+    await screen.findByText(blocked.issue);
+    expect(toggle).toBeDisabled();
+    expect(fixture.save).not.toHaveBeenCalled();
+
+    fixture.saved = true;
+    rerender(<HerdrSettings getStatus={getStatus} />);
+    expect(toggle).not.toBeDisabled();
+    fireEvent.click(toggle);
+    expect(fixture.save).toHaveBeenCalledWith(false);
+    fixture.saved = false;
+    rerender(<HerdrSettings getStatus={getStatus} />);
+
+    const retry = screen.getByRole("button", { name: "Recheck availability" });
+    fireEvent.click(retry);
+    expect(retry).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    recover(ready);
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(screen.queryByText(blocked.issue)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Recheck availability" }),
+    ).toBeNull();
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    fireEvent.click(toggle);
+    expect(fixture.save).toHaveBeenLastCalledWith(true);
   });
 
   it("reports a missing status hook without blocking turning off", async () => {

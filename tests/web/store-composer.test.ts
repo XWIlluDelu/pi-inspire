@@ -674,20 +674,20 @@ describe("Pi native command dispatch", () => {
     await store.sendPrompt("/session");
     await store.sendPrompt("/hotkeys");
     await store.sendPrompt("/quit");
-    await store.sendPrompt("/login");
+    await store.sendPrompt("/share");
 
     expect(store.getState().commandActivities.s1).toHaveLength(4);
     expect(store.getState().commandActivities.s1).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ command: "compact", status: "running" }),
         expect.objectContaining({
-          command: "login",
+          command: "share",
           status: "warning",
-          details: [{ label: "Run in Pi", value: "/login" }],
+          details: [{ label: "Run in Pi", value: "/share" }],
           action: {
             kind: "open-terminal",
             label: "Open terminal & copy command",
-            value: "/login",
+            value: "/share",
           },
         }),
       ]),

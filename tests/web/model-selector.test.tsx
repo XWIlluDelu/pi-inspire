@@ -6,9 +6,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
 import { supportedThinkingLevels } from "../../src/model-options";
+import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
+
+beforeEach(mockModelMenuLayout);
 
 const models = [
   {
@@ -27,7 +30,222 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
-  it("keeps provider headings outside option navigation and exposes active/recent/capability labels", () => {
+  it("bounds mounted rows while search and keyboard navigation reach the end of a large available set", () => {
+    const available = Array.from({ length: 2400 }, (_, index) => ({
+      provider: "fixture",
+      id: `model-${String(index).padStart(4, "0")}`,
+      name: `Available model ${index}`,
+    }));
+    const change = vi.fn();
+    render(
+      <ModelSelector
+        value={available[0]!}
+        models={available}
+        recent={[]}
+        onChange={change}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    const search = screen.getByRole("combobox", { name: "Search models" });
+    expect(screen.getAllByRole("option").length).toBeLessThan(25);
+    fireEvent.keyDown(search, { key: "End" });
+    const last = document.getElementById(
+      search.getAttribute("aria-activedescendant")!,
+    )!;
+    expect(last).toHaveAttribute("aria-posinset", "2400");
+    expect(last).toHaveTextContent("Available model 2399");
+    fireEvent.keyDown(search, { key: "ArrowUp" });
+    expect(
+      document.getElementById(search.getAttribute("aria-activedescendant")!),
+    ).toHaveTextContent("Available model 2398");
+    expect(screen.getAllByRole("option").length).toBeLessThan(25);
+    fireEvent.change(search, { target: { value: "model-2399" } });
+    expect(screen.getAllByRole("option")[0]).toHaveTextContent(
+      "Available model 2399",
+    );
+    expect(screen.getAllByRole("option").length).toBeLessThan(25);
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(change).toHaveBeenCalledWith("fixture", "model-2399");
+  });
+  it("searches displayed provider/model identities in common and ordinary groups, including slashes inside the model ID", () => {
+    const choices = [
+      {
+        provider: "review-final",
+        id: "review-final-chat",
+        name: "Review final",
+      },
+      { provider: "custom", id: "folder/chat", name: "Nested chat" },
+      { provider: "other", id: "unrelated", name: "Unrelated" },
+    ];
+    const change = vi.fn();
+    render(
+      <ModelSelector
+        value={choices[2]!}
+        models={choices}
+        recent={[]}
+        common={[choices[0]!]}
+        onChange={change}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    const search = screen.getByRole("combobox", { name: "Search models" });
+    for (const [query, name] of [
+      ["review-final/review-final-chat", "Review final"],
+      ["custom/folder/chat", "Nested chat"],
+      ["folder/chat", "Nested chat"],
+      ["Nested chat", "Nested chat"],
+    ]) {
+      fireEvent.change(search, { target: { value: query } });
+      const matches = screen.getAllByRole("option");
+      expect(matches).toHaveLength(1);
+      expect(matches[0]).toHaveTextContent(name!);
+    }
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(change).toHaveBeenCalledWith("custom", "folder/chat");
+  });
+
+  it("keeps configured common order above recency and offers one keyboard-reachable management destination, with no unconfigured common group", () => {
+    const manage = vi.fn();
+    const view = render(
+      <ModelSelector
+        value={models[0]!}
+        models={models}
+        recent={[models[0]!]}
+        common={[models[2]!, models[1]!]}
+        onChange={vi.fn()}
+        onManageModels={manage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    expect(
+      screen
+        .getAllByRole("option")
+        .map(
+          (option) =>
+            option.textContent?.match(/GPT 5|Claude Haiku|Claude Sonnet/)?.[0],
+        ),
+    ).toEqual(["GPT 5", "Claude Haiku", "Claude Sonnet"]);
+    expect(
+      screen.getAllByRole("button", { name: "Manage models" }),
+    ).toHaveLength(1);
+    const search = screen.getByRole("combobox", { name: "Search models" });
+    fireEvent.keyDown(search, { key: "Tab" });
+    expect(
+      screen.getByRole("listbox", { name: "Available models" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage models" }));
+    expect(manage).toHaveBeenCalledOnce();
+    view.rerender(
+      <ModelSelector
+        value={models[0]!}
+        models={models}
+        recent={[]}
+        onChange={vi.fn()}
+        onManageModels={manage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    expect(screen.queryByText("Common models")).not.toBeInTheDocument();
+  });
+  it.each(["insertion", "recent reorder"])(
+    "keeps the highlighted model through catalog %s so Enter chooses the same identity",
+    (changeKind) => {
+      const choices = [
+        { provider: "fixture", id: "a", name: "Alpha" },
+        { provider: "fixture", id: "b", name: "Beta" },
+        { provider: "fixture", id: "c", name: "Gamma" },
+      ];
+      const change = vi.fn();
+      const view = render(
+        <ModelSelector
+          value={choices[0]!}
+          models={choices}
+          recent={[]}
+          onChange={change}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Model" }));
+      const search = screen.getByRole("combobox", { name: "Search models" });
+      fireEvent.keyDown(search, { key: "ArrowDown" });
+      const updated =
+        changeKind === "insertion"
+          ? [...choices, { provider: "fixture", id: "0", name: "Inserted" }]
+          : choices;
+      const recent = changeKind === "recent reorder" ? [choices[2]!] : [];
+      view.rerender(
+        <ModelSelector
+          value={choices[0]!}
+          models={updated}
+          recent={recent}
+          onChange={change}
+        />,
+      );
+      expect(
+        document.getElementById(search.getAttribute("aria-activedescendant")!)
+          ?.textContent,
+      ).toContain("Beta");
+      expect(document.activeElement).toBe(search);
+      fireEvent.keyDown(search, { key: "Enter" });
+      expect(change).toHaveBeenCalledWith("fixture", "b");
+    },
+  );
+  it("opens cached choices immediately, updates the same menu, and keeps cache usable after refresh failure", async () => {
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const refresh = vi.fn(async () => {
+      await pending;
+      return undefined;
+    });
+    const change = vi.fn();
+    const view = render(
+      <ModelSelector
+        value={models[0]!}
+        models={models}
+        recent={[]}
+        onChange={change}
+        refreshModels={refresh}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    expect(
+      screen.getByRole("option", { name: /Claude Sonnet/, selected: true }),
+    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Refreshing models");
+    const search = screen.getByRole("combobox", { name: "Search models" });
+    fireEvent.change(search, { target: { value: "fresh" } });
+    complete();
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    const fresh = { provider: "fixture", id: "fresh", name: "Fresh" };
+    const failing = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    view.rerender(
+      <ModelSelector
+        value={models[0]!}
+        models={[...models, fresh]}
+        recent={[]}
+        onChange={change}
+        refreshModels={failing}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Search models" })).toBe(
+      search,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Could not refresh"),
+    );
+    expect(screen.getByRole("option", { name: /Fresh/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+      "Claude Sonnet",
+    );
+    fireEvent.click(screen.getByRole("option", { name: /Fresh/ }));
+    expect(change).toHaveBeenCalledWith("fixture", "fresh");
+  });
+  it("keeps provider headings outside option navigation and exposes selection, recent use and capabilities", () => {
     const change = vi.fn();
     render(
       <ModelSelector
@@ -49,7 +267,10 @@ describe("model picker interaction", () => {
         ),
     ).toEqual(["Claude Haiku", "Claude Sonnet", "GPT 5"]);
     expect(
-      within(list).getByRole("option", { name: /Claude Sonnet.*Active/ }),
+      within(list).getByRole("option", {
+        name: /Claude Sonnet/,
+        selected: true,
+      }),
     ).toBeInTheDocument();
     expect(
       within(list).getByRole("option", {

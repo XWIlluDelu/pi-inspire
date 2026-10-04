@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
+import type { ModelSettingsDestination } from "../shared/model-settings";
 import { ApiError, pairHost } from "./api";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
@@ -152,9 +153,11 @@ function DeferredContextPane({
 
 function DeferredSettings({
   initialCategory,
+  modelDestination,
   onClose,
 }: {
   initialCategory: SettingsCategoryId;
+  modelDestination?: ModelSettingsDestination;
   onClose: () => void;
 }) {
   return (
@@ -164,7 +167,10 @@ function DeferredSettings({
         fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
       >
         <Suspense fallback={<SettingsLoading />}>
-          <DeferredSettingsSurface initialCategory={initialCategory} />
+          <DeferredSettingsSurface
+            initialCategory={initialCategory}
+            modelDestination={modelDestination}
+          />
         </Suspense>
       </RenderErrorBoundary>
     </SettingsDialog>
@@ -676,6 +682,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("display");
+  const [modelDestination, setModelDestination] =
+    useState<ModelSettingsDestination>();
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
@@ -696,6 +704,7 @@ export function App() {
       // Host deselection must clear session ownership, but the start surface
       // still inherits the workspace choices visible at the user's gesture.
       setWelcomeInheritance({
+        sessionId: current.sessionId,
         cwd: current.cwd,
         model: current.model,
         thinkingLevel: current.thinkingLevel,
@@ -804,7 +813,16 @@ export function App() {
     }
     if (request.action === "model" || request.action === "thinking") return;
     if (extensionOverlayOpen) return;
-    if (request.action === "settings") {
+    if (request.action === "models") {
+      setPaletteOpen(false);
+      setSettingsCategory("models");
+      setModelDestination({
+        query: request.query,
+        focus: request.modelSettingsFocus,
+        owner: request.modelSettingsOwner,
+      });
+      setSettingsOpen(true);
+    } else if (request.action === "settings") {
       setPaletteOpen(false);
       setSettingsCategory("behavior");
       setSettingsOpen(true);
@@ -892,6 +910,44 @@ export function App() {
         !(event.key === "Escape" && state.runState === "conflict")
       )
         return;
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.getModifierState("AltGraph")
+      )
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      const cycleKey = event.code
+        ? event.code.replace(/^Key/, "").toLowerCase()
+        : event.key.toLowerCase();
+      const cyclingKey =
+        event.altKey &&
+        event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        ["m", "p", "r"].includes(cycleKey);
+      if (cyclingKey) {
+        const editable = target?.closest(
+          "input,textarea,[contenteditable=true]",
+        );
+        const draft = editable && target?.closest(".composer");
+        const combobox = target?.closest("[role=combobox]");
+        if (
+          !store.getState().sessionId ||
+          target?.closest(
+            ".xterm, .dropdown__menu, .model-picker__menu, [role=listbox], [role=menu]",
+          ) ||
+          (combobox &&
+            (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
+          (editable && !draft)
+        )
+          return;
+        event.preventDefault();
+        if (cycleKey === "r") void store.cycleThinking();
+        else void store.cycleModel(cycleKey === "m" ? 1 : -1);
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1043,6 +1099,7 @@ export function App() {
         {settingsOpen && !extensionOverlayOpen ? (
           <DeferredSettings
             initialCategory={settingsCategory}
+            modelDestination={modelDestination}
             onClose={closeSettings}
           />
         ) : null}

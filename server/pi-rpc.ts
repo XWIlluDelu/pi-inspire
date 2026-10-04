@@ -188,6 +188,7 @@ export class PiRpcProcess extends EventEmitter {
         ...process.env,
         PI_SKIP_VERSION_CHECK: "1",
         ...this.options.env,
+        INSPIRE_PI_SDK_ENTRY: piInstallation.sdkEntryPath,
       },
     });
     this.child = child;

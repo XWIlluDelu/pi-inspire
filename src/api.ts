@@ -36,6 +36,7 @@ import type {
   ResourceProbeResponse,
   SessionDeleteResponse,
   SessionListResponse,
+  ThinkingLevel,
   TranscriptActivityPage,
   TranscriptPage,
   UploadedAttachment,
@@ -48,6 +49,17 @@ import type {
   HostRestartRequest,
   HostRestartStatus,
 } from "../shared/host-restart";
+import type {
+  ModelCatalogResponse,
+  ModelConfigEdit,
+  ModelPreferencesPatch,
+  ModelSettingsSnapshot,
+  ModelSettingsWriteResult,
+} from "../shared/model-settings";
+import type {
+  ProviderAuthOperation,
+  ProviderAuthResult,
+} from "../shared/provider-auth-bridge";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import type {
   TerminalAttachTicketResponse,
@@ -723,6 +735,66 @@ export function createApi(token: string | null = null) {
         {
           timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
         },
+      ),
+    refreshModels: (sessionId?: string, cwd?: string) =>
+      request<ModelCatalogResponse>(
+        token,
+        `/api/models?${new URLSearchParams({
+          ...(sessionId ? { sessionId } : {}),
+          ...(cwd ? { cwd } : {}),
+        })}`,
+      ),
+    modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
+      request<ModelSettingsSnapshot>(
+        token,
+        `/api/model-settings?${new URLSearchParams(owner)}`,
+      ),
+    saveModelPreferences: (
+      owner: { sessionId?: string; cwd?: string },
+      revision: string,
+      patch: ModelPreferencesPatch,
+    ) =>
+      request<ModelSettingsWriteResult>(
+        token,
+        `/api/model-settings?${new URLSearchParams(owner)}`,
+        { method: "PATCH", body: JSON.stringify({ revision, patch }) },
+        { mutation: true },
+      ),
+    editModelConfig: (
+      owner: { sessionId?: string; cwd?: string },
+      revision: string,
+      edit: ModelConfigEdit,
+    ) =>
+      request<ModelSettingsWriteResult>(
+        token,
+        `/api/model-settings/config?${new URLSearchParams(owner)}`,
+        { method: "PATCH", body: JSON.stringify({ revision, edit }) },
+        { mutation: true },
+      ),
+    providerAuth: (
+      owner: { sessionId?: string; cwd?: string },
+      operation: ProviderAuthOperation,
+    ) =>
+      post<{ result: ProviderAuthResult }>(
+        token,
+        `/api/provider-auth?${new URLSearchParams(owner)}`,
+        operation,
+        {},
+        {
+          mutation:
+            operation.operation !== "providers" &&
+            operation.operation !== "status",
+        },
+      ),
+    newSessionThinking: (
+      cwd: string,
+      provider: string,
+      modelId: string,
+      current: ThinkingLevel,
+    ) =>
+      request<{ level: ThinkingLevel }>(
+        token,
+        `/api/new-session/thinking?${new URLSearchParams({ cwd, provider, modelId, current })}`,
       ),
     newSessionDefaults: (cwd: string) =>
       request<NewSessionDefaults>(

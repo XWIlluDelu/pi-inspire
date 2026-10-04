@@ -42,6 +42,7 @@ import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
 } from "./maintenance-restart.js";
+import { modelSwitchThinkingLevel } from "./model-catalog.js";
 import { resolveProjectDirectory } from "./paths.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -403,6 +404,10 @@ interface MaintenanceRestartLike {
   release(leaseId: string): MaintenanceRestartTransition;
 }
 
+import type { ModelSettingsService } from "./model-settings.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
+import type { ProviderAuthService } from "./provider-auth.js";
+
 interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */
   promptObservationWindowMs?: number;
@@ -424,7 +429,11 @@ interface AppDependencies {
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Browser-safe configured model metadata, available without a live worker. */
-  availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
+  availableModels?: (
+    refresh?: boolean,
+  ) => Promise<BootstrapResponse["availableModels"]>;
+  modelSettings?: ModelSettingsService;
+  providerAuth?: ProviderAuthService;
   /** Cached public-release observation; failures never block local work. */
   updateChecker?: UpdateCheckerLike;
   /** Read-only Pi and configured-package update observation. */
@@ -1042,6 +1051,49 @@ export function createInspireServer(deps: AppDependencies): {
         .json({ error: "New-session model resolution is unavailable" });
     }
     response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
+  });
+  registerModelSettingsRoutes(app, deps);
+  app.get("/api/models", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const { sessionId, cwd: requestedCwd } = z
+      .object({
+        sessionId: sessionIdField.optional(),
+        cwd: z.string().min(1).max(4_096).optional(),
+      })
+      .parse(request.query);
+    const cwd = sessionId
+      ? deps.runtime.sessionCwd(sessionId)
+      : requestedCwd
+        ? await resolveProjectDirectory(requestedCwd)
+        : process.cwd();
+    const result = sessionId
+      ? await deps.runtime.refreshModels(sessionId)
+      : { models: (await deps.availableModels?.(true)) ?? [] };
+    const commonModels =
+      deps.modelSettings && cwd
+        ? (await deps.modelSettings.read(cwd, result.models)).commonModels
+        : [];
+    response.json({ ...result, commonModels });
+  });
+  app.get("/api/new-session/thinking", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const query = z
+      .object({
+        cwd: z.string().min(1).max(4_096),
+        provider: z.string().min(1).max(256),
+        modelId: z.string().min(1).max(512),
+        current: z.enum(THINKING_LEVELS),
+      })
+      .parse(request.query);
+    const cwd = await resolveProjectDirectory(query.cwd);
+    response.json({
+      level: modelSwitchThinkingLevel(
+        cwd,
+        query.provider,
+        query.modelId,
+        query.current,
+      ),
+    });
   });
   app.get("/api/new-session/files", async (request, response) => {
     const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(

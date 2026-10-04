@@ -36,7 +36,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
     await page.setViewportSize(viewport);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
     await dialog
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
@@ -66,7 +66,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
         response.url().endsWith("/api/preferences") &&
         response.request().method() === "PATCH",
     );
-    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
     await restored;
     const activity = dialog.getByRole("combobox", { name: "Activity groups" });
     await activity.click();

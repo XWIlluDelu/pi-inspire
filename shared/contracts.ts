@@ -1141,6 +1141,7 @@ export interface ActiveSnapshot {
     /** Settings that affect the live Pi session rather than INSΠRE chrome. */
     runtimeSettings?: PiRuntimeSettings;
     availableModels: unknown[];
+    commonModels?: import("./model-settings.js").CommonModelOption[];
     commands: unknown[];
   };
   runState: RunState;

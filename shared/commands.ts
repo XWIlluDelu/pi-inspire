@@ -42,8 +42,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "scoped-models",
-    description: "Configure Pi's terminal model cycle",
-    execution: "terminal",
+    description: "Manage common models and their cycle order",
+    execution: "surface",
   },
   {
     name: "export",
@@ -112,14 +112,15 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "login",
-    description: "Authenticate a provider in a trusted terminal",
+    description: "Log in to a provider on this Host",
     argumentHint: "[provider]",
-    execution: "terminal",
+    execution: "surface",
   },
   {
     name: "logout",
-    description: "Remove provider credentials in a trusted terminal",
-    execution: "terminal",
+    description: "Manage saved provider credentials on this Host",
+    argumentHint: "[provider]",
+    execution: "surface",
   },
   {
     name: "new",

@@ -9,6 +9,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PROJECT_FILES,
+  type ModelIdentity,
   type ModelOption,
   modelIdentityKey,
   THINKING_LEVELS,
@@ -20,7 +21,7 @@ import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
-import { supportedThinkingLevels } from "../model-options";
+import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
 import {
   sessionDraft,
   setSessionDraft,
@@ -36,6 +37,8 @@ import { ModelSelector } from "./ModelSelector";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 import { relativeTime } from "./transcript-rows";
 import { BrandLogo, Wordmark } from "./Wordmark";
+
+const DIRECTORY_PREVIEW_DELAY_MS = 220;
 
 interface WelcomeAttachment extends PendingAttachment {
   file: File;
@@ -56,6 +59,7 @@ function localAttachment(file: File): WelcomeAttachment {
 }
 
 export interface WelcomeInheritance {
+  sessionId?: string;
   cwd: string;
   model: ModelOption | null;
   thinkingLevel: string;
@@ -74,6 +78,7 @@ export const Welcome = memo(function Welcome({
 }) {
   const state = useAppState(
     (source) => ({
+      sessionId: source.sessionId,
       cwd: source.cwd,
       model: source.model,
       thinkingLevel: source.thinkingLevel,
@@ -87,6 +92,7 @@ export const Welcome = memo(function Welcome({
   );
   const liveInheritance = state.cwd
     ? ({
+        sessionId: state.sessionId ?? undefined,
         cwd: state.cwd,
         model: state.model,
         thinkingLevel: state.thinkingLevel,
@@ -134,27 +140,62 @@ export const Welcome = memo(function Welcome({
   attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
   const effectiveDirectory = directory.trim();
+  const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
+  const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
+  const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
+  const catalogGeneration = useRef(0);
+  const thinkingInputGeneration = useRef(0);
+  const thinkingRef = useRef(thinkingLevel);
+  thinkingRef.current = thinkingLevel;
+  const catalogSource =
+    inheritance?.cwd === effectiveDirectory ? inheritance.sessionId : undefined;
+  const refreshModels = useCallback(async () => {
+    const generation = ++catalogGeneration.current;
+    const result = await store.readNewSessionModels(
+      catalogSource,
+      effectiveDirectory || undefined,
+    );
+    if (catalogGeneration.current === generation) {
+      setCatalog(result.models);
+      setCommonModels(result.commonModels ?? []);
+    }
+    return result.warning;
+  }, [catalogSource, effectiveDirectory]);
+  useEffect(() => {
+    const timer = effectiveDirectory
+      ? setTimeout(() => {
+          void refreshModels().catch(() => {});
+        }, DIRECTORY_PREVIEW_DELAY_MS)
+      : undefined;
+    return () => {
+      clearTimeout(timer);
+      ++catalogGeneration.current;
+    };
+  }, [effectiveDirectory, refreshModels]);
   const availableModels = useMemo(() => {
+    const models = catalog ?? state.availableModels;
     if (
       !resolvedDefaultModel ||
-      state.availableModels.some(
+      models.some(
         (model) =>
           modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel),
       )
     ) {
-      return state.availableModels;
+      return models;
     }
-    return [...state.availableModels, resolvedDefaultModel];
-  }, [resolvedDefaultModel, state.availableModels]);
+    return [...models, resolvedDefaultModel];
+  }, [catalog, resolvedDefaultModel, state.availableModels]);
   const selectedModel = useMemo<ModelOption | null>(() => {
     const catalogModel = availableModels.find(
       (model) => modelIdentityKey(model) === modelKey,
     );
     if (catalogModel) return catalogModel;
+    if (pickedModel && modelIdentityKey(pickedModel) === modelKey)
+      return pickedModel;
     return inheritedModel && modelIdentityKey(inheritedModel) === modelKey
       ? inheritedModel
       : null;
-  }, [availableModels, inheritedModel, modelKey]);
+  }, [availableModels, inheritedModel, modelKey, pickedModel]);
   const thinkingLevels = useMemo(
     () => supportedThinkingLevels(selectedModel),
     [selectedModel],
@@ -171,8 +212,44 @@ export const Welcome = memo(function Welcome({
 
   useEffect(() => {
     if (!thinkingLevels.includes(thinkingLevel))
-      setThinkingLevel(thinkingLevels[0] ?? "off");
-  }, [thinkingLevel, thinkingLevels]);
+      setThinkingLevel(clampThinkingLevel(selectedModel, thinkingLevel));
+  }, [thinkingLevel, thinkingLevels, selectedModel]);
+
+  // Model switches apply native defaults even after an earlier effort choice;
+  // input made AFTER this request remains user-owned. Catalog refresh alone is
+  // not a model switch and must not reapply defaults.
+  useEffect(() => {
+    if (!modelTouched || !effectiveDirectory || !pickedModel) return;
+    let cancelled = false;
+    const inputGeneration = thinkingInputGeneration.current;
+    setModelStatus("loading");
+    void store
+      .resolveNewSessionThinking(
+        effectiveDirectory,
+        pickedModel,
+        thinkingRef.current,
+      )
+      .then(
+        (level) => {
+          if (cancelled) return;
+          if (thinkingInputGeneration.current === inputGeneration)
+            setThinkingLevel(clampThinkingLevel(pickedModel, level));
+          setModelStatus("ready");
+        },
+        () => {
+          if (!cancelled) setModelStatus("error");
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    effectiveDirectory,
+    modelKey,
+    modelTouched,
+    pickedModel,
+    modelResolveAttempt,
+  ]);
 
   // Until the user chooses explicitly, an inherited session model is the
   // preferred source. The explicit inheritance survives host deselection, and
@@ -199,6 +276,7 @@ export const Welcome = memo(function Welcome({
       return;
     }
     let cancelled = false;
+    const inputGeneration = thinkingInputGeneration.current;
     setModelKey("");
     setResolvedDefaultModel(null);
     setModelStatus("loading");
@@ -208,25 +286,20 @@ export const Welcome = memo(function Welcome({
           if (cancelled) return;
           setResolvedDefaultModel(defaults.model);
           setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
-          if (!thinkingTouched) setThinkingLevel(defaults.thinkingLevel);
+          if (thinkingInputGeneration.current === inputGeneration)
+            setThinkingLevel(defaults.thinkingLevel);
           setModelStatus(defaults.model ? "ready" : "error");
         },
         () => {
           if (!cancelled) setModelStatus("error");
         },
       );
-    }, 220);
+    }, DIRECTORY_PREVIEW_DELAY_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [
-    effectiveDirectory,
-    inheritedModel,
-    modelResolveAttempt,
-    modelTouched,
-    thinkingTouched,
-  ]);
+  }, [effectiveDirectory, inheritedModel, modelResolveAttempt, modelTouched]);
 
   const addFiles = (files: File[]) => {
     if (starting || files.length === 0) return;
@@ -322,7 +395,7 @@ export const Welcome = memo(function Welcome({
     hasInput &&
       effectiveDirectory &&
       selectedModel &&
-      modelStatus !== "loading" &&
+      modelStatus === "ready" &&
       !starting,
   );
 
@@ -473,6 +546,12 @@ export const Welcome = memo(function Welcome({
               value={selectedModel}
               models={availableModels}
               recent={state.prefs.recentModelIds}
+              common={commonModels}
+              onManageModels={() =>
+                store.openModelSettings(undefined, undefined, {
+                  cwd: effectiveDirectory || undefined,
+                })
+              }
               emptyLabel={
                 modelStatus === "loading" ||
                 (modelStatus === "idle" && effectiveDirectory && !modelTouched)
@@ -481,8 +560,17 @@ export const Welcome = memo(function Welcome({
                     ? "Model unavailable"
                     : "Select model"
               }
-              disabled={starting || modelStatus === "loading"}
+              disabled={starting}
+              refreshModels={refreshModels}
               onChange={(provider, id) => {
+                const model = availableModels.find(
+                  (item) => item.provider === provider && item.id === id,
+                );
+                if (!model) return;
+                setPickedModel(model);
+                setThinkingLevel(
+                  clampThinkingLevel(model, thinkingRef.current),
+                );
                 setModelTouched(true);
                 setModelStatus("ready");
                 setModelKey(modelIdentityKey({ provider, id }));
@@ -510,6 +598,7 @@ export const Welcome = memo(function Welcome({
                 label: level,
               }))}
               onChange={(value) => {
+                ++thinkingInputGeneration.current;
                 setThinkingTouched(true);
                 setThinkingLevel(value as ThinkingLevel);
               }}

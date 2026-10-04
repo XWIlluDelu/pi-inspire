@@ -3,6 +3,7 @@ import {
   assistantStreamTextLength,
 } from "../shared/assistant-stream.js";
 import {
+  MODEL_REFRESH_SUFFIX,
   RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
@@ -23,6 +24,7 @@ import {
   messageFallbackCorrelation,
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
+import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
@@ -737,6 +739,8 @@ export class RuntimeEventController {
       record.type === "extension_ui_request" &&
       record.method === "setStatus" &&
       [
+        `${slot.bridge.statusKey}${MODEL_REFRESH_SUFFIX}`,
+        `${slot.bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`,
         `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
         `${slot.bridge.statusKey}${PENDING_IMAGE_SUFFIX}`,
       ].includes(record.statusKey as string)

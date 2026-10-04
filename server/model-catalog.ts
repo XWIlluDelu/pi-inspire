@@ -1,5 +1,11 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+  type ModelOption,
+  type NewSessionDefaults,
+  THINKING_LEVELS,
+  type ThinkingLevel,
+} from "../shared/contracts.js";
+import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
@@ -7,12 +13,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "./pi-runtime.js";
-import {
-  THINKING_LEVELS,
-  type ModelOption,
-  type NewSessionDefaults,
-  type ThinkingLevel,
-} from "../shared/contracts.js";
 
 function thinkingLevelMap(value: unknown): ModelOption["thinkingLevelMap"] {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -35,7 +35,7 @@ type PiModel = {
   thinkingLevelMap?: unknown;
 };
 
-function modelOption(model: PiModel): ModelOption {
+export function modelOption(model: PiModel): ModelOption {
   const map = thinkingLevelMap(model.thinkingLevelMap);
   return {
     provider: model.provider,
@@ -63,6 +63,23 @@ export async function availableModelOptions(
   runtime: Pick<ModelRuntime, "getAvailable">,
 ): Promise<ModelOption[]> {
   return (await runtime.getAvailable()).map(modelOption);
+}
+
+/** Same precedence as AgentSession.setModel, before capability clamping. It
+ * reads public settings only, including for extension-only model identities. */
+export function modelSwitchThinkingLevel(
+  cwd: string,
+  provider: string,
+  id: string,
+  current: ThinkingLevel,
+): ThinkingLevel {
+  const settings = SettingsManager.create(cwd, getAgentDir());
+  return (
+    settings.getModelThinkingLevel(provider, id) ??
+    settings.getDefaultThinkingLevel() ??
+    current ??
+    "medium"
+  );
 }
 
 /** Resolve the model Pi will choose when Inspire omits `--model` for this
@@ -123,6 +140,7 @@ export async function resolveNewSessionDefaults(
   )
     ? (session.thinkingLevel as ThinkingLevel)
     : "off";
+  session.dispose();
   return {
     cwd,
     model: defaultModelOption(model),

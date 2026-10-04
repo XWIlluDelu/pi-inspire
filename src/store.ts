@@ -21,6 +21,7 @@ import {
   isBusyRunState,
   type LaunchPreference,
   type ModelOption,
+  modelIdentityKey,
   type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
@@ -36,10 +37,18 @@ import {
   type ReadingWidthPreference,
   type SessionDeleteDisposition,
   type ThemePreference,
+  type ThinkingLevel,
   type ToolVisibilityPreference,
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../shared/contracts";
+import type {
+  ModelCatalogResponse,
+  ModelConfigEdit,
+  ModelPreferencesPatch,
+  ModelSettingsSnapshot,
+} from "../shared/model-settings";
+import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import {
   type Api,
   ApiError,
@@ -139,9 +148,6 @@ function boundedCommandActivities(
 
 function terminalCommandGuidance(command: string): string {
   switch (command) {
-    case "login":
-    case "logout":
-      return "Provider credentials stay in Pi's trusted terminal flow so secrets and browser redirects are never projected through the chat UI.";
     case "share":
       return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
     case "trust":
@@ -883,6 +889,8 @@ export class AppStore {
         typeof active?.thinkingLevel === "string"
           ? active.thinkingLevel
           : this.state.thinkingLevel,
+      commonModels:
+        active?.commonModels ?? (sessionChanged ? [] : this.state.commonModels),
       availableModels:
         active &&
         Array.isArray(active.availableModels) &&
@@ -1527,6 +1535,13 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
 
+    if (["login", "logout", "scoped-models"].includes(command.name)) {
+      this.openModelSettings(
+        command.argument,
+        command.name === "scoped-models" ? "common" : "credentials",
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
     if (command.name === "settings") {
       this.requestNativeCommandUi(sessionId, "settings");
       return ACCEPTED_NATIVE_COMMAND;
@@ -2313,6 +2328,235 @@ export class AppStore {
 
   setWorkspaceShowHidden = (value: boolean): void =>
     this.workspace.setShowHidden(value);
+
+  private modelCycleQueue: {
+    sessionId: string;
+    selection: number;
+    transport: number;
+    pending: Promise<void>;
+  } | null = null;
+
+  private queueModelCycle = (
+    run: (owns: () => boolean) => Promise<void>,
+  ): Promise<void> => {
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return Promise.resolve();
+    const selection = this.selectionGeneration;
+    const transport = this.transportGeneration;
+    const owns = () =>
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === selection &&
+      this.transportGeneration === transport;
+    if (
+      this.modelCycleQueue?.sessionId !== sessionId ||
+      this.modelCycleQueue.selection !== selection ||
+      this.modelCycleQueue.transport !== transport
+    )
+      this.modelCycleQueue = {
+        sessionId,
+        selection,
+        transport,
+        pending: Promise.resolve(),
+      };
+    const guarded = () => (owns() ? run(owns) : Promise.resolve());
+    const result = this.modelCycleQueue.pending.then(guarded, guarded);
+    this.modelCycleQueue.pending = result;
+    return result;
+  };
+
+  openModelSettings = (
+    query?: string,
+    modelSettingsFocus?: "credentials" | "common",
+    modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
+  ): void => {
+    const id = this.state.nextNativeCommandId;
+    this.set({
+      nextNativeCommandId: id + 1,
+      nativeCommandUiRequest: {
+        id,
+        sessionId: this.state.sessionId ?? "",
+        action: "models",
+        ...(query ? { query } : {}),
+        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
+        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
+      },
+    });
+  };
+
+  cycleModel = (direction: 1 | -1): Promise<void> =>
+    this.queueModelCycle(async (owns) => {
+      const available = this.state.availableModels;
+      const byKey = new Map(
+        available.map((model) => [modelIdentityKey(model), model]),
+      );
+      const common = this.state.commonModels.flatMap((model) => {
+        const match = byKey.get(modelIdentityKey(model));
+        return match ? [match] : [];
+      });
+      const models = common.length ? common : available;
+      if (models.length <= 1) return;
+      const index = Math.max(
+        0,
+        models.findIndex(
+          (model) =>
+            model.provider === this.state.model?.provider &&
+            model.id === this.state.model?.id,
+        ),
+      );
+      const next = models[(index + direction + models.length) % models.length]!;
+      const scoped = this.state.commonModels.find(
+        (model) => modelIdentityKey(model) === modelIdentityKey(next),
+      );
+      if (await this.setModel(next.provider, next.id)) {
+        if (scoped?.thinkingLevel && owns())
+          await this.setThinkingLevel(scoped.thinkingLevel);
+      }
+    });
+
+  cycleThinking = (): Promise<void> =>
+    this.queueModelCycle(async () => {
+      if (!this.state.model) return;
+      const levels = supportedThinkingLevels(this.state.model);
+      const index = levels.indexOf(this.state.thinkingLevel as ThinkingLevel);
+      await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
+    });
+
+  private modelSettingsApi = (): Api => {
+    if (!this.api) throw new Error("The Host is unavailable");
+    return this.api;
+  };
+
+  private ownsModelSettings = (owner: {
+    sessionId?: string;
+    cwd?: string;
+  }): boolean =>
+    owner.sessionId
+      ? owner.sessionId === this.state.sessionId
+      : !this.state.sessionId && (!owner.cwd || owner.cwd === this.state.cwd);
+
+  readModelSettings = async (owner: {
+    sessionId?: string;
+    cwd?: string;
+  }): Promise<ModelSettingsSnapshot> => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const snapshot = await api.modelSettings(owner);
+    if (
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({ commonModels: snapshot.commonModels });
+    return snapshot;
+  };
+
+  saveModelPreferences = async (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    patch: ModelPreferencesPatch,
+  ) => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const result = await api.saveModelPreferences(owner, revision, patch);
+    if (
+      result.snapshot &&
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({ commonModels: result.snapshot.commonModels });
+    return result;
+  };
+
+  editModelConfig = async (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    edit: ModelConfigEdit,
+  ) => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const result = await api.editModelConfig(owner, revision, edit);
+    if (
+      result.snapshot &&
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({
+        availableModels: result.snapshot.models,
+        commonModels: result.snapshot.commonModels,
+      });
+    return result;
+  };
+
+  providerAuth = (
+    owner: { sessionId?: string; cwd?: string },
+    operation: ProviderAuthOperation,
+  ) =>
+    this.modelSettingsApi()
+      .providerAuth(owner, operation)
+      .then((response) => response.result);
+
+  refreshModels = async (owner?: {
+    sessionId?: string;
+    cwd?: string;
+  }): Promise<string | undefined> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.refreshModels(requested.sessionId, requested.cwd);
+    if (
+      this.api === api &&
+      this.transportGeneration === transport &&
+      this.selectionGeneration === selection &&
+      this.ownsModelSettings(requested)
+    )
+      this.set({
+        availableModels: result.models,
+        commonModels: result.commonModels ?? [],
+      });
+    return result.warning;
+  };
+
+  readNewSessionModels = async (
+    sessionId?: string,
+    cwd?: string,
+  ): Promise<ModelCatalogResponse> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.refreshModels(sessionId, cwd);
+    if (this.api !== api || this.transportGeneration !== transport)
+      throw new Error("The Host connection changed");
+    return result;
+  };
+
+  resolveNewSessionThinking = async (
+    cwd: string,
+    model: ModelOption,
+    current: ThinkingLevel,
+  ): Promise<ThinkingLevel> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.newSessionThinking(
+      cwd,
+      model.provider,
+      model.id,
+      current,
+    );
+    if (this.api !== api || this.transportGeneration !== transport)
+      throw new Error("The Host connection changed");
+    return result.level;
+  };
 
   resolveNewSessionDefaults = async (
     cwd: string,

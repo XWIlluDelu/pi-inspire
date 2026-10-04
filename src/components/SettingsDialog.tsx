@@ -74,7 +74,11 @@ export function SettingsDialog({
 }) {
   const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
+    <div
+      className="overlay settings-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
       <div
         ref={ref}
         className="dialog settings"

@@ -249,6 +249,35 @@ export const CommandPalette = memo(function CommandPalette({
           run: () => runTerminalAction("settings"),
         },
       );
+      actions.push(
+        {
+          id: "model-next",
+          group: "Models",
+          title: "Next model",
+          hint: "Alt+Shift+M",
+          run: () => void store.cycleModel(1),
+        },
+        {
+          id: "model-previous",
+          group: "Models",
+          title: "Previous model",
+          hint: "Alt+Shift+P",
+          run: () => void store.cycleModel(-1),
+        },
+        {
+          id: "thinking-cycle",
+          group: "Models",
+          title: "Cycle thinking level",
+          hint: "Alt+Shift+R",
+          run: () => void store.cycleThinking(),
+        },
+        {
+          id: "manage-models",
+          group: "Models",
+          title: "Manage models",
+          run: () => store.openModelSettings(),
+        },
+      );
       if (hasEarlierBranch) {
         actions.push({
           id: "latest-branch",

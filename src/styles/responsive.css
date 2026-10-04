@@ -736,10 +736,13 @@ body.srail-dragging {
     flex: 0 0 auto;
     border-right: 0;
     border-bottom: 1px solid var(--hairline);
-    padding: var(--space-2) 4px;
+    padding: var(--space-2) 12px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
   }
 
   .settings__sidebar::-webkit-scrollbar {
@@ -756,11 +759,11 @@ body.srail-dragging {
   .settings__nav-item {
     width: auto;
     flex: 0 0 auto;
-    min-height: 36px;
     gap: 4px;
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-xs);
     white-space: nowrap;
+    scroll-snap-align: nearest;
   }
 
   .settings__nav-item--active::before {
@@ -774,92 +777,38 @@ body.srail-dragging {
   }
 
   .settings__content {
-    padding: var(--space-3) var(--space-3) min(220px, 34vh);
-    gap: var(--space-4);
-  }
-
-  .settings__field,
-  .settings__field--stacked {
-    min-height: 0;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .settings__field-control {
-    justify-content: flex-start;
-    width: 100%;
-  }
-
-  .settings__field--stacked .dropdown--field,
-  .settings__field--stacked .dropdown__trigger,
-  .settings__field-control .dropdown--field,
-  .settings__field-control .dropdown__trigger {
-    width: 100%;
-    flex-basis: auto;
-  }
-
-  .settings .dropdown--described .dropdown__menu {
-    left: 0;
-    right: auto;
-    width: 100%;
-    min-width: 100%;
+    padding: var(--space-3) var(--space-3) var(--space-5);
+    gap: var(--space-5);
   }
 
   .settings__field-help {
     max-width: none;
   }
 
-  .settings__update-entry {
-    padding: var(--space-3);
-  }
-
-  .settings__update-check {
-    min-height: 36px;
-  }
-
-  .settings__update-status-row {
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .segmented {
-    width: 100%;
-    flex-wrap: wrap;
-    min-height: 38px;
-  }
-
-  .segmented__item,
-  .segmented button {
-    flex: 1 1 0;
-    justify-content: center;
-    min-height: 36px;
-  }
-
   .settings__footer {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 2px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
   }
 
   .settings__footer-status {
-    min-height: 24px;
-  }
-
-  .settings__footer-actions {
-    justify-content: flex-end;
-    flex-wrap: wrap;
+    min-height: 20px;
+    display: inline-flex;
+    align-items: center;
     gap: var(--space-2);
   }
 
-  .settings__footer-actions .button,
-  .settings__footer-actions button {
-    min-height: 36px;
+  .settings__install {
+    margin-left: auto;
   }
 
-  .settings__utility {
-    min-height: 36px;
+  .settings__footer-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   .palette {
@@ -889,6 +838,10 @@ body.srail-dragging {
 }
 
 @media (max-width: 420px) {
+  .settings__nav-icon {
+    display: none;
+  }
+
   .welcome__row-project {
     display: none;
   }

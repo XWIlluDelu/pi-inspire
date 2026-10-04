@@ -60,6 +60,7 @@ describe("Herdr enhancement status API", () => {
   it("keeps the effective startup value separate from the persisted next-start preference", async () => {
     const status: HerdrEnhancementStatus = {
       enabled: false,
+      ready: true,
       supported: true,
       installed: true,
       running: false,

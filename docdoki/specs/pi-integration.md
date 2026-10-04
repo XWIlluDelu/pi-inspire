@@ -27,12 +27,14 @@ Use Pi as the agent runtime and keep privileged local operations in the Host.
 - [[session-transport]] — HTTP/WebSocket observations and browser ownership.
 - [[session-branches]] — same-file navigation and independent fork.
 - [[composer]] — command feedback, input delivery, and Pending.
+- [[model-settings]] — Pi-owned model configuration, defaults/common scope, and provider authentication.
 
 ## Runtime and agent ownership
 
 Pi and user configuration own model tools, prompts, extensions, and execution policy. Inspire adds
 GUI projections and explicit user controls, not LLM tools, system prompts, or delegation policy.
-Its internal branch-navigation extension registers a non-model command for GUI navigation.
+Its internal extension registers non-model commands for GUI branch navigation, worker-local
+model-catalog refresh, effective retry-state reads, pending-image evidence and provider authentication.
 Explicit attachments and selected prompt resources remain user input.
 
 The Host resolves the external `pi` executable, imports its public SDK, and starts RPC workers from
@@ -56,6 +58,19 @@ The browser receives model availability and runtime state, not stored credential
 settings controls cover auto-compaction, auto-retry, and steering/follow-up delivery. Pi's worker and
 `SettingsManager` own those values. Browser optimism is per field and selection/transport owner:
 a stale failure cannot roll back a newer request, and a current failure reconciles against Pi.
+Retry reads use the owning worker's public `getSettings()` through the hidden bridge, preserving its
+project-trust and override decisions. A native setter acknowledgment is followed by an effective read;
+that confirmation does not establish successful persistence.
+
+[[model-settings]] owns saved model/thinking defaults, native common scope, graphical declarations
+and credential controls. Their files and precedence remain Pi-owned; configuration is independent
+of login and does not switch an open session. Current worker provider definitions own authentication
+methods. Public `ModelRuntime.login/logout` runs in a separate auth operation owner sharing native
+storage, not a cached replacement registry or a second account platform. The internal bridge carries
+native interactions outside model input; cancelled/superseded credentials and retired worker owners
+respect native cancellation and actual stop fences. Only established cross-device methods receive
+Remote login help. Browser inventories/status and errors omit stored or resolved keys/tokens.
+Implementation and isolated native evidence: [[follow-model-settings-auth-2026-10-02]].
 
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
 `shared/commands.ts` reserves built-in names before resource dispatch, matching Pi's interactive

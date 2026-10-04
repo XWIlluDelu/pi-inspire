@@ -123,6 +123,17 @@ declaration.
   bound every selected measure. The 52px topbar aligns the regions without
   turning the page into a dashboard of boxed panels.
 
+## Scrolling
+
+Native scroll areas share a transparent track and a rounded, neutral thumb with stronger hover and
+pressed states. Settings, pickers, History, Files/Changes, document previews and horizontal code
+scrolling inherit this treatment. Chromium/WebKit use an 8px track with a 6px visible thumb and no
+arrow buttons; Firefox uses its native thin geometry. High-contrast mode retains system colors.
+
+Terminal's own slider uses the same color roles and visible thickness while retaining its drag target
+and scroll handling. Navigation/conversation boundary rails and deliberately hidden tab-strip bars
+keep their existing behavior. Embedded documents retain their own styles.
+
 ## Component grammar
 
 - The navigation header carries the optical reticle and wordmark; the collapsed
@@ -161,6 +172,8 @@ declaration.
   available to assistive technology and the tooltip, and containing controls
   retain that same value for copying and navigation. Ordinary titles and bare
   filenames do not enter this path-specific treatment.
+- Shared text buttons align icons to Plex's visual text center; the correction does not alter button
+  height or spinning-icon animation. Icon-only controls retain geometric centering.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: a 6px surface, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short

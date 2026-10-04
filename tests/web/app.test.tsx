@@ -14,6 +14,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import "../../src/components/ContextPane";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
+import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -436,6 +437,7 @@ describe("welcome flow", () => {
   });
 
   it("keeps the model trigger focused when a later setModel rejection rerenders the error banner", async () => {
+    mockModelMenuLayout();
     let releaseFailure!: () => void;
     modelFailureGate = new Promise<void>((resolve) => {
       releaseFailure = resolve;

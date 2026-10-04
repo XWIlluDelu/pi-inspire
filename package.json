@@ -65,10 +65,14 @@
       "docs/redesign/prototype/app.js",
       "tests/**/*.{test,spec}.{ts,tsx}",
       "tests/fixtures/pi-operation-lifecycle-extension.ts",
-      "tests/fixtures/attachment-retention-process.ts"
+      "tests/fixtures/attachment-retention-process.ts",
+      "tests/fixtures/pi-model-catalog-extension.ts",
+      "tests/fixtures/pi-provider-auth-extension.ts",
+      "docs/examples/native-ui.ts"
     ],
     "ignore": [
       "server/instance-state.d.mts",
+      "server/proper-lockfile.d.ts",
       "server/file-lock.d.mts",
       "server/platform-paths.d.mts",
       "server/process-tree.d.mts",
